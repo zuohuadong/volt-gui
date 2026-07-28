@@ -2,7 +2,7 @@
 // a remote host over an established SSH connection. It detects the remote
 // OS/arch, locates or installs reasonix, launches serve bound to a random
 // loopback port with a file-based token (never in argv), and records the
-// result under the remote ~/.reasonix/remote so a later reconnect can reuse
+// result under the remote ~/.voltui/remote so a later reconnect can reuse
 // it. V1 targets Linux and macOS remotes.
 package bootstrap
 

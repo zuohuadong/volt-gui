@@ -1,6 +1,7 @@
 package capability
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -68,18 +69,41 @@ func TestRouteRespectsSkillAutoUseMetadata(t *testing.T) {
 	}
 }
 
-func TestSkillEntriesReadinessFollowsExecutionModeSurface(t *testing.T) {
-	sk := []skill.Skill{{Name: "test", Scope: skill.ScopeBuiltin}}
-	readOnlyTools := []tool.ContractEntry{{Name: "read_only_skill"}}
+func TestRouteKeepsAllStrongCandidatesBeforeSuggestBudget(t *testing.T) {
+	entries := make([]Entry, 0, 8)
+	for i := 0; i < 6; i++ {
+		entries = append(entries, Entry{ID: fmt.Sprintf("skill:required-%d", i), Kind: KindSkill, Name: fmt.Sprintf("required-%d", i), AutoUse: AutoUsePrefer, Triggers: []string{"ship"}})
+	}
+	entries = append(entries,
+		Entry{ID: "skill:suggest-a", Kind: KindSkill, Name: "suggest-a", AutoUse: AutoUseSuggest, Triggers: []string{"ship"}},
+		Entry{ID: "skill:suggest-b", Kind: KindSkill, Name: "suggest-b", AutoUse: AutoUseSuggest, Triggers: []string{"ship"}},
+	)
 
-	if got := SkillEntriesForMode(sk, readOnlyTools, true)[0].Status; got != StatusReady {
-		t.Fatalf("plan-mode status = %s, want ready", got)
+	decision := Route("ship this", entries)
+	if len(decision.Candidates) != 6 {
+		t.Fatalf("candidates = %d, want all 6 strong candidates", len(decision.Candidates))
 	}
-	if got := SkillEntriesForMode(sk, readOnlyTools, false)[0].Status; got != StatusConfigured {
-		t.Fatalf("normal-mode status with only read_only_skill = %s, want configured", got)
+	for _, candidate := range decision.Candidates {
+		if candidate.Policy != AutoUsePrefer {
+			t.Fatalf("suggest candidate displaced a strong candidate: %+v", candidate)
+		}
 	}
-	if got := SkillEntriesForMode(sk, []tool.ContractEntry{{Name: "run_skill"}}, false)[0].Status; got != StatusReady {
-		t.Fatalf("normal-mode status with run_skill = %s, want ready", got)
+}
+
+func TestRouteDeliveryPromotesMatchedBuiltinSkills(t *testing.T) {
+	entries := []Entry{
+		{ID: "skill:explore", Kind: KindSkill, Name: "explore", Source: string(skill.ScopeBuiltin), AutoUse: AutoUseSuggest, Triggers: []string{"调用链"}},
+		{ID: "skill:custom", Kind: KindSkill, Name: "custom", Source: string(skill.ScopeProject), AutoUse: AutoUseSuggest, Triggers: []string{"调用链"}},
+	}
+	decision := RouteDelivery("分析调用链", entries)
+	if !decision.Delivery || len(decision.Candidates) != 2 {
+		t.Fatalf("delivery decision = %+v", decision)
+	}
+	if decision.Candidates[0].Entry.ID != "skill:explore" || decision.Candidates[0].Policy != AutoUsePrefer {
+		t.Fatalf("built-in candidate was not promoted: %+v", decision.Candidates)
+	}
+	if decision.Candidates[1].Entry.ID != "skill:custom" || decision.Candidates[1].Policy != AutoUseSuggest {
+		t.Fatalf("custom authored policy changed: %+v", decision.Candidates)
 	}
 }
 
@@ -117,32 +141,6 @@ func TestRenderTransientBlockMentionsConnectSource(t *testing.T) {
 	for _, want := range []string{`<capability-route version="1">`, `source:skills`, `connect_tool_source`} {
 		if !strings.Contains(block, want) {
 			t.Fatalf("block missing %q:\n%s", want, block)
-		}
-	}
-}
-
-func TestAutoEnableBuiltinSkillCandidateRequiresTrustedStrongConfiguredMatch(t *testing.T) {
-	eligible := RouteCandidate{
-		Entry: Entry{
-			ID:     "skill:review",
-			Kind:   KindSkill,
-			Name:   "review",
-			Source: string(skill.ScopeBuiltin),
-			Status: StatusConfigured,
-		},
-		Policy: AutoUsePrefer,
-	}
-	if got, ok := AutoEnableBuiltinSkillCandidate(RouteDecision{Candidates: []RouteCandidate{eligible}}); !ok || got.Entry.Name != "review" {
-		t.Fatalf("eligible candidate = %+v, ok=%v", got, ok)
-	}
-
-	for _, candidate := range []RouteCandidate{
-		{Entry: eligible.Entry, Policy: AutoUseSuggest},
-		{Entry: func() Entry { e := eligible.Entry; e.Source = string(skill.ScopeProject); return e }(), Policy: AutoUseRequire},
-		{Entry: func() Entry { e := eligible.Entry; e.Status = StatusReady; return e }(), Policy: AutoUseRequire},
-	} {
-		if got, ok := AutoEnableBuiltinSkillCandidate(RouteDecision{Candidates: []RouteCandidate{candidate}}); ok {
-			t.Fatalf("candidate should not auto-enable: %+v", got)
 		}
 	}
 }

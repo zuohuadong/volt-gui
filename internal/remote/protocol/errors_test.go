@@ -12,34 +12,34 @@ func TestFrozenErrorTableHasExactly51ControlledEntries(t *testing.T) {
 	if len(contracts) != 51 {
 		t.Fatalf("error contracts = %d, want 51", len(contracts))
 	}
-	seen := map[ReasonixErrorCode]bool{}
+	seen := map[VoltUIErrorCode]bool{}
 	gotCodes := make([]string, 0, len(contracts))
 	for _, contract := range contracts {
-		gotCodes = append(gotCodes, string(contract.ReasonixCode))
-		if seen[contract.ReasonixCode] {
-			t.Fatalf("duplicate error %s", contract.ReasonixCode)
+		gotCodes = append(gotCodes, string(contract.VoltUICode))
+		if seen[contract.VoltUICode] {
+			t.Fatalf("duplicate error %s", contract.VoltUICode)
 		}
-		seen[contract.ReasonixCode] = true
+		seen[contract.VoltUICode] = true
 		if contract.JSONRPCCode != DomainErrorCode || strings.TrimSpace(contract.Message) == "" {
 			t.Fatalf("invalid contract %+v", contract)
 		}
 		options := ErrorOptions{}
-		if contract.ReasonixCode == ErrHostBusy {
+		if contract.VoltUICode == ErrHostBusy {
 			retry := int64(100)
 			options.RetryAfterMs = &retry
 		}
-		if contract.ReasonixCode == ErrRewindPartial {
+		if contract.VoltUICode == ErrRewindPartial {
 			workspace, conversation, snapshot := true, false, true
 			options.WorkspaceMayHaveChanged = &workspace
 			options.ConversationMayHaveChanged = &conversation
 			options.SnapshotRequired = &snapshot
 		}
-		remoteErr, err := NewRemoteError(contract.ReasonixCode, options)
+		remoteErr, err := NewRemoteError(contract.VoltUICode, options)
 		if err != nil {
-			t.Fatalf("construct %s: %v", contract.ReasonixCode, err)
+			t.Fatalf("construct %s: %v", contract.VoltUICode, err)
 		}
 		if remoteErr.Message != contract.Message || remoteErr.RPCError().Code != DomainErrorCode {
-			t.Fatalf("constructed error drift for %s", contract.ReasonixCode)
+			t.Fatalf("constructed error drift for %s", contract.VoltUICode)
 		}
 	}
 	wantCodes := strings.Fields(`
@@ -55,7 +55,7 @@ CONTENT_REF_EXPIRED CHECKPOINT_NOT_FOUND CHECKPOINT_SCOPE_UNAVAILABLE REWIND_PAR
 PATH_NOT_FOUND NOT_FILE GIT_UNAVAILABLE GIT_OBJECT_NOT_FOUND QUERY_FAILED CAPABILITY_UNAVAILABLE`)
 	sort.Strings(wantCodes)
 	if !reflect.DeepEqual(gotCodes, wantCodes) {
-		t.Fatalf("Reasonix error code golden drift\n got: %v\nwant: %v", gotCodes, wantCodes)
+		t.Fatalf("VoltUI error code golden drift\n got: %v\nwant: %v", gotCodes, wantCodes)
 	}
 }
 

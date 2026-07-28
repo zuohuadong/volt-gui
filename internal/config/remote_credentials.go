@@ -25,13 +25,13 @@ type remoteCredentialSnapshot struct {
 	set   bool
 }
 
-// RemotePasswordCredentialEnvName returns the Reasonix-owned credential slot
+// RemotePasswordCredentialEnvName returns the VoltUI-owned credential slot
 // for a remote host password without exposing the user-supplied label.
 func RemotePasswordCredentialEnvName(hostID string) string {
 	return remoteCredentialEnvName(hostID, remotePasswordCredentialKind)
 }
 
-// RemotePassphraseCredentialEnvName returns the Reasonix-owned credential slot
+// RemotePassphraseCredentialEnvName returns the VoltUI-owned credential slot
 // for a remote host private-key passphrase.
 func RemotePassphraseCredentialEnvName(hostID string) string {
 	return remoteCredentialEnvName(hostID, remotePassphraseCredentialKind)
@@ -42,7 +42,7 @@ func remoteCredentialEnvName(hostID, kind string) string {
 	return fmt.Sprintf("REASONIX_REMOTE_%X_%s", sum[:8], kind)
 }
 
-// IsGeneratedRemoteCredential reports whether key is a Reasonix-owned slot
+// IsGeneratedRemoteCredential reports whether key is a VoltUI-owned slot
 // for this host. User-managed/shared environment variables are never deleted.
 func IsGeneratedRemoteCredential(hostID, key string) bool {
 	key = strings.TrimSpace(key)
@@ -74,7 +74,7 @@ func UnusedGeneratedRemoteCredentialChanges(c *Config, candidates []string) []Cr
 	return changes
 }
 
-// EditUserConfigWithCredentials updates config and its Reasonix-owned secret
+// EditUserConfigWithCredentials updates config and its VoltUI-owned secret
 // slots as one recoverable operation. Credential writes happen before SaveTo;
 // any later failure restores every touched slot, keeping plaintext out of TOML.
 func EditUserConfigWithCredentials(mutate func(*Config) ([]CredentialChange, error)) error {

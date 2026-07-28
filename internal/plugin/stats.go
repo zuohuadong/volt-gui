@@ -1,6 +1,6 @@
 // Per-plugin startup latency tracking for MCP servers. VoltUI uses these
 // samples to decide whether a chronically slow plugin should be demoted from
-// "eager" to "lazy" loading for the rest of a session — see Recommend.
+// "eager" to background loading for the rest of a session — see Recommend.
 //
 // Storage is one tiny JSON file per plugin under <cacheDir>/mcp/, written
 // atomically (tmpfile + Rename) so a crash mid-write can't corrupt history.
@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"voltui/internal/config"
+	fileencoding "voltui/internal/fileutil/encoding"
 )
 
 const (
@@ -56,9 +57,9 @@ type StartupStats struct {
 
 // Recommendation is the result of inspecting a plugin's recent startup
 // history. Demote is the actionable bit boot.go consumes (true → switch this
-// plugin's tier to "lazy" for this session). P99 and Reason are descriptive
-// only — Reason is meant to be surfaced to the user as a Notice so a sudden
-// demotion isn't silent.
+// plugin to background startup for this session). P99 and Reason are
+// descriptive only — Reason is meant to be surfaced to the user as a Notice so a
+// sudden demotion isn't silent.
 type Recommendation struct {
 	Demote bool
 	P99    time.Duration
@@ -153,7 +154,7 @@ func Recommend(name string, budget time.Duration, demoteAfter int) Recommendatio
 	}
 	rec.Demote = true
 	rec.Reason = fmt.Sprintf(
-		"plugin %q has been slow %d startups in a row (last %dms, budget %dms); demoting to lazy this session",
+		"plugin %q has been slow %d startups in a row (last %dms, budget %dms); demoting to background startup this session",
 		name, demoteAfter, tail[len(tail)-1], budget.Milliseconds(),
 	)
 	return rec
@@ -203,7 +204,7 @@ func legacyStatsPath(name string) string {
 // to be worth a trace, but they still must not stop the caller.
 func loadStats(path string) StartupStats {
 	var s StartupStats
-	b, err := os.ReadFile(path)
+	b, err := fileencoding.ReadFileUTF8(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			slog.Warn("plugin: read startup stats failed", "path", path, "err", err)

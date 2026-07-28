@@ -29,12 +29,12 @@ func TestCountUntracked(t *testing.T) {
 
 func TestGitStatusRender(t *testing.T) {
 	got := ansi.Strip(gitStatus{Repo: "mySkills", Branch: "main", Added: 15}.Render())
-	if got != "mySkills@main (+15 -0)" {
+	if got != "mySkills@main  +15 -0" {
 		t.Fatalf("Render = %q", got)
 	}
 
 	got = ansi.Strip(gitStatus{Repo: "repo", Branch: "abc1234", Detached: true, Untracked: 2}.Render())
-	if got != "repo@abc1234 (?2)" {
+	if got != "repo@abc1234  ?2" {
 		t.Fatalf("detached Render = %q", got)
 	}
 }
@@ -47,10 +47,10 @@ func TestGitStatusRenderRepoUsesSuppliedRepoStyle(t *testing.T) {
 }
 
 func TestGitStatusRenderWithinCompactsRepoBeforeBranch(t *testing.T) {
-	status := gitStatus{Repo: "VeryLongVoltUIWorkspace", Branch: "codex/cli-tui-status-row"}
+	status := gitStatus{Repo: "VeryLongDeepSeekVoltUIWorkspace", Branch: "codex/cli-tui-status-row"}
 
 	full := ansi.Strip(status.RenderWithin(80, statusAutoColor))
-	if full != "VeryLongVoltUIWorkspace@codex/cli-tui-status-row" {
+	if full != "VeryLongDeepSeekVoltUIWorkspace@codex/cli-tui-status-row" {
 		t.Fatalf("wide RenderWithin = %q", full)
 	}
 
@@ -68,7 +68,7 @@ func TestGitStatusRenderWithinCompactsRepoBeforeBranch(t *testing.T) {
 
 func TestGitStatusRenderWithinKeepsDirtySuffix(t *testing.T) {
 	status := gitStatus{
-		Repo:      "VeryLongVoltUIWorkspace",
+		Repo:      "VeryLongDeepSeekVoltUIWorkspace",
 		Branch:    "codex/cli-tui-status-row",
 		Added:     12,
 		Removed:   3,
@@ -79,7 +79,7 @@ func TestGitStatusRenderWithinKeepsDirtySuffix(t *testing.T) {
 	if ansi.StringWidth(got) > 35 {
 		t.Fatalf("compacted dirty status width = %d, want <= 35: %q", ansi.StringWidth(got), got)
 	}
-	if !strings.Contains(got, "(+12 -3 ?4)") {
+	if !strings.Contains(got, "+12 -3 ?4") {
 		t.Fatalf("dirty suffix should be preserved: %q", got)
 	}
 	if !strings.Contains(got, "@") || !strings.Contains(got, "…") {
@@ -94,7 +94,7 @@ func TestLoadGitStatus(t *testing.T) {
 
 	root := t.TempDir()
 	runGitForTest(t, root, "init")
-	runGitForTest(t, root, "config", "user.email", "voltui@example.invalid")
+	runGitForTest(t, root, "config", "user.email", "reasonix@example.invalid")
 	runGitForTest(t, root, "config", "user.name", "VoltUI Test")
 	writeFileForTest(t, filepath.Join(root, "tracked.txt"), "one\ntwo\n")
 	runGitForTest(t, root, "add", "tracked.txt")

@@ -72,12 +72,6 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	protocol = normalizeReasoningProtocol(protocol)
 	chatURL, _ := cfg.Extra["chat_url"].(string)
 	chatURL = normalizeChatURL(cfg.BaseURL, chatURL)
-	apiSurface, err := normalizeAPISurface(cfg.Extra["api_surface"])
-	if err != nil {
-		return nil, fmt.Errorf("openai: provider %q: %w", name, err)
-	}
-	responsesURL, _ := cfg.Extra["responses_url"].(string)
-	responsesURL = normalizeResponsesURL(cfg.BaseURL, responsesURL)
 	headers, _ := cfg.Extra["headers"].(map[string]string)
 	extraBody, _ := cfg.Extra["extra_body"].(map[string]any)
 	vision, _ := cfg.Extra["vision"].(bool)
@@ -189,8 +183,6 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		keySource:    keySource,
 		baseURL:      strings.TrimRight(cfg.BaseURL, "/"),
 		chatURL:      chatURL,
-		apiSurface:   apiSurface,
-		responsesURL: responsesURL,
 		headers:      cleanCustomHeaders(headers),
 		extraBody:    cleanExtraBody(extraBody),
 		model:        cfg.Model,
@@ -198,6 +190,7 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		minimax:      minimax,
 		zhipu:        zhipu,
 		longcat:      longcat,
+		mimo:         IsMiMo(cfg.BaseURL),
 		thinkingType: thinkingType,
 		vision:       vision,
 		visionDetail: visionDetail,
@@ -224,8 +217,6 @@ type client struct {
 	keySource    string // source of keyEnv, surfaced in auth errors
 	baseURL      string
 	chatURL      string
-	apiSurface   string
-	responsesURL string
 	headers      map[string]string
 	extraBody    map[string]any
 	model        string
@@ -234,6 +225,7 @@ type client struct {
 	minimax      bool          // true for api.minimaxi.com — emits MiniMax-M3's thinking knob instead of reasoning_effort
 	zhipu        bool          // true for Zhipu GLM (bigmodel.cn / z.ai) — gates thinking via thinking.type, ignores reasoning_effort
 	longcat      bool          // true for LongCat — gates thinking via thinking.type, ignores reasoning_effort
+	mimo         bool          // true for MiMo — upgrades legacy tuple schemas to Draft 2020-12
 	thinkingType string        // explicit `thinking` config override (enabled|disabled); "" = no override
 	vision       bool          // model accepts image input — embed attached images as image_url parts
 	visionDetail string        // image_url detail hint (low|high); "" = auto/omit
@@ -285,35 +277,11 @@ func normalizeReasoningProtocol(raw string) string {
 	}
 }
 
-const (
-	apiSurfaceChatCompletions = "chat_completions"
-	apiSurfaceResponses       = "responses"
-)
-
-func normalizeAPISurface(raw any) (string, error) {
-	value, _ := raw.(string)
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "chat", "chat_completions", "chat-completions", "chat.completions":
-		return apiSurfaceChatCompletions, nil
-	case "responses", "response":
-		return apiSurfaceResponses, nil
-	default:
-		return "", fmt.Errorf("api_surface must be chat_completions or responses")
-	}
-}
-
 func normalizeChatURL(baseURL, chatURL string) string {
 	if trimmed := strings.TrimRight(strings.TrimSpace(chatURL), "/"); trimmed != "" {
 		return trimmed
 	}
 	return strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/chat/completions"
-}
-
-func normalizeResponsesURL(baseURL, responsesURL string) string {
-	if trimmed := strings.TrimRight(strings.TrimSpace(responsesURL), "/"); trimmed != "" {
-		return trimmed
-	}
-	return strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/responses"
 }
 
 func cleanCustomHeaders(in map[string]string) map[string]string {
@@ -400,8 +368,7 @@ var bufPool = sync.Pool{
 func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
 	buf := bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
-	wireReq, url := c.buildWireRequest(req)
-	if err := json.NewEncoder(buf).Encode(wireReq); err != nil {
+	if err := json.NewEncoder(buf).Encode(c.buildRequest(req)); err != nil {
 		bufPool.Put(buf)
 		return nil, fmt.Errorf("%s: marshal request: %w", c.name, err)
 	}
@@ -410,7 +377,7 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 	bufPool.Put(buf)
 
 	newReq := func(ctx context.Context) (*http.Request, error) {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.chatURL, bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
@@ -422,20 +389,13 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 	}
 	resp, err := provider.SendWithRetry(ctx, c.http, c.sendOpts(), newReq)
 	if err != nil {
-		return nil, err
+		return nil, provider.AnnotateToolSchemaError(err, req.Tools)
 	}
 	c.authed.Store(true)
 
 	out := make(chan provider.Chunk)
 	go c.streamWithReconnect(ctx, resp, newReq, out)
 	return out, nil
-}
-
-func (c *client) buildWireRequest(req provider.Request) (any, string) {
-	if c.apiSurface == apiSurfaceResponses {
-		return c.buildResponsesRequest(req), c.responsesURL
-	}
-	return c.buildRequest(req), c.chatURL
 }
 
 // maxStreamReconnects bounds how many times a mid-stream connection drop is
@@ -450,7 +410,7 @@ const maxStreamReconnects = 3
 func (c *client) streamWithReconnect(ctx context.Context, resp *http.Response, newReq func(context.Context) (*http.Request, error), out chan<- provider.Chunk) {
 	defer close(out)
 	for attempt := 0; ; attempt++ {
-		emitted, err := c.readActiveStream(ctx, resp, out)
+		emitted, err := c.readStream(ctx, resp, out)
 		if err == nil {
 			return
 		}
@@ -475,13 +435,6 @@ func (c *client) streamWithReconnect(ctx context.Context, resp *http.Response, n
 	}
 }
 
-func (c *client) readActiveStream(ctx context.Context, resp *http.Response, out chan<- provider.Chunk) (bool, error) {
-	if c.apiSurface == apiSurfaceResponses {
-		return c.readResponsesStream(ctx, resp, out)
-	}
-	return c.readStream(ctx, resp, out)
-}
-
 func sendChunk(ctx context.Context, out chan<- provider.Chunk, chunk provider.Chunk) bool {
 	select {
 	case out <- chunk:
@@ -502,8 +455,11 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 	// rejects with a 400 ("must be followed by tool messages …").
 	src := provider.SanitizeToolPairing(req.Messages)
 	msgs := make([]chatMessage, 0, len(src))
-	// Chat Completions accepts only plain text under role "tool". Preserve the
-	// paired tool-result run, then add tool images in one synthetic user message.
+	// Images returned by tool calls can't ride in the tool message itself — the
+	// OpenAI API accepts only text content parts under role "tool" — so they are
+	// carried by a synthetic user message injected after the turn's full run of
+	// tool results, before the next non-tool message (splitting a tool-result
+	// run would break the API's tool-call pairing validation).
 	var pendingToolImages []string
 	flushToolImages := func() {
 		if len(pendingToolImages) == 0 {
@@ -564,6 +520,9 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 		parameters := t.Parameters
 		if len(parameters) == 0 {
 			parameters = provider.CanonicalizeSchema(nil)
+		}
+		if c.mimo {
+			parameters = provider.NormalizeLegacyTupleItemsForDraft202012(parameters)
 		}
 		tools = append(tools, chatTool{
 			Type:     "function",
@@ -637,110 +596,6 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 	return out
 }
 
-func (c *client) buildResponsesRequest(req provider.Request) responsesRequest {
-	src := provider.SanitizeToolPairing(req.Messages)
-	var instructions []string
-	input := make([]any, 0, len(src))
-	// Like Chat Completions, Responses function_call_output items are text-only.
-	// Keep every paired output adjacent to its call and inject the associated
-	// images as one following user message, never between tool results.
-	var pendingToolImages []string
-	flushToolImages := func() {
-		if len(pendingToolImages) == 0 {
-			return
-		}
-		input = append(input, responsesMessageItem{
-			Role:    string(provider.RoleUser),
-			Content: responsesInputContent("Images returned by the preceding tool call(s):", pendingToolImages, true, c.visionDetail),
-		})
-		pendingToolImages = nil
-	}
-	for _, m := range src {
-		if m.Role != provider.RoleTool {
-			flushToolImages()
-		}
-		switch m.Role {
-		case provider.RoleSystem:
-			if strings.TrimSpace(m.Content) != "" {
-				instructions = append(instructions, m.Content)
-			}
-		case provider.RoleUser:
-			parts := responsesInputContent(m.Content, m.Images, c.vision && len(m.Images) > 0, c.visionDetail)
-			input = append(input, responsesMessageItem{Role: string(provider.RoleUser), Content: parts})
-		case provider.RoleAssistant:
-			if m.Content != "" {
-				input = append(input, responsesMessageItem{
-					Type:    "message",
-					Role:    string(provider.RoleAssistant),
-					Content: []responsesContentPart{{Type: "output_text", Text: m.Content}},
-				})
-			}
-			for _, tc := range m.ToolCalls {
-				input = append(input, responsesFunctionCallItem{
-					Type:      "function_call",
-					CallID:    tc.ID,
-					Name:      tc.Name,
-					Arguments: tc.Arguments,
-				})
-			}
-		case provider.RoleTool:
-			input = append(input, responsesFunctionCallOutputItem{
-				Type:   "function_call_output",
-				CallID: m.ToolCallID,
-				Output: m.Content,
-			})
-			if c.vision {
-				pendingToolImages = append(pendingToolImages, m.Images...)
-			}
-		}
-	}
-	flushToolImages()
-
-	var tools []responsesTool
-	for _, t := range req.Tools {
-		parameters := t.Parameters
-		if len(parameters) == 0 {
-			parameters = provider.CanonicalizeSchema(nil)
-		}
-		tools = append(tools, responsesTool{
-			Type:        "function",
-			Name:        t.Name,
-			Description: t.Description,
-			Parameters:  parameters,
-		})
-	}
-
-	store := false
-	out := responsesRequest{
-		Model:           c.model,
-		Instructions:    strings.Join(instructions, "\n\n"),
-		Input:           input,
-		Tools:           tools,
-		Stream:          true,
-		Temperature:     req.Temperature,
-		MaxOutputTokens: req.MaxTokens,
-		Store:           &store,
-		ExtraBody:       c.extraBody,
-	}
-	if c.effort != "" {
-		out.Reasoning = &responsesReasoning{Effort: c.effort}
-	}
-	return out
-}
-
-func responsesInputContent(text string, images []string, includeImages bool, detail string) []responsesContentPart {
-	parts := make([]responsesContentPart, 0, len(images)+1)
-	if text != "" {
-		parts = append(parts, responsesContentPart{Type: "input_text", Text: text})
-	}
-	if includeImages {
-		for _, url := range images {
-			parts = append(parts, responsesContentPart{Type: "input_image", ImageURL: url, Detail: detail})
-		}
-	}
-	return parts
-}
-
 // readStream parses one SSE response into chunks: text deltas stream live,
 // tool-call fragments accumulate by index and emit complete on [DONE], and a
 // ChunkToolCallStart fires the moment a call's name is known. It returns whether
@@ -791,6 +646,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 
 	acc := map[int]*provider.ToolCall{}
 	started := map[int]bool{}
+	argBucket := map[int]int{}
 	var order []int
 	var lastFinishReason string
 	var sawDone bool
@@ -886,6 +742,18 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 					return emitted, ctx.Err()
 				}
 			}
+			// Progress ticks while a large argument payload streams (a 30KB
+			// write_file body can take a minute-plus): one chunk per 2KB bucket
+			// so the consumer can show liveness without per-delta spam.
+			if started[tc.Index] {
+				if bucket := len(cur.Arguments) / 2048; bucket > argBucket[tc.Index] {
+					argBucket[tc.Index] = bucket
+					emitted = true
+					if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkToolCallArgsDelta, ToolCall: &provider.ToolCall{ID: cur.ID, Name: cur.Name}, ArgChars: len(cur.Arguments)}) {
+						return emitted, ctx.Err()
+					}
+				}
+			}
 		}
 	}
 
@@ -937,268 +805,6 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	return emitted, nil
 }
 
-func (c *client) readResponsesStream(ctx context.Context, resp *http.Response, out chan<- provider.Chunk) (emitted bool, _ error) {
-	defer resp.Body.Close()
-
-	idleTimeout := c.idleTimeout
-	if idleTimeout <= 0 {
-		idleTimeout = defaultStreamIdleTimeout
-	}
-	done := make(chan struct{})
-	defer close(done)
-	activity := make(chan struct{}, 1)
-	var stalled atomic.Bool
-	go func() {
-		idle := time.NewTimer(idleTimeout)
-		defer idle.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				resp.Body.Close()
-				return
-			case <-idle.C:
-				stalled.Store(true)
-				resp.Body.Close()
-				return
-			case <-activity:
-				if !idle.Stop() {
-					select {
-					case <-idle.C:
-					default:
-					}
-				}
-				idle.Reset(idleTimeout)
-			case <-done:
-				return
-			}
-		}
-	}()
-
-	acc := map[int]*provider.ToolCall{}
-	started := map[int]bool{}
-	completed := map[int]bool{}
-	var order []int
-	var sawCompleted bool
-	var emittedText bool
-	var usage *provider.Usage
-
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		select {
-		case activity <- struct{}{}:
-		default:
-		}
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "[DONE]" {
-			sawCompleted = true
-			break
-		}
-
-		var ev responsesStreamEvent
-		if err := json.Unmarshal([]byte(data), &ev); err != nil {
-			return emitted, fmt.Errorf("%s: decode responses stream: %w", c.name, err)
-		}
-		if ev.Error != nil {
-			return emitted, fmt.Errorf("%s: %s", c.name, ev.Error.Message)
-		}
-		switch ev.Type {
-		case "error":
-			if ev.Message != "" {
-				return emitted, fmt.Errorf("%s: %s", c.name, ev.Message)
-			}
-			return emitted, fmt.Errorf("%s: responses stream error", c.name)
-		case "response.output_text.delta":
-			if ev.Delta != "" {
-				emitted = true
-				emittedText = true
-				if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkText, Text: ev.Delta}) {
-					return emitted, ctx.Err()
-				}
-			}
-		case "response.output_item.added":
-			if ev.Item != nil && ev.Item.Type == "function_call" {
-				if !c.recordResponsesToolCall(ev.OutputIndex, ev.Item, acc, started, &order, out, ctx, &emitted) {
-					return emitted, ctx.Err()
-				}
-			}
-		case "response.function_call_arguments.delta":
-			tc := responsesToolCallAt(ev.OutputIndex, acc, &order)
-			tc.Arguments += ev.Delta
-		case "response.function_call_arguments.done":
-			if ev.Item != nil {
-				if !c.recordResponsesToolCall(ev.OutputIndex, ev.Item, acc, started, &order, out, ctx, &emitted) {
-					return emitted, ctx.Err()
-				}
-			}
-			if ev.Arguments != "" {
-				tc := responsesToolCallAt(ev.OutputIndex, acc, &order)
-				tc.Arguments = ev.Arguments
-			}
-			if !completed[ev.OutputIndex] {
-				completed[ev.OutputIndex] = true
-				if !sendResponsesToolCall(ctx, out, ev.OutputIndex, acc[ev.OutputIndex]) {
-					return emitted, ctx.Err()
-				}
-				emitted = true
-			}
-		case "response.output_item.done":
-			if ev.Item != nil && ev.Item.Type == "function_call" {
-				if !c.recordResponsesToolCall(ev.OutputIndex, ev.Item, acc, started, &order, out, ctx, &emitted) {
-					return emitted, ctx.Err()
-				}
-				if !completed[ev.OutputIndex] {
-					completed[ev.OutputIndex] = true
-					if !sendResponsesToolCall(ctx, out, ev.OutputIndex, acc[ev.OutputIndex]) {
-						return emitted, ctx.Err()
-					}
-					emitted = true
-				}
-			}
-		case "response.completed":
-			sawCompleted = true
-			if ev.Response != nil {
-				if ev.Response.Error != nil {
-					return emitted, fmt.Errorf("%s: %s", c.name, ev.Response.Error.Message)
-				}
-				if !emittedText {
-					for _, item := range ev.Response.Output {
-						if item.Type != "message" {
-							continue
-						}
-						for _, part := range item.Content {
-							if part.Type == "output_text" && part.Text != "" {
-								emitted = true
-								emittedText = true
-								if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkText, Text: part.Text}) {
-									return emitted, ctx.Err()
-								}
-							}
-						}
-					}
-				}
-				for idx, item := range ev.Response.Output {
-					if item.Type != "function_call" {
-						continue
-					}
-					if !c.recordResponsesToolCall(idx, &item, acc, started, &order, out, ctx, &emitted) {
-						return emitted, ctx.Err()
-					}
-					if !completed[idx] {
-						completed[idx] = true
-						if !sendResponsesToolCall(ctx, out, idx, acc[idx]) {
-							return emitted, ctx.Err()
-						}
-						emitted = true
-					}
-				}
-				if ev.Response.Usage != nil {
-					usage = normaliseResponsesUsage(ev.Response.Usage)
-					if ev.Response.Status != "" && ev.Response.Status != "completed" {
-						usage.FinishReason = ev.Response.Status
-					}
-				}
-			}
-		case "response.failed":
-			sawCompleted = true
-			if ev.Response != nil && ev.Response.Error != nil {
-				return emitted, fmt.Errorf("%s: %s", c.name, ev.Response.Error.Message)
-			}
-			return emitted, fmt.Errorf("%s: responses stream failed", c.name)
-		}
-	}
-
-	if err := ctx.Err(); err != nil {
-		return emitted, err
-	}
-	if stalled.Load() {
-		return emitted, fmt.Errorf("%s: stream stalled — no data for %s, connection likely dropped", c.name, idleTimeout)
-	}
-	if err := scanner.Err(); err != nil {
-		return emitted, fmt.Errorf("%s: read responses stream: %w", c.name, err)
-	}
-	if !sawCompleted {
-		return emitted, fmt.Errorf("%s: responses stream ended before completion: %w", c.name, io.ErrUnexpectedEOF)
-	}
-
-	sort.Ints(order)
-	for _, idx := range order {
-		if completed[idx] {
-			continue
-		}
-		if !sendResponsesToolCall(ctx, out, idx, acc[idx]) {
-			return emitted, ctx.Err()
-		}
-		emitted = true
-	}
-	if usage != nil {
-		emitted = true
-		if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkUsage, Usage: usage}) {
-			return emitted, ctx.Err()
-		}
-	}
-	if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkDone}) {
-		return emitted, ctx.Err()
-	}
-	return emitted, nil
-}
-
-func responsesToolCallAt(index int, acc map[int]*provider.ToolCall, order *[]int) *provider.ToolCall {
-	tc, ok := acc[index]
-	if ok {
-		return tc
-	}
-	tc = &provider.ToolCall{}
-	acc[index] = tc
-	*order = append(*order, index)
-	return tc
-}
-
-func (c *client) recordResponsesToolCall(index int, item *responsesOutputItem, acc map[int]*provider.ToolCall, started map[int]bool, order *[]int, out chan<- provider.Chunk, ctx context.Context, emitted *bool) bool {
-	if item == nil {
-		return true
-	}
-	tc := responsesToolCallAt(index, acc, order)
-	if id := firstNonEmpty(item.CallID, item.ID, tc.ID); id != "" {
-		tc.ID = id
-	}
-	if item.Name != "" {
-		tc.Name = item.Name
-	}
-	if item.Arguments != "" {
-		tc.Arguments = item.Arguments
-	}
-	if !started[index] && tc.Name != "" {
-		started[index] = true
-		*emitted = true
-		return sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkToolCallStart, ToolCall: &provider.ToolCall{ID: tc.ID, Name: tc.Name}})
-	}
-	return true
-}
-
-func sendResponsesToolCall(ctx context.Context, out chan<- provider.Chunk, index int, tc *provider.ToolCall) bool {
-	if tc == nil {
-		return true
-	}
-	if tc.ID == "" {
-		tc.ID = fmt.Sprintf("call_%d", index)
-	}
-	return sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkToolCall, ToolCall: tc})
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 // normaliseUsage folds the two cache-hit shapes the OpenAI-compatible ecosystem
 // uses into a single Usage: DeepSeek puts prompt_cache_{hit,miss}_tokens at the
 // top of usage; OpenAI and MiMo put it nested under prompt_tokens_details.
@@ -1220,29 +826,6 @@ func normaliseUsage(u *wireUsage) *provider.Usage {
 	return &provider.Usage{
 		PromptTokens:     u.PromptTokens,
 		CompletionTokens: u.CompletionTokens,
-		TotalTokens:      u.TotalTokens,
-		CacheHitTokens:   hit,
-		CacheMissTokens:  miss,
-		ReasoningTokens:  reasoning,
-	}
-}
-
-func normaliseResponsesUsage(u *responsesWireUsage) *provider.Usage {
-	hit := 0
-	if u.InputTokensDetails != nil {
-		hit = u.InputTokensDetails.CachedTokens
-	}
-	miss := 0
-	if u.InputTokens > hit {
-		miss = u.InputTokens - hit
-	}
-	reasoning := 0
-	if u.OutputTokensDetails != nil {
-		reasoning = u.OutputTokensDetails.ReasoningTokens
-	}
-	return &provider.Usage{
-		PromptTokens:     u.InputTokens,
-		CompletionTokens: u.OutputTokens,
 		TotalTokens:      u.TotalTokens,
 		CacheHitTokens:   hit,
 		CacheMissTokens:  miss,
@@ -1355,104 +938,6 @@ type chatToolCall struct {
 	} `json:"function"`
 }
 
-type responsesRequest struct {
-	Model           string              `json:"model"`
-	Instructions    string              `json:"instructions,omitempty"`
-	Input           []any               `json:"input"`
-	Tools           []responsesTool     `json:"tools,omitempty"`
-	Stream          bool                `json:"stream"`
-	Temperature     *float64            `json:"temperature,omitempty"`
-	MaxOutputTokens int                 `json:"max_output_tokens,omitempty"`
-	Reasoning       *responsesReasoning `json:"reasoning,omitempty"`
-	Store           *bool               `json:"store,omitempty"`
-	ExtraBody       map[string]any      `json:"-"`
-}
-
-func (r responsesRequest) MarshalJSON() ([]byte, error) {
-	type wire responsesRequest
-	baseReq := wire(r)
-	baseReq.ExtraBody = nil
-	raw, err := json.Marshal(baseReq)
-	if err != nil {
-		return nil, err
-	}
-	if len(r.ExtraBody) == 0 {
-		return raw, nil
-	}
-	var body map[string]any
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, err
-	}
-	for key, value := range cleanResponsesExtraBody(r.ExtraBody) {
-		body[key] = value
-	}
-	return json.Marshal(body)
-}
-
-func cleanResponsesExtraBody(in map[string]any) map[string]any {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]any, len(in))
-	for rawName, value := range in {
-		name := strings.TrimSpace(rawName)
-		if name == "" || reservedResponsesBodyField(name) {
-			continue
-		}
-		out[name] = value
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func reservedResponsesBodyField(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "model", "input", "instructions", "tools", "stream", "temperature", "max_output_tokens", "reasoning":
-		return true
-	default:
-		return false
-	}
-}
-
-type responsesReasoning struct {
-	Effort string `json:"effort,omitempty"`
-}
-
-type responsesMessageItem struct {
-	Type    string                 `json:"type,omitempty"`
-	Role    string                 `json:"role"`
-	Content []responsesContentPart `json:"content,omitempty"`
-}
-
-type responsesContentPart struct {
-	Type     string `json:"type"`
-	Text     string `json:"text,omitempty"`
-	ImageURL string `json:"image_url,omitempty"`
-	Detail   string `json:"detail,omitempty"`
-}
-
-type responsesFunctionCallItem struct {
-	Type      string `json:"type"`
-	CallID    string `json:"call_id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
-
-type responsesFunctionCallOutputItem struct {
-	Type   string `json:"type"`
-	CallID string `json:"call_id"`
-	Output string `json:"output"`
-}
-
-type responsesTool struct {
-	Type        string          `json:"type"`
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Parameters  json.RawMessage `json:"parameters,omitempty"`
-}
-
 type streamResponse struct {
 	Choices []struct {
 		Delta struct {
@@ -1467,50 +952,6 @@ type streamResponse struct {
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
-}
-
-type responsesStreamEvent struct {
-	Type        string               `json:"type"`
-	Delta       string               `json:"delta"`
-	Arguments   string               `json:"arguments"`
-	OutputIndex int                  `json:"output_index"`
-	Item        *responsesOutputItem `json:"item"`
-	Response    *responsesEnvelope   `json:"response"`
-	Message     string               `json:"message"`
-	Error       *struct {
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
-type responsesEnvelope struct {
-	Status string                `json:"status"`
-	Output []responsesOutputItem `json:"output"`
-	Usage  *responsesWireUsage   `json:"usage"`
-	Error  *struct {
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
-type responsesOutputItem struct {
-	Type      string                 `json:"type"`
-	ID        string                 `json:"id"`
-	CallID    string                 `json:"call_id"`
-	Name      string                 `json:"name"`
-	Arguments string                 `json:"arguments"`
-	Status    string                 `json:"status"`
-	Content   []responsesContentPart `json:"content"`
-}
-
-type responsesWireUsage struct {
-	InputTokens        int `json:"input_tokens"`
-	OutputTokens       int `json:"output_tokens"`
-	TotalTokens        int `json:"total_tokens"`
-	InputTokensDetails *struct {
-		CachedTokens int `json:"cached_tokens"`
-	} `json:"input_tokens_details"`
-	OutputTokensDetails *struct {
-		ReasoningTokens int `json:"reasoning_tokens"`
-	} `json:"output_tokens_details"`
 }
 
 // wireUsage covers both DeepSeek's top-level cache fields and the

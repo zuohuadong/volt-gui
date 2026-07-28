@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
-
-	fileencoding "voltui/internal/fileutil/encoding"
 )
 
 func TestCCSwitchRowsToPlugins(t *testing.T) {
@@ -96,45 +94,90 @@ func TestLoadCCSwitchLegacyConfig(t *testing.T) {
 	}
 }
 
-func TestLoadCCSwitchLegacyConfigDecodesGB18030(t *testing.T) {
+func TestLoadCCSwitchLegacyConfigPrefersVoltUIFlag(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 	body := `{
 		"mcp": {
 			"servers": {
-				"file-index": {
-					"name": "文件索引",
-					"server": {
-						"type": "stdio",
-						"command": "工具.exe",
-						"args": ["--目录", "中文参数"],
-						"env": {"标签": "中文环境"}
-					},
+				"legacy": {
+					"name": "legacy",
+					"server": {"command": "node", "args": ["legacy.js"]},
 					"apps": {"codex": true}
+				},
+				"reasonix-off": {
+					"name": "reasonix-off",
+					"server": {"command": "node", "args": ["off.js"]},
+					"apps": {"codex": true, "reasonix": false}
+				},
+				"reasonix-on": {
+					"name": "reasonix-on",
+					"server": {"command": "node", "args": ["on.js"]},
+					"apps": {"codex": false, "reasonix": true}
 				}
 			}
 		}
 	}`
-	if err := os.WriteFile(path, fileencoding.Encode(body, fileencoding.GB18030), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-
 	got, err := loadCCSwitchLegacyConfig(path)
 	if err != nil {
 		t.Fatalf("loadCCSwitchLegacyConfig: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("entries = %d, want 1: %+v", len(got), got)
+	if len(got) != 2 || got[0].Name != "legacy" || got[1].Name != "reasonix-on" {
+		t.Fatalf("entries = %+v, want legacy fallback and explicit VoltUI enablement", got)
 	}
-	want := PluginEntry{
-		Name:    "文件索引",
-		Type:    "stdio",
-		Command: "工具.exe",
-		Args:    []string{"--目录", "中文参数"},
-		Env:     map[string]string{"标签": "中文环境"},
+}
+
+func TestLoadCCSwitchMCPDBPrefersVoltUIColumn(t *testing.T) {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 not available")
 	}
-	if !reflect.DeepEqual(got[0], want) {
-		t.Fatalf("entry = %+v, want %+v", got[0], want)
+	dbPath := filepath.Join(t.TempDir(), "cc-switch.db")
+	setup := `CREATE TABLE mcp_servers (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		server_config TEXT NOT NULL,
+		enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+		enabled_reasonix BOOLEAN NOT NULL DEFAULT 0
+	);
+	INSERT INTO mcp_servers VALUES ('codex-only', 'codex-only', '{"command":"node","args":["codex.js"]}', 1, 0);
+	INSERT INTO mcp_servers VALUES ('reasonix-only', 'reasonix-only', '{"command":"node","args":["reasonix.js"]}', 0, 1);`
+	if out, err := exec.Command("sqlite3", dbPath, setup).CombinedOutput(); err != nil {
+		t.Fatalf("create sqlite db: %v\n%s", err, out)
+	}
+	got, err := loadCCSwitchMCPDB(dbPath)
+	if err != nil {
+		t.Fatalf("loadCCSwitchMCPDB: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "reasonix-only" {
+		t.Fatalf("entries = %+v, want only explicit VoltUI enablement", got)
+	}
+}
+
+func TestLoadCCSwitchMCPDBFallsBackToCodexWithoutVoltUIColumn(t *testing.T) {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 not available")
+	}
+	dbPath := filepath.Join(t.TempDir(), "cc-switch.db")
+	setup := `CREATE TABLE mcp_servers (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		server_config TEXT NOT NULL,
+		enabled_codex BOOLEAN NOT NULL DEFAULT 0
+	);
+	INSERT INTO mcp_servers VALUES ('codex-on', 'codex-on', '{"command":"node","args":["on.js"]}', 1);
+	INSERT INTO mcp_servers VALUES ('codex-off', 'codex-off', '{"command":"node","args":["off.js"]}', 0);`
+	if out, err := exec.Command("sqlite3", dbPath, setup).CombinedOutput(); err != nil {
+		t.Fatalf("create sqlite db: %v\n%s", err, out)
+	}
+	got, err := loadCCSwitchMCPDB(dbPath)
+	if err != nil {
+		t.Fatalf("loadCCSwitchMCPDB: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "codex-on" {
+		t.Fatalf("entries = %+v, want legacy Codex fallback", got)
 	}
 }
 

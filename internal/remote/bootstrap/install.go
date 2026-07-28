@@ -36,7 +36,7 @@ func ensureBinary(ctx context.Context, conn Conn, fs *sftpfs.FS, opts Options, h
 		if b, v, nerr := installViaNPM(ctx, conn, opts.MinVersion); nerr == nil {
 			return b, v, nil
 		} else if opts.LocalBinary == "" {
-			return "", "", fmt.Errorf("%w; bootstrap: no local Reasonix CLI is available for upload", nerr)
+			return "", "", fmt.Errorf("%w; bootstrap: no local VoltUI CLI is available for upload", nerr)
 		}
 		return installViaUpload(ctx, conn, fs, opts, home, goos, goarch, uploaded)
 	}

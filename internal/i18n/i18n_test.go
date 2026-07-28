@@ -48,6 +48,37 @@ func TestCatalogsAgreeOnPlaceholders(t *testing.T) {
 	}
 }
 
+func TestPlanApprovalChoicesExposeThreeExplicitActions(t *testing.T) {
+	tests := []struct {
+		tag   string
+		value string
+		want  []string
+	}{
+		{tag: "en", value: English.PlanApprovalChoices, want: []string{"Start execution", "Revise plan", "Exit without executing"}},
+		{tag: "zh", value: Chinese.PlanApprovalChoices, want: []string{"开始执行", "修改计划", "暂不执行，退出计划模式"}},
+		{tag: "zh-TW", value: ChineseTraditional.PlanApprovalChoices, want: []string{"開始執行", "修改計畫", "暫不執行，退出計畫模式"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tag, func(t *testing.T) {
+			numbered := 0
+			for _, line := range strings.Split(tt.value, "\n") {
+				line = strings.TrimSpace(line)
+				if len(line) >= 3 && line[0] >= '1' && line[0] <= '9' && line[1] == '.' {
+					numbered++
+				}
+			}
+			if numbered != 3 {
+				t.Fatalf("numbered Plan actions = %d, want 3:\n%s", numbered, tt.value)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(tt.value, want) {
+					t.Errorf("Plan choices missing %q:\n%s", want, tt.value)
+				}
+			}
+		})
+	}
+}
+
 // countVerbs counts unescaped fmt placeholders (%s, %d, %q, %v, …). %% does
 // not count.
 func countVerbs(s string) int {
@@ -66,7 +97,7 @@ func countVerbs(s string) int {
 }
 
 // TestNormalize covers the locale-string shapes likely to land in $LANG /
-// $LC_ALL / $VOLTUI_LANG. Unknown locales return "" so DetectLanguage falls
+// $LC_ALL / $REASONIX_LANG. Unknown locales return "" so DetectLanguage falls
 // through to the next candidate instead of mis-routing.
 func TestNormalize(t *testing.T) {
 	cases := map[string]string{
@@ -94,10 +125,10 @@ func TestNormalize(t *testing.T) {
 	}
 }
 
-// TestDetectLanguagePriority verifies override beats env and that VOLTUI_LANG
+// TestDetectLanguagePriority verifies override beats env and that REASONIX_LANG
 // beats LANG. With a clean env we fall back to English.
 func TestDetectLanguagePriority(t *testing.T) {
-	t.Setenv("VOLTUI_LANG", "")
+	t.Setenv("REASONIX_LANG", "")
 	t.Setenv("LC_ALL", "")
 	t.Setenv("LC_MESSAGES", "")
 	t.Setenv("LANG", "")
@@ -112,9 +143,9 @@ func TestDetectLanguagePriority(t *testing.T) {
 		t.Errorf("LANG=zh_CN.UTF-8: got %q, want zh", got)
 	}
 
-	t.Setenv("VOLTUI_LANG", "en")
+	t.Setenv("REASONIX_LANG", "en")
 	if got := DetectLanguage(""); got != "en" {
-		t.Errorf("VOLTUI_LANG=en overriding LANG=zh: got %q, want en", got)
+		t.Errorf("REASONIX_LANG=en overriding LANG=zh: got %q, want en", got)
 	}
 
 	if got := DetectLanguage("zh"); got != "zh" {

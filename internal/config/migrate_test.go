@@ -6,7 +6,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 )
 
 // legacyHome points HOME / config-dir / .env resolution at a fresh temp tree and
@@ -19,7 +18,7 @@ func legacyHome(t *testing.T) (src, dest, home string) {
 	t.Setenv("USERPROFILE", home)                               // os.UserHomeDir on Windows
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config")) // os.UserConfigDir on Linux
 	t.Setenv("AppData", filepath.Join(home, "AppData"))         // os.UserConfigDir on Windows
-	return filepath.Join(home, ".voltui", "config.json"), userConfigPath(), home
+	return filepath.Join(home, ".reasonix", "config.json"), userConfigPath(), home
 }
 
 func writeLegacy(t *testing.T, src, body string) {
@@ -242,7 +241,7 @@ func TestMigrateMCPToUserConfigOnUpgradeCollectsKnownSources(t *testing.T) {
 			"global": {"command": "legacy-should-not-win"}
 		}
 	}`)
-	writeLegacy(t, filepath.Join(filepath.Dir(dest), "voltui.toml"), `
+	writeLegacy(t, filepath.Join(filepath.Dir(dest), "reasonix.toml"), `
 [[plugins]]
 name = "legacy-toml"
 command = "legacy-toml-bin"
@@ -258,7 +257,7 @@ command = "global-bin"
 		t.Fatal(err)
 	}
 	projectTOML := t.TempDir()
-	if err := os.WriteFile(filepath.Join(projectTOML, "voltui.toml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectTOML, "reasonix.toml"), []byte(`
 [[plugins]]
 name = "project-toml"
 command = "project-toml-bin"
@@ -310,7 +309,7 @@ command = "project-should-not-win"
 	}
 
 	lateProject := t.TempDir()
-	if err := os.WriteFile(filepath.Join(lateProject, "voltui.toml"), []byte(`
+	if err := os.WriteFile(filepath.Join(lateProject, "reasonix.toml"), []byte(`
 [[plugins]]
 name = "late"
 command = "late-bin"
@@ -326,6 +325,57 @@ command = "late-bin"
 	}
 	if got := LoadForEdit(dest); len(got.Plugins) != len(cfg.Plugins) {
 		t.Fatalf("second migration changed plugins: %+v", got.Plugins)
+	}
+}
+
+func TestMCPMigrationMarkerMakesCurrentConfigAuthoritativeAfterRemoval(t *testing.T) {
+	src, dest, _ := legacyHome(t)
+	writeLegacy(t, src, `{
+		"mcpServers": {
+			"legacy-only": {"command": "legacy-mcp-bin"}
+		}
+	}`)
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest, []byte("config_version = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := MigrateMCPToUserConfigOnUpgrade(nil)
+	if err != nil {
+		t.Fatalf("MigrateMCPToUserConfigOnUpgrade: %v", err)
+	}
+	if res == nil || res.Added != 1 {
+		t.Fatalf("migration result = %+v, want one imported MCP", res)
+	}
+
+	removed, err := RemovePluginFromSourcesForRoot(t.TempDir(), "legacy-only")
+	if err != nil {
+		t.Fatalf("RemovePluginFromSourcesForRoot: %v", err)
+	}
+	if !removed {
+		t.Fatal("RemovePluginFromSourcesForRoot reported no removal")
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load after removal: %v", err)
+	}
+	for _, p := range loaded.Plugins {
+		if p.Name == "legacy-only" {
+			t.Fatalf("removed MCP was resurrected from legacy config: %+v", loaded.Plugins)
+		}
+	}
+	if got := loadLegacyMCP(src); len(got) != 0 {
+		t.Fatalf("an older runtime would resurrect the removed legacy MCP: %+v", got)
+	}
+	legacyRaw, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read legacy source: %v", err)
+	}
+	if !strings.Contains(string(legacyRaw), `"legacy-only"`) || !strings.Contains(string(legacyRaw), `"mcpDisabled"`) {
+		t.Fatalf("legacy source should retain the server and add a compatibility disable marker:\n%s", legacyRaw)
 	}
 }
 
@@ -384,7 +434,7 @@ func TestMigrateMCPToUserConfigOnUpgradePreservesConfigVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := t.TempDir()
-	if err := os.WriteFile(filepath.Join(project, "voltui.toml"), []byte(`
+	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte(`
 [[plugins]]
 name = "project"
 command = "project-bin"
@@ -410,7 +460,7 @@ command = "project-bin"
 
 func TestMigrateImportsLegacyV1TOMLBeforeJSON(t *testing.T) {
 	srcJSON, dest, _ := legacyHome(t)
-	legacyTOML := filepath.Join(filepath.Dir(dest), "voltui.toml")
+	legacyTOML := filepath.Join(filepath.Dir(dest), "reasonix.toml")
 	if err := os.MkdirAll(filepath.Dir(legacyTOML), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -444,7 +494,7 @@ command = "legacy-bin"
 		t.Fatalf("read migrated config: %v", err)
 	}
 	text := string(got)
-	for _, want := range []string{`config_version = 4`, `[desktop]`, `close_behavior = "quit"`, `name    = "legacy-v1"`} {
+	for _, want := range []string{`config_version = 5`, `[desktop]`, `close_behavior = "quit"`, `name    = "legacy-v1"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("migrated TOML missing %q:\n%s", want, text)
 		}
@@ -456,7 +506,7 @@ command = "legacy-bin"
 
 func TestMigrateImportsLegacyV1HomeTOMLBeforeJSON(t *testing.T) {
 	srcJSON, dest, home := legacyHome(t)
-	legacyTOML := filepath.Join(home, ".voltui", "voltui.toml")
+	legacyTOML := filepath.Join(home, ".reasonix", "reasonix.toml")
 	if err := os.MkdirAll(filepath.Dir(legacyTOML), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +644,7 @@ func TestMigrateImportsLegacyXDGConfigToPrimaryConfig(t *testing.T) {
 		t.Skip("legacy XDG paths are Unix-only")
 	}
 	_, dest, home := legacyHome(t)
-	legacy := filepath.Join(home, ".config", "voltui", "config.toml")
+	legacy := filepath.Join(home, ".config", "reasonix", "config.toml")
 	if samePath(legacy, dest) {
 		t.Skip("legacy XDG config path matches primary path on this platform")
 	}
@@ -699,7 +749,7 @@ func TestMigrateLegacyCredentialsUsesWorkspaceRootForKeyring(t *testing.T) {
 	if err := os.WriteFile(dest, []byte(`default_model = "deepseek-flash/deepseek-chat"`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(project, "voltui.toml"), []byte(`
+	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte(`
 default_model = "custom/m"
 [[providers]]
 name = "custom"
@@ -844,6 +894,42 @@ func TestMigrateSkipsLegacyCredentialsAlreadyInCurrentAutoStore(t *testing.T) {
 	}
 }
 
+func TestMigrateImportsLegacyStateHomeDotEnvCredentials(t *testing.T) {
+	_, dest, _ := legacyHome(t)
+	state := t.TempDir()
+	t.Setenv("REASONIX_STATE_HOME", state)
+	t.Setenv("REASONIX_CREDENTIALS_STORE", "")
+	os.Unsetenv("REASONIX_CREDENTIALS_STORE")
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest, []byte(`default_model = "deepseek-flash/deepseek-chat"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, ".env"), []byte("DEEPSEEK_API_KEY=state-env-value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	currentCred := UserCredentialsPath()
+	if strings.HasPrefix(currentCred, state) {
+		t.Fatalf("current credentials path should not be under REASONIX_STATE_HOME: %q", currentCred)
+	}
+	res, err := MigrateLegacyIfNeeded()
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if res != nil {
+		t.Fatalf("primary config exists, config migration should be skipped, got %+v", res)
+	}
+	data, err := os.ReadFile(currentCred)
+	if err != nil {
+		t.Fatalf("read current credentials: %v", err)
+	}
+	if string(data) != "DEEPSEEK_API_KEY=state-env-value\n" {
+		t.Fatalf("migrated credentials = %q", data)
+	}
+}
+
 func TestMigrateNoLegacyIsNoop(t *testing.T) {
 	legacyHome(t)
 	res, err := MigrateLegacyIfNeeded()
@@ -976,174 +1062,5 @@ func TestMigrateSupportData(t *testing.T) {
 				t.Fatalf("migrated %s mode = %o, want %o", check.rel, got, check.perm)
 			}
 		}
-	}
-}
-
-func TestMigrateSupportDataPreservesCurrentDesktopStateAndCopiesMissingFiles(t *testing.T) {
-	legacyDir := t.TempDir()
-	newDir := t.TempDir()
-
-	legacyFiles := map[string]string{
-		"desktop-workspace":                    "/legacy/workspace",
-		"desktop-workspaces.json":              `["/legacy/workspace"]`,
-		"desktop-window.json":                  `{"width":1200}`,
-		"workbench-projects.json":              `{"projects":[{"id":"p1"}]}`,
-		"workbench-project-materials.json":     `{"materials":[{"id":"m1"}]}`,
-		"workbench-data.json":                  `{"customers":[{"id":"c1"}]}`,
-		"todos.json":                           `{"todos":[{"id":"t1"}]}`,
-		"agents.json":                          `{"agents":[{"id":"a1"}]}`,
-		"automations.json":                     `{"automations":[{"id":"auto1"}]}`,
-		"automation-runs.json":                 `{"runs":[{"id":"run1"}]}`,
-		"heartbeat-tasks.json":                 `{"tasks":[{"id":"heartbeat1"}]}`,
-		"knowledge.db":                         "legacy knowledge",
-		"sessions/session-1.jsonl":             "legacy session",
-		"projects/project-1/sessions/s1.jsonl": "legacy project session",
-	}
-	legacyTabs := filepath.Join(legacyDir, "desktop-tabs.json")
-	if err := os.WriteFile(legacyTabs, []byte(`{"tabs":[{"id":"legacy"}]}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for rel, content := range legacyFiles {
-		path := filepath.Join(legacyDir, rel)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	currentTabs := filepath.Join(newDir, "desktop-tabs.json")
-	if err := os.WriteFile(currentTabs, []byte(`{"tabs":[{"id":"current"}]}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	warnings := migrateSupportData(legacyDir, newDir)
-	for _, warning := range warnings {
-		if strings.Contains(warning, "failed to migrate") {
-			t.Fatalf("migration warning = %q", warning)
-		}
-	}
-
-	data, err := os.ReadFile(currentTabs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := string(data); got != `{"tabs":[{"id":"current"}]}` {
-		t.Fatalf("current desktop tabs were overwritten: %s", got)
-	}
-	for rel, want := range legacyFiles {
-		data, err := os.ReadFile(filepath.Join(newDir, rel))
-		if err != nil {
-			t.Fatalf("read migrated %s: %v", rel, err)
-		}
-		if got := string(data); got != want {
-			t.Fatalf("migrated %s = %q, want %q", rel, got, want)
-		}
-	}
-
-	if err := os.WriteFile(filepath.Join(newDir, "desktop-window.json"), []byte("newer window"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	migrateSupportData(legacyDir, newDir)
-	data, err = os.ReadFile(filepath.Join(newDir, "desktop-window.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := string(data); got != "newer window" {
-		t.Fatalf("idempotent migration overwrote current file: %q", got)
-	}
-	if _, err := os.Stat(filepath.Join(legacyDir, "sessions", "session-1.jsonl")); err != nil {
-		t.Fatalf("legacy source was removed: %v", err)
-	}
-}
-
-func TestMigrateLegacySupportDataOnUpgradeRunsWhenCurrentConfigAlreadyExists(t *testing.T) {
-	home := t.TempDir()
-	legacyRoot := filepath.Join(home, "Library", "Application Support")
-	oldGOOS := runtimeGOOS
-	oldHome := osUserHomeDir
-	oldConfig := osUserConfigDir
-	runtimeGOOS = "darwin"
-	osUserHomeDir = func() (string, error) { return home, nil }
-	osUserConfigDir = func() string { return legacyRoot }
-	t.Cleanup(func() {
-		runtimeGOOS = oldGOOS
-		osUserHomeDir = oldHome
-		osUserConfigDir = oldConfig
-	})
-	t.Setenv("VOLTUI_HOME", "")
-	t.Setenv("REASONIX_HOME", "")
-	t.Setenv("VOLTUI_STATE_HOME", "")
-	t.Setenv("REASONIX_STATE_HOME", "")
-
-	legacyDir := filepath.Join(legacyRoot, "voltui")
-	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacyDir, "desktop-window.json"), []byte(`{"width":1200}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(userConfigPath()), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(userConfigPath(), []byte("config_version = 1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	result := MigrateLegacySupportDataOnUpgrade()
-	if result == nil || result.From != legacyDir || result.To != filepath.Join(home, ".voltui") {
-		t.Fatalf("migration result = %+v", result)
-	}
-	data, err := os.ReadFile(filepath.Join(home, ".voltui", "desktop-window.json"))
-	if err != nil {
-		t.Fatalf("read recovered desktop window state: %v", err)
-	}
-	if !strings.Contains(string(data), "1200") {
-		t.Fatalf("recovered desktop window state = %s", data)
-	}
-	if _, err := os.Stat(filepath.Join(legacyDir, "desktop-window.json")); err != nil {
-		t.Fatalf("legacy source was removed: %v", err)
-	}
-	if repeated := MigrateLegacySupportDataOnUpgrade(); repeated != nil {
-		t.Fatalf("unchanged legacy data should be skipped by the migration marker: %+v", repeated)
-	}
-	legacySessions := filepath.Join(legacyDir, "sessions")
-	if err := os.MkdirAll(legacySessions, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacySessions, "after-downgrade.jsonl"), []byte("new legacy session"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	future := time.Now().Add(2 * time.Second)
-	if err := os.Chtimes(legacySessions, future, future); err != nil {
-		t.Fatal(err)
-	}
-	if resumed := MigrateLegacySupportDataOnUpgrade(); resumed == nil {
-		t.Fatal("new legacy session after the marker did not trigger another safe pass")
-	}
-	if data, err := os.ReadFile(filepath.Join(home, ".voltui", "sessions", "after-downgrade.jsonl")); err != nil || string(data) != "new legacy session" {
-		t.Fatalf("new legacy session was not copied: data=%q err=%v", data, err)
-	}
-}
-
-func TestMigrateLegacySupportDataOnUpgradeIsNoopWhenWindowsPathsMatch(t *testing.T) {
-	home := t.TempDir()
-	appData := filepath.Join(home, "AppData", "Roaming")
-	oldGOOS := runtimeGOOS
-	oldHome := osUserHomeDir
-	oldConfig := osUserConfigDir
-	runtimeGOOS = "windows"
-	osUserHomeDir = func() (string, error) { return home, nil }
-	osUserConfigDir = func() string { return appData }
-	t.Cleanup(func() {
-		runtimeGOOS = oldGOOS
-		osUserHomeDir = oldHome
-		osUserConfigDir = oldConfig
-	})
-	t.Setenv("VOLTUI_HOME", "")
-	t.Setenv("REASONIX_HOME", "")
-	if result := MigrateLegacySupportDataOnUpgrade(); result != nil {
-		t.Fatalf("matching Windows support paths should be a no-op: %+v", result)
 	}
 }

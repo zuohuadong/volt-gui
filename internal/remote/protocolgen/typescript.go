@@ -84,7 +84,7 @@ func generateTypeScript(document protocol.SchemaDocument, bindings []methodBindi
 	if err := writePair(&out, renderer, "RemoteEvent", eventSchema); err != nil {
 		return nil, err
 	}
-	if err := writeSchemaAlias(&out, renderer, "ReasonixErrorCode", reasonixCode.Schema, hydratedMode); err != nil {
+	if err := writeSchemaAlias(&out, renderer, "VoltUIErrorCode", reasonixCode.Schema, hydratedMode); err != nil {
 		return nil, err
 	}
 	if err := writeSchemaAlias(&out, renderer, "RemoteAction", action.Schema, hydratedMode); err != nil {

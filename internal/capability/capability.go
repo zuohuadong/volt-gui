@@ -12,10 +12,11 @@ import (
 type Kind string
 
 const (
-	KindSkill   Kind = "skill"
-	KindMCPTool Kind = "mcp-tool"
-	KindTool    Kind = "tool"
-	KindSource  Kind = "source"
+	KindSkill     Kind = "skill"
+	KindMCPServer Kind = "mcp-server"
+	KindMCPTool   Kind = "mcp-tool"
+	KindTool      Kind = "tool"
+	KindSource    Kind = "source"
 )
 
 type Status string
@@ -45,6 +46,7 @@ type Entry struct {
 	Source           string
 	Status           Status
 	ReadOnly         bool
+	Destructive      bool
 	Cost             string
 	AutoUse          AutoUse
 	Triggers         []string
@@ -53,6 +55,10 @@ type Entry struct {
 	ToolName         string
 	ConnectSource    string
 	ConnectName      string
+	Requires         []string // capability IDs this skill depends on
+	Profiles         []string // economy|balanced|delivery; empty = all
+	AutoStart        bool     // MCP: configured auto_start
+	FailureReason    string   // host-proven failure detail
 }
 
 type RouteCandidate struct {
@@ -63,43 +69,22 @@ type RouteCandidate struct {
 
 type RouteDecision struct {
 	Candidates []RouteCandidate
-}
-
-// AutoEnableBuiltinSkillCandidate returns the first trusted built-in skill whose
-// route is strong enough to justify enabling the local skill source before the
-// model's first request. Custom/project skills and weak suggest-only matches
-// remain explicit connect_tool_source decisions.
-func AutoEnableBuiltinSkillCandidate(d RouteDecision) (RouteCandidate, bool) {
-	for _, candidate := range d.Candidates {
-		entry := candidate.Entry
-		if entry.Kind != KindSkill || entry.Source != string(skill.ScopeBuiltin) || entry.Status != StatusConfigured {
-			continue
-		}
-		if candidate.Policy != AutoUsePrefer && candidate.Policy != AutoUseRequire {
-			continue
-		}
-		return candidate, true
-	}
-	return RouteCandidate{}, false
+	// Delivery marks a Delivery-profile route: the transient block must direct
+	// the model to the stable use_capability proxy — connect_tool_source is not
+	// registered in Delivery, so instructing it would dead-end the route.
+	Delivery bool
+	// CapabilityProxy directs unready MCP candidates to use_capability rather
+	// than connect_tool_source. True for Delivery and for dual-model Planner
+	// boots that expose the stable proxy without Economy's connector.
+	CapabilityProxy bool
 }
 
 func SkillEntries(skills []skill.Skill, tools []tool.ContractEntry) []Entry {
-	return SkillEntriesForMode(skills, tools, false)
-}
-
-// SkillEntriesForMode marks a skill ready only when the live registry exposes
-// the entry point that is valid for the current execution mode. Plan mode has
-// a deliberately narrow read-only surface; normal mode needs run_skill before
-// a route can invoke a skill without an explicit source connection.
-func SkillEntriesForMode(skills []skill.Skill, tools []tool.ContractEntry, planMode bool) []Entry {
 	toolNames := map[string]bool{}
 	for _, t := range tools {
 		toolNames[t.Name] = true
 	}
-	skillToolReady := toolNames["read_only_skill"]
-	if !planMode {
-		skillToolReady = toolNames["run_skill"]
-	}
+	skillToolReady := toolNames["run_skill"] || toolNames["read_skill"] || toolNames["read_only_skill"]
 
 	out := make([]Entry, 0, len(skills))
 	for _, sk := range skills {
@@ -129,6 +114,8 @@ func SkillEntriesForMode(skills []skill.Skill, tools []tool.ContractEntry, planM
 			NeedsFreshData:   sk.NeedsFreshData,
 			ToolName:         "run_skill",
 			ConnectSource:    connectSource,
+			Requires:         cleanList(sk.Requires),
+			Profiles:         cleanList(sk.Profiles),
 		})
 	}
 	return out
@@ -159,9 +146,20 @@ func ToolEntries(tools []tool.ContractEntry) []Entry {
 }
 
 func Route(input string, entries []Entry) RouteDecision {
+	return RouteDecision{Candidates: limitRouteCandidates(routeCandidates(input, entries))}
+}
+
+// RouteDelivery routes against the full matched set before promoting built-in
+// playbooks, so candidates that become prefer are never discarded by the
+// ordinary suggest budget first.
+func RouteDelivery(input string, entries []Entry) RouteDecision {
+	return PromoteDelivery(RouteDecision{Candidates: routeCandidates(input, entries)})
+}
+
+func routeCandidates(input string, entries []Entry) []RouteCandidate {
 	text := normalize(input)
 	if text == "" {
-		return RouteDecision{}
+		return nil
 	}
 	var candidates []RouteCandidate
 	for _, e := range entries {
@@ -181,10 +179,53 @@ func Route(input string, entries []Entry) RouteDecision {
 		}
 		return candidates[i].Entry.ID < candidates[j].Entry.ID
 	})
-	if len(candidates) > 5 {
-		candidates = candidates[:5]
+	return candidates
+}
+
+// PromoteDelivery strengthens matched built-in playbooks in Delivery. Custom
+// skills keep their authored auto-use policy; only shipped workflows with a
+// concrete trigger match move from suggest to prefer.
+func PromoteDelivery(decision RouteDecision) RouteDecision {
+	decision.Delivery = true
+	for i := range decision.Candidates {
+		candidate := &decision.Candidates[i]
+		if candidate.Policy == AutoUseSuggest && candidate.Entry.Kind == KindSkill && candidate.Entry.Source == string(skill.ScopeBuiltin) {
+			candidate.Policy = AutoUsePrefer
+			candidate.Reason += "; Delivery prefers matched built-in playbooks"
+		}
 	}
-	return RouteDecision{Candidates: candidates}
+	sort.SliceStable(decision.Candidates, func(i, j int) bool {
+		if rank(decision.Candidates[i].Policy) != rank(decision.Candidates[j].Policy) {
+			return rank(decision.Candidates[i].Policy) > rank(decision.Candidates[j].Policy)
+		}
+		if decision.Candidates[i].Entry.Kind != decision.Candidates[j].Entry.Kind {
+			return decision.Candidates[i].Entry.Kind < decision.Candidates[j].Entry.Kind
+		}
+		return decision.Candidates[i].Entry.ID < decision.Candidates[j].Entry.ID
+	})
+	return RouteDecision{Candidates: limitRouteCandidates(decision.Candidates), Delivery: true, CapabilityProxy: true}
+}
+
+func limitRouteCandidates(candidates []RouteCandidate) []RouteCandidate {
+	const targetCandidates = 5
+	strong := make([]RouteCandidate, 0, len(candidates))
+	suggested := make([]RouteCandidate, 0, targetCandidates)
+	for _, candidate := range candidates {
+		switch candidate.Policy {
+		case AutoUseRequire, AutoUsePrefer:
+			strong = append(strong, candidate)
+		case AutoUseSuggest:
+			suggested = append(suggested, candidate)
+		}
+	}
+	slots := targetCandidates - len(strong)
+	if slots < 0 {
+		slots = 0
+	}
+	if len(suggested) > slots {
+		suggested = suggested[:slots]
+	}
+	return append(strong, suggested...)
 }
 
 func RenderTransientBlock(d RouteDecision) string {
@@ -196,8 +237,9 @@ func RenderTransientBlock(d RouteDecision) string {
 	b.WriteString("Relevant capabilities for this turn:\n")
 	for _, c := range d.Candidates {
 		e := c.Entry
+		proxyMCP := d.CapabilityProxy && (e.Kind == KindMCPTool || e.Kind == KindMCPServer)
 		target := e.ID
-		if e.Status != StatusReady && e.ConnectSource != "" {
+		if !d.Delivery && !proxyMCP && e.Status != StatusReady && e.ConnectSource != "" {
 			target = fmt.Sprintf("source:%s", e.ConnectSource)
 			if e.ConnectName != "" {
 				target += "/" + e.ConnectName
@@ -207,7 +249,20 @@ func RenderTransientBlock(d RouteDecision) string {
 		if e.Status != "" && e.Status != StatusReady {
 			fmt.Fprintf(&b, " (status=%s)", e.Status)
 		}
-		if e.ConnectSource != "" {
+		switch {
+		case d.Delivery || proxyMCP:
+			// Delivery and dual-model Planner have no connect_tool_source for
+			// MCP; the stable proxy both connects and calls on demand, keeping
+			// the concrete capability id.
+			if e.Status != StatusReady {
+				switch e.Kind {
+				case KindMCPTool:
+					fmt.Fprintf(&b, "; call use_capability(action=\"call\", capability_id=%q, arguments={...}) — it connects the server on demand after approval", e.ID)
+				case KindMCPServer:
+					fmt.Fprintf(&b, "; call use_capability(action=\"call\", capability_id=%q) to connect it (after approval) and list its tools, then call a listed mcp-tool id", e.ID)
+				}
+			}
+		case e.ConnectSource != "":
 			if e.ConnectName != "" {
 				fmt.Fprintf(&b, "; first call connect_tool_source with source=%q name=%q", e.ConnectSource, e.ConnectName)
 			} else {

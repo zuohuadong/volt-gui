@@ -15,19 +15,11 @@ import (
 	"time"
 
 	"voltui/internal/proc"
+	"voltui/internal/secrets"
 )
 
 const maxImageAttachmentBytes = 10 * 1024 * 1024
-
-// maxFileAttachmentBytes is the size limit for files copied from a native path.
-// Keep this distinct from the data-URL limit: a 64 MiB browser data URL would
-// occupy substantially more memory and cross the desktop IPC boundary at once.
-// MaxFileAttachmentBytes is the hard cap for files copied from a native path.
-// Callers that select files before copying should use the same boundary.
-const MaxFileAttachmentBytes = 64 * 1024 * 1024
-
-const maxFileAttachmentBytes = MaxFileAttachmentBytes
-const maxFileAttachmentDataURLBytes = 25 * 1024 * 1024
+const maxFileAttachmentBytes = 25 * 1024 * 1024
 const maxAttachmentCreateAttempts = 1000
 
 var attachmentPathSeq atomic.Uint64
@@ -39,30 +31,16 @@ var safeAttachmentExt = regexp.MustCompile(`^\.[a-z0-9]{1,12}$`)
 // .voltui/attachments and returns its repo-relative path for @referencing.
 // origName supplies only the extension; the stored name is generated.
 func SaveAttachmentDataURL(origName, dataURL string) (string, error) {
-	return SaveAttachmentDataURLInRoot(".", origName, dataURL)
-}
-
-// SaveAttachmentDataURLInRoot is SaveAttachmentDataURL with an explicit
-// workspace root. Desktop callers use this form so concurrent attachment
-// writes never need to mutate the process-wide working directory.
-func SaveAttachmentDataURLInRoot(root, origName, dataURL string) (string, error) {
 	const marker = ";base64,"
 	i := strings.Index(dataURL, marker)
 	if !strings.HasPrefix(dataURL, "data:") || i < 0 {
 		return "", fmt.Errorf("unsupported pasted file")
 	}
-	encoded := dataURL[i+len(marker):]
-	if base64.StdEncoding.DecodedLen(len(encoded)) > maxFileAttachmentDataURLBytes {
-		return "", fmt.Errorf("pasted attachment must not exceed 25 MiB; use native file import")
-	}
-	raw, err := base64.StdEncoding.DecodeString(encoded)
+	raw, err := base64.StdEncoding.DecodeString(dataURL[i+len(marker):])
 	if err != nil {
 		return "", fmt.Errorf("decode pasted file: %w", err)
 	}
-	if len(raw) > maxFileAttachmentDataURLBytes {
-		return "", fmt.Errorf("pasted attachment must not exceed 25 MiB; use native file import")
-	}
-	return SaveAttachmentBytesInRoot(root, origName, raw)
+	return SaveAttachmentBytes(origName, raw)
 }
 
 func SaveAttachmentBytes(origName string, raw []byte) (string, error) {
@@ -71,7 +49,7 @@ func SaveAttachmentBytes(origName string, raw []byte) (string, error) {
 
 func SaveAttachmentBytesInRoot(root, origName string, raw []byte) (string, error) {
 	if len(raw) == 0 || len(raw) > maxFileAttachmentBytes {
-		return "", attachmentFileSizeError()
+		return "", fmt.Errorf("attachment must be between 1 byte and 25 MB")
 	}
 	ext := strings.ToLower(filepath.Ext(origName))
 	if !safeAttachmentExt.MatchString(ext) {
@@ -81,11 +59,6 @@ func SaveAttachmentBytesInRoot(root, origName string, raw []byte) (string, error
 }
 
 func SaveImageDataURL(dataURL string) (string, error) {
-	return SaveImageDataURLInRoot(".", dataURL)
-}
-
-// SaveImageDataURLInRoot is SaveImageDataURL with an explicit workspace root.
-func SaveImageDataURLInRoot(root, dataURL string) (string, error) {
 	const prefix = "data:"
 	const marker = ";base64,"
 	if !strings.HasPrefix(dataURL, prefix) {
@@ -100,7 +73,7 @@ func SaveImageDataURLInRoot(root, dataURL string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("decode pasted image: %w", err)
 	}
-	return SaveImageBytesInRoot(root, mime, raw)
+	return SaveImageBytes(mime, raw)
 }
 
 func SaveImageBytes(declaredMime string, raw []byte) (string, error) {
@@ -154,15 +127,9 @@ func saveAttachmentBytesInRoot(root, ext string, raw []byte) (string, error) {
 }
 
 func SaveImageFile(path string) (string, error) {
-	return SaveImageFileInRoot(".", path)
-}
-
-// SaveImageFileInRoot copies an image attachment into the explicit workspace
-// root without relying on the process working directory.
-func SaveImageFileInRoot(root, path string) (string, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return "", fmt.Errorf("pasted image source is unavailable; select it again")
+		return "", err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		return "", fmt.Errorf("pasted image path must not be a symlink")
@@ -172,171 +139,103 @@ func SaveImageFileInRoot(root, path string) (string, error) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("pasted image source cannot be read; select it again")
+		return "", err
 	}
 	defer f.Close()
 	opened, err := f.Stat()
 	if err != nil {
-		return "", fmt.Errorf("pasted image source changed while opening")
+		return "", err
 	}
 	if !os.SameFile(info, opened) {
 		return "", fmt.Errorf("pasted image changed while opening")
 	}
 	raw, err := io.ReadAll(io.LimitReader(f, maxImageAttachmentBytes+1))
 	if err != nil {
-		return "", fmt.Errorf("pasted image source cannot be read; select it again")
+		return "", err
 	}
 	if len(raw) == 0 || len(raw) > maxImageAttachmentBytes {
 		return "", fmt.Errorf("pasted image must be between 1 byte and 10 MB")
 	}
 	if after, err := f.Stat(); err != nil {
-		return "", fmt.Errorf("pasted image source changed while reading")
+		return "", err
 	} else if !os.SameFile(opened, after) || after.Size() != opened.Size() {
 		return "", fmt.Errorf("pasted image changed while reading")
 	}
-	return SaveImageBytesInRoot(root, "", raw)
+	return SaveImageBytes("", raw)
 }
 
-// SaveAttachmentFile copies a native file after validating it at copy time.
-// Callers that need to bind the copy to a prior native selection should use
-// SaveAttachmentFileWithExpectedInfo instead.
 func SaveAttachmentFile(path string) (string, error) {
-	return SaveAttachmentFileInRoot(".", path)
-}
-
-// SaveAttachmentFileInRoot copies a native file into an explicit workspace
-// root. The returned path remains workspace-relative for @ references.
-func SaveAttachmentFileInRoot(root, path string) (string, error) {
-	return saveAttachmentFile(root, path, nil)
-}
-
-// SaveAttachmentFileWithExpectedInfo copies a native file only when it is still
-// the same regular file that was selected earlier. expected is checked before
-// opening, against the opened descriptor, and against the path after copying so
-// an atomic replacement, symlink swap, or size change cannot be accepted.
-func SaveAttachmentFileWithExpectedInfo(path string, expected os.FileInfo) (string, error) {
-	return SaveAttachmentFileWithExpectedInfoInRoot(".", path, expected)
-}
-
-// SaveAttachmentFileWithExpectedInfoInRoot is the root-aware form used by
-// native file-selection flows that revalidate a previously selected source.
-func SaveAttachmentFileWithExpectedInfoInRoot(root, path string, expected os.FileInfo) (string, error) {
-	if expected == nil {
-		return "", fmt.Errorf("attachment selection is unavailable; select it again")
-	}
-	return saveAttachmentFile(root, path, expected)
-}
-
-func saveAttachmentFile(root, path string, expected os.FileInfo) (string, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return "", fmt.Errorf("attachment source is unavailable; select it again")
+		return "", err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		return "", fmt.Errorf("attachment path must not be a symlink")
 	}
-	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxFileAttachmentBytes {
-		return "", attachmentFileSizeError()
-	}
-	if expected != nil && !sameAttachmentFile(expected, info) {
-		return "", fmt.Errorf("attachment changed after selection; select it again")
+	if info.IsDir() || info.Size() <= 0 || info.Size() > maxFileAttachmentBytes {
+		return "", fmt.Errorf("attachment must be between 1 byte and 25 MB")
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("attachment source cannot be read; select it again")
+		return "", err
 	}
 	defer f.Close()
 	opened, err := f.Stat()
 	if err != nil {
-		return "", fmt.Errorf("attachment source changed while opening")
+		return "", err
 	}
 	if !os.SameFile(info, opened) {
 		return "", fmt.Errorf("attachment changed while opening")
 	}
-	if expected != nil && !sameAttachmentFile(expected, opened) {
-		return "", fmt.Errorf("attachment changed after selection; select it again")
+	raw, err := io.ReadAll(io.LimitReader(f, maxFileAttachmentBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(raw) == 0 || len(raw) > maxFileAttachmentBytes {
+		return "", fmt.Errorf("attachment must be between 1 byte and 25 MB")
+	}
+	if after, err := f.Stat(); err != nil {
+		return "", err
+	} else if !os.SameFile(opened, after) || after.Size() != opened.Size() {
+		return "", fmt.Errorf("attachment changed while reading")
 	}
 	ext := strings.ToLower(filepath.Ext(path))
 	if !safeAttachmentExt.MatchString(ext) {
 		ext = ".bin"
 	}
-	absRoot, err := filepath.Abs(root)
+	if err := ensureAttachmentRoot(); err != nil {
+		return "", err
+	}
+	rel, dst, err := createAttachmentFile(ext)
 	if err != nil {
-		return "", fmt.Errorf("attachment destination is unavailable; check that the workspace is writable")
+		return "", err
 	}
-	if err := ensureAttachmentRootIn(absRoot); err != nil {
-		return "", fmt.Errorf("attachment destination is unavailable; check that the workspace is writable")
-	}
-	rel, dst, err := createAttachmentFileIn(absRoot, ext)
-	if err != nil {
-		return "", fmt.Errorf("attachment destination is unavailable; check that the workspace is writable")
-	}
-	destination := filepath.Join(absRoot, filepath.FromSlash(rel))
-	keepDestination := false
-	defer func() {
-		if keepDestination {
-			return
-		}
+	if _, err := dst.Write(raw); err != nil {
 		_ = dst.Close()
-		_ = os.Remove(destination)
-	}()
-
-	written, err := io.Copy(dst, io.LimitReader(f, maxFileAttachmentBytes+1))
-	if err != nil {
-		return "", fmt.Errorf("attachment source cannot be read; select it again")
-	}
-	if written == 0 || written > maxFileAttachmentBytes || written != opened.Size() {
-		return "", fmt.Errorf("attachment changed while reading")
-	}
-	if after, err := f.Stat(); err != nil {
-		return "", fmt.Errorf("attachment changed while reading")
-	} else if !os.SameFile(opened, after) || after.Size() != opened.Size() {
-		return "", fmt.Errorf("attachment changed while reading")
-	}
-	if final, err := os.Lstat(path); err != nil {
-		return "", fmt.Errorf("attachment changed while reading")
-	} else if final.Mode()&os.ModeSymlink != 0 || !os.SameFile(info, final) || final.Size() != info.Size() || (expected != nil && !sameAttachmentFile(expected, final)) {
-		return "", fmt.Errorf("attachment changed while reading")
+		_ = os.Remove(rel)
+		return "", err
 	}
 	if err := dst.Close(); err != nil {
-		return "", fmt.Errorf("attachment destination is unavailable; check that the workspace is writable")
+		_ = os.Remove(rel)
+		return "", err
 	}
-	keepDestination = true
 	return filepath.ToSlash(rel), nil
 }
 
-func sameAttachmentFile(expected, actual os.FileInfo) bool {
-	return expected != nil && actual != nil && os.SameFile(expected, actual) && expected.Size() == actual.Size()
-}
-
-func attachmentFileSizeError() error {
-	return fmt.Errorf("attachment must be between 1 byte and 64 MiB")
-}
-
 func SaveClipboardImage() (string, error) {
-	return SaveClipboardImageInRoot(".")
-}
-
-// SaveClipboardImageInRoot stores the native clipboard image under an explicit
-// workspace root, avoiding process-wide cwd changes in desktop sessions.
-func SaveClipboardImageInRoot(root string) (string, error) {
 	switch runtime.GOOS {
 	case "darwin":
-		return saveDarwinClipboardImageInRoot(root)
+		return saveDarwinClipboardImage()
 	case "windows":
-		return saveWindowsClipboardImageInRoot(root)
+		return saveWindowsClipboardImage()
 	case "linux":
-		return saveLinuxClipboardImageInRoot(root)
+		return saveLinuxClipboardImage()
 	default:
 		return "", fmt.Errorf("clipboard image paste is not supported on %s yet", runtime.GOOS)
 	}
 }
 
 func saveWindowsClipboardImage() (string, error) {
-	return saveWindowsClipboardImageInRoot(".")
-}
-
-func saveWindowsClipboardImageInRoot(root string) (string, error) {
 	// Windows PowerShell 5.1 (preinstalled) reaches the GUI clipboard; pwsh (Core)
 	// lacks Get-Clipboard -Format Image, so invoke powershell.exe. The PNG is
 	// returned as base64 on stdout so no temp file is involved.
@@ -347,6 +246,7 @@ $ms = New-Object System.IO.MemoryStream
 $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
 [Convert]::ToBase64String($ms.ToArray())`
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	cmd.Env = secrets.ProcessEnv()
 	proc.HideWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
@@ -359,34 +259,26 @@ $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
 	if err != nil {
 		return "", fmt.Errorf("decode clipboard image: %w", err)
 	}
-	return SaveImageBytesInRoot(root, "", raw)
+	return SaveImageBytes("", raw)
 }
 
 func saveLinuxClipboardImage() (string, error) {
-	return saveLinuxClipboardImageInRoot(".")
-}
-
-func saveLinuxClipboardImageInRoot(root string) (string, error) {
 	// Wayland (wl-paste) then X11 (xclip); both write image bytes to stdout.
 	for _, c := range [][]string{
 		{"wl-paste", "--type", "image/png", "--no-newline"},
 		{"xclip", "-selection", "clipboard", "-t", "image/png", "-o"},
 	} {
-		if out, err := exec.Command(c[0], c[1:]...).Output(); err == nil && len(out) > 0 {
-			return SaveImageBytesInRoot(root, "", out)
+		cmd := exec.Command(c[0], c[1:]...)
+		cmd.Env = secrets.ProcessEnv()
+		if out, err := cmd.Output(); err == nil && len(out) > 0 {
+			return SaveImageBytes("", out)
 		}
 	}
 	return "", fmt.Errorf("clipboard image paste needs wl-paste (Wayland) or xclip (X11)")
 }
 
 func ImageDataURL(path string) (string, error) {
-	return ImageDataURLInRoot(".", path)
-}
-
-// ImageDataURLInRoot reads an attachment preview relative to an explicit
-// workspace root.
-func ImageDataURLInRoot(root, path string) (string, error) {
-	raw, mime, err := readAttachmentImageInRoot(root, path)
+	raw, mime, err := readAttachmentImage(path)
 	if err != nil {
 		return "", err
 	}
@@ -398,11 +290,7 @@ func ImageDataURLInRoot(root, path string) (string, error) {
 // base64 so an oversized photo doesn't balloon the request bytes and image
 // tokens. Best-effort: an undecodable format passes through at original size.
 func visionImageDataURL(path string) (string, error) {
-	return visionImageDataURLInRoot(".", path)
-}
-
-func visionImageDataURLInRoot(root, path string) (string, error) {
-	raw, mime, err := readAttachmentImageInRoot(root, path)
+	raw, mime, err := readAttachmentImage(path)
 	if err != nil {
 		return "", err
 	}
@@ -411,11 +299,7 @@ func visionImageDataURLInRoot(root, path string) (string, error) {
 }
 
 func readAttachmentImage(path string) (raw []byte, mime string, err error) {
-	return readAttachmentImageInRoot(".", path)
-}
-
-func readAttachmentImageInRoot(root, path string) (raw []byte, mime string, err error) {
-	clean, err := cleanAttachmentPathInRoot(root, path)
+	clean, err := cleanAttachmentPath(path)
 	if err != nil {
 		return nil, "", err
 	}
@@ -461,31 +345,21 @@ func readAttachmentImageInRoot(root, path string) (raw []byte, mime string, err 
 }
 
 func cleanAttachmentPath(path string) (string, error) {
-	return cleanAttachmentPathInRoot(".", path)
-}
-
-func cleanAttachmentPathInRoot(base, path string) (string, error) {
 	if filepath.IsAbs(path) {
 		return "", fmt.Errorf("attachment path must be relative")
 	}
 	clean := filepath.Clean(filepath.FromSlash(path))
-	relRoot := filepath.Join(".voltui", "attachments")
-	if clean == "." || clean == relRoot || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || !strings.HasPrefix(clean, relRoot+string(filepath.Separator)) {
+	root := filepath.Join(".reasonix", "attachments")
+	if clean == "." || clean == root || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || !strings.HasPrefix(clean, root+string(filepath.Separator)) {
 		return "", fmt.Errorf("attachment path is outside .voltui/attachments")
 	}
-	absBase, err := filepath.Abs(base)
-	if err != nil {
+	if err := ensureAttachmentRoot(); err != nil {
 		return "", err
 	}
-	if err := ensureAttachmentRootIn(absBase); err != nil {
+	if err := rejectSymlinkComponents(clean, root); err != nil {
 		return "", err
 	}
-	root := filepath.Join(absBase, relRoot)
-	target := filepath.Join(absBase, clean)
-	if err := rejectSymlinkComponents(target, root); err != nil {
-		return "", err
-	}
-	return target, nil
+	return clean, nil
 }
 
 func rejectSymlinkComponents(path, root string) error {
@@ -518,7 +392,7 @@ func ensureAttachmentRoot() error {
 }
 
 func ensureAttachmentRootIn(base string) error {
-	root := filepath.Join(base, ".voltui", "attachments")
+	root := filepath.Join(base, ".reasonix", "attachments")
 	if info, err := os.Lstat(root); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("attachment directory must not be a symlink")
@@ -544,12 +418,8 @@ func ensureAttachmentRootIn(base string) error {
 }
 
 func saveDarwinClipboardImage() (string, error) {
-	return saveDarwinClipboardImageInRoot(".")
-}
-
-func saveDarwinClipboardImageInRoot(root string) (string, error) {
 	for _, class := range []string{"PNGf", "JPEG"} {
-		if rel, err := saveDarwinClipboardClassInRoot(root, class); err == nil {
+		if rel, err := saveDarwinClipboardClass(class); err == nil {
 			return rel, nil
 		}
 	}
@@ -557,24 +427,20 @@ func saveDarwinClipboardImageInRoot(root string) (string, error) {
 }
 
 func saveDarwinClipboardClass(class string) (string, error) {
-	return saveDarwinClipboardClassInRoot(".", class)
-}
-
-func saveDarwinClipboardClassInRoot(root, class string) (string, error) {
-	absRoot, err := filepath.Abs(root)
+	if err := ensureAttachmentRoot(); err != nil {
+		return "", err
+	}
+	rel, f, err := createAttachmentFile(".bin")
 	if err != nil {
 		return "", err
 	}
-	if err := ensureAttachmentRootIn(absRoot); err != nil {
-		return "", err
-	}
-	rel, f, err := createAttachmentFileIn(absRoot, ".bin")
-	if err != nil {
-		return "", err
-	}
-	tempPath := filepath.Join(absRoot, filepath.FromSlash(rel))
 	if err := f.Close(); err != nil {
-		_ = os.Remove(tempPath)
+		_ = os.Remove(rel)
+		return "", err
+	}
+	abs, err := filepath.Abs(rel)
+	if err != nil {
+		_ = os.Remove(rel)
 		return "", err
 	}
 	script := fmt.Sprintf(`
@@ -595,17 +461,19 @@ on error errMsg
 	end try
 	error errMsg
 end try
-`, tempPath, class)
-	if out, err := exec.Command("osascript", "-e", script).CombinedOutput(); err != nil {
-		_ = os.Remove(tempPath)
+`, abs, class)
+	clip := exec.Command("osascript", "-e", script)
+	clip.Env = secrets.ProcessEnv()
+	if out, err := clip.CombinedOutput(); err != nil {
+		_ = os.Remove(rel)
 		return "", fmt.Errorf("read clipboard image: %s", strings.TrimSpace(string(out)))
 	}
-	raw, err := os.ReadFile(tempPath)
-	_ = os.Remove(tempPath)
+	raw, err := os.ReadFile(rel)
+	_ = os.Remove(rel)
 	if err != nil {
 		return "", err
 	}
-	return SaveImageBytesInRoot(absRoot, "", raw)
+	return SaveImageBytes("", raw)
 }
 
 func createAttachmentFile(ext string) (string, *os.File, error) {
@@ -630,7 +498,7 @@ func createAttachmentFileIn(base, ext string) (string, *os.File, error) {
 func attachmentPath(ext string) string {
 	seq := attachmentPathSeq.Add(1)
 	name := fmt.Sprintf("clipboard-%s-%06d%s", attachmentNow().Format("20060102-150405.000000"), seq, ext)
-	return filepath.Join(".voltui", "attachments", name)
+	return filepath.Join(".reasonix", "attachments", name)
 }
 
 func detectedImageMime(raw []byte) string {

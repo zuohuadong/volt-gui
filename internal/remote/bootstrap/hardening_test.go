@@ -111,7 +111,7 @@ func TestAutoInstallPreservesNPMFailureWhenNoUploadBinaryExists(t *testing.T) {
 		t.Fatal("auto install unexpectedly succeeded")
 	}
 	message := err.Error()
-	if !strings.Contains(message, "npm install failed: permission denied") || !strings.Contains(message, "no local Reasonix CLI") {
+	if !strings.Contains(message, "npm install failed: permission denied") || !strings.Contains(message, "no local VoltUI CLI") {
 		t.Fatalf("auto install hid the actionable failures: %v", err)
 	}
 }

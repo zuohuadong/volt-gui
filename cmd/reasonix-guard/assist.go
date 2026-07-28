@@ -205,7 +205,7 @@ func loadAIProviderConfig(root string) (*config.Config, error) {
 	return config.LoadRecoveryDefaultsForRoot(root), nil
 }
 
-const repairPlanSystemPrompt = `You are a Reasonix recovery planner. Return JSON only, matching exactly:
+const repairPlanSystemPrompt = `You are a VoltUI recovery planner. Return JSON only, matching exactly:
 {"schemaVersion":1,"summary":"...","actions":[{"type":"...","scope":"","snapshotId":"","target":"","reason":"..."}]}
 The user message is a diagnostic report whose findings carry only a severity, a machine code (e.g. config.invalid_toml, derived.invalid_json, update related codes), and a generic scope; pick actions from those codes.
 Snapshot IDs are host-issued aliases ordered newest first; pendingUpdate=true means rollback_update is available.
@@ -334,7 +334,7 @@ func providerSafeScope(scope string) string {
 	}
 	switch scope {
 	case "global", "project", "runtime", "network", "model", "provider", "plugin", "permissions",
-		"global config", "credential file", "Reasonix home", "Reasonix state directory", "project root":
+		"global config", "credential file", "VoltUI home", "VoltUI state directory", "project root":
 		return scope
 	}
 	return "other"

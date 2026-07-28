@@ -58,7 +58,7 @@ func RebuildDerivedState(target string) ([]string, error) {
 
 func derivedStatePaths() map[string]string {
 	paths := map[string]string{}
-	if root := config.ReasonixHomeDir(); root != "" {
+	if root := config.VoltUIHomeDir(); root != "" {
 		paths["tabs"] = filepath.Join(root, "desktop-tabs.json")
 		paths["projects"] = filepath.Join(root, "desktop-projects.json")
 	}

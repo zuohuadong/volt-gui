@@ -180,7 +180,7 @@ func TestStatusFooterThemesKeepIdenticalGeometry(t *testing.T) {
 	m.effortLevel = "max"
 	m.runtimeProfile = "full"
 	m.balance = "¥12.34"
-	m.gitStatus = gitStatus{Repo: "DeepSeek-Reasonix", Branch: "feature/theme-footer", Added: 3}
+	m.gitStatus = gitStatus{Repo: "DeepSeek-VoltUI", Branch: "feature/theme-footer", Added: 3}
 
 	render := func(mode string, colors bool) string {
 		colorEnabled = colors
@@ -211,9 +211,9 @@ func TestStatusFooterGitAndDividerAdaptToTheme(t *testing.T) {
 		t.Run(tt.mode, func(t *testing.T) {
 			configureCLITheme(tt.mode)
 			m := newTestChatTUI()
-			m.gitStatus = gitStatus{Repo: "DeepSeek-Reasonix", Branch: "db4be5e6", Detached: true}
+			m.gitStatus = gitStatus{Repo: "DeepSeek-VoltUI", Branch: "db4be5e6", Detached: true}
 			git := m.layoutGitTelemetry(80)
-			if !strings.Contains(git, tt.gitSGR+"DeepSeek-Reasonix") {
+			if !strings.Contains(git, tt.gitSGR+"DeepSeek-VoltUI") {
 				t.Fatalf("%s Git identity should use warm semantic colour: %q", tt.mode, git)
 			}
 			divider := statusFooterDivider(40)
@@ -375,7 +375,7 @@ func TestStatusFooterSwapsModelAndGitGroups(t *testing.T) {
 	m.effortLevel = "auto"
 	m.balance = "¥12.34"
 	m.gitStatus = gitStatus{
-		Repo:      "DeepSeek-Reasonix",
+		Repo:      "DeepSeek-VoltUI",
 		Branch:    "feature/responsive-footer",
 		Added:     1199,
 		Removed:   244,
@@ -390,13 +390,13 @@ func TestStatusFooterSwapsModelAndGitGroups(t *testing.T) {
 	if !strings.Contains(lines[0], "MODEL deepseek-v4-flash   EFFORT auto   WORK balanced") {
 		t.Fatalf("first row should keep model, effort, and work in one session group:\n%s", strings.Join(lines, "\n"))
 	}
-	if strings.Contains(lines[0], "DeepSeek-Reasonix@") {
+	if strings.Contains(lines[0], "DeepSeek-VoltUI@") {
 		t.Fatalf("first row should not contain Git identity:\n%s", strings.Join(lines, "\n"))
 	}
 	if strings.Trim(lines[1], "─ ") != "" {
 		t.Fatalf("middle row should be a divider:\n%s", strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[2], "DeepSeek-Reasonix@feature/responsive-footer") || strings.Contains(lines[2], "…") {
+	if !strings.Contains(lines[2], "DeepSeek-VoltUI@feature/responsive-footer") || strings.Contains(lines[2], "…") {
 		t.Fatalf("second row should preserve the full Git identity when it fits:\n%s", strings.Join(lines, "\n"))
 	}
 	if !strings.Contains(lines[2], "+1199 -244 ?3") || !strings.HasSuffix(lines[2], "BAL ¥12.34") {
@@ -465,7 +465,7 @@ func TestStatusFooterStacksGitAndTelemetryWithoutFloatingContinuation(t *testing
 
 	m := newTestChatTUI()
 	m.gitStatus = gitStatus{
-		Repo: "DeepSeek-Reasonix", Branch: "feature/responsive-footer", Added: 20, Removed: 4,
+		Repo: "DeepSeek-VoltUI", Branch: "feature/responsive-footer", Added: 20, Removed: 4,
 	}
 	m.balance = "¥123.45"
 
@@ -473,7 +473,7 @@ func TestStatusFooterStacksGitAndTelemetryWithoutFloatingContinuation(t *testing
 	if len(lines) != 2 {
 		t.Fatalf("stacked Git/telemetry rows = %d, want 2:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
-	if !strings.HasPrefix(lines[0], statusFooterIndent+"DeepSeek-Reasonix@") || !strings.Contains(lines[0], "+20 -4") {
+	if !strings.HasPrefix(lines[0], statusFooterIndent+"DeepSeek-VoltUI@") || !strings.Contains(lines[0], "+20 -4") {
 		t.Fatalf("Git should own the complete first row:\n%s", strings.Join(lines, "\n"))
 	}
 	if !strings.HasPrefix(lines[1], statusFooterIndent+"BAL ¥123.45") {
@@ -490,7 +490,7 @@ func TestStatusFooterNarrowLayoutBreaksBetweenGroups(t *testing.T) {
 	m.runtimeProfile = "delivery"
 	m.balance = "¥123.45"
 	m.gitStatus = gitStatus{
-		Repo:    "DeepSeek-Reasonix-Workspace",
+		Repo:    "DeepSeek-VoltUI-Workspace",
 		Branch:  "feature/" + strings.Repeat("long-branch-", 8),
 		Added:   20,
 		Removed: 4,
@@ -522,14 +522,14 @@ func TestStatusFooterCustomLineStillReplacesBuiltInData(t *testing.T) {
 	m.balance = "¥12.34"
 	m.statuslineCmd = "custom-status"
 	m.statuslineOut = "custom telemetry"
-	m.gitStatus = gitStatus{Repo: "Reasonix", Branch: "main"}
+	m.gitStatus = gitStatus{Repo: "VoltUI", Branch: "main"}
 
 	primary := m.primaryStatusLine(" Auto ", false, false)
 	block := ansi.Strip(m.renderStatusBlock(primary, 120))
 	if strings.Contains(block, "deepseek-v4-flash") || strings.Contains(block, "work delivery") || strings.Contains(block, "¥12.34") {
 		t.Fatalf("custom statusline should replace built-in data fields:\n%s", block)
 	}
-	if !strings.Contains(block, "Reasonix@main") || !strings.Contains(block, "custom telemetry") {
+	if !strings.Contains(block, "VoltUI@main") || !strings.Contains(block, "custom telemetry") {
 		t.Fatalf("custom statusline should coexist with Git identity:\n%s", block)
 	}
 }

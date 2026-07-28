@@ -115,7 +115,7 @@ func (a *Agent) maintainStaleToolResults(mode toolResultMaintenanceMode) (PruneS
 }
 
 func shouldMaintainToolResult(m provider.Message, mode toolResultMaintenanceMode) bool {
-	if m.Role != provider.RoleTool {
+	if m.LocalOnly || m.Role != provider.RoleTool {
 		return false
 	}
 	if strings.HasPrefix(m.Content, prunedMarker) {

@@ -7,7 +7,7 @@ import (
 	"voltui/internal/skill"
 )
 
-func TestReasonixGuideBuiltinRegistered(t *testing.T) {
+func TestVoltUIGuideBuiltinRegistered(t *testing.T) {
 	store := skill.New(skill.Options{HomeDir: t.TempDir(), DisableBuiltins: false})
 	sk, ok := store.Read("reasonix-guide")
 	if !ok {
@@ -27,7 +27,7 @@ func TestReasonixGuideBuiltinRegistered(t *testing.T) {
 	}
 }
 
-func TestReasonixGuideIndexLineOnly(t *testing.T) {
+func TestVoltUIGuideIndexLineOnly(t *testing.T) {
 	store := skill.New(skill.Options{HomeDir: t.TempDir()})
 	list := store.List()
 	var guide skill.Skill
@@ -64,7 +64,7 @@ func skBodySnippet(sk skill.Skill) string {
 	return body
 }
 
-func TestReasonixGuideOverriddenByProject(t *testing.T) {
+func TestVoltUIGuideOverriddenByProject(t *testing.T) {
 	home := t.TempDir()
 	root := t.TempDir()
 	store := skill.New(skill.Options{HomeDir: home, ProjectRoot: root})
@@ -87,7 +87,7 @@ func TestReasonixGuideOverriddenByProject(t *testing.T) {
 	}
 }
 
-func TestReasonixGuideDisabled(t *testing.T) {
+func TestVoltUIGuideDisabled(t *testing.T) {
 	store := skill.New(skill.Options{
 		HomeDir:       t.TempDir(),
 		DisabledNames: []string{"reasonix-guide"},
@@ -102,7 +102,7 @@ func TestReasonixGuideDisabled(t *testing.T) {
 	}
 }
 
-func TestReasonixGuideIndexStableAcrossCalls(t *testing.T) {
+func TestVoltUIGuideIndexStableAcrossCalls(t *testing.T) {
 	store := skill.New(skill.Options{HomeDir: t.TempDir()})
 	a := skill.IndexBlock(store.List())
 	b := skill.IndexBlock(store.List())

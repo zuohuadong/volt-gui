@@ -20,19 +20,20 @@ func writeVisionTestConfig(t *testing.T, root string) {
 		Models:       []string{"text-only", "vision-pro"},
 		VisionModels: []string{"vision-pro"},
 	}}
-	if err := cfg.SaveTo(filepath.Join(root, "voltui.toml")); err != nil {
+	if err := cfg.SaveTo(filepath.Join(root, "reasonix.toml")); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
 }
 
 func TestControllerInputImagesResolvesAttachment(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir)
 	writeVisionTestConfig(t, dir)
-	ref, err := SaveImageDataURLInRoot(dir, "data:image/png;base64,"+tinyPNG)
+	ref, err := SaveImageDataURL("data:image/png;base64," + tinyPNG)
 	if err != nil {
-		t.Fatalf("SaveImageDataURLInRoot: %v", err)
+		t.Fatalf("SaveImageDataURL: %v", err)
 	}
-	urls := (&Controller{workspaceRoot: dir, modelRef: "custom/vision-pro"}).inputImages("look at @" + ref)
+	urls := (&Controller{modelRef: "custom/vision-pro"}).inputImages("look at @" + ref)
 	if len(urls) != 1 {
 		t.Fatalf("inputImages = %v, want one resolved data URL", urls)
 	}
@@ -109,7 +110,7 @@ func TestControllerInputImagesSkipsModelImagesWhenSelectedModelIsTextOnly(t *tes
 		Models:       []string{"text-only", "vision-pro"},
 		VisionModels: []string{"vision-pro"},
 	}}
-	if err := cfg.SaveTo(filepath.Join(workspace, "voltui.toml")); err != nil {
+	if err := cfg.SaveTo(filepath.Join(workspace, "reasonix.toml")); err != nil {
 		t.Fatalf("save workspace config: %v", err)
 	}
 	path := filepath.Join(workspace, "diagram.png")

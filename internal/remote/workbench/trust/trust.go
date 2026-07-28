@@ -29,7 +29,7 @@ type Record struct {
 	UpdatedAt           time.Time `json:"updatedAt"`
 }
 
-// Store is a process-local durable trust store under Reasonix home.
+// Store is a process-local durable trust store under VoltUI home.
 type Store struct {
 	path string
 	mu   sync.Mutex

@@ -154,7 +154,7 @@ main:
             apt-get install -y nodejs
             npm install -g pnpm@10
 
-            go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+            go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
             wails doctor || true
 
         - name: build-windows-desktop

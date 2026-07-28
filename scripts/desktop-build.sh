@@ -141,7 +141,11 @@ build_args+=(-platform "$PLATFORM" -ldflags "$ldflags")
 [ "$os" = linux ] && build_args+=(-tags webkit2_41)
 
 echo "==> wails build ${build_args[*]}"
-wails build "${build_args[@]}"
+if [ "$os" = windows ]; then
+	CGO_ENABLED=0 wails build "${build_args[@]}"
+else
+	wails build "${build_args[@]}"
+fi
 if [ "$os" != windows ]; then
 	guard_out="$ROOT/desktop/build/bin/$GUARDNAME"
 	build_guard

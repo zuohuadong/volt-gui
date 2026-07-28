@@ -226,10 +226,13 @@ test('desktop packaging excludes prerequisites while keeping the online WebView2
   const installer = readFileSync(new URL('../desktop/build/windows/installer/project.nsi', import.meta.url), 'utf8');
   const desktopCI = readFileSync(new URL('../.github/workflows/desktop-ci.yml', import.meta.url), 'utf8');
   const cnb = readFileSync(new URL('../.cnb.yml', import.meta.url), 'utf8');
+  const desktopGoMod = readFileSync(new URL('../desktop/go.mod', import.meta.url), 'utf8');
   const version = readFileSync(new URL('../desktop/prerequisites-version.txt', import.meta.url), 'utf8').trim();
   const desktopReadme = readFileSync(new URL('../desktop/README.md', import.meta.url), 'utf8');
+  const wailsVersion = desktopGoMod.match(/github\.com\/wailsapp\/wails\/v2 (v\S+)/)?.[1];
 
   assert.match(buildScript, /-nsis -webview2 embed/);
+  assert.match(buildScript, /CGO_ENABLED=0 wails build "\$\{build_args\[@\]\}"/);
   assert.match(buildScript, /\.\/cmd\/reasonix-guard/);
   assert.doesNotMatch(buildScript, /\.\/cmd\/voltui-guard/);
   assert.doesNotMatch(buildScript, /stage-windows-prerequisites/);
@@ -243,5 +246,7 @@ test('desktop packaging excludes prerequisites while keeping the online WebView2
   assert.match(cnb, /--make-latest=false/);
   assert.match(cnb, /scripts\/desktop-build\.sh windows\/amd64 "\$VERSION"/);
   assert.match(cnb, /scripts\/build-windows-prerequisites\.sh windows\/amd64/);
+  assert.ok(wailsVersion, 'desktop/go.mod must declare Wails v2');
+  assert.match(cnb, new RegExp(`wails/v2/cmd/wails@${wailsVersion.replaceAll('.', '\\.')}\\b`));
   assert.match(desktopReadme, new RegExp('current bundle version is `' + version.replaceAll('.', '\\.') + '`'));
 });

@@ -99,9 +99,9 @@ func init() {
 	contracts := ErrorContracts()
 	codes := make([]string, len(contracts))
 	for i := range contracts {
-		codes[i] = string(contracts[i].ReasonixCode)
+		codes[i] = string(contracts[i].VoltUICode)
 	}
-	enumTypes[reflect.TypeOf(ReasonixErrorCode(""))] = codes
+	enumTypes[reflect.TypeOf(VoltUIErrorCode(""))] = codes
 }
 
 func values[T ~string](in ...T) []string {

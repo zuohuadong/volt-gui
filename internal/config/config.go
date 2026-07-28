@@ -1,6 +1,5 @@
 // Package config loads VoltUI's runtime configuration from TOML. Resolution order:
-// flag > project ./voltui.toml > user config.toml (in the OS user-config dir) > built-in defaults.
-// User-global runtime controls, such as agent step limits, are documented exceptions.
+// flag > project ./reasonix.toml > user config.toml (in the OS user-config dir) > built-in defaults.
 // Secrets come from the environment via api_key_env and are never stored in
 // config files.
 package config
@@ -42,10 +41,8 @@ func SkillNameKey(name string) string {
 type Config struct {
 	ConfigVersion    int                 `toml:"config_version"`
 	DefaultModel     string              `toml:"default_model"`
-	Language         string              `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $VOLTUI_LANG
+	Language         string              `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
 	CredentialsStore string              `toml:"credentials_store"`
-	Brand            BrandConfig         `toml:"brand"`
-	Auth             AuthConfig          `toml:"auth"`
 	UI               UIConfig            `toml:"ui"`
 	Desktop          DesktopConfig       `toml:"desktop"`
 	Notifications    NotificationsConfig `toml:"notifications"`
@@ -58,10 +55,8 @@ type Config struct {
 	Environment      EnvironmentConfig   `toml:"environment"`
 	Plugins          []PluginEntry       `toml:"plugins"`
 	Skills           SkillsConfig        `toml:"skills"`
-	Codegraph        CodegraphConfig     `toml:"codegraph"`
 	Statusline       StatuslineConfig    `toml:"statusline"`
 	LSP              LSPConfig           `toml:"lsp"`
-	Workbench        WorkbenchConfig     `toml:"workbench"`
 	Bot              BotConfig           `toml:"bot"`
 	Serve            ServeConfig         `toml:"serve"`
 	Secrets          SecretsConfig       `toml:"secrets"`
@@ -70,10 +65,29 @@ type Config struct {
 	providerSources            map[string]providerSourceScope
 	shadowedProjectProviders   []ProviderEntry
 	ignoredProjectDefaultModel string
+	ignoredLegacyStepLimits    bool
 	expansionEnv               map[string]string
+	pluginPackageOwners        map[string]string
+	pluginPackageSkillOwners   map[string][]string
+	pluginPackageAgentOwners   map[string][]string
+	safeMode                   bool
 }
 
-// IgnoredProjectDefaultModel returns the project voltui.toml default_model
+// SafeMode reports whether this configuration was built for recovery startup.
+// It is process-local runtime state and is never persisted to TOML.
+func (c *Config) SafeMode() bool {
+	return c != nil && c.safeMode
+}
+
+// IgnoredLegacyAgentStepLimits reports whether this load found and ignored the
+// retired [agent].max_steps or planner_max_steps settings. Boot removes standard
+// key assignments before loading, while read-only/config-only loads only report
+// and normalize them in memory.
+func (c *Config) IgnoredLegacyAgentStepLimits() bool {
+	return c != nil && c.ignoredLegacyStepLimits
+}
+
+// IgnoredProjectDefaultModel returns the project reasonix.toml default_model
 // that LoadForRoot ignored because no configured provider serves it (see
 // restoreUnresolvableProjectDefaultModel), or "" when none was ignored.
 func (c *Config) IgnoredProjectDefaultModel() string {
@@ -84,15 +98,10 @@ func (c *Config) IgnoredProjectDefaultModel() string {
 }
 
 // SecretsConfig controls the credential protection layers. It is a user-global
-// setting: project voltui.toml values are ignored (see LoadForRoot), so a cloned
-// repository cannot silently switch off redaction or opt the user into
-// workflow-breaking protections.
+// setting: project reasonix.toml values are ignored (see LoadForRoot), so a
+// cloned repository cannot silently opt the user into workflow-breaking
+// protections.
 type SecretsConfig struct {
-	// RedactToolOutput masks credential-shaped values in tool output before it
-	// enters model context and UI events. Nil keeps the default enabled.
-	// Session transcripts and background-job artifacts on disk are always
-	// redacted, regardless of this switch.
-	RedactToolOutput *bool `toml:"redact_tool_output"`
 	// FilterSubprocessEnv strips credential-like environment variables
 	// (*_API_KEY, *TOKEN*, *SECRET*, ...) from tool subprocesses (bash, hooks,
 	// LSP, MCP stdio). Default off: it breaks token-based workflows such as
@@ -100,15 +109,9 @@ type SecretsConfig struct {
 	FilterSubprocessEnv bool `toml:"filter_subprocess_env"`
 	// ProtectSensitiveFiles makes read/list/search tools treat credential
 	// paths (.env, .git-credentials, .netrc, *.pem/*.key/*.p12/*.pfx, ~/.ssh)
-	// as invisible. Default off: output redaction already masks the values,
-	// and hiding the files breaks legitimate "edit my .env" workflows.
+	// as invisible. Default off because hiding the files breaks legitimate
+	// "edit my .env" workflows.
 	ProtectSensitiveFiles bool `toml:"protect_sensitive_files"`
-}
-
-// SecretsRedactToolOutput reports whether live tool output redaction is enabled
-// (default true).
-func (c *Config) SecretsRedactToolOutput() bool {
-	return c == nil || c.Secrets.RedactToolOutput == nil || *c.Secrets.RedactToolOutput
 }
 
 type providerSourceScope string
@@ -126,7 +129,7 @@ type UIConfig struct {
 	ShortcutLayout string `toml:"shortcut_layout"` // classic|desktop; accepted for compatibility
 	CloseBehavior  string `toml:"close_behavior"`  // legacy desktop close behavior; prefer desktop.close_behavior
 	ShowReasoning  bool   `toml:"show_reasoning"`  // Ctrl+O / /verbose: show thinking text in CLI; false = collapsed
-	CursorShape    string `toml:"cursor_shape"`    // block|underline|bar; empty defaults to underline
+	CursorShape    string `toml:"cursor_shape"`    // block|underline|bar; empty defaults to bar
 }
 
 // DesktopConfig controls desktop-only UI preferences. It is intentionally
@@ -137,131 +140,29 @@ type DesktopConfig struct {
 	LayoutStyle             string   `toml:"layout_style"`               // classic|workbench|creation; desktop layout style
 	Theme                   string   `toml:"theme"`                      // auto|dark|light; empty resolves to auto
 	ThemeStyle              string   `toml:"theme_style"`                // graphite|aurora|slate|carbon|nocturne|amber and legacy aliases
+	ExternalOpener          string   `toml:"external_opener"`            // preferred installed app used by the desktop Open control
 	CloseBehavior           string   `toml:"close_behavior"`             // quit|background; desktop window close behavior
 	DisplayMode             string   `toml:"display_mode"`               // standard|compact (legacy "minimal" maps to compact); transcript display mode
 	StatusBarStyle          string   `toml:"status_bar_style"`           // icon|text; desktop status bar metric labels
 	StatusBarItems          []string `toml:"status_bar_items"`           // ordered visible desktop status bar items
-	DefaultToolApprovalMode string   `toml:"default_tool_approval_mode"` // ask|auto|yolo; default for newly-created desktop sessions
+	DefaultToolApprovalMode string   `toml:"default_tool_approval_mode"` // ask|auto|yolo; defaults to auto for newly-created desktop sessions
 	CheckUpdates            *bool    `toml:"check_updates"`              // startup update checks; nil keeps the default enabled
 	UpdateChannel           string   `toml:"update_channel"`             // stable|preview; canary is accepted as a legacy alias for preview
 	Telemetry               *bool    `toml:"telemetry"`                  // anonymous launch ping plus scrubbed next-launch native crash diagnostics; nil keeps the default enabled
 	Metrics                 *bool    `toml:"metrics"`                    // aggregate desktop metrics (anonymous signal/bucket counts, including lifecycle health; no content); nil keeps the default enabled
 	ProviderAccess          []string `toml:"provider_access"`            // desktop-only list of provider entries shown in Settings > Model > Access
 	ExpandThinking          bool     `toml:"expand_thinking"`            // true = show reasoning text expanded by default; false = collapsed
+	ConversationWidth       string   `toml:"conversation_width"`         // standard|full; max transcript width; empty = standard
 }
 
-// BrandConfig controls the white-label / OEM identity of the desktop app.
-type BrandConfig struct {
-	Name         string `toml:"name"`
-	ShortName    string `toml:"short_name"`
-	LogoPath     string `toml:"logo_path"`
-	WordmarkPath string `toml:"wordmark_path"`
-	IconPath     string `toml:"icon_path"`
-}
-
-// AuthConfig enables a desktop OIDC identity gate.
-type AuthConfig struct {
-	Provider        string `toml:"provider"` // "oidc"; empty disables desktop auth
-	Issuer          string `toml:"issuer"`
-	ClientID        string `toml:"client_id"`
-	Scope           string `toml:"scope"`
-	CallbackMinPort int    `toml:"callback_port_min"`
-	CallbackMaxPort int    `toml:"callback_port_max"`
-}
-
-func (c *Config) AuthProvider() string {
-	return strings.ToLower(strings.TrimSpace(c.Auth.Provider))
-}
-
-func (c *Config) AuthScope() string {
-	if scope := strings.TrimSpace(c.Auth.Scope); scope != "" {
-		return scope
+// DesktopExternalOpener returns the user-selected external opener id. The
+// desktop shell resolves it against applications installed on the current OS;
+// an empty or unavailable id safely falls back to the platform file manager.
+func (c *Config) DesktopExternalOpener() string {
+	if c == nil {
+		return ""
 	}
-	return "openid profile email"
-}
-
-func (c *Config) AuthCallbackPorts() (int, int) {
-	minPort, maxPort := c.Auth.CallbackMinPort, c.Auth.CallbackMaxPort
-	if minPort <= 0 {
-		minPort = 42000
-	}
-	if maxPort <= 0 {
-		maxPort = 42099
-	}
-	if maxPort < minPort {
-		maxPort = minPort
-	}
-	return minPort, maxPort
-}
-
-func (c *Config) AuthConfigured() bool {
-	return c.AuthProvider() != "" ||
-		strings.TrimSpace(c.Auth.Issuer) != "" ||
-		strings.TrimSpace(c.Auth.ClientID) != ""
-}
-
-func (c *Config) AuthEnabled() bool {
-	return c.AuthProvider() == "oidc" &&
-		strings.TrimSpace(c.Auth.Issuer) != "" &&
-		strings.TrimSpace(c.Auth.ClientID) != ""
-}
-
-var defaultBrandName = "VoltUI"
-
-func compiledDefaultBrandName() string {
-	if name := strings.TrimSpace(defaultBrandName); name != "" {
-		return name
-	}
-	return "VoltUI"
-}
-
-func (c *Config) BrandName() string {
-	if v := firstEnv("VOLTUI_BRAND_NAME", "REASONIX_BRAND_NAME"); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(c.Brand.Name); v != "" {
-		return v
-	}
-	return compiledDefaultBrandName()
-}
-
-func (c *Config) BrandShortName() string {
-	if v := firstEnv("VOLTUI_BRAND_SHORT_NAME", "REASONIX_SHORT_NAME"); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(c.Brand.ShortName); v != "" {
-		return v
-	}
-	return c.BrandName()
-}
-
-func (c *Config) BrandLogoPath() string {
-	if v := firstEnv("VOLTUI_BRAND_LOGO", "REASONIX_BRAND_LOGO"); v != "" {
-		return v
-	}
-	return c.expandVars(strings.TrimSpace(c.Brand.LogoPath))
-}
-
-func (c *Config) BrandWordmarkPath() string {
-	if v := firstEnv("VOLTUI_BRAND_WORDMARK", "REASONIX_BRAND_WORDMARK"); v != "" {
-		return v
-	}
-	return c.expandVars(strings.TrimSpace(c.Brand.WordmarkPath))
-}
-
-func (c *Config) BrandIconPath() string {
-	if v := firstEnv("VOLTUI_BRAND_ICON", "REASONIX_BRAND_ICON"); v != "" {
-		return v
-	}
-	return c.expandVars(strings.TrimSpace(c.Brand.IconPath))
-}
-
-func (c *Config) ApplyBrandName(s string) string {
-	name := c.BrandName()
-	if strings.TrimSpace(name) == "" || name == "VoltUI" {
-		return s
-	}
-	return strings.ReplaceAll(s, "VoltUI", name)
+	return strings.ToLower(strings.TrimSpace(c.Desktop.ExternalOpener))
 }
 
 // NotificationsConfig controls optional system notifications for CLI chat/run.
@@ -316,18 +217,17 @@ func (c *Config) UIShortcutLayout() string {
 	}
 }
 
-// UICursorShape normalizes ui.cursor_shape. Defaults to "underline" to avoid
-// block-cursor visual corruption with CJK wide characters in the textarea
-// (Bubble Tea real-cursor + CJK column-counting drift). Valid values:
-// "block", "underline", "bar".
+// UICursorShape normalizes ui.cursor_shape. The slim "bar" default stays
+// visible without covering CJK wide characters. Valid values are "block",
+// "underline", and "bar".
 func (c *Config) UICursorShape() string {
 	switch strings.ToLower(strings.TrimSpace(c.UI.CursorShape)) {
 	case "block":
 		return "block"
-	case "bar":
-		return "bar"
-	default:
+	case "underline":
 		return "underline"
+	default:
+		return "bar"
 	}
 }
 
@@ -432,6 +332,15 @@ func (c *Config) DesktopDisplayMode() string {
 	default:
 		return "standard"
 	}
+}
+
+// DesktopConversationWidth returns the normalized desktop conversation width.
+// Unknown and missing values fall back to standard for backward compatibility.
+func (c *Config) DesktopConversationWidth() string {
+	if c != nil && strings.EqualFold(strings.TrimSpace(c.Desktop.ConversationWidth), "full") {
+		return "full"
+	}
+	return "standard"
 }
 
 // NormalizeToolApprovalMode returns the canonical desktop/session tool approval
@@ -566,16 +475,6 @@ func (c *Config) ColdResumePruneEnabled() bool {
 	return *c.Agent.ColdResumePrune
 }
 
-// PlanModeAllowHostAutomation reports whether first-party browser/desktop
-// automation tools may run while planning. Default true favors convenience;
-// privacy-sensitive users can disable it in config.
-func (c *Config) PlanModeAllowHostAutomation() bool {
-	if c == nil || c.Agent.PlanModeAllowHostAutomation == nil {
-		return true
-	}
-	return *c.Agent.PlanModeAllowHostAutomation
-}
-
 // ResponseLanguage normalizes the top-level language preference for final
 // answers. Empty means auto: replies follow the current user turn.
 func (c *Config) ResponseLanguage() string {
@@ -665,22 +564,6 @@ type LSPServer struct {
 	InstallHint string            `toml:"install_hint"`
 }
 
-// CodegraphConfig governs the built-in CodeGraph MCP server.
-type CodegraphConfig struct {
-	Enabled     bool   `toml:"enabled"`
-	AutoInstall bool   `toml:"auto_install"`
-	Path        string `toml:"path"`
-	Tier        string `toml:"tier"`
-}
-
-func (c CodegraphConfig) ShouldAutoStart() bool {
-	return c.Enabled
-}
-
-func (c CodegraphConfig) ResolvedTier() string {
-	return resolvedMCPTier(c.Tier)
-}
-
 // StatuslineConfig configures a custom status line. Command, when set, is run at
 // startup and after each turn; its first line of stdout replaces the built-in
 // status data row. A JSON payload (model, context tokens, cwd) is fed on stdin.
@@ -708,6 +591,20 @@ type BotConfig struct {
 	Weixin             WeixinBotConfig       `toml:"weixin"`
 	Routes             []BotRouteConfig      `toml:"routes"`
 	Connections        []BotConnectionConfig `toml:"connections"`
+	// DesktopWatchers persists /desktop watch subscriptions so god-view
+	// notifications survive a desktop restart. Managed by the desktop bot
+	// bridge, not the settings UI.
+	DesktopWatchers []BotDesktopWatcherConfig `toml:"desktop_watchers"`
+}
+
+// BotDesktopWatcherConfig is one bot chat subscribed to desktop events
+// (/desktop watch on).
+type BotDesktopWatcherConfig struct {
+	Platform     string `toml:"platform"`
+	ConnectionID string `toml:"connection_id"`
+	Domain       string `toml:"domain"`
+	ChatType     string `toml:"chat_type"`
+	ChatID       string `toml:"chat_id"`
 }
 
 type BotSelfUserIDs struct {
@@ -760,18 +657,13 @@ type BotPairingConfig struct {
 
 // BotAccessConfig controls who may use one concrete bot connection.
 type BotAccessConfig struct {
-	Enabled                bool     `toml:"enabled"`
-	AllowAll               bool     `toml:"allow_all"`
-	PairingEnabled         bool     `toml:"pairing_enabled"`
-	Users                  []string `toml:"users"`
-	Groups                 []string `toml:"groups"`
-	Approvers              []string `toml:"approvers"`
-	Admins                 []string `toml:"admins"`
-	WorkspaceRoots         []string `toml:"workspace_roots"`
-	ProjectIDs             []string `toml:"project_ids"`
-	AgentProfileIDs        []string `toml:"agent_profile_ids"`
-	PermissionCeiling      string   `toml:"permission_ceiling"`
-	RequireHighRiskConfirm bool     `toml:"require_high_risk_confirm"`
+	Enabled        bool     `toml:"enabled"`
+	AllowAll       bool     `toml:"allow_all"`
+	PairingEnabled bool     `toml:"pairing_enabled"`
+	Users          []string `toml:"users"`
+	Groups         []string `toml:"groups"`
+	Approvers      []string `toml:"approvers"`
+	Admins         []string `toml:"admins"`
 }
 
 // QQBotConfig QQ 官方 Bot API v2 配置。
@@ -796,6 +688,11 @@ type FeishuBotConfig struct {
 	Mode              string `toml:"mode"`               // webhook（默认）| websocket
 	WebhookPort       int    `toml:"webhook_port"`       // webhook 模式端口
 	RequireMention    bool   `toml:"require_mention"`
+	// OutboundMediaRoots contains absolute local directories the loopback /send
+	// control API may attach files from. Media refs must be bare filenames and
+	// must exist in exactly one configured root. Empty (the default) disables
+	// outbound file sending.
+	OutboundMediaRoots []string `toml:"outbound_media_roots"`
 }
 
 // WeixinBotConfig 微信 iLink Bot 配置。
@@ -836,19 +733,15 @@ type BotConnectionCredential struct {
 }
 
 type BotConnectionSessionMapping struct {
-	RemoteID               string `toml:"remote_id"`
-	SessionID              string `toml:"session_id"`
-	SessionSource          string `toml:"session_source"`
-	ChatType               string `toml:"chat_type"`
-	UserID                 string `toml:"user_id"`
-	ThreadID               string `toml:"thread_id"`
-	ProjectID              string `toml:"project_id"`
-	AgentProfileID         string `toml:"agent_profile_id"`
-	PermissionCeiling      string `toml:"permission_ceiling"`
-	RequireHighRiskConfirm bool   `toml:"require_high_risk_confirm"`
-	Scope                  string `toml:"scope"`
-	WorkspaceRoot          string `toml:"workspace_root"`
-	UpdatedAt              string `toml:"updated_at"`
+	RemoteID      string `toml:"remote_id"`
+	SessionID     string `toml:"session_id"`
+	SessionSource string `toml:"session_source"`
+	ChatType      string `toml:"chat_type"`
+	UserID        string `toml:"user_id"`
+	ThreadID      string `toml:"thread_id"`
+	Scope         string `toml:"scope"`
+	WorkspaceRoot string `toml:"workspace_root"`
+	UpdatedAt     string `toml:"updated_at"`
 }
 
 // ServeConfig controls the HTTP serve frontend security settings.
@@ -862,7 +755,7 @@ type ServeConfig struct {
 	// cryptographically random token is generated at startup and printed.
 	Token string `toml:"token"`
 	// PasswordHash is a bcrypt hash of the password for auth_mode = "password".
-	// Generate one with: voltui serve --hash-password --password '...'
+	// Generate one with: reasonix serve --hash-password --password '...'
 	PasswordHash string `toml:"password_hash"`
 	// BehindProxy indicates the server sits behind a trusted reverse proxy
 	// (nginx, Caddy, Cloudflare, etc.) that sets X-Forwarded-For and
@@ -888,22 +781,6 @@ type NetworkConfig struct {
 	// process environment instead.
 	NoProxy string             `toml:"no_proxy"`
 	Proxy   NetworkProxyConfig `toml:"proxy"`
-	// TrustedIntranet is a user-global allowlist for web_fetch targets that
-	// resolve to RFC1918 or IPv6 ULA addresses. Project config is never allowed
-	// to override it (see LoadForRoot), because cloned repositories are not a
-	// trust boundary.
-	TrustedIntranet TrustedIntranetConfig `toml:"trusted_intranet"`
-}
-
-type TrustedIntranetConfig struct {
-	Enabled bool                        `toml:"enabled"`
-	Sites   []TrustedIntranetSiteConfig `toml:"sites"`
-}
-
-type TrustedIntranetSiteConfig struct {
-	Host  string   `toml:"host"`
-	CIDRs []string `toml:"cidrs"`
-	Ports []int    `toml:"ports"`
 }
 
 // NetworkProxyConfig is the structured custom-proxy editor shape. Password is
@@ -1063,7 +940,7 @@ func (c *Config) IsSkillDisabled(name string) bool {
 // (write_file / edit_file / multi_edit / move_file) may modify; empty means the
 // current working directory, so writes stay inside the project by default.
 // AllowWrite lists extra directories writers may also touch (e.g. a sibling repo
-// or a temp dir). ForbidRead lists directories the agent may not read or list at all
+// or a temp dir). ForbidRead lists files or directories the agent may not read or list
 // (e.g. ~/.ssh for secrets). Both support ${VAR} / ${VAR:-default} expansion. Reads are
 // unrestricted; confining `bash` is Phase 1 (OS-level sandbox).
 type SandboxConfig struct {
@@ -1126,7 +1003,7 @@ func (c *Config) AllowWriteRoots() []string {
 	return roots
 }
 
-// ForbidReadRoots returns the directories the agent is forbidden from reading
+// ForbidReadRoots returns the paths the agent is forbidden from reading
 // or listing, with ${VAR} expanded. Relative roots are resolved against the
 // current working directory; the confiner resolves them to symlink-free paths.
 // Empty when no forbid_read entries are configured.
@@ -1163,10 +1040,9 @@ func (c *Config) BashMode() string {
 }
 
 // BashModeForGOOS normalises the bash-sandbox mode for tests and cross-platform
-// rendering. Windows currently forces bash sandboxing off, even when older
-// configs explicitly requested "enforce", because the native backend still
-// breaks common Git Bash/MSYS2, Docker, and git workflows. macOS/Linux keep the
-// existing explicit-mode behavior.
+// rendering. Windows has no OS-level Bash sandbox and forces the effective mode
+// off, even when older configs explicitly requested "enforce". macOS/Linux keep
+// the existing explicit-mode behavior.
 func (c *Config) BashModeForGOOS(goos string) string {
 	if goos == "windows" {
 		return "off"
@@ -1189,36 +1065,51 @@ func (c *Config) BashModeForGOOS(goos string) string {
 // each model's prompt prefix stays cache-stable). SubagentModel is the optional
 // default for runAs=subagent skills; SubagentModels overrides it per skill name.
 type AgentConfig struct {
-	SystemPrompt        string            `toml:"system_prompt"`
-	SystemPromptFile    string            `toml:"system_prompt_file"`
-	MaxSteps            int               `toml:"max_steps"`         // tool-call rounds per turn; 0 = unlimited
-	PlannerMaxSteps     int               `toml:"planner_max_steps"` // planner read-only tool-call rounds; 0 = unlimited
-	Temperature         float64           `toml:"temperature"`
-	PlannerModel        string            `toml:"planner_model"`
-	GuardianModel       string            `toml:"guardian_model"`
-	GuardianTemperature float64           `toml:"guardian_temperature"`
+	SystemPrompt     string `toml:"system_prompt"`
+	SystemPromptFile string `toml:"system_prompt_file"`
+	// Deprecated compatibility fields. Old TOML and desktop clients may still
+	// send them, but config loading normalizes both to zero and rendering omits
+	// them. One-off CLI and unattended bot limits remain separate controls.
+	MaxSteps            int     `toml:"max_steps"`
+	PlannerMaxSteps     int     `toml:"planner_max_steps"`
+	Temperature         float64 `toml:"temperature"`
+	PlannerModel        string  `toml:"planner_model"`
+	GuardianModel       string  `toml:"guardian_model"`
+	GuardianTemperature float64 `toml:"guardian_temperature"`
+	// RecoveryModel optionally names a dedicated model for the independent
+	// recovery reviewer. Empty falls back to GuardianModel, then the main model.
+	RecoveryModel string `toml:"recovery_model"`
+	// RecoveryTemperature is accepted from older configs but ignored. Auto
+	// Guard review is deterministic at temperature zero.
+	RecoveryTemperature float64           `toml:"recovery_temperature"`
 	SubagentModel       string            `toml:"subagent_model"`
 	SubagentModels      map[string]string `toml:"subagent_models"`
 	SubagentEffort      string            `toml:"subagent_effort"`
 	SubagentEfforts     map[string]string `toml:"subagent_efforts"`
 	MaxSubagentDepth    int               `toml:"max_subagent_depth"`
-	// MaxSubagentConcurrency bounds parallel task/fleet work in one session.
-	// Missing or non-positive values use the agent package default.
+	// MaxSubagentConcurrency bounds how many sub-agents (task, fleet items,
+	// profile skills, nested children) may run at once in one session.
+	// 0 means the default (6). Values outside 1–32 are clamped on load.
 	MaxSubagentConcurrency int `toml:"max_subagent_concurrency"`
+	// MaxParallelWriters bounds concurrent writer-capable sub-agents that
+	// declare non-overlapping write_paths. 0 means the default (3). Must not
+	// exceed MaxSubagentConcurrency after normalization.
+	MaxParallelWriters int `toml:"max_parallel_writers"`
 	// OutputStyle selects a persona/tone block folded into the system prompt at
 	// startup (a built-in like "explanatory"/"learning"/"concise", or a custom
 	// .voltui/output-styles/<name>.md). Empty = the unmodified prompt.
 	OutputStyle string `toml:"output_style"`
-	// AutoPlan controls whether interactive turns that look multi-step start in
-	// plan mode automatically: "off" keeps plan mode manual, "on" enables the
-	// approval gate. Legacy "ask" is treated as "on".
+	// Deprecated compatibility field. Automatic plan mode was retired in config
+	// version 5; old TOML remains readable, but loading normalizes it to "off"
+	// and rendering omits it. Plan mode remains available as an explicit user
+	// choice.
 	AutoPlan string `toml:"auto_plan"`
 	// ReasoningLanguage controls the preferred language for visible reasoning
 	// text. Empty/auto follows the conversation language. Applied as transient
 	// turn context, not the stable prompt.
 	ReasoningLanguage string `toml:"reasoning_language"`
-	// AutoPlanClassifier optionally names a provider/model used to classify
-	// borderline auto-plan decisions. Empty keeps the zero-cost heuristic path.
+	// Deprecated compatibility field paired with AutoPlan. Old TOML remains
+	// readable, but loading clears it and rendering omits it.
 	AutoPlanClassifier string `toml:"auto_plan_classifier"`
 	// Compaction window fractions: soft = notice only, compact = trigger, force = hard ceiling.
 	SoftCompactRatio    float64 `toml:"soft_compact_ratio"`
@@ -1233,80 +1124,19 @@ type AgentConfig struct {
 	// ColdResumePrune elides stale tool results when a session reopens past the
 	// provider cache window. nil = default enabled.
 	ColdResumePrune *bool `toml:"cold_resume_prune"`
-	// PlanModeAllowHostAutomation controls whether first-party browser/desktop
-	// automation tools may run in plan mode. nil/default = true for convenience.
-	PlanModeAllowHostAutomation *bool `toml:"plan_mode_allow_host_automation"`
-	// PlanModeAllowedTools names extra custom tools the plan-mode policy may treat
-	// as read-only. It cannot unlock known blocked tools or unsafe bash commands.
-	PlanModeAllowedTools []string `toml:"plan_mode_allowed_tools"`
-	// PlanModeReadOnlyCommands names concrete shell command prefixes that plan mode
-	// may treat as read-only. Shell operators, background execution, and shell
-	// interpreter prefixes remain blocked.
+	// PlanModeReadOnlyCommands is retained for old config/session round trips. Main
+	// Plan bash calls now use the ordinary Permissions classifier and Sandbox.
 	PlanModeReadOnlyCommands []string `toml:"plan_mode_read_only_commands"`
-	// MemoryCompiler controls the v5 execution-memory compiler. Missing configs
-	// default to enabled so users get the self-improving planner unless they opt
-	// out explicitly.
-	MemoryCompiler MemoryCompilerConfig `toml:"memory_compiler"`
-}
-
-// MemoryCompilerConfig controls the v5 execution-memory compiler.
-type MemoryCompilerConfig struct {
-	Enabled   *bool  `toml:"enabled"`
-	Verbosity string `toml:"verbosity"`
-}
-
-const (
-	MemoryCompilerVerbosityObserve = "observe"
-	MemoryCompilerVerbosityCompact = "compact"
-)
-
-// MemoryCompilerEnabled reports whether the v5 execution-memory compiler should
-// participate in future turns. Missing config defaults to true.
-func (c *Config) MemoryCompilerEnabled() bool {
-	if c == nil || c.Agent.MemoryCompiler.Enabled == nil {
-		return true
-	}
-	return *c.Agent.MemoryCompiler.Enabled
-}
-
-// MemoryCompilerVerbosity reports how much Memory v5 state should be injected
-// into model-facing turns. The default observes and learns without prompt
-// injection, so Memory v5 IR is not provider-visible unless opted in.
-func (c *Config) MemoryCompilerVerbosity() string {
-	if c == nil {
-		return MemoryCompilerVerbosityObserve
-	}
-	return NormalizeMemoryCompilerVerbosity(c.Agent.MemoryCompiler.Verbosity)
-}
-
-// NormalizeMemoryCompilerVerbosity accepts current and legacy spellings for the
-// Memory v5 injection mode.
-func NormalizeMemoryCompilerVerbosity(v string) string {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "", "observe", "observed", "silent", "minimal", "none":
-		return MemoryCompilerVerbosityObserve
-	case "compact", "inject", "injected", "contract", "on":
-		return MemoryCompilerVerbosityCompact
-	default:
-		return MemoryCompilerVerbosityObserve
-	}
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's
 // token budget; the harness compacts older history as a turn's prompt approaches
 // it (see agent compaction). 0 disables compaction for the instance.
 type ProviderEntry struct {
-	Name    string `toml:"name"`
-	Kind    string `toml:"kind"`
-	BaseURL string `toml:"base_url"`
-	ChatURL string `toml:"chat_url"`
-	// APISurface selects the OpenAI-compatible request schema. Empty/default is
-	// chat_completions; "responses" uses the Responses API at ResponsesURL or
-	// base_url + "/responses".
-	APISurface string `toml:"api_surface"`
-	// ResponsesURL is an optional full Responses API endpoint URL. It is ignored
-	// unless APISurface is "responses".
-	ResponsesURL   string            `toml:"responses_url"`
+	Name           string            `toml:"name"`
+	Kind           string            `toml:"kind"`
+	BaseURL        string            `toml:"base_url"`
+	ChatURL        string            `toml:"chat_url"`
 	Model          string            `toml:"model"`      // a single model (back-compat)
 	Models         []string          `toml:"models"`     // a vendor's model list (one base_url/key, many models)
 	ModelsURL      string            `toml:"models_url"` // auto-fetch models from this URL on startup
@@ -1366,8 +1196,7 @@ type ProviderEntry struct {
 	visionOverride *bool
 	// NoProxy reaches this provider's base_url directly, never through the proxy.
 	// For China-only endpoints a foreign-exit proxy resets the TLS handshake (#2803).
-	NoProxy  bool `toml:"no_proxy"`
-	Priority int  `toml:"priority"` // higher wins when a bare model name exists in multiple providers
+	NoProxy bool `toml:"no_proxy"`
 }
 
 type ProviderModelOverride struct {
@@ -1375,32 +1204,10 @@ type ProviderModelOverride struct {
 	SupportedEfforts  []string `toml:"supported_efforts"`
 	DefaultEffort     string   `toml:"default_effort"`
 	Vision            *bool    `toml:"vision"`
-}
-
-const (
-	APISurfaceChatCompletions = "chat_completions"
-	APISurfaceResponses       = "responses"
-)
-
-func NormalizeAPISurface(raw string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "chat", "chat_completions", "chat-completions", "chat.completions":
-		return "", nil
-	case "responses", "response":
-		return APISurfaceResponses, nil
-	default:
-		return "", fmt.Errorf("api_surface %q: must be chat_completions or responses", raw)
-	}
-}
-
-func EffectiveAPISurface(e *ProviderEntry) string {
-	if e == nil {
-		return APISurfaceChatCompletions
-	}
-	if surface, err := NormalizeAPISurface(e.APISurface); err == nil && surface != "" {
-		return surface
-	}
-	return APISurfaceChatCompletions
+	// ContextWindow overrides the provider-wide context budget for this model.
+	// Zero inherits ProviderEntry.ContextWindow so existing configurations keep
+	// their current compaction behavior.
+	ContextWindow int `toml:"context_window"`
 }
 
 // ModelList returns the models this provider exposes: the explicit `models` list,
@@ -1454,7 +1261,6 @@ func IsLikelyChatModel(model string) bool {
 		"asr": true, "stt": true, "tts": true,
 		"whisper": true, "embedding": true,
 		"moderation": true, "rerank": true, "dall": true,
-		"image": true, "video": true,
 		"transcription": true,
 	}
 	for _, tok := range tokens {
@@ -1546,6 +1352,9 @@ func (e *ProviderEntry) applyModelOverride() {
 	}
 	if ov.Vision != nil {
 		e.visionOverride = ov.Vision
+	}
+	if ov.ContextWindow > 0 {
+		e.ContextWindow = ov.ContextWindow
 	}
 }
 
@@ -1660,39 +1469,34 @@ type PermissionsConfig struct {
 	Deny  []string `toml:"deny"`
 }
 
-// WorkbenchConfig declares desktop workbench integrations.
-type WorkbenchConfig struct {
-	Plugins   []WorkbenchPluginEntry   `toml:"plugins"`
-	Providers []WorkbenchProviderEntry `toml:"providers"`
+// MCPConfigSource records where a merged MCP entry came from. It is runtime
+// provenance only and is never serialized back into TOML or .mcp.json.
+type MCPConfigSource string
+
+const (
+	MCPSourceUnknown        MCPConfigSource = ""
+	MCPSourceUserConfig     MCPConfigSource = "user_config"
+	MCPSourceProjectConfig  MCPConfigSource = "project_config"
+	MCPSourceProjectMCPJSON MCPConfigSource = "project_mcp_json"
+	MCPSourceLegacyUser     MCPConfigSource = "legacy_user_config"
+	MCPSourcePluginPackage  MCPConfigSource = "plugin_package"
+)
+
+func (s MCPConfigSource) UserAuthorized() bool {
+	switch s {
+	case MCPSourceUserConfig, MCPSourceLegacyUser, MCPSourcePluginPackage,
+		MCPSourceProjectConfig, MCPSourceProjectMCPJSON:
+		return true
+	default:
+		return false
+	}
 }
 
-type WorkbenchPluginEntry struct {
-	ID           string            `toml:"id"`
-	Name         string            `toml:"name"`
-	Kind         string            `toml:"kind"`
-	Entry        string            `toml:"entry"`
-	Version      string            `toml:"version"`
-	Capabilities []string          `toml:"capabilities"`
-	ProviderIDs  []string          `toml:"provider_ids"`
-	Config       map[string]string `toml:"config"`
-	Enabled      *bool             `toml:"enabled"`
-}
-
-func (e WorkbenchPluginEntry) IsEnabled() bool {
-	return e.Enabled == nil || *e.Enabled
-}
-
-type WorkbenchProviderEntry struct {
-	ID           string            `toml:"id"`
-	Type         string            `toml:"type"`
-	Server       string            `toml:"server"`
-	URL          string            `toml:"url"`
-	Command      string            `toml:"command"`
-	Args         []string          `toml:"args"`
-	Capabilities []string          `toml:"capabilities"`
-	Headers      map[string]string `toml:"headers"`
-	Env          map[string]string `toml:"env"`
-	Config       map[string]string `toml:"config"`
+// ProjectScoped reports whether an MCP entry belongs to one workspace. Project
+// scope remains useful for provenance, activation, and relative-path handling;
+// it no longer implies a separate launch-approval workflow.
+func (s MCPConfigSource) ProjectScoped() bool {
+	return s == MCPSourceProjectConfig || s == MCPSourceProjectMCPJSON
 }
 
 // PluginEntry declares an external MCP server. Type selects the transport:
@@ -1701,7 +1505,7 @@ type WorkbenchProviderEntry struct {
 // static Headers. String fields support ${VAR} / ${VAR:-default} expansion so
 // secrets (bearer tokens, keys) come from the environment, not the file. The
 // fields mirror Claude Code's mcpServers spec, so entries can come from either
-// voltui.toml's [[plugins]] or a project-root .mcp.json (see loadMCPJSON).
+// reasonix.toml's [[plugins]] or a project-root .mcp.json (see loadMCPJSON).
 type PluginEntry struct {
 	Name    string            `toml:"name"`
 	Type    string            `toml:"type"` // "stdio" (default) | "http" | "sse"
@@ -1717,11 +1521,6 @@ type PluginEntry struct {
 	// from this server. Keys are server-local tool names, not model-visible
 	// mcp__server__tool names.
 	ToolTimeoutSeconds map[string]int `toml:"tool_timeout_seconds"`
-	// TrustedReadOnlyTools names raw MCP tool names that VoltUI should treat as
-	// trusted read-only for planner / plan-mode / read-only research surfaces.
-	// Use this only for tools whose semantics are known to be side-effect free.
-	TrustedReadOnlyTools []string `toml:"trusted_read_only_tools"`
-	Source            MCPConfigSource     `toml:"-"` // runtime: where this merged entry came from
 	// AutoStart controls whether the server connects during session startup.
 	// Nil preserves historical behavior: configured servers start automatically.
 	AutoStart *bool `toml:"auto_start"`
@@ -1735,7 +1534,8 @@ type PluginEntry struct {
 	//                  swap happens once the spawn finishes.
 	// Empty defaults to "background" so enabled MCPs connect automatically
 	// without blocking chat. Unknown non-empty values fall back to "background".
-	Tier         string `toml:"tier"`
+	Tier         string          `toml:"tier"`
+	Source       MCPConfigSource `toml:"-" json:"-"`
 	expansionEnv map[string]string
 }
 
@@ -1746,6 +1546,9 @@ func (e PluginEntry) ShouldAutoStart() bool {
 // ResolvedTier returns the normalized tier ("eager"|"background") with the
 // project default applied. Legacy lazy and unknown values fall back to
 // background so enabled MCPs are available without manual connection.
+//
+// Tier no longer changes runtime process start timing; it remains for config
+// compatibility and diagnostics only.
 func (e PluginEntry) ResolvedTier() string {
 	return resolvedMCPTier(e.Tier)
 }
@@ -1763,10 +1566,31 @@ func resolvedMCPTier(tier string) string {
 	}
 }
 
+// AutoStartPlugins returns enabled MCP entries for the catalog. Durable
+// enable/disable overrides in mcp-activation.json take precedence over the
+// legacy auto_start field. auto_start=false without an override still maps to
+// disabled; true/nil map to enabled. "Auto start" no longer means "spawn the
+// process at session boot" — enabled servers register cached tools and start
+// on first real tool call.
 func (c *Config) AutoStartPlugins() []PluginEntry {
+	return c.EnabledPlugins("", DefaultMCPActivationStore())
+}
+
+// EnabledPlugins returns catalog-enabled MCP entries for workspace, consulting
+// the activation store when provided.
+func (c *Config) EnabledPlugins(workspace string, activation *MCPActivationStore) []PluginEntry {
+	if c == nil {
+		return nil
+	}
 	out := make([]PluginEntry, 0, len(c.Plugins))
 	for _, p := range c.Plugins {
-		if p.ShouldAutoStart() {
+		enabled := p.ShouldAutoStart()
+		if activation != nil {
+			if resolved, err := activation.IsEnabled(p, workspace); err == nil {
+				enabled = resolved
+			}
+		}
+		if enabled {
 			out = append(out, p)
 		}
 	}
@@ -1774,23 +1598,13 @@ func (c *Config) AutoStartPlugins() []PluginEntry {
 }
 
 // DefaultSystemPrompt is used when config provides none.
-const DefaultSystemPrompt = `You are VoltUI, a coding agent focused on executing code tasks.
-Use the provided tools to read and write files and run shell commands.
-Principles: understand the request before acting; verify with tools instead of
-guessing; keep changes minimal and correct; briefly summarize what you did.
-For multi-step work, establish the task list once with todo_write and keep exactly
-one item in_progress. Finish each item with complete_step using its exact title or
-number and real evidence; the host advances the list automatically, so do not
-re-send todo_write merely to mark completed items.
-In plan mode the harness blocks writer tools: do read-only research, then write a
-concise plan as your reply and stop. The user is asked to approve before anything
-is changed; once approved, work through the steps, signing off each step as you go.`
-
-const ExecutionWorkflowPolicy = `Tool and execution workflow: use only tool names present in the attached tool schema. Do not invent tool names such as send_feedback; after an unknown-tool error, choose a real listed tool or finish without another tool call. For multi-step execution, call todo_write once to establish the list with exactly one in_progress item, then call complete_step for each finished item using its exact title, 1-based number, or the unique current step. The host advances the task list automatically; do not use todo_write to mark completed items or replace the list after each step. When an edit is rejected because the file changed or a fresh read is required, re-read that file before editing again. On Windows PowerShell, use PowerShell syntax or the dedicated cross-platform file tools, never bash-only forms such as ls -la; check that external programs such as git exist before invoking them, and if unavailable continue with repository/file tools or report the missing prerequisite instead of retrying.`
+const DefaultSystemPrompt = `You are VoltUI, a coding agent.
+Use the available tools when they help you complete the user's request.
+Keep changes focused and responses concise.`
 
 // UserDecisionPolicy is appended to every system prompt, including user-custom
 // prompts, so custom personas cannot accidentally remove the `ask` UI contract.
-const UserDecisionPolicy = `User-owned choices: when a real decision belongs to the user — scope, approach, library, risk, manual validation, or any ambiguous or consequential path — and there is no obvious safe default, call the ask tool with 2-4 concrete options so the UI shows a choice. Do not ask in prose, infer a choice from silence, or continue by choosing for the user; do not choose for the user. Tool-approval bypass modes do not answer ask questions or approve plans. If no interactive user is available, the ask tool returns a model-assumption fallback; state that assumption and choose the safest reversible path.`
+const UserDecisionPolicy = `User-owned choices: when a consequential decision has no safe, obvious default, call the ask tool so the user can choose. Otherwise proceed with a sensible reversible default. Do not ask in prose when ask is available. In non-interactive runs, state the assumption and take the safest reversible path.`
 
 // LanguagePolicy is the auto fallback appended to the system prompt when no
 // concrete UI language is resolved. It is static English text, so it stays part
@@ -1803,12 +1617,11 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 // Default returns the built-in default configuration.
 func Default() *Config {
 	return &Config{
-		ConfigVersion:    4,
-		DefaultModel:     "qwen-thinking",
+		ConfigVersion:    5,
+		DefaultModel:     "deepseek-flash",
 		CredentialsStore: CredentialsStoreAuto,
-		Brand:            BrandConfig{Name: compiledDefaultBrandName()},
-		Auth:             AuthConfig{Scope: "openid profile email", CallbackMinPort: 42000, CallbackMaxPort: 42099},
 		UI:               UIConfig{Theme: "auto"},
+		Desktop:          DesktopConfig{DefaultToolApprovalMode: "auto", ConversationWidth: "standard"},
 		Notifications: NotificationsConfig{
 			Enabled:         false,
 			TurnDone:        true,
@@ -1817,10 +1630,8 @@ func Default() *Config {
 		},
 		Agent: AgentConfig{
 			SystemPrompt: DefaultSystemPrompt,
-			// 0 = no step cap: the agent loops until the model gives a final answer,
-			// the user cancels, or the provider errors. Context stays bounded by
-			// compaction, not by a round count. Set a positive agent.max_steps only
-			// if you want a hard guard against runaway.
+			// Normal interactive execution has no configurable total round cap. It
+			// is bounded by adaptive progress guards and context compaction instead.
 			MaxSteps:               0,
 			PlannerMaxSteps:        0,
 			AutoPlan:               "off",
@@ -1830,21 +1641,21 @@ func Default() *Config {
 			CompactForceRatio:      0.9,
 			MaxSubagentDepth:       2,
 			MaxSubagentConcurrency: 6,
+			MaxParallelWriters:     3,
 		},
-		// Mode "ask" with no rules keeps `voltui run` autonomous (no TTY → ask
-		// resolves to allow) while `voltui` prompts before writers. Users add
+		// Mode "ask" with no rules keeps `reasonix run` autonomous (no TTY → ask
+		// resolves to allow) while `reasonix` prompts before writers. Users add
 		// deny/allow rules to harden or quiet specific tools.
 		Permissions: PermissionsConfig{Mode: "ask"},
 		// Sandbox uses platform defaults: macOS/Linux jail bash by default;
-		// Windows forces bash off until the native sandbox backend is reliable.
+		// Windows has no OS-level Bash sandbox and always forces bash off.
 		// Network=true here so an absent [sandbox] in a user's file keeps egress
 		// (zero value would wrongly deny it).
 		Sandbox: SandboxConfig{Network: true},
 		// LSP tools on by default, but dormant until a language server is on PATH;
 		// a missing server yields an install hint rather than an error.
-		LSP:       LSPConfig{Enabled: true},
-		Codegraph: CodegraphConfig{Enabled: true, AutoInstall: true},
-		Network:   NetworkConfig{ProxyMode: netclient.ModeAuto},
+		LSP:     LSPConfig{Enabled: true},
+		Network: NetworkConfig{ProxyMode: netclient.ModeAuto},
 		Bot: BotConfig{
 			ToolApprovalMode:   "ask",
 			MaxSteps:           25,
@@ -1853,7 +1664,7 @@ func Default() *Config {
 			QueueCap:           20,
 			QueueDrop:          "summarize",
 			IgnoreSelfMessages: true,
-			Control:            BotControlConfig{Addr: "127.0.0.1:37913", TokenEnv: "VOLTUI_BOT_CONTROL_TOKEN"},
+			Control:            BotControlConfig{Addr: "127.0.0.1:37913", TokenEnv: "REASONIX_BOT_CONTROL_TOKEN"},
 			Pairing:            BotPairingConfig{Enabled: true, RequestTTLMinutes: 60, MaxPendingPerPlatform: 3},
 			Allowlist:          BotAllowlist{Enabled: true},
 			QQ:                 QQBotConfig{AppSecretEnv: "QQ_BOT_APP_SECRET"},
@@ -1861,14 +1672,8 @@ func Default() *Config {
 			Weixin:             WeixinBotConfig{AccountID: "default", TokenEnv: "WEIXIN_BOT_TOKEN", APIBase: "https://ilinkai.weixin.qq.com"},
 		},
 		Providers: []ProviderEntry{
-			{Name: "qwen-thinking", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "qwen-gpu4/qwen36-opus-prisma8-gpu4", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, SupportedEfforts: []string{"high", "max"}, DefaultEffort: "high"},
-			{Name: "glm-5.2", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "glm-primary/glm-5.2-nvfp4", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072},
-			{Name: "qwen-fast", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "qwen-gpu5/qwen36-opus-prisma8-gpu5", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, SupportedEfforts: []string{"high", "max"}, DefaultEffort: "high"},
-			{Name: "image-gen", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "image-gpu5/image-gpu5", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072},
 			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: deepSeekV4FlashPrice()},
 			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: deepSeekV4ProPrice()},
-			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: mimoV25ProPrice(), NoProxy: true, Priority: 10},
-			{Name: "mimo-flash", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: mimoV25Price(), NoProxy: true},
 		},
 	}
 }
@@ -1927,69 +1732,16 @@ func (c *Config) ResolveModel(ref string) (*ProviderEntry, bool) {
 		return &cp, true
 	}
 	// a bare model name → the provider that lists it
-	if e, ambiguous := c.resolveBareModel(ref); len(ambiguous) == 0 && e != nil {
-		return e, true
+	for i := range c.Providers {
+		if c.Providers[i].HasModel(ref) {
+			cp := c.Providers[i]
+			cp.Model = ref
+			cp.applyModelPrice()
+			cp.applyModelOverride()
+			return &cp, true
+		}
 	}
 	return nil, false
-}
-
-func (c *Config) resolveBareModel(ref string) (*ProviderEntry, []string) {
-	var best ProviderEntry
-	bestPriority := 0
-	found := false
-	ties := []string{}
-	for i := range c.Providers {
-		if !c.Providers[i].HasModel(ref) {
-			continue
-		}
-		priority := c.Providers[i].Priority
-		candidateRef := c.Providers[i].Name + "/" + ref
-		if !found || priority > bestPriority {
-			best = c.Providers[i]
-			bestPriority = priority
-			found = true
-			ties = []string{candidateRef}
-			continue
-		}
-		if priority == bestPriority {
-			ties = append(ties, candidateRef)
-		}
-	}
-	if !found {
-		return nil, nil
-	}
-	if len(ties) > 1 {
-		return nil, ties
-	}
-	best.Model = ref
-	best.applyModelPrice()
-	best.applyModelOverride()
-	return &best, nil
-}
-
-func (c *Config) AmbiguousModelRefs(ref string) []string {
-	ref = strings.TrimSpace(ref)
-	if ref == "" {
-		return nil
-	}
-	if access := desktopProviderAccessMap(c.Desktop.ProviderAccess); len(access) > 0 {
-		ref = retargetDesktopOfficialRef(ref, access)
-	}
-	if _, _, ok := strings.Cut(ref, "/"); ok {
-		return nil
-	}
-	if _, found := c.Provider(ref); found {
-		return nil
-	}
-	_, ambiguous := c.resolveBareModel(ref)
-	return ambiguous
-}
-
-func (c *Config) ResolveModelError(ref string) error {
-	if ambiguous := c.AmbiguousModelRefs(ref); len(ambiguous) > 0 {
-		return fmt.Errorf("ambiguous model %q matches %s; use provider/model or set a unique provider priority", ref, strings.Join(ambiguous, ", "))
-	}
-	return fmt.Errorf("unknown model %q (configured: %s)", ref, c.providerNames())
 }
 
 // ResolveModelWithFallback resolves a model reference to the canonical
@@ -2002,18 +1754,12 @@ func (c *Config) ResolveModelWithFallback(ref string) (resolvedRef string, fallb
 		if e, found := c.ResolveModel(ref); found {
 			return e.Name + "/" + e.Model, false, true
 		}
-		if ambiguous := c.AmbiguousModelRefs(ref); len(ambiguous) > 0 {
-			return "", false, false
-		}
 	}
 	// Before falling back to the first configured provider (which may not be the
 	// user's preferred choice), try the configured default_model.  Skip when ref
 	// already WAS the DefaultModel (it already failed above, so retrying won't
 	// help) or when the default provider has no API key configured.
 	if ref != c.DefaultModel && c.DefaultModel != "" {
-		if ambiguous := c.AmbiguousModelRefs(c.DefaultModel); len(ambiguous) > 0 {
-			return "", false, false
-		}
 		if e, found := c.ResolveModel(c.DefaultModel); found && e.Configured() {
 			return e.Name + "/" + e.Model, true, true
 		}
@@ -2144,12 +1890,12 @@ func (c *Config) ResolveSystemPromptForRoot(root string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("system_prompt_file: %w", err)
 		}
-		return c.ApplyBrandName(strings.TrimSpace(string(b))), nil
+		return strings.TrimSpace(string(b)), nil
 	}
 	if strings.TrimSpace(c.Agent.SystemPrompt) == "" {
-		return c.ApplyBrandName(DefaultSystemPrompt), nil
+		return DefaultSystemPrompt, nil
 	}
-	return c.ApplyBrandName(c.Agent.SystemPrompt), nil
+	return c.Agent.SystemPrompt, nil
 }
 
 // Validate checks that the selected model's provider is usable.
@@ -2179,21 +1925,4 @@ func (c *Config) providerNames() string {
 		names[i] = p.Name
 	}
 	return strings.Join(names, ", ")
-}
-
-// MCPConfigSource records where a merged MCP entry came from. It is runtime
-// metadata only (TOML tag "-") so config rendering never persists it.
-type MCPConfigSource string
-
-const (
-	MCPSourceUnknown        MCPConfigSource = ""
-	MCPSourceUserConfig     MCPConfigSource = "user_config"
-	MCPSourceProjectConfig  MCPConfigSource = "project_config"
-	MCPSourceProjectMCPJSON MCPConfigSource = "project_mcp_json"
-	MCPSourceLegacyUser     MCPConfigSource = "legacy_user_config"
-	MCPSourcePluginPackage  MCPConfigSource = "plugin_package"
-)
-
-func (s MCPConfigSource) ProjectScoped() bool {
-	return s == MCPSourceProjectConfig || s == MCPSourceProjectMCPJSON
 }

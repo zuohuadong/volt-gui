@@ -24,9 +24,9 @@ type Options struct {
 	// existing Host (desktop active session). Collect never starts MCP when
 	// RuntimeHost is set unless Live is also true (desktop passes Live=false).
 	RuntimeHost *plugin.Host
-	// HomeDir and ReasonixHomeDir override discovery roots (tests).
+	// HomeDir and VoltUIHomeDir override discovery roots (tests).
 	HomeDir         string
-	ReasonixHomeDir string
+	VoltUIHomeDir string
 }
 
 // Report is the stable capability diagnostics payload.

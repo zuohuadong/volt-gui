@@ -622,7 +622,6 @@ func searchBotProjectsWithRG(ctx context.Context, rg string, projects []botProje
 	// The desktop app hosts bot bridges in the GUI process; without this an
 	// rg search flashes a console window on Windows.
 	proc.HideWindow(cmd)
-
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError

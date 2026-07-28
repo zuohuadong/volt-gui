@@ -11,8 +11,8 @@ import (
 	"voltui/internal/tool"
 )
 
-// fakeImageTool models an MCP screenshot result: textual output and images
-// use distinct channels.
+// fakeImageTool implements tool.ImageTool: text and images travel on separate
+// channels, like an MCP remote tool returning a screenshot.
 type fakeImageTool struct {
 	text   string
 	images []string
@@ -30,10 +30,11 @@ func (f *fakeImageTool) ExecuteWithImages(ctx context.Context, args json.RawMess
 	return f.text, f.images, nil
 }
 
-// Tool-result image bytes are preserved independently when text output is
-// truncated. This prevents the textual head/tail splice from corrupting base64.
+// Tool-result images must reach the session message intact even when the text
+// output blows the truncation budget: the head+tail splice that trims tool text
+// would corrupt a base64 payload, so images ride outside the truncated text.
 func TestToolResultImagesBypassTruncation(t *testing.T) {
-	dataURL := "data:image/png;base64," + strings.Repeat("QUFB", 20000)
+	dataURL := "data:image/png;base64," + strings.Repeat("QUFB", 20000) // ~80KB payload, alone over the text budget
 	longText := strings.Repeat("x", maxToolOutputBytes+1024) + "[image: image/png]"
 	reg := tool.NewRegistry()
 	reg.Add(&fakeImageTool{text: longText, images: []string{dataURL}})

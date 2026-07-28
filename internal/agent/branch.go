@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"voltui/internal/fileutil"
-	"voltui/internal/scopedmemory"
+	fileencoding "voltui/internal/fileutil/encoding"
 	"voltui/internal/store"
 )
 
@@ -18,35 +18,26 @@ import (
 // navigable conversation tree. The conversation itself remains in the .jsonl
 // file; metadata lives beside it at <session>.meta.
 type BranchMeta struct {
-	ID                    string                `json:"id"`
-	Name                  string                `json:"name,omitempty"`
-	ParentID              string                `json:"parent_id,omitempty"`
-	ForkTurn              int                   `json:"fork_turn,omitempty"`
-	ForkMessageIndex      int                   `json:"fork_message_index,omitempty"`
-	CreatedAt             time.Time             `json:"created_at"`
-	UpdatedAt             time.Time             `json:"updated_at"`
-	Scope                 string                `json:"scope,omitempty"`
-	WorkspaceRoot         string                `json:"workspace_root,omitempty"`
-	TopicID               string                `json:"topic_id,omitempty"`
-	TopicTitle            string                `json:"topic_title,omitempty"`
-	CustomTitle           string                `json:"custom_title,omitempty"`
-	Model                 string                `json:"model,omitempty"`
-	TokenMode             string                `json:"token_mode,omitempty"`
-	Mode                  string                `json:"mode,omitempty"`
-	ToolApprovalMode      string                `json:"tool_approval_mode,omitempty"`
-	Goal                  string                `json:"goal,omitempty"`
-	AgentProfileID        string                `json:"agent_profile_id,omitempty"`
-	AgentProfileName      string                `json:"agent_profile_name,omitempty"`
-	AgentProfileBaseModel string                `json:"agent_profile_base_model,omitempty"`
-	AgentProfileUpdatedAt string                `json:"agent_profile_updated_at,omitempty"`
-	AgentProfileHistory   []AgentProfileSwitch  `json:"agent_profile_history,omitempty"`
-	MemoryContext         *scopedmemory.Context `json:"memory_context,omitempty"`
-	MemoryScopes          []string              `json:"memory_scopes,omitempty"`
-	MemorySourceIDs       []string              `json:"memory_source_ids,omitempty"`
-	MemoryUpdatedAt       string                `json:"memory_updated_at,omitempty"`
-	Recovered             bool                  `json:"recovered,omitempty"`
-	RecoveryReason        string                `json:"recovery_reason,omitempty"`
-	RecoveryDigest        string                `json:"recovery_digest,omitempty"`
+	ID               string    `json:"id"`
+	Name             string    `json:"name,omitempty"`
+	ParentID         string    `json:"parent_id,omitempty"`
+	ForkTurn         int       `json:"fork_turn,omitempty"`
+	ForkMessageIndex int       `json:"fork_message_index,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	Scope            string    `json:"scope,omitempty"`
+	WorkspaceRoot    string    `json:"workspace_root,omitempty"`
+	TopicID          string    `json:"topic_id,omitempty"`
+	TopicTitle       string    `json:"topic_title,omitempty"`
+	CustomTitle      string    `json:"custom_title,omitempty"`
+	Model            string    `json:"model,omitempty"`
+	TokenMode        string    `json:"token_mode,omitempty"`
+	Mode             string    `json:"mode,omitempty"`
+	ToolApprovalMode string    `json:"tool_approval_mode,omitempty"`
+	Goal             string    `json:"goal,omitempty"`
+	Recovered        bool      `json:"recovered,omitempty"`
+	RecoveryReason   string    `json:"recovery_reason,omitempty"`
+	RecoveryDigest   string    `json:"recovery_digest,omitempty"`
 	// RecoveryDepth counts how many recovery forks separate this branch from a
 	// normal session (1 = forked from a normal session). SaveRecoveryBranch
 	// refuses to fork past SessionRecoveryMaxDepth so a conflict loop cannot
@@ -74,61 +65,6 @@ type BranchMeta struct {
 	Turns        int               `json:"turns,omitempty"`
 	Preview      string            `json:"preview,omitempty"`
 	InFlightTurn *InFlightTurnMeta `json:"in_flight_turn,omitempty"`
-}
-
-// AgentProfileSwitch is an auditable record of a thread runtime changing its
-// selected Agent Profile. The main transcript remains provider-compatible;
-// profile evidence stays in the branch sidecar.
-type AgentProfileSwitch struct {
-	ProfileID       string    `json:"profile_id,omitempty"`
-	ProfileName     string    `json:"profile_name,omitempty"`
-	ModelRef        string    `json:"model_ref,omitempty"`
-	ToolIDs         []string  `json:"tool_ids,omitempty"`
-	SkillNames      []string  `json:"skill_names,omitempty"`
-	MemoryScopes    []string  `json:"memory_scopes,omitempty"`
-	MemorySourceIDs []string  `json:"memory_source_ids,omitempty"`
-	PermissionMode  string    `json:"permission_mode,omitempty"`
-	Action          string    `json:"action"`
-	ChangedAt       time.Time `json:"changed_at"`
-}
-
-// InheritAgentProfile copies the reusable runtime axes to a child branch. The
-// caller assigns the child's thread id and refreshes its visible memory audit;
-// parent thread memory must never become child thread memory by inheritance.
-func (m *BranchMeta) InheritAgentProfile(parent BranchMeta) {
-	if m == nil {
-		return
-	}
-	m.AgentProfileID = parent.AgentProfileID
-	m.AgentProfileName = parent.AgentProfileName
-	m.AgentProfileBaseModel = parent.AgentProfileBaseModel
-	m.AgentProfileUpdatedAt = parent.AgentProfileUpdatedAt
-	m.AgentProfileHistory = cloneAgentProfileHistory(parent.AgentProfileHistory)
-	if parent.MemoryContext != nil {
-		memoryContext := *parent.MemoryContext
-		memoryContext.ThreadID = ""
-		m.MemoryContext = &memoryContext
-	} else {
-		m.MemoryContext = nil
-	}
-	m.MemoryScopes = nil
-	m.MemorySourceIDs = nil
-	m.MemoryUpdatedAt = ""
-}
-
-func cloneAgentProfileHistory(history []AgentProfileSwitch) []AgentProfileSwitch {
-	if len(history) == 0 {
-		return nil
-	}
-	out := make([]AgentProfileSwitch, len(history))
-	for i := range history {
-		out[i] = history[i]
-		out[i].ToolIDs = append([]string(nil), history[i].ToolIDs...)
-		out[i].SkillNames = append([]string(nil), history[i].SkillNames...)
-		out[i].MemoryScopes = append([]string(nil), history[i].MemoryScopes...)
-		out[i].MemorySourceIDs = append([]string(nil), history[i].MemorySourceIDs...)
-	}
-	return out
 }
 
 // BranchMetaCountsVersion is stamped into BranchMeta.SchemaVersion whenever a
@@ -185,7 +121,7 @@ func LoadBranchMeta(sessionPath string) (BranchMeta, bool, error) {
 	if metaPath == "" {
 		return BranchMeta{}, false, nil
 	}
-	b, err := os.ReadFile(metaPath)
+	b, err := fileencoding.ReadFileUTF8(metaPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return BranchMeta{}, false, nil
@@ -334,6 +270,19 @@ func TouchBranchMeta(sessionPath string) error {
 }
 
 func MarkSessionInFlightTurn(sessionPath string, startMessageIndex int, preserveUser bool) error {
+	return SetSessionInFlightTurn(sessionPath, InFlightTurnMeta{
+		StartMessageIndex: startMessageIndex,
+		PreserveUser:      preserveUser,
+		StartedAt:         time.Now().UTC(),
+	})
+}
+
+// SetSessionInFlightTurn writes an existing in-flight marker verbatim. It is
+// used when a running turn moves to a recovery branch: preserving StartedAt is
+// what lets crash recovery relocate the turn after an in-turn compaction has
+// rewritten its original message index.
+func SetSessionInFlightTurn(sessionPath string, marker InFlightTurnMeta) error {
+	startMessageIndex := marker.StartMessageIndex
 	if startMessageIndex < 0 {
 		startMessageIndex = 0
 	}
@@ -346,11 +295,11 @@ func MarkSessionInFlightTurn(sessionPath string, startMessageIndex int, preserve
 	if err != nil {
 		return err
 	}
-	m.InFlightTurn = &InFlightTurnMeta{
-		StartMessageIndex: startMessageIndex,
-		PreserveUser:      preserveUser,
-		StartedAt:         time.Now().UTC(),
+	marker.StartMessageIndex = startMessageIndex
+	if marker.StartedAt.IsZero() {
+		marker.StartedAt = time.Now().UTC()
 	}
+	m.InFlightTurn = &marker
 	return SaveBranchMetaPreserveUpdated(sessionPath, m)
 }
 

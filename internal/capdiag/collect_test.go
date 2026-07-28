@@ -52,7 +52,7 @@ auto_start = false
 	r := capdiag.Collect(capdiag.Options{
 		Root:            root,
 		HomeDir:         home,
-		ReasonixHomeDir: filepath.Join(home, ".reasonix"),
+		VoltUIHomeDir: filepath.Join(home, ".reasonix"),
 		Live:            false,
 	})
 
@@ -102,7 +102,7 @@ auto_start = false
 	// Deterministic JSON round.
 	j1, _ := capdiag.RenderJSON(r)
 	r2 := capdiag.Collect(capdiag.Options{
-		Root: root, HomeDir: home, ReasonixHomeDir: filepath.Join(home, ".reasonix"),
+		Root: root, HomeDir: home, VoltUIHomeDir: filepath.Join(home, ".reasonix"),
 	})
 	j2, _ := capdiag.RenderJSON(r2)
 	if j1 != j2 {
@@ -121,7 +121,7 @@ func TestMissingConventionDirsNoWarning(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("REASONIX_HOME", filepath.Join(home, ".reasonix"))
 	r := capdiag.Collect(capdiag.Options{
-		Root: root, HomeDir: home, ReasonixHomeDir: filepath.Join(home, ".reasonix"),
+		Root: root, HomeDir: home, VoltUIHomeDir: filepath.Join(home, ".reasonix"),
 	})
 	if r.Issues == nil {
 		t.Fatal("empty issues must be a non-nil slice for JSON consumers")
@@ -151,7 +151,7 @@ func TestProjectHooksEnabledByDefault(t *testing.T) {
   "hooks": {"Stop": [{"command": "echo done"}]}
 }`)
 	r := capdiag.Collect(capdiag.Options{
-		Root: root, HomeDir: home, ReasonixHomeDir: filepath.Join(home, ".reasonix"),
+		Root: root, HomeDir: home, VoltUIHomeDir: filepath.Join(home, ".reasonix"),
 	})
 	if !r.Hooks.TrustedProject {
 		t.Fatal("compatibility field trusted_project should reflect default enablement")
@@ -187,7 +187,7 @@ func TestLoadForRootReadOnlyDoesNotRewriteTier(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = capdiag.Collect(capdiag.Options{
-		Root: root, HomeDir: home, ReasonixHomeDir: filepath.Join(home, ".reasonix"),
+		Root: root, HomeDir: home, VoltUIHomeDir: filepath.Join(home, ".reasonix"),
 	})
 	raw, err := os.ReadFile(userCfg)
 	if err != nil {
@@ -209,7 +209,7 @@ func TestUnknownHookEventIsReported(t *testing.T) {
   }
 }`)
 	r := capdiag.Collect(capdiag.Options{
-		Root: root, HomeDir: home, ReasonixHomeDir: filepath.Join(home, ".reasonix"),
+		Root: root, HomeDir: home, VoltUIHomeDir: filepath.Join(home, ".reasonix"),
 	})
 	found := false
 	for _, is := range r.Issues {
@@ -236,7 +236,7 @@ func TestCollectIgnoresMatchersOnNonToolHookEvents(t *testing.T) {
 }`)
 
 	r := capdiag.Collect(capdiag.Options{
-		Root: root, HomeDir: home, ReasonixHomeDir: reasonixHome,
+		Root: root, HomeDir: home, VoltUIHomeDir: reasonixHome,
 	})
 	if len(r.Hooks.Entries) != 1 {
 		t.Fatalf("hook entries = %+v, want one Stop hook", r.Hooks.Entries)
@@ -272,7 +272,7 @@ func TestCollectRejectsNonRegularPluginContextFile(t *testing.T) {
 	}
 
 	r := capdiag.Collect(capdiag.Options{
-		Root: root, HomeDir: home, ReasonixHomeDir: reasonixHome,
+		Root: root, HomeDir: home, VoltUIHomeDir: reasonixHome,
 	})
 	for _, issue := range r.Issues {
 		if issue.Code == "hook.missing_context_file" {
@@ -299,7 +299,7 @@ func TestPluginPackageCommandsAreReported(t *testing.T) {
 	}
 
 	r := capdiag.Collect(capdiag.Options{
-		Root: root, HomeDir: home, ReasonixHomeDir: reasonixHome,
+		Root: root, HomeDir: home, VoltUIHomeDir: reasonixHome,
 	})
 	if len(r.Plugins.Packages) != 1 {
 		t.Fatalf("plugin packages = %+v, want demo", r.Plugins.Packages)
@@ -333,7 +333,7 @@ command = "`+filepath.ToSlash(ext)+`"
 		_ = os.Chmod(ext, 0o755)
 	}
 	r := capdiag.Collect(capdiag.Options{
-		Root: root, HomeDir: home, ReasonixHomeDir: filepath.Join(home, ".reasonix"),
+		Root: root, HomeDir: home, VoltUIHomeDir: filepath.Join(home, ".reasonix"),
 	})
 	raw, _ := json.Marshal(r)
 	if strings.Contains(string(raw), "secret-user-bin") {

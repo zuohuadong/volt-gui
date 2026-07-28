@@ -235,8 +235,8 @@ func TestNormalizeCommandRepairsOnlyPowerShellFileEscapedQuotes(t *testing.T) {
 	}{
 		{
 			name:    "powershell file path copied with json escaped quotes",
-			command: `powershell -File \"C:\Users\Example\.voltui\hooks\archive-attachments.ps1\"`,
-			want:    `powershell -File "C:\Users\Example\.voltui\hooks\archive-attachments.ps1"`,
+			command: `powershell -File \"C:\Users\Example\.reasonix\hooks\archive-attachments.ps1\"`,
+			want:    `powershell -File "C:\Users\Example\.reasonix\hooks\archive-attachments.ps1"`,
 		},
 		{
 			name:    "pwsh file path with spaces",
@@ -351,8 +351,8 @@ func TestRepairablePowerShellFileArgs(t *testing.T) {
 // use.
 func installSuperpowersV611HookFixture(t *testing.T, home string) string {
 	t.Helper()
-	voltuiHome := filepath.Join(home, ".voltui")
-	root := filepath.Join(voltuiHome, "plugins", "superpowers fixture")
+	reasonixHome := filepath.Join(home, ".reasonix")
+	root := filepath.Join(reasonixHome, "plugins", "superpowers fixture")
 	writeHookTestFile(t, filepath.Join(root, pluginpkg.CodexManifest), `{
   "name": "superpowers",
   "description": "Core skills library for Claude Code",
@@ -376,7 +376,7 @@ func installSuperpowersV611HookFixture(t *testing.T, home string) string {
 }`)
 	writeHookTestFile(t, filepath.Join(root, "hooks", "run-hook.cmd"),
 		"@echo off\r\nset /p hook_input=\r\necho %1:%hook_input%\r\n")
-	if err := pluginpkg.Upsert(voltuiHome, pluginpkg.InstalledPlugin{
+	if err := pluginpkg.Upsert(reasonixHome, pluginpkg.InstalledPlugin{
 		Name:         "superpowers",
 		Root:         "plugins/superpowers fixture",
 		Version:      "6.1.1",
@@ -428,8 +428,8 @@ func TestLoadSuperpowersV611SessionStartExecutionContract(t *testing.T) {
 
 func TestLoadIncludesPluginSessionStartHook(t *testing.T) {
 	home := t.TempDir()
-	voltuiHome := filepath.Join(home, ".voltui")
-	root := filepath.Join(voltuiHome, "plugins", "superpowers")
+	reasonixHome := filepath.Join(home, ".reasonix")
+	root := filepath.Join(reasonixHome, "plugins", "superpowers")
 	writeSettings(t, home, `{"hooks":{"PostToolUse":[{"command":"echo global"}]}}`)
 	writeHookTestFile(t, filepath.Join(root, pluginpkg.CodexManifest), `{
   "name": "superpowers",
@@ -437,7 +437,7 @@ func TestLoadIncludesPluginSessionStartHook(t *testing.T) {
   "skills": "./skills/"
 }`)
 	writeHookTestFile(t, filepath.Join(root, "hooks", "session-start-codex"), "#!/usr/bin/env bash\necho ok\n")
-	if err := pluginpkg.Upsert(voltuiHome, pluginpkg.InstalledPlugin{
+	if err := pluginpkg.Upsert(reasonixHome, pluginpkg.InstalledPlugin{
 		Name:         "superpowers",
 		Root:         "plugins/superpowers",
 		Version:      "6.1.0",
@@ -464,8 +464,8 @@ func TestLoadIncludesPluginSessionStartHook(t *testing.T) {
 
 func TestLoadIncludesPluginClaudeCompatibilityHooks(t *testing.T) {
 	home := t.TempDir()
-	voltuiHome := filepath.Join(home, ".voltui")
-	root := filepath.Join(voltuiHome, "plugins", "claude-pack")
+	reasonixHome := filepath.Join(home, ".reasonix")
+	root := filepath.Join(reasonixHome, "plugins", "claude-pack")
 	writeHookTestFile(t, filepath.Join(root, pluginpkg.CodexManifest), `{
   "name": "claude-pack",
   "version": "1.0.0",
@@ -491,7 +491,7 @@ func TestLoadIncludesPluginClaudeCompatibilityHooks(t *testing.T) {
     ]
   }
 }`)
-	if err := pluginpkg.Upsert(voltuiHome, pluginpkg.InstalledPlugin{
+	if err := pluginpkg.Upsert(reasonixHome, pluginpkg.InstalledPlugin{
 		Name:         "claude-pack",
 		Root:         "plugins/claude-pack",
 		Version:      "1.0.0",
@@ -531,8 +531,8 @@ func TestLoadIncludesPluginClaudeCompatibilityHooks(t *testing.T) {
 
 func TestLoadPluginHooksPreservesExecutionContract(t *testing.T) {
 	home := t.TempDir()
-	voltuiHome := filepath.Join(home, ".voltui")
-	root := filepath.Join(voltuiHome, "plugins", "hook-contract")
+	reasonixHome := filepath.Join(home, ".reasonix")
+	root := filepath.Join(reasonixHome, "plugins", "hook-contract")
 	writeHookTestFile(t, filepath.Join(root, pluginpkg.NativeManifest), `{
   "name": "hook-contract",
   "hooks": {
@@ -542,7 +542,7 @@ func TestLoadPluginHooksPreservesExecutionContract(t *testing.T) {
     ]
   }
 }`)
-	if err := pluginpkg.Upsert(voltuiHome, pluginpkg.InstalledPlugin{
+	if err := pluginpkg.Upsert(reasonixHome, pluginpkg.InstalledPlugin{
 		Name:         "hook-contract",
 		Root:         "plugins/hook-contract",
 		ManifestKind: "native",
@@ -569,8 +569,8 @@ func TestLoadPluginHooksPreservesExecutionContract(t *testing.T) {
 
 func TestLoadExpandsVoltUIPluginRootBeforeShellLaunch(t *testing.T) {
 	home := t.TempDir()
-	voltuiHome := filepath.Join(home, ".voltui")
-	root := filepath.Join(voltuiHome, "plugins", "impeccable")
+	reasonixHome := filepath.Join(home, ".reasonix")
+	root := filepath.Join(reasonixHome, "plugins", "impeccable")
 	projectRoot := filepath.Join(home, "$CLAUDE_PLUGIN_ROOT-project")
 	writeHookTestFile(t, filepath.Join(root, pluginpkg.NativeManifest), `{
   "name": "impeccable",
@@ -585,7 +585,7 @@ func TestLoadExpandsVoltUIPluginRootBeforeShellLaunch(t *testing.T) {
     }]
   }
 }`)
-	if err := pluginpkg.Upsert(voltuiHome, pluginpkg.InstalledPlugin{
+	if err := pluginpkg.Upsert(reasonixHome, pluginpkg.InstalledPlugin{
 		Name:         "impeccable",
 		Root:         "plugins/impeccable",
 		Version:      "3.9.1",
@@ -707,12 +707,12 @@ func TestWindowsPOSIXShellExecFormUsesDiscoveredBash(t *testing.T) {
 }
 
 func TestWindowsBatchCommandLinePreservesQuotedPluginPath(t *testing.T) {
-	command := `"C:\Users\Test User\AppData\Roaming\voltui\plugins\superpowers/hooks/run-hook.cmd" session-start`
+	command := `"C:\Users\Test User\AppData\Roaming\reasonix\plugins\superpowers/hooks/run-hook.cmd" session-start`
 	got, ok := windowsBatchCommandLine(command)
 	if !ok {
 		t.Fatal("quoted plugin batch command was not recognized")
 	}
-	want := `cmd.exe /d /s /c ""C:\Users\Test User\AppData\Roaming\voltui\plugins\superpowers\hooks\run-hook.cmd" session-start"`
+	want := `cmd.exe /d /s /c ""C:\Users\Test User\AppData\Roaming\reasonix\plugins\superpowers\hooks\run-hook.cmd" session-start"`
 	if got != want {
 		t.Fatalf("batch command line = %q, want %q", got, want)
 	}
@@ -850,19 +850,19 @@ func TestDecodeHookOutputPreservesTruncatedUTF8Prefix(t *testing.T) {
 
 func TestVoltUIHomeOverridesGlobalHookPaths(t *testing.T) {
 	home := t.TempDir()
-	voltuiHome := filepath.Join(t.TempDir(), "rx-home")
+	reasonixHome := filepath.Join(t.TempDir(), "rx-home")
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	t.Setenv("REASONIX_HOME", voltuiHome)
-	if err := os.MkdirAll(voltuiHome, 0o755); err != nil {
+	t.Setenv("REASONIX_HOME", reasonixHome)
+	if err := os.MkdirAll(reasonixHome, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(voltuiHome, SettingsFilename), []byte(`{"hooks":{"PostToolUse":[{"command":"echo rx"}]}}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(reasonixHome, SettingsFilename), []byte(`{"hooks":{"PostToolUse":[{"command":"echo rx"}]}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	writeSettings(t, home, `{"hooks":{"PostToolUse":[{"command":"echo old"}]}}`)
 
-	if got := GlobalSettingsPath(""); got != filepath.Join(voltuiHome, SettingsFilename) {
+	if got := GlobalSettingsPath(""); got != filepath.Join(reasonixHome, SettingsFilename) {
 		t.Fatalf("GlobalSettingsPath = %q, want VoltUI home", got)
 	}
 	hooks := Load(LoadOptions{})
@@ -873,10 +873,10 @@ func TestVoltUIHomeOverridesGlobalHookPaths(t *testing.T) {
 
 func TestVoltUIHomeDoesNotFallBackToLegacyWhenIsolated(t *testing.T) {
 	home := t.TempDir()
-	voltuiHome := filepath.Join(t.TempDir(), "rx-home")
+	reasonixHome := filepath.Join(t.TempDir(), "rx-home")
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	t.Setenv("REASONIX_HOME", voltuiHome)
+	t.Setenv("REASONIX_HOME", reasonixHome)
 	writeSettings(t, home, `{"hooks":{"PostToolUse":[{"command":"echo old"}]}}`)
 
 	hooks := Load(LoadOptions{})

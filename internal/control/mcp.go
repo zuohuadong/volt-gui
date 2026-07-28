@@ -14,7 +14,7 @@ import (
 // (live server connections), the tool Registry the executor reads each turn, and
 // the session-scoped context a hot-added stdio server binds its subprocess to.
 // Like approvalManager it holds the live plumbing behind its own lock, off c.mu —
-// the Controller keeps the config-facing orchestration (persisting voltui.toml
+// the Controller keeps the config-facing orchestration (persisting reasonix.toml
 // on add/remove, building specs from entries).
 //
 // mu guards the lazy host creation and host-pointer reads. The registry is
@@ -67,6 +67,42 @@ func (m *mcpManager) connectSpec(s plugin.Spec) (int, error) {
 	if reg != nil {
 		reg.ResumePrefix(plugin.ToolPrefix(s.Name))
 		reg.RemovePrefix(plugin.ToolPrefix(s.Name))
+		for _, t := range tools {
+			reg.Add(t)
+		}
+	}
+	return len(tools), nil
+}
+
+// registerSpecOnDemand restores one enabled server into this session's tool
+// registry without starting a disconnected process. A live shared-host client
+// is reused immediately; otherwise cached lazy tools (or one connect stub on a
+// cache miss) start the server only when the model makes the first real call.
+func (m *mcpManager) registerSpecOnDemand(s plugin.Spec) (int, error) {
+	m.mu.Lock()
+	if m.host == nil {
+		m.host = plugin.NewHost()
+	}
+	host, ctx, reg := m.host, m.pluginCtx, m.reg
+	m.mu.Unlock()
+
+	var tools []tool.Tool
+	if host.HasClient(s.Name) {
+		toolsCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		var err error
+		tools, err = host.ToolsFor(toolsCtx, s.Name)
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		cached, _ := plugin.LoadCachedSchemaForSpec(s)
+		tools = plugin.LazyToolset(s, cached, host, reg, ctx, false)
+	}
+	if reg != nil {
+		prefix := plugin.ToolPrefix(s.Name)
+		reg.ResumePrefix(prefix)
+		reg.RemovePrefix(prefix)
 		for _, t := range tools {
 			reg.Add(t)
 		}

@@ -2,7 +2,7 @@
 // PreToolUse / PostToolUse fire around each tool call, PermissionRequest fires
 // before a tool approval prompt is shown, UserPromptSubmit before a turn, Stop
 // after it. Hooks come from settings.json — a project
-// (.reasonix/settings.json, only when the project is trusted) and a global
+// (.voltui/settings.json, only when the project is trusted) and a global
 // (<VoltUI home>/settings.json) file. A hook's exit
 // code is its verdict: 0 = pass, 2 = block (only on the gating events), other =
 // warn. The payload is delivered as JSON on stdin; output is captured (capped)
@@ -176,7 +176,7 @@ func (h ResolvedHook) timeout() time.Duration {
 
 // SettingsDirname / SettingsFilename locate a scope's settings.json.
 const (
-	SettingsDirname  = ".voltui"
+	SettingsDirname  = ".reasonix"
 	SettingsFilename = "settings.json"
 )
 
@@ -186,7 +186,7 @@ func GlobalSettingsPath(homeDir string) string {
 	return filepath.Join(reasonixHome(homeDir), SettingsFilename)
 }
 
-// ProjectSettingsPath is <root>/.reasonix/settings.json.
+// ProjectSettingsPath is <root>/.voltui/settings.json.
 func ProjectSettingsPath(projectRoot string) string {
 	return filepath.Join(projectRoot, SettingsDirname, SettingsFilename)
 }
@@ -1464,7 +1464,7 @@ func reasonixHome(override string) string {
 	if override != "" {
 		return filepath.Join(override, SettingsDirname)
 	}
-	if dir := config.ReasonixHomeDir(); dir != "" {
+	if dir := config.VoltUIHomeDir(); dir != "" {
 		return dir
 	}
 	if h, err := os.UserHomeDir(); err == nil {
@@ -1510,33 +1510,4 @@ func sameCleanPath(a, b string) bool {
 		b = bb
 	}
 	return filepath.Clean(a) == filepath.Clean(b)
-}
-
-// legacyReasonixHome returns the pre-isolation settings directory when VoltUI
-// is not already isolated and no override is set, so legacy trust/settings
-// files can be migrated. Empty means no legacy path applies.
-func legacyReasonixHome(override string) string {
-	if override != "" {
-		return ""
-	}
-	if config.IsolatedHomeDir() != "" {
-		return ""
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
-	}
-	legacy := filepath.Join(home, SettingsDirname)
-	if sameCleanPath(legacy, reasonixHome("")) {
-		return ""
-	}
-	return legacy
-}
-
-func legacyTrustPath(homeDir string) string {
-	dir := legacyReasonixHome(homeDir)
-	if dir == "" {
-		return ""
-	}
-	return filepath.Join(dir, TrustFilename)
 }

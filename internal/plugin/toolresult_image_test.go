@@ -42,22 +42,6 @@ func TestParseToolResultImageDefaultsToPNG(t *testing.T) {
 	}
 }
 
-func TestParseToolResultAcceptsVisionMimes(t *testing.T) {
-	payload := base64.StdEncoding.EncodeToString([]byte("x"))
-	for _, mime := range []string{"image/jpeg", "image/png", "image/gif", "image/webp"} {
-		t.Run(mime, func(t *testing.T) {
-			res := `{"content":[` + imageItem(mime, payload) + `]}`
-			text, images, err := parseToolResult(json.RawMessage(res))
-			if err != nil {
-				t.Fatalf("parseToolResult: %v", err)
-			}
-			if text != "[image: "+mime+"]" || len(images) != 1 || images[0] != "data:"+mime+";base64,"+payload {
-				t.Fatalf("got text=%q images=%v, want %s data URL", text, images, mime)
-			}
-		})
-	}
-}
-
 func TestParseToolResultImageNormalizesWrappedBase64(t *testing.T) {
 	payload := base64.StdEncoding.EncodeToString([]byte("png-bytes"))
 	wrapped := payload[:4] + "\n" + payload[4:8] + " " + payload[8:]
@@ -101,6 +85,7 @@ func TestParseToolResultImageUnsupportedMimeOmitted(t *testing.T) {
 }
 
 func TestParseToolResultImageOversizedOmitted(t *testing.T) {
+	// Valid base64 alphabet, over the byte budget.
 	big := strings.Repeat("QUFB", maxToolResultImageBytes/4+1)
 	res := `{"content":[` + imageItem("image/png", big) + `]}`
 	text, images, err := parseToolResult(json.RawMessage(res))

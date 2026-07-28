@@ -64,7 +64,7 @@ func TestACPInitializesWithoutAPIKey(t *testing.T) {
 			t.Fatalf("Run --acp initialize rc = %d, want 0", rc)
 		}
 	})
-	if !strings.Contains(out, `"protocolVersion":1`) || !strings.Contains(out, `"name":"voltui"`) {
+	if !strings.Contains(out, `"protocolVersion":1`) || !strings.Contains(out, `"name":"reasonix"`) {
 		t.Fatalf("initialize output = %s", out)
 	}
 }
@@ -75,7 +75,7 @@ func TestACPFactoryLoadsSessionCwdProjectConfig(t *testing.T) {
 		t.Fatalf("SetCredential: %v", err)
 	}
 	project := t.TempDir()
-	if err := os.WriteFile(filepath.Join(project, "voltui.toml"), []byte(`
+	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte(`
 default_model = "local"
 
 [[providers]]
@@ -87,7 +87,7 @@ api_key_env = "REASONIX_TEST_KEY"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmdDir := filepath.Join(project, ".voltui", "commands")
+	cmdDir := filepath.Join(project, ".reasonix", "commands")
 	if err := os.MkdirAll(cmdDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestACPFactoryClearsEffortOverrideForUnsupportedModel(t *testing.T) {
 		t.Fatalf("SetCredential: %v", err)
 	}
 	project := t.TempDir()
-	if err := os.WriteFile(filepath.Join(project, "voltui.toml"), []byte(`
+	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte(`
 default_model = "reasoner/reasoning-model"
 
 [[providers]]
@@ -166,6 +166,47 @@ effort = "high"
 	}
 	if state.EffortOverride == nil || *state.EffortOverride != "" {
 		t.Fatalf("plain effort override = %v, want explicit empty override", state.EffortOverride)
+	}
+}
+
+func TestACPFactoryAdvertisesAndNormalizesRuntimeProfiles(t *testing.T) {
+	isolateCLIConfigHome(t)
+	if _, err := config.SetCredential("REASONIX_TEST_KEY", "test-key"); err != nil {
+		t.Fatalf("SetCredential: %v", err)
+	}
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte(`
+default_model = "local"
+
+[[providers]]
+name = "local"
+kind = "acp-test-provider"
+base_url = "http://example.invalid"
+model = "fake-model"
+api_key_env = "REASONIX_TEST_KEY"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := (&acpFactory{profile: "full"}).SessionConfigState(context.Background(), acp.SessionConfigStateParams{
+		Cwd:            project,
+		RuntimeProfile: "delivery",
+	})
+	if err != nil {
+		t.Fatalf("SessionConfigState: %v", err)
+	}
+	work, ok := findACPConfigOption(state.ConfigOptions, "work_mode")
+	if !ok || work.CurrentValue != "delivery" || state.RuntimeProfile != "delivery" || len(work.Options) != 3 {
+		t.Fatalf("work mode state = %+v / %q, want delivery with 3 options", work, state.RuntimeProfile)
+	}
+
+	state, err = (&acpFactory{profile: "full"}).SessionConfigState(context.Background(), acp.SessionConfigStateParams{Cwd: project})
+	if err != nil {
+		t.Fatalf("default SessionConfigState: %v", err)
+	}
+	work, _ = findACPConfigOption(state.ConfigOptions, "work_mode")
+	if work.CurrentValue != "balanced" || state.RuntimeProfile != "balanced" {
+		t.Fatalf("legacy full profile = %+v / %q, want balanced", work, state.RuntimeProfile)
 	}
 }
 

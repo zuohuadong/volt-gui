@@ -98,7 +98,7 @@ func PrepareFileUpdate(fromVersion, toVersion, targetPath string, siblingPaths .
 	}
 	root := config.MemoryUserDir()
 	if root == "" {
-		return nil, fmt.Errorf("prepare update: Reasonix state directory is unavailable")
+		return nil, fmt.Errorf("prepare update: VoltUI state directory is unavailable")
 	}
 	unlock := lockPendingUpdate()
 	defer unlock()
@@ -178,7 +178,7 @@ func WritePendingUpdate(tx *UpdateTransaction) error {
 	}
 	path := PendingUpdatePath()
 	if path == "" {
-		return fmt.Errorf("pending update: Reasonix state directory is unavailable")
+		return fmt.Errorf("pending update: VoltUI state directory is unavailable")
 	}
 	b, err := json.MarshalIndent(tx, "", "  ")
 	if err != nil {
@@ -487,7 +487,7 @@ func validateUpdateTransaction(tx *UpdateTransaction) error {
 	switch tx.TargetKind {
 	case "file":
 		if !allowedUpdateTargetBase(filepath.Base(tx.TargetPath), true) {
-			return fmt.Errorf("pending update target is not a Reasonix executable")
+			return fmt.Errorf("pending update target is not a VoltUI executable")
 		}
 		if filepath.Dir(launcher) != filepath.Dir(tx.TargetPath) {
 			return fmt.Errorf("pending update target is outside the current Guard installation")

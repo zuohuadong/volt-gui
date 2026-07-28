@@ -1,27 +1,35 @@
 package config
 
 import (
-	"bufio"
-	"bytes"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+
+	"github.com/joho/godotenv"
 
 	fileencoding "voltui/internal/fileutil/encoding"
 )
 
-// loadDotEnv loads VoltUI's global credentials. Workspace .env values returned
-// by loadDotEnvForRoot are ignored here because loadDotEnv has no Config to
-// carry a workspace-scoped expansion environment.
+type dotEnvFile struct {
+	Path       string
+	Values     map[string]string
+	Duplicates []string
+}
+
+// loadDotEnv loads VoltUI's global .env for provider credentials. The
+// workspace .env values returned by loadDotEnvForRoot are ignored here because
+// loadDotEnv has no Config to carry a workspace-scoped expansion environment.
 func loadDotEnv() {
 	loadDotEnvForRoot(".")
 }
 
 // loadDotEnvForRoot returns workspace .env values for scoped plugin/MCP/proxy
-// expansion, then loads VoltUI's global credentials for provider keys.
+// expansion, then loads VoltUI's global .env for provider credentials.
 // Workspace .env values are deliberately not written into the process
 // environment, so multiple desktop/ACP workspaces cannot leak tokens into each
-// other and project files cannot redirect VoltUI's own config/credential paths.
+// other and project files cannot redirect VoltUI's own config/credential
+// paths.
 func loadDotEnvForRoot(root string) map[string]string {
 	projectEnv := loadProjectDotEnvForExpansion(root)
 	loadCredentialStoreForRoot(root)
@@ -37,7 +45,11 @@ func loadProjectDotEnvForExpansion(root string) map[string]string {
 	if current := UserCredentialsPath(); current != "" && samePath(path, current) {
 		return nil
 	}
-	return readDotEnvFileMap(path, func(key string) bool {
+	file, ok := readDotEnvFile(path)
+	if !ok {
+		return nil
+	}
+	return file.filtered(func(key string) bool {
 		return !isProjectDotEnvControlKey(key)
 	})
 }
@@ -48,7 +60,7 @@ func isProjectDotEnvControlKey(key string) bool {
 		return true
 	}
 	upper := strings.ToUpper(key)
-	if strings.HasPrefix(upper, "VOLTUI_") || strings.HasPrefix(upper, "REASONIX_") {
+	if strings.HasPrefix(upper, "REASONIX_") {
 		return true
 	}
 	switch upper {
@@ -80,9 +92,9 @@ func legacyCredentialsPaths() []string {
 	if dir := legacyOSSupportDir(); dir != "" {
 		add(filepath.Join(dir, "credentials"))
 	}
-	if dir := reasonixHomeDir(); dir != "" {
-		add(filepath.Join(dir, ".env"))
+	if dir := userSupportDir(); dir != "" {
 		add(filepath.Join(dir, "credentials"))
+		add(filepath.Join(dir, ".env"))
 	}
 	for _, cfg := range legacyXDGConfigPaths() {
 		add(filepath.Join(filepath.Dir(cfg), "credentials"))
@@ -90,31 +102,13 @@ func legacyCredentialsPaths() []string {
 	return paths
 }
 
-func legacyUserCredentialsPath() string {
-	paths := legacyCredentialsPaths()
-	if len(paths) == 0 {
-		return ""
-	}
-	return paths[0]
-}
-
 func loadDotEnvFileAs(path string, source CredentialSource) {
-	sc, ok := dotEnvScanner(path)
+	file, ok := readDotEnvFile(path)
 	if !ok {
 		return
 	}
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimPrefix(line, "export ")
-		key, val, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
+	for key, val := range file.Values {
 		key = strings.TrimSpace(key)
-		val = strings.Trim(strings.TrimSpace(val), `"'`)
 		if key == "" {
 			continue
 		}
@@ -129,28 +123,30 @@ func loadDotEnvFileAs(path string, source CredentialSource) {
 	}
 }
 
-func readDotEnvFileMap(path string, allow func(string) bool) map[string]string {
-	sc, ok := dotEnvScanner(path)
-	if !ok {
-		return nil
+func readDotEnvFile(path string) (dotEnvFile, bool) {
+	raw, err := fileencoding.ReadFileUTF8(path)
+	if err != nil {
+		return dotEnvFile{}, false
 	}
+	values, err := godotenv.Unmarshal(string(raw))
+	if err != nil {
+		return dotEnvFile{}, false
+	}
+	return dotEnvFile{
+		Path:       path,
+		Values:     values,
+		Duplicates: detectDotEnvDuplicateKeys(path),
+	}, true
+}
 
+func (f dotEnvFile) filtered(allow func(string) bool) map[string]string {
 	out := map[string]string{}
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimPrefix(line, "export ")
-		key, val, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
+	for key, val := range f.Values {
 		key = strings.TrimSpace(key)
 		if key == "" || allow != nil && !allow(key) {
 			continue
 		}
-		out[key] = strings.Trim(strings.TrimSpace(val), `"'`)
+		out[key] = val
 	}
 	if len(out) == 0 {
 		return nil
@@ -158,38 +154,53 @@ func readDotEnvFileMap(path string, allow func(string) bool) map[string]string {
 	return out
 }
 
+func (f dotEnvFile) warnings() []string {
+	if len(f.Duplicates) == 0 {
+		return nil
+	}
+	warnings := make([]string, 0, len(f.Duplicates))
+	for _, key := range f.Duplicates {
+		warnings = append(warnings, "duplicate .env key "+key+" in "+f.Path+"; last parsed value wins")
+	}
+	return warnings
+}
+
+func detectDotEnvDuplicateKeys(path string) []string {
+	raw, err := fileencoding.ReadFileUTF8(path)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	dups := map[string]bool{}
+	for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
+		values, err := godotenv.Unmarshal(line)
+		if err != nil {
+			continue
+		}
+		for key := range values {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			if seen[key] {
+				dups[key] = true
+			}
+			seen[key] = true
+		}
+	}
+	out := make([]string, 0, len(dups))
+	for key := range dups {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func envFileValue(path, wantKey string) (string, bool) {
-	sc, ok := dotEnvScanner(path)
+	file, ok := readDotEnvFile(path)
 	if !ok {
 		return "", false
 	}
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimPrefix(line, "export ")
-		key, val, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		if key != wantKey {
-			continue
-		}
-		val = strings.Trim(strings.TrimSpace(val), `"'`)
-		return val, true
-	}
-	return "", false
-}
-
-// dotEnvScanner keeps VoltUI's line-oriented dotenv parser and credential
-// source tracking intact while decoding user-edited Windows text encodings
-// before scanning assignments.
-func dotEnvScanner(path string) (*bufio.Scanner, bool) {
-	raw, err := fileencoding.ReadFileUTF8(path)
-	if err != nil {
-		return nil, false
-	}
-	return bufio.NewScanner(bytes.NewReader(raw)), true
+	val, ok := file.Values[wantKey]
+	return val, ok
 }

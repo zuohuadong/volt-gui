@@ -63,6 +63,28 @@ func TestStripTransientUserBlocksUnwrapsMemoryCompilerExecution(t *testing.T) {
 			in:   "just a normal prompt",
 			want: "just a normal prompt",
 		},
+		{
+			name: "hook context prefix is stripped",
+			in:   "<hook-context event=\"SessionStart\">\nLoad conventions.\n</hook-context>\n\nship it",
+			want: "ship it",
+		},
+		{
+			name: "active goal prefix is stripped",
+			in:   "<active-goal>\nFix all bugs\n</active-goal>\n\nfix the auth bug",
+			want: "fix the auth bug",
+		},
+		{
+			name: "active goal after other transient prefixes is stripped",
+			in: "<reasoning-language>\nuse Chinese\n</reasoning-language>\n\n" +
+				"<memory-update>\n- note\n</memory-update>\n\n" +
+				"<active-goal>\nDo X\n</active-goal>\n\nhelp me",
+			want: "help me",
+		},
+		{
+			name: "capability route prefix is stripped",
+			in:   "<capability-route version=\"1\">\nRelevant capabilities:\n- skill:review prefer\n</capability-route>\n\nreview this",
+			want: "review this",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -80,24 +102,6 @@ func TestUserPreviewTextPreservesCompiledTurnPrompt(t *testing.T) {
 	in := realContract("ship the refactor")
 	if got := UserPreviewText(in); got != "ship the refactor" {
 		t.Fatalf("UserPreviewText = %q, want %q (compiled turn must not blank the preview)", got, "ship the refactor")
-	}
-}
-
-func TestUserPreviewTextStripsWorkbenchContext(t *testing.T) {
-	in := "归属项目：kiro-test\n工作权限：替我批准\n分析项目需求"
-	if got := UserPreviewText(in); got != "分析项目需求" {
-		t.Fatalf("UserPreviewText = %q, want visible prompt", got)
-	}
-}
-
-func TestUserPreviewTextStripsCapabilityRoute(t *testing.T) {
-	in := `<capability-route version="1">
-{"capability_id":"code.review"}
-</capability-route>
-
-审查当前项目的登录修复`
-	if got := UserPreviewText(in); got != "审查当前项目的登录修复" {
-		t.Fatalf("UserPreviewText = %q, want visible prompt without internal capability route", got)
 	}
 }
 

@@ -36,7 +36,7 @@ func TestCanonicalSchemaDeterministicAndHashExact(t *testing.T) {
 		t.Fatalf("SchemaHash = %s, want %s", SchemaHash(), wantHash)
 	}
 	text := string(third)
-	for _, forbidden := range []string{"InitializeParams", "/home/taibai/DeepSeek-Reasonix", "generatedAt"} {
+	for _, forbidden := range []string{"InitializeParams", "/home/taibai/DeepSeek-VoltUI", "generatedAt"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("schema contains non-wire input %q", forbidden)
 		}
@@ -69,7 +69,7 @@ func TestSchemaContainsRegistryErrorsEventsAndFrozenLimits(t *testing.T) {
 	}
 	reasonixCode := findProperty(t, document.ErrorData, "reasonixCode")
 	if len(reasonixCode.Schema.Enum) != 51 {
-		t.Fatalf("ReasonixErrorCode enum = %d", len(reasonixCode.Schema.Enum))
+		t.Fatalf("VoltUIErrorCode enum = %d", len(reasonixCode.Schema.Enum))
 	}
 	submit := findSchemaMethod(t, document, MethodSessionSubmit)
 	if !findProperty(t, submit.Params, "requestId").Required || !findProperty(t, submit.Result, "kind").Required {

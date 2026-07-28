@@ -5,14 +5,16 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"voltui/internal/config"
 )
 
 // TestModelRefsFromConfig verifies the /model picker enumerates configured
-// provider/model refs (built-in defaults when no voltui.toml is present), and
+// provider/model refs (built-in defaults when no reasonix.toml is present), and
 // only those whose provider API key is set.
 func TestModelRefsFromConfig(t *testing.T) {
-	isolateUserConfig(t) // no voltui.toml -> built-in default providers
+	isolateUserConfig(t) // no reasonix.toml -> built-in default providers
 	// Only DeepSeek keyed → MiMo refs must be filtered out.
 	if _, err := config.SetCredential("DEEPSEEK_API_KEY", "test-key"); err != nil {
 		t.Fatalf("SetCredential: %v", err)
@@ -32,22 +34,33 @@ func TestModelRefsFromConfig(t *testing.T) {
 	}
 }
 
-// TestModelRefsSkipsUnconfigured verifies that with no external provider keys
-// set, the picker still offers private-network defaults but filters keyed
-// external providers the user can't select.
+func TestBareModelOpensKeyboardPicker(t *testing.T) {
+	isolateUserConfig(t)
+	if _, err := config.SetCredential("DEEPSEEK_API_KEY", "test-key"); err != nil {
+		t.Fatal(err)
+	}
+	m := newTestChatTUI()
+	m.runModelSubcommand("/model")
+	if m.quickPick == nil || m.quickPick.kind != quickPickerModel {
+		t.Fatalf("bare /model picker = %+v", m.quickPick)
+	}
+	if m.renderQuickPicker() == "" || !m.hideComposer() {
+		t.Fatal("model picker should render as a modal panel")
+	}
+	next, _ := m.handleQuickPickerKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if next.(chatTUI).quickPick != nil {
+		t.Fatal("Esc should close model picker")
+	}
+}
+
+// TestModelRefsSkipsUnconfigured verifies that with no provider keys set, the
+// picker offers nothing rather than listing models the user can't select.
 func TestModelRefsSkipsUnconfigured(t *testing.T) {
 	isolateUserConfig(t)
-	t.Chdir(t.TempDir())
 	t.Setenv("DEEPSEEK_API_KEY", "")
 	t.Setenv("MIMO_API_KEY", "")
-	refs := modelRefs()
-	if len(refs) == 0 {
-		t.Fatal("no keys set should still expose private-network refs")
-	}
-	for _, ref := range refs {
-		if strings.HasPrefix(ref, "deepseek") || strings.HasPrefix(ref, "mimo") {
-			t.Errorf("external unconfigured ref %q should be filtered out; refs=%v", ref, refs)
-		}
+	if refs := modelRefs(); len(refs) != 0 {
+		t.Errorf("no keys set → no refs, got %v", refs)
 	}
 }
 

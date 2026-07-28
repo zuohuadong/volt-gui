@@ -9,7 +9,7 @@ import (
 )
 
 func nativeRecoveryChoice() recoveryChoice {
-	script := `Add-Type -AssemblyName PresentationFramework; $r=[System.Windows.MessageBox]::Show('Reasonix failed to start repeatedly. Yes: repair configuration and start. No: start in Safe Mode. Cancel: quit.','Reasonix Recovery','YesNoCancel','Warning'); Write-Output $r`
+	script := `Add-Type -AssemblyName PresentationFramework; $r=[System.Windows.MessageBox]::Show('VoltUI failed to start repeatedly. Yes: repair configuration and start. No: start in Safe Mode. Cancel: quit.','VoltUI Recovery','YesNoCancel','Warning'); Write-Output $r`
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	out, err := cmd.Output()

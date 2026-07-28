@@ -1,7 +1,7 @@
 // Package sftpfs is the SFTP file layer for the remote module: directory
 // listing, stat, capped reads with text/binary detection, atomic writes, and
 // the usual mkdir/rename/remove. It quarantines the github.com/pkg/sftp
-// dependency — no other Reasonix package imports it directly. One *FS is shared
+// dependency — no other VoltUI package imports it directly. One *FS is shared
 // per SSH connection; the underlying pkg/sftp client is safe for concurrent
 // use.
 package sftpfs

@@ -12,12 +12,13 @@ import (
 	"time"
 
 	"voltui/internal/proc"
+	"voltui/internal/secrets"
 )
 
-// psUTF8Prologue forces PowerShell and Python subprocesses to emit UTF-8 instead
-// of the host's OEM code page (e.g. CP936 on a Chinese Windows), so non-ASCII
-// output and error text come back as valid UTF-8 rather than mojibake or crashes.
-const psUTF8Prologue = "$OutputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$env:PYTHONUTF8='1';$env:PYTHONIOENCODING='utf-8';"
+// psUTF8Prologue forces PowerShell to emit UTF-8 instead of the host's OEM code
+// page (e.g. CP936 on a Chinese Windows), so non-ASCII command output and error
+// text come back as valid UTF-8 rather than mojibake.
+const psUTF8Prologue = "$OutputEncoding=[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;"
 
 // PowerShellUTF8Script prepares a PowerShell script for captured execution.
 // Setting both encodings keeps PowerShell's own output and native child-process
@@ -173,6 +174,7 @@ func probeBash(path string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "-c", "true")
+	cmd.Env = secrets.ProcessEnv()
 	proc.HideWindow(cmd)
 	return cmd.Run() == nil
 }

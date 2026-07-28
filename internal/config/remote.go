@@ -20,8 +20,8 @@ type RemoteConfig struct {
 
 // RemoteHostEntry describes one SSH target. Secrets follow the provider
 // idiom: the entry names credential env vars (passphrase_env/password_env);
-// values live in Reasonix's global .env, never in TOML. identity_file is a
-// path — private key material itself is never stored by Reasonix.
+// values live in VoltUI's global .env, never in TOML. identity_file is a
+// path — private key material itself is never stored by VoltUI.
 type RemoteHostEntry struct {
 	Name          string               `toml:"name"`
 	Host          string               `toml:"host"`

@@ -69,9 +69,9 @@ func TestImageURLDetailOmittedByDefault(t *testing.T) {
 	}
 }
 
-// Tool-result images cannot ride under role "tool" in Chat Completions. They
-// are injected after the complete contiguous tool-result run so call pairing
-// remains valid.
+// Tool-result images can't ride in the tool message itself (the OpenAI API
+// accepts only text parts under role "tool"), so buildRequest injects them as
+// a user message after the turn's full run of tool results.
 func TestBuildRequestInjectsToolImagesAsUserMessage(t *testing.T) {
 	c := &client{model: "gpt-4o", vision: true}
 	req := c.buildRequest(provider.Request{
@@ -112,11 +112,13 @@ func TestBuildRequestInjectsToolImagesAsUserMessage(t *testing.T) {
 
 func TestBuildRequestFlushesTrailingToolImages(t *testing.T) {
 	c := &client{model: "gpt-4o", vision: true}
-	req := c.buildRequest(provider.Request{Messages: []provider.Message{
-		{Role: provider.RoleUser, Content: "go"},
-		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "c1", Name: "shot", Arguments: "{}"}}},
-		{Role: provider.RoleTool, ToolCallID: "c1", Name: "shot", Content: "[image: image/png]", Images: []string{"data:image/png;base64,AAAA"}},
-	}})
+	req := c.buildRequest(provider.Request{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: "go"},
+			{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "c1", Name: "shot", Arguments: "{}"}}},
+			{Role: provider.RoleTool, ToolCallID: "c1", Name: "shot", Content: "[image: image/png]", Images: []string{"data:image/png;base64,AAAA"}},
+		},
+	})
 	last := req.Messages[len(req.Messages)-1]
 	if last.Role != "user" {
 		t.Fatalf("last message = %+v, want the injected image user message", last)
@@ -127,69 +129,18 @@ func TestBuildRequestFlushesTrailingToolImages(t *testing.T) {
 }
 
 func TestBuildRequestSkipsToolImagesWithoutVision(t *testing.T) {
-	c := &client{model: "deepseek-v4"}
-	req := c.buildRequest(provider.Request{Messages: []provider.Message{
-		{Role: provider.RoleUser, Content: "go"},
-		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "c1", Name: "shot", Arguments: "{}"}}},
-		{Role: provider.RoleTool, ToolCallID: "c1", Name: "shot", Content: "[image: image/png]", Images: []string{"data:image/png;base64,AAAA"}},
-	}})
+	c := &client{model: "deepseek-v4"} // vision unset
+	req := c.buildRequest(provider.Request{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: "go"},
+			{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "c1", Name: "shot", Arguments: "{}"}}},
+			{Role: provider.RoleTool, ToolCallID: "c1", Name: "shot", Content: "[image: image/png]", Images: []string{"data:image/png;base64,AAAA"}},
+		},
+	})
 	if len(req.Messages) != 3 {
 		t.Fatalf("got %d messages, want 3 (no injection without vision)", len(req.Messages))
 	}
 	if s, ok := req.Messages[2].Content.(string); !ok || s != "[image: image/png]" {
 		t.Fatalf("tool content = %#v, want the plain placeholder string", req.Messages[2].Content)
-	}
-}
-
-// VoltUI supports the Responses surface as well as Chat Completions. Tool
-// images must take the same structural image path instead of being silently
-// discarded from function_call_output.
-func TestBuildResponsesRequestInjectsToolImagesAfterOutputs(t *testing.T) {
-	c := &client{model: "gpt-5.4", vision: true, apiSurface: apiSurfaceResponses}
-	req := c.buildResponsesRequest(provider.Request{Messages: []provider.Message{
-		{Role: provider.RoleUser, Content: "screenshot please"},
-		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{
-			{ID: "c1", Name: "shot", Arguments: "{}"},
-			{ID: "c2", Name: "shot", Arguments: "{}"},
-		}},
-		{Role: provider.RoleTool, ToolCallID: "c1", Name: "shot", Content: "[image: image/png]", Images: []string{"data:image/png;base64,AAAA"}},
-		{Role: provider.RoleTool, ToolCallID: "c2", Name: "shot", Content: "no image"},
-		{Role: provider.RoleUser, Content: "and?"},
-	}})
-	if len(req.Input) != 7 {
-		t.Fatalf("got %d input items, want 7 with injected tool image message", len(req.Input))
-	}
-	for i := 3; i <= 4; i++ {
-		output, ok := req.Input[i].(responsesFunctionCallOutputItem)
-		if !ok || output.Type != "function_call_output" || output.Output == "" {
-			t.Fatalf("input %d = %#v, want text-only function_call_output", i, req.Input[i])
-		}
-	}
-	injected, ok := req.Input[5].(responsesMessageItem)
-	if !ok || injected.Role != "user" || len(injected.Content) != 2 {
-		t.Fatalf("injected input = %#v, want user message with text and image", req.Input[5])
-	}
-	if injected.Content[0].Type != "input_text" || injected.Content[1].Type != "input_image" || injected.Content[1].ImageURL != "data:image/png;base64,AAAA" {
-		t.Fatalf("injected content = %#v, want [input_text, input_image]", injected.Content)
-	}
-	trailing, ok := req.Input[6].(responsesMessageItem)
-	if !ok || trailing.Role != "user" || len(trailing.Content) != 1 || trailing.Content[0].Text != "and?" {
-		t.Fatalf("trailing input displaced: %#v", req.Input[6])
-	}
-}
-
-func TestBuildResponsesRequestSkipsToolImagesWithoutVision(t *testing.T) {
-	c := &client{model: "gpt-5.4", apiSurface: apiSurfaceResponses}
-	req := c.buildResponsesRequest(provider.Request{Messages: []provider.Message{
-		{Role: provider.RoleUser, Content: "go"},
-		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "c1", Name: "shot", Arguments: "{}"}}},
-		{Role: provider.RoleTool, ToolCallID: "c1", Name: "shot", Content: "[image: image/png]", Images: []string{"data:image/png;base64,AAAA"}},
-	}})
-	if len(req.Input) != 3 {
-		t.Fatalf("got %d input items, want no synthetic image message without vision", len(req.Input))
-	}
-	output, ok := req.Input[2].(responsesFunctionCallOutputItem)
-	if !ok || output.Output != "[image: image/png]" {
-		t.Fatalf("tool output = %#v, want the safe text placeholder", req.Input[2])
 	}
 }

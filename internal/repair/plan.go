@@ -177,7 +177,7 @@ func PreviewRepairPlan(plan RepairPlan, opts ApplyPlanOptions) ([]RepairPlanPrev
 			if err != nil {
 				return nil, fmt.Errorf("action %d: no rollback-ready update: %w", i+1, err)
 			}
-			preview.Description = fmt.Sprintf("Restore Reasonix %s over probationary %s", tx.FromVersion, tx.ToVersion)
+			preview.Description = fmt.Sprintf("Restore VoltUI %s over probationary %s", tx.FromVersion, tx.ToVersion)
 		}
 		previews = append(previews, preview)
 	}

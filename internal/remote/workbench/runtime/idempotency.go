@@ -143,7 +143,7 @@ func (l *mutationLedger) record(method protocol.Method, identity mutationIdentit
 	return nil
 }
 
-func preAdmissionError(code protocol.ReasonixErrorCode) bool {
+func preAdmissionError(code protocol.VoltUIErrorCode) bool {
 	switch code {
 	case protocol.ErrRemoteNotInstalled,
 		protocol.ErrHostStopped,

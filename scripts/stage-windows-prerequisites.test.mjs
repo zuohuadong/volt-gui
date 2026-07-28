@@ -276,6 +276,8 @@ test('desktop packaging excludes prerequisites while keeping the online WebView2
   assert.match(cnb, /--make-latest=false/);
   assert.match(cnb, /scripts\/desktop-build\.sh windows\/amd64 "\$VERSION"/);
   assert.match(cnb, /scripts\/build-windows-prerequisites\.sh windows\/amd64/);
+  assert.match(cnb, /CHANGELOG_LIMIT=50/);
+  assert.match(cnb, /git log --max-count="\$CHANGELOG_LIMIT"/);
   assert.ok(wailsVersion, 'desktop/go.mod must declare Wails v2');
   assert.match(cnb, new RegExp(`wails/v2/cmd/wails@${wailsVersion.replaceAll('.', '\\.')}\\b`));
   assert.match(desktopReadme, new RegExp('current bundle version is `' + version.replaceAll('.', '\\.') + '`'));

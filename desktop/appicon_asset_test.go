@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestAppIconPNGUsesBlueFullCanvasRoundedBackground(t *testing.T) {
+func TestAppIconPNGUsesAnyongFullCanvasRoundedBackground(t *testing.T) {
 	f, err := os.Open("build/appicon.png")
 	if err != nil {
 		t.Fatal(err)
@@ -23,19 +23,19 @@ func TestAppIconPNGUsesBlueFullCanvasRoundedBackground(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertFullCanvasRoundedIcon(t, img, 1024)
+	assertAnyongAppIcon(t, img, 1024)
 }
 
-func TestWindowsICOUsesBlueFullCanvasRoundedBackground(t *testing.T) {
+func TestWindowsICOUsesAnyongFullCanvasRoundedBackground(t *testing.T) {
 	for _, size := range []int{16, 24, 32, 48, 64, 256} {
 		t.Run(fmt.Sprintf("%dx%d", size, size), func(t *testing.T) {
 			img := decodeICOImage(t, "build/windows/icon.ico", size)
-			assertFullCanvasRoundedIcon(t, img, size)
+			assertAnyongAppIcon(t, img, size)
 		})
 	}
 }
 
-func assertFullCanvasRoundedIcon(t *testing.T, img image.Image, size int) {
+func assertAnyongAppIcon(t *testing.T, img image.Image, size int) {
 	t.Helper()
 
 	bounds := img.Bounds()
@@ -55,15 +55,19 @@ func assertFullCanvasRoundedIcon(t *testing.T, img image.Image, size int) {
 	}
 	for _, corner := range corners {
 		_, _, _, a := img.At(corner.x, corner.y).RGBA()
-		if a > 0xff {
-			t.Fatalf("%s corner must be transparent, alpha=%d", corner.name, a)
+		// ICO resampling may leave a one- or two-step antialias fringe, but the
+		// rounded tile must still be visually transparent at every corner.
+		if a > 0x400 {
+			t.Fatalf("%s corner must be effectively transparent, alpha=%d", corner.name, a)
 		}
 	}
 
-	_, _, _, centerAlpha := img.At(bounds.Min.X+bounds.Dx()/2, bounds.Min.Y+bounds.Dy()/2).RGBA()
+	center := img.At(bounds.Min.X+bounds.Dx()/2, bounds.Min.Y+bounds.Dy()/2)
+	_, _, _, centerAlpha := center.RGBA()
 	if centerAlpha == 0 {
 		t.Fatal("app icon center must contain visible artwork")
 	}
+	assertAnyongOrbitalMark(t, center)
 
 	edgePoints := []struct {
 		name string
@@ -80,25 +84,28 @@ func assertFullCanvasRoundedIcon(t *testing.T, img image.Image, size int) {
 		if a == 0 {
 			t.Fatalf("%s edge must contain visible rounded-rect background", point.name)
 		}
-		assertReasonixBlue(t, point.name, img.At(point.x, point.y))
+		assertAnyongCyan(t, point.name, img.At(point.x, point.y))
 	}
 }
 
-func assertReasonixBlue(t *testing.T, name string, colorValue color.Color) {
+func assertAnyongCyan(t *testing.T, name string, colorValue color.Color) {
 	t.Helper()
 
 	r16, g16, b16, _ := colorValue.RGBA()
 	r, g, b := uint8(r16>>8), uint8(g16>>8), uint8(b16>>8)
-	if !near(r, 0x01, 2) || !near(g, 0x53, 2) || !near(b, 0xe5, 2) {
-		t.Fatalf("%s edge must use Reasonix blue background, got #%02x%02x%02x", name, r, g, b)
+	if r < 0xa0 || g < 0xc0 || b < 0xe0 || r > g || g > b {
+		t.Fatalf("%s edge must use the light Anyong cyan background, got #%02x%02x%02x", name, r, g, b)
 	}
 }
 
-func near(got, want uint8, tolerance uint8) bool {
-	if got > want {
-		return got-want <= tolerance
+func assertAnyongOrbitalMark(t *testing.T, colorValue color.Color) {
+	t.Helper()
+
+	r16, g16, b16, _ := colorValue.RGBA()
+	r, g, b := uint8(r16>>8), uint8(g16>>8), uint8(b16>>8)
+	if r >= 0xa0 || g >= 0xc8 || b < 0x90 || r >= g || g >= b {
+		t.Fatalf("icon center must contain the Anyong blue orbital mark, got #%02x%02x%02x", r, g, b)
 	}
-	return want-got <= tolerance
 }
 
 func decodeICOImage(t *testing.T, path string, size int) image.Image {

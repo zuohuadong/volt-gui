@@ -63,12 +63,12 @@ func (e *HostKeyMismatchError) Unwrap() error { return ErrHostKeyMismatch }
 type HostKeyPrompt func(ctx context.Context, q HostKeyQuestion) (accept bool, err error)
 
 // HostKeyPolicy verifies presented host keys against the user's OpenSSH
-// known_hosts files (read-only) and a Reasonix-managed file (read-write, TOFU).
+// known_hosts files (read-only) and a VoltUI-managed file (read-write, TOFU).
 type HostKeyPolicy struct {
 	// SystemKnownHosts are OpenSSH known_hosts files consulted read-only.
 	// Empty => [~/.ssh/known_hosts, ~/.ssh/known_hosts2] when they exist.
 	SystemKnownHosts []string
-	// ManagedPath is the Reasonix-managed known_hosts file that accepted TOFU
+	// ManagedPath is the VoltUI-managed known_hosts file that accepted TOFU
 	// keys are appended to. Empty => config.RemoteKnownHostsPath().
 	ManagedPath string
 	// Prompt decides unknown (first-seen) keys. Nil => strict reject.

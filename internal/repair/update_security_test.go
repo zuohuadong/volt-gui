@@ -102,7 +102,7 @@ func TestPendingUpdateAcceptsMissingReleaseSibling(t *testing.T) {
 		BackupSHA256:  "deadbeef",
 		Files: []UpdateTransactionFile{
 			{TargetPath: target, BackupPath: backup, SHA256: "deadbeef"},
-			{TargetPath: filepath.Join(dir, "Reasonix.exe"), MissingBefore: true},
+			{TargetPath: filepath.Join(dir, "VoltUI.exe"), MissingBefore: true},
 		},
 		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
@@ -131,7 +131,7 @@ func TestPendingUpdateAcceptsWindowsReleaseUnit(t *testing.T) {
 		"reasonix-launcher.exe",
 		"reasonix-update-helper.exe",
 		"reasonix-cli.exe",
-		"Reasonix.exe",
+		"VoltUI.exe",
 	}
 	paths := make([]string, 0, len(names))
 	for _, name := range names {

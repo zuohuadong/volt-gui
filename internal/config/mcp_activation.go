@@ -54,7 +54,7 @@ type MCPActivationStore struct {
 	mu   sync.Mutex
 }
 
-// MCPActivationPath returns the durable activation file under Reasonix home.
+// MCPActivationPath returns the durable activation file under VoltUI home.
 func MCPActivationPath(reasonixHome string) string {
 	return filepath.Join(strings.TrimSpace(reasonixHome), mcpActivationFilename)
 }
@@ -64,9 +64,9 @@ func NewMCPActivationStore(reasonixHome string) *MCPActivationStore {
 	return &MCPActivationStore{path: MCPActivationPath(reasonixHome)}
 }
 
-// DefaultMCPActivationStore uses the process Reasonix home.
+// DefaultMCPActivationStore uses the process VoltUI home.
 func DefaultMCPActivationStore() *MCPActivationStore {
-	return NewMCPActivationStore(ReasonixHomeDir())
+	return NewMCPActivationStore(VoltUIHomeDir())
 }
 
 // Path returns the store file path.
@@ -243,7 +243,7 @@ func (s *MCPActivationStore) saveLocked(file MCPActivationFile) error {
 }
 
 // lockUpdates serializes the full read-modify-write transaction across both
-// independent store instances and separate Reasonix processes. Atomic rename
+// independent store instances and separate VoltUI processes. Atomic rename
 // prevents torn JSON; this lock additionally prevents the last writer from
 // silently dropping another server's override.
 func (s *MCPActivationStore) lockUpdates() (func(), error) {

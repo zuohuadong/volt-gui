@@ -125,7 +125,7 @@ func TestRemoteAddReplacementCleansDroppedGeneratedCredentials(t *testing.T) {
 	}
 }
 
-func TestRemoteImportPreservesReasonixSettings(t *testing.T) {
+func TestRemoteImportPreservesVoltUISettings(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)
 	t.Setenv("HOME", home)

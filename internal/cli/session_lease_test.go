@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,6 +64,41 @@ func TestRunCopyRequiresResumeTarget(t *testing.T) {
 	}
 }
 
+// TestRunResumeCopyJSONKeepsStdoutClean guards that --copy under a structured
+// output format writes its human notice to stderr, leaving stdout a single valid
+// JSON object (the copy notice used to pollute it).
+func TestRunResumeCopyJSONKeepsStdoutClean(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "held-src.jsonl")
+	saveTestSession(t, src, "copy me")
+	holdSessionLease(t, src)
+
+	var rc int
+	var errOut string
+	out := captureStdout(t, func() {
+		errOut = captureStderr(t, func() {
+			rc = runAgent([]string{"--resume", src, "--copy", "--output-format", "json", "continue task"})
+		})
+	})
+	// Setup fails in the isolated home (no provider), so the run ends with a JSON
+	// error object — but the copy still happened first.
+	if rc != 1 {
+		t.Fatalf("rc = %d, want 1 (setup fails in isolated home)", rc)
+	}
+	if strings.Contains(out, "continuing in a session copy") {
+		t.Fatalf("json stdout leaked the copy notice:\n%s", out)
+	}
+	if !strings.Contains(errOut, "continuing in a session copy: ") {
+		t.Fatalf("copy notice should be on stderr, got stderr:\n%s", errOut)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &obj); err != nil {
+		t.Fatalf("stdout is not a single JSON object: %v\nstdout:\n%s", err, out)
+	}
+}
+
 func TestRunResumeCopyContinuesInDuplicate(t *testing.T) {
 	isolateCLIConfigHome(t)
 
@@ -81,8 +117,8 @@ func TestRunResumeCopyContinuesInDuplicate(t *testing.T) {
 			rc = runAgent([]string{"--resume", src, "--copy", "continue task"})
 		})
 	})
-	// The run itself may fail after entering the model call, but it must never
-	// fail with the lease refusal or touch src. The duplicate owns any new prompt.
+	// The isolated home has no provider config, so the run itself fails after
+	// the copy — but never with the lease refusal, and never touching src.
 	if rc != 1 {
 		t.Fatalf("run --resume --copy rc = %d, want 1 (setup fails in isolated home)", rc)
 	}
@@ -110,17 +146,12 @@ func TestRunResumeCopyContinuesInDuplicate(t *testing.T) {
 		t.Fatalf("load copy: %v", err)
 	}
 	srcMsgs, copyMsgs := srcLoaded.Snapshot(), copyLoaded.Snapshot()
-	if len(copyMsgs) != len(srcMsgs) && len(copyMsgs) != len(srcMsgs)+1 {
-		t.Fatalf("copy has %d messages, source %d; want source prefix with optional run prompt", len(copyMsgs), len(srcMsgs))
+	if len(copyMsgs) != len(srcMsgs) {
+		t.Fatalf("copy has %d messages, source %d", len(copyMsgs), len(srcMsgs))
 	}
 	for i := range srcMsgs {
 		if copyMsgs[i].Role != srcMsgs[i].Role || copyMsgs[i].Content != srcMsgs[i].Content {
 			t.Fatalf("copy message %d = %+v, want %+v", i, copyMsgs[i], srcMsgs[i])
-		}
-	}
-	if len(copyMsgs) == len(srcMsgs)+1 {
-		if last := copyMsgs[len(copyMsgs)-1]; last.Role != provider.RoleUser || last.Content != "continue task" {
-			t.Fatalf("copy tail = %+v, want appended run prompt", last)
 		}
 	}
 	// The run exited: the copy's lease must be released again.

@@ -10,8 +10,8 @@ import (
 
 func nativeRecoveryChoice() recoveryChoice {
 	if path, err := exec.LookPath("zenity"); err == nil {
-		cmd := exec.Command(path, "--question", "--title=Reasonix Recovery",
-			"--text=Reasonix failed to start repeatedly.",
+		cmd := exec.Command(path, "--question", "--title=VoltUI Recovery",
+			"--text=VoltUI failed to start repeatedly.",
 			"--ok-label=Repair and Start", "--cancel-label=Safe Mode", "--extra-button=Quit")
 		out, err := cmd.Output()
 		if strings.TrimSpace(string(out)) == "Quit" {
@@ -23,7 +23,7 @@ func nativeRecoveryChoice() recoveryChoice {
 		return recoverySafeMode
 	}
 	if path, err := exec.LookPath("kdialog"); err == nil {
-		err := exec.Command(path, "--warningyesnocancel", "Reasonix failed to start repeatedly. Repair configuration and start?", "--title", "Reasonix Recovery").Run()
+		err := exec.Command(path, "--warningyesnocancel", "VoltUI failed to start repeatedly. Repair configuration and start?", "--title", "VoltUI Recovery").Run()
 		if err == nil {
 			return recoveryRepair
 		}

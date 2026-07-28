@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"voltui/internal/shellparse"
 	"voltui/internal/shellsafe"
 )
 
@@ -39,7 +40,10 @@ func isReadOnlyBashSubject(subject string) bool {
 	if !ok {
 		return false
 	}
-	fields := strings.Fields(strings.TrimSpace(subject))
+	fields, malformed := shellparse.StaticFields(subject)
+	if malformed != "" {
+		return false
+	}
 	if sub == "" {
 		return !hasUnsafeReadOnlyArgs(base, fields[1:])
 	}

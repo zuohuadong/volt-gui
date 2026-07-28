@@ -135,7 +135,7 @@ func TestBuildSafeModeDropsExtraPlugins(t *testing.T) {
 		workspace := robustTempDir(t)
 		t.Chdir(workspace)
 		t.Setenv("REASONIX_SAFE_MODE", "1")
-		marker := filepath.Join(plugin.MCPStateDir(config.ReasonixHomeDir(), workspace, "acp-extra"), "started")
+		marker := filepath.Join(plugin.MCPStateDir(config.VoltUIHomeDir(), workspace, "acp-extra"), "started")
 		build(t, marker)
 		if _, err := os.Stat(marker); !os.IsNotExist(err) {
 			t.Fatalf("safe mode spawned the host-supplied MCP server (stat err=%v)", err)
@@ -147,7 +147,7 @@ func TestBuildSafeModeDropsExtraPlugins(t *testing.T) {
 		workspace := robustTempDir(t)
 		t.Chdir(workspace)
 		t.Setenv("REASONIX_SAFE_MODE", "")
-		marker := filepath.Join(plugin.MCPStateDir(config.ReasonixHomeDir(), workspace, "acp-extra"), "started")
+		marker := filepath.Join(plugin.MCPStateDir(config.VoltUIHomeDir(), workspace, "acp-extra"), "started")
 		build(t, marker)
 		deadline := time.Now().Add(5 * time.Second)
 		for {

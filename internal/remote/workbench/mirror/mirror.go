@@ -15,7 +15,7 @@ import (
 	"voltui/internal/config"
 )
 
-// Root is <Reasonix home>/remote-mirrors.
+// Root is <VoltUI home>/remote-mirrors.
 func Root() string {
 	base := config.MemoryUserDir()
 	if base == "" {

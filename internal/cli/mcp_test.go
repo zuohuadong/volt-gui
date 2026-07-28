@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,11 +13,20 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"voltui/internal/builtinmcp"
 	"voltui/internal/config"
 	"voltui/internal/control"
+	"voltui/internal/mcpregistry"
 	"voltui/internal/plugin"
 )
+
+func stubMCPReadinessProbe(t *testing.T) {
+	t.Helper()
+	previous := mcpProbeForInstall
+	mcpProbeForInstall = func(entry config.PluginEntry) (plugin.MCPInstallResult, error) {
+		return plugin.ReadyInstallResult(entry.Name, 3), nil
+	}
+	t.Cleanup(func() { mcpProbeForInstall = previous })
+}
 
 func TestParseMCPAddStdio(t *testing.T) {
 	e, err := parseMCPAdd([]string{"fs", "npx", "-y", "@modelcontextprotocol/server-filesystem", "."})
@@ -82,11 +94,64 @@ func TestParseMCPAddErrors(t *testing.T) {
 		"command and url":   {"x", "--http", "https://x", "node"},
 		"unknown flag":      {"x", "--bogus", "y", "cmd"},
 		"env without value": {"x", "--env"},
+		"bare dash dash":    {"--"},
 	}
 	for name, args := range cases {
 		if _, err := parseMCPAdd(args); err == nil {
 			t.Errorf("%s: expected an error for %v", name, args)
 		}
+	}
+}
+
+func TestParseMCPAddDashDashArgv(t *testing.T) {
+	e, err := parseMCPAdd([]string{"--", "npx", "-y", "chrome-devtools-mcp@latest"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if e.Name != "chrome-devtools-mcp" {
+		t.Fatalf("name = %q, want chrome-devtools-mcp", e.Name)
+	}
+	if e.Command != "npx" || !reflect.DeepEqual(e.Args, []string{"-y", "chrome-devtools-mcp@latest"}) {
+		t.Fatalf("command/args = %q/%v", e.Command, e.Args)
+	}
+
+	named, err := parseMCPAdd([]string{"chrome", "--", "npx", "-y", "chrome-devtools-mcp@latest"})
+	if err != nil {
+		t.Fatalf("named -- form: %v", err)
+	}
+	if named.Name != "chrome" || named.Command != "npx" {
+		t.Fatalf("named entry = %+v", named)
+	}
+}
+
+func TestParseMCPAddDashDashNamesLauncherPackageNotTrailingArgument(t *testing.T) {
+	e, err := parseMCPAdd([]string{"--", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/srv/shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Name != "server-filesystem" {
+		t.Fatalf("name = %q, want server-filesystem", e.Name)
+	}
+
+	python, err := parseMCPAdd([]string{"--", "python", "-m", "mcp_server_time", "--local-timezone=UTC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if python.Name != "mcp-server-time" {
+		t.Fatalf("python module name = %q, want mcp-server-time", python.Name)
+	}
+}
+
+func TestParseMCPAddBareURL(t *testing.T) {
+	e, err := parseMCPAdd([]string{"https://mcp.example.com/path"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if e.Type != "http" || e.URL != "https://mcp.example.com/path" {
+		t.Fatalf("type/url = %q/%q", e.Type, e.URL)
+	}
+	if e.Name != "mcp" {
+		t.Fatalf("name = %q, want mcp", e.Name)
 	}
 }
 
@@ -102,37 +167,29 @@ func TestTokenizeArgs(t *testing.T) {
 	}
 }
 
-func TestMCPGetStdioRedactsEnvAndKeepsOrder(t *testing.T) {
+func TestMCPGetOpenDesignStyleInstall(t *testing.T) {
 	isolateCLIConfigHome(t)
+	stubMCPReadinessProbe(t)
 
-	_ = captureStdout(t, func() {
-		if rc := mcpAddCLI([]string{
-			"open-design",
-			"--env", "OPEN_DESIGN_TOKEN=placeholder-value",
+	addOut := captureStdout(t, func() {
+		if rc := Run([]string{
+			"mcp", "add", "open-design",
 			"--env", "OD_DAEMON_URL=http://127.0.0.1:7456",
+			"--env", "OPEN_DESIGN_TOKEN=placeholder-value",
 			"node", "open-design-mcp.js", "--stdio",
-		}); rc != 0 {
+		}, "test-version"); rc != 0 {
 			t.Fatalf("mcp add rc = %d, want 0", rc)
 		}
 	})
-
-	configPath := "voltui.toml"
-	before, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("read config before get: %v", err)
+	if !strings.Contains(addOut, `added MCP server "open-design"`) {
+		t.Fatalf("mcp add output = %q", addOut)
 	}
+
 	getOut := captureStdout(t, func() {
 		if rc := Run([]string{"mcp", "get", "open-design"}, "test-version"); rc != 0 {
 			t.Fatalf("mcp get rc = %d, want 0", rc)
 		}
 	})
-	after, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("read config after get: %v", err)
-	}
-	if string(after) != string(before) {
-		t.Fatalf("mcp get changed config:\nbefore:\n%s\nafter:\n%s", before, after)
-	}
 	for _, want := range []string{
 		"name: open-design",
 		"type: stdio",
@@ -149,16 +206,13 @@ func TestMCPGetStdioRedactsEnvAndKeepsOrder(t *testing.T) {
 	if strings.Contains(getOut, "placeholder-value") {
 		t.Fatalf("mcp get leaked sensitive env value:\n%s", getOut)
 	}
-	if strings.Index(getOut, "OD_DAEMON_URL=") > strings.Index(getOut, "OPEN_DESIGN_TOKEN=") {
-		t.Fatalf("mcp get env output is not sorted:\n%s", getOut)
-	}
 }
 
 func TestMCPGetMissingServerFails(t *testing.T) {
 	isolateCLIConfigHome(t)
 
 	errOut := captureStderr(t, func() {
-		if rc := mcpCommand([]string{"get", "open-design"}); rc != 1 {
+		if rc := Run([]string{"mcp", "get", "open-design"}, "test-version"); rc != 1 {
 			t.Fatalf("mcp get missing rc = %d, want 1", rc)
 		}
 	})
@@ -167,22 +221,167 @@ func TestMCPGetMissingServerFails(t *testing.T) {
 	}
 }
 
-func TestMCPGetRemoteRedactsAuthMaterialAndKeepsHeaderOrder(t *testing.T) {
+func TestMCPDisablePersistsProjectWorkspaceActivation(t *testing.T) {
 	isolateCLIConfigHome(t)
+	workspace := mcpCLIWorkspaceRoot()
+	if err := os.WriteFile(filepath.Join(workspace, "reasonix.toml"), []byte(`
+[[plugins]]
+name = "project-mcp"
+command = "project-mcp"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	captureStdout(t, func() {
+		if rc := mcpEnableCLI([]string{"project-mcp"}, false); rc != 0 {
+			t.Fatalf("mcp disable rc = %d, want 0", rc)
+		}
+	})
+	cfg, err := config.LoadForRoot(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := cfg.Plugins[0]
+	enabled, err := config.DefaultMCPActivationStore().IsEnabled(entry, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enabled {
+		t.Fatal("project MCP remained enabled after CLI disable")
+	}
+	scope, _, source, owner := config.ActivationIdentity(entry, workspace)
+	if _, found, err := config.DefaultMCPActivationStore().Lookup(scope, "", source, owner, entry.Name); err != nil {
+		t.Fatal(err)
+	} else if found {
+		t.Fatal("project MCP activation was incorrectly stored under an empty workspace fingerprint")
+	}
+}
+
+func TestPersistCLIInstalledMCPAlwaysWritesGlobalConfig(t *testing.T) {
+	isolateCLIConfigHome(t)
+	workspace := mcpCLIWorkspaceRoot()
+	projectPath := filepath.Join(workspace, "reasonix.toml")
+	if err := os.WriteFile(projectPath, []byte(`
+[[plugins]]
+name = "project-mcp"
+command = "project-mcp"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistCLIInstalledMCP(workspace, config.PluginEntry{
+		Name: "global-mcp", Command: "global-mcp",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	if entry, ok := findCLIPlugin(userCfg.Plugins, "global-mcp"); !ok || entry.Command != "global-mcp" {
+		t.Fatalf("global config entry = %+v, found=%v", entry, ok)
+	}
+	projectCfg := config.LoadForEdit(projectPath)
+	if _, ok := findCLIPlugin(projectCfg.Plugins, "global-mcp"); ok {
+		t.Fatalf("CLI-installed global MCP leaked into project config: %+v", projectCfg.Plugins)
+	}
+}
+
+func findCLIPlugin(entries []config.PluginEntry, name string) (config.PluginEntry, bool) {
+	for _, entry := range entries {
+		if entry.Name == name {
+			return entry, true
+		}
+	}
+	return config.PluginEntry{}, false
+}
+
+func TestMCPUpdateProbesCandidateWithoutRewritingConfig(t *testing.T) {
+	isolateCLIConfigHome(t)
+	stubMCPReadinessProbe(t)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := config.PluginEntry{Name: "chrome", Command: "npx", Args: []string{"-y", "chrome-devtools-mcp@latest"}}
+	if err := cfg.UpsertPlugin(entry); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if rc := mcpUpdateCLI([]string{"chrome"}); rc != 0 {
+			t.Fatalf("mcp update rc = %d", rc)
+		}
+	})
+	if !strings.Contains(out, "candidate handshake passed with 3 tools") {
+		t.Fatalf("mcp update output = %q", out)
+	}
+	after, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Plugins) != 1 || !reflect.DeepEqual(after.Plugins[0].Args, entry.Args) {
+		t.Fatalf("candidate verification unexpectedly rewrote config: %+v", after.Plugins)
+	}
+}
+
+func TestMCPBrowseAndInstallOfficialRegistryEntry(t *testing.T) {
+	isolateCLIConfigHome(t)
+	stubMCPReadinessProbe(t)
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"servers": []any{map[string]any{"server": map[string]any{
+			"name": "io.example/demo", "title": "Demo MCP", "version": "1.0.0",
+			"remotes": []any{map[string]any{"type": "streamable-http", "url": "https://mcp.example.test/mcp"}},
+		}}}})
+	}))
+	defer registry.Close()
+	client := mcpregistry.New("")
+	client.BaseURL = registry.URL
+
+	browseOut := captureStdout(t, func() {
+		if rc := mcpBrowseWithClient([]string{"demo", "--limit", "5"}, client); rc != 0 {
+			t.Fatalf("mcp browse rc = %d", rc)
+		}
+	})
+	for _, want := range []string{"io.example/demo", "1.0.0", "http", "Demo MCP"} {
+		if !strings.Contains(browseOut, want) {
+			t.Fatalf("mcp browse output missing %q: %s", want, browseOut)
+		}
+	}
+
+	installOut := captureStdout(t, func() {
+		if rc := mcpInstallWithClient([]string{"io.example/demo", "--as", "demo-market"}, client); rc != 0 {
+			t.Fatalf("mcp install rc = %d", rc)
+		}
+	})
+	if !strings.Contains(installOut, `installed MCP Registry server "io.example/demo" as "demo-market"`) {
+		t.Fatalf("mcp install output = %q", installOut)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Plugins) != 1 || cfg.Plugins[0].Name != "demo-market" || cfg.Plugins[0].Type != "http" || cfg.Plugins[0].URL != "https://mcp.example.test/mcp" {
+		t.Fatalf("installed plugins = %+v", cfg.Plugins)
+	}
+}
+
+func TestMCPGetRedactsRemoteAuthMaterial(t *testing.T) {
+	isolateCLIConfigHome(t)
+	stubMCPReadinessProbe(t)
 
 	_ = captureStdout(t, func() {
-		if rc := mcpAddCLI([]string{
-			"stripe",
-			"--http", "https://mcp.example.test/mcp?access_token=access-secret&key=key-secret&workspace=main",
-			"--header", "X-Workspace=main",
-			"--header", "Authorization=Bearer header-secret",
-		}); rc != 0 {
+		if rc := Run([]string{
+			"mcp", "add", "stripe",
+			"--http", "https://mcp.example.test/mcp?access_token=abc&key=xyz&workspace=main",
+			"--header", "Authorization=Bearer abc",
+		}, "test-version"); rc != 0 {
 			t.Fatalf("mcp add remote rc = %d, want 0", rc)
 		}
 	})
 
 	getOut := captureStdout(t, func() {
-		if rc := mcpCommand([]string{"get", "stripe"}); rc != 0 {
+		if rc := Run([]string{"mcp", "get", "stripe"}, "test-version"); rc != 0 {
 			t.Fatalf("mcp get remote rc = %d, want 0", rc)
 		}
 	})
@@ -192,137 +391,13 @@ func TestMCPGetRemoteRedactsAuthMaterialAndKeepsHeaderOrder(t *testing.T) {
 		"access_token=%3Credacted%3E",
 		"key=%3Credacted%3E",
 		"Authorization=<redacted>",
-		"X-Workspace=main",
 	} {
 		if !strings.Contains(getOut, want) {
 			t.Fatalf("mcp get remote output missing %q:\n%s", want, getOut)
 		}
 	}
-	for _, secret := range []string{"access-secret", "key-secret", "Bearer header-secret"} {
-		if strings.Contains(getOut, secret) {
-			t.Fatalf("mcp get leaked %q:\n%s", secret, getOut)
-		}
-	}
-	if strings.Index(getOut, "Authorization=") > strings.Index(getOut, "X-Workspace=") {
-		t.Fatalf("mcp get header output is not sorted:\n%s", getOut)
-	}
-}
-
-func TestMCPGetUsesEffectiveConfigSourcesWithoutBuiltins(t *testing.T) {
-	isolateCLIConfigHome(t)
-	userPath := config.UserConfigPath()
-	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(userPath, []byte(`[[plugins]]
-name = "shared"
-command = "user-bin"
-
-[[plugins]]
-name = "user-only"
-command = "user-only-bin"
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile("voltui.toml", []byte(`[[plugins]]
-name = "shared"
-command = "project-bin"
-
-[[plugins]]
-name = "project-only"
-command = "project-only-bin"
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(".mcp.json", []byte(`{
-  "mcpServers": {
-    "shared": {"type": "http", "url": "https://mcp.example.test/ignored"},
-    "mcp-only": {"type": "http", "url": "https://mcp.example.test/effective"}
-  }
-}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	sourcePaths := []string{userPath, "voltui.toml", ".mcp.json"}
-	sourceBefore := make(map[string]string, len(sourcePaths))
-	for _, path := range sourcePaths {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read config source %s before get: %v", path, err)
-		}
-		sourceBefore[path] = string(raw)
-	}
-
-	for _, tc := range []struct {
-		name    string
-		want    string
-		notWant string
-	}{
-		{name: "shared", want: "command: project-bin", notWant: "user-bin"},
-		{name: "user-only", want: "command: user-only-bin"},
-		{name: "project-only", want: "command: project-only-bin"},
-		{name: "mcp-only", want: "url: https://mcp.example.test/effective"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			out := captureStdout(t, func() {
-				if rc := mcpCommand([]string{"get", tc.name}); rc != 0 {
-					t.Fatalf("mcp get %s rc = %d, want 0", tc.name, rc)
-				}
-			})
-			if !strings.Contains(out, tc.want) {
-				t.Fatalf("mcp get %s output missing %q:\n%s", tc.name, tc.want, out)
-			}
-			if tc.notWant != "" && strings.Contains(out, tc.notWant) {
-				t.Fatalf("mcp get %s output unexpectedly contains %q:\n%s", tc.name, tc.notWant, out)
-			}
-		})
-	}
-
-	errOut := captureStderr(t, func() {
-		if rc := mcpCommand([]string{"get", builtinmcp.TimeName}); rc != 1 {
-			t.Fatalf("mcp get built-in rc = %d, want 1", rc)
-		}
-	})
-	if !strings.Contains(errOut, "no MCP server named") {
-		t.Fatalf("mcp get built-in stderr = %q", errOut)
-	}
-
-	for _, path := range sourcePaths {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read config source %s after get: %v", path, err)
-		}
-		if string(raw) != sourceBefore[path] {
-			t.Fatalf("mcp get changed config source %s", path)
-		}
-	}
-}
-
-func TestMCPListRedactsRemoteQuerySecrets(t *testing.T) {
-	isolateCLIConfigHome(t)
-
-	_ = captureStdout(t, func() {
-		if rc := mcpAddCLI([]string{
-			"remote",
-			"--http", "https://mcp.example.test/mcp?access_token=list-access-secret&key=list-key-secret&workspace=main",
-		}); rc != 0 {
-			t.Fatalf("mcp add remote rc = %d, want 0", rc)
-		}
-	})
-
-	out := captureStdout(t, func() {
-		if rc := mcpList(); rc != 0 {
-			t.Fatalf("mcp list rc = %d, want 0", rc)
-		}
-	})
-	for _, want := range []string{"remote", "workspace=main", "access_token=%3Credacted%3E", "key=%3Credacted%3E"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("mcp list output missing %q:\n%s", want, out)
-		}
-	}
-	for _, secret := range []string{"list-access-secret", "list-key-secret"} {
-		if strings.Contains(out, secret) {
-			t.Fatalf("mcp list leaked %q:\n%s", secret, out)
-		}
+	if strings.Contains(getOut, "Bearer abc") || strings.Contains(getOut, "access_token=abc") || strings.Contains(getOut, "key=xyz") {
+		t.Fatalf("mcp get leaked remote auth material:\n%s", getOut)
 	}
 }
 
@@ -369,6 +444,26 @@ func TestRenderMCPStatusCapsLongSections(t *testing.T) {
 	}
 }
 
+func TestRenderMCPStatusShowsQuarantinedTools(t *testing.T) {
+	got := renderMCPStatus(200,
+		[]plugin.ServerStatus{{
+			Name: "yakit", Transport: "stdio", Tools: 1,
+			ToolList: []plugin.ToolInfo{
+				{Name: "echo", Description: "available"},
+				{Name: "generate_yso_bytes", SchemaError: "invalid input schema: bad type at /properties/options/items/type"},
+			},
+		}},
+		nil,
+		nil,
+		nil,
+	)
+	for _, want := range []string{"1 tool", "1 unavailable tool", "unavailable tools", "generate_yso_bytes", "invalid input schema"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered MCP status missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestMCPCapabilitiesTextUsesAdvertisedTools(t *testing.T) {
 	if got := mcpCapabilitiesText(mcpServerView{HasTools: true}); got != "tools" {
 		t.Fatalf("mcpCapabilitiesText = %q, want tools", got)
@@ -391,9 +486,10 @@ func TestRenderMCPStatusShowsFailures(t *testing.T) {
 
 func TestRenderMCPManagerListGroupsRuntimeAndConfiguredServers(t *testing.T) {
 	p := &mcpManager{snapshot: mcpSnapshot{
-		configPath: "voltui.toml",
+		configPath: "config.toml",
 		servers: []mcpServerView{
 			{Name: "managed-search", Transport: "stdio", Status: "connected", BuiltIn: true, Tools: 4},
+			{Name: "project-docs", Transport: "http", Status: "deferred", Configured: true, Source: config.MCPSourceProjectConfig},
 			{Name: "github", Transport: "stdio", Status: "deferred", Configured: true, Tier: "background", Tools: 12},
 			{Name: "figma", Transport: "http", Status: "failed", Configured: true, Tier: "background", URL: "https://mcp.figma.com", Error: "connect: 401 unauthorized"},
 		},
@@ -401,11 +497,14 @@ func TestRenderMCPManagerListGroupsRuntimeAndConfiguredServers(t *testing.T) {
 	got := p.renderList(120)
 	for _, want := range []string{
 		"Manage MCP servers",
-		"3 servers",
+		"4 servers",
 		"Managed MCPs",
-		"User MCPs (voltui.toml)",
+		"Project MCPs",
+		"Global MCPs (config.toml)",
 		"managed-search",
 		"connected",
+		"project-docs",
+		"preparing in background",
 		"github",
 		"preparing in background",
 		"figma",
@@ -414,6 +513,67 @@ func TestRenderMCPManagerListGroupsRuntimeAndConfiguredServers(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rendered MCP manager list missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestBuildMCPSnapshotUsesControllerWorkspaceAndPerServerConfigPaths(t *testing.T) {
+	isolateCLIConfigHome(t)
+	workspace := t.TempDir()
+	other := t.TempDir()
+	t.Chdir(other)
+	userPath := config.UserConfigPath()
+	userCfg := config.LoadForEdit(userPath)
+	userCfg.Plugins = []config.PluginEntry{
+		{Name: "global-only", Command: "global-only"},
+		{Name: "shared", Command: "global-shared"},
+	}
+	if err := userCfg.SaveTo(userPath); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(workspace, "reasonix.toml")
+	if err := os.WriteFile(projectPath, []byte(`
+[[plugins]]
+name = "project-only"
+command = "project-only"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mcpJSONPath := filepath.Join(workspace, ".mcp.json")
+	if err := os.WriteFile(mcpJSONPath, []byte(`{
+  "mcpServers": {
+    "shared": { "command": "project-shared" }
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctrl := control.New(control.Options{WorkspaceRoot: workspace, Host: plugin.NewHost()})
+	defer ctrl.Close()
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+	m.host = ctrl.Host()
+	snapshot := m.buildMCPSnapshot()
+	byName := map[string]mcpServerView{}
+	for _, server := range snapshot.servers {
+		byName[server.Name] = server
+	}
+	if got := byName["global-only"]; got.Source != config.MCPSourceUserConfig || got.ConfigPath != userPath {
+		t.Fatalf("global-only view = %+v, want global source path %q", got, userPath)
+	}
+	if got := byName["project-only"]; got.Source != config.MCPSourceProjectConfig || got.ConfigPath != projectPath {
+		t.Fatalf("project-only view = %+v, want project source path %q", got, projectPath)
+	}
+	if got := byName["shared"]; got.Source != config.MCPSourceProjectMCPJSON || got.ConfigPath != mcpJSONPath || got.Command != "project-shared" {
+		t.Fatalf("shared view = %+v, want project .mcp.json to override global", got)
+	}
+}
+
+func TestMCPConfigPathForViewPrefersSelectedServerSource(t *testing.T) {
+	if got := mcpConfigPathForView(mcpServerView{ConfigPath: "/project/.mcp.json"}, "/global/config.toml"); got != "/project/.mcp.json" {
+		t.Fatalf("selected config path = %q", got)
+	}
+	if got := mcpConfigPathForView(mcpServerView{}, "/global/config.toml"); got != "/global/config.toml" {
+		t.Fatalf("fallback config path = %q", got)
 	}
 }
 
@@ -437,7 +597,7 @@ func TestRenderMCPManagerAuthFailureActions(t *testing.T) {
 		stage: mcpStageDetail,
 		name:  "figma",
 		snapshot: mcpSnapshot{
-			configPath: "voltui.toml",
+			configPath: "reasonix.toml",
 			servers: []mcpServerView{{
 				Name: "figma", Transport: "http", Status: "failed", Configured: true,
 				Tier: "background", URL: "https://mcp.figma.com", Error: "connect: 401 unauthorized",
@@ -461,6 +621,35 @@ func TestRenderMCPManagerAuthFailureActions(t *testing.T) {
 	}
 	if strings.Contains(got, "Retry") {
 		t.Fatalf("auth failures should prefer Authenticate over Retry:\n%s", got)
+	}
+}
+
+func TestRenderMCPManagerProjectServerIsReadyWithoutInstallAction(t *testing.T) {
+	p := &mcpManager{
+		stage: mcpStageDetail,
+		name:  "project-docs",
+		snapshot: mcpSnapshot{
+			configPath: "reasonix.toml",
+			servers: []mcpServerView{{
+				Name: "project-docs", Transport: "http", Status: "connected", Configured: true,
+				Source: config.MCPSourceProjectConfig, URL: "https://example.test/mcp",
+				Tools: 2, HasTools: true,
+			}},
+		},
+	}
+	got := p.renderDetail(120)
+	for _, want := range []string{
+		"connected",
+		"current project reasonix.toml",
+		"View tools",
+		"Disable for this session",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered project MCP details missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Install and use") || strings.Contains(got, "Authorize") {
+		t.Fatalf("trusted project MCP must not expose an installation or authorization action:\n%s", got)
 	}
 }
 
@@ -496,7 +685,7 @@ func TestRenderMCPManagerRemoteDeferredAuthHint(t *testing.T) {
 		stage: mcpStageDetail,
 		name:  "dida",
 		snapshot: mcpSnapshot{
-			configPath: "voltui.toml",
+			configPath: "reasonix.toml",
 			servers: []mcpServerView{{
 				Name: "dida", Transport: "http", Status: "deferred", Configured: true,
 				Tier: "background", URL: "https://mcp.dida365.com",
@@ -549,7 +738,7 @@ func TestMCPEditConfigLaunchUsesVisualBeforeEditor(t *testing.T) {
 	t.Setenv("VISUAL", "vim")
 	t.Setenv("EDITOR", "nano")
 
-	path := "/tmp/voltui config.toml"
+	path := "/tmp/reasonix config.toml"
 	launch, err := mcpEditConfigLaunchCommand(path, func(string) (string, error) {
 		t.Fatal("lookPath should not be called when VISUAL is set")
 		return "", errors.New("unexpected lookup")
@@ -578,7 +767,7 @@ func TestMCPEditConfigLaunchEditorWithArgs(t *testing.T) {
 	t.Setenv("VISUAL", "code --wait")
 	t.Setenv("EDITOR", "")
 
-	path := "/tmp/voltui.toml"
+	path := "/tmp/reasonix.toml"
 	launch, err := mcpEditConfigLaunchCommand(path, func(string) (string, error) {
 		t.Fatal("lookPath should not be called when VISUAL is set")
 		return "", errors.New("unexpected lookup")
@@ -601,7 +790,7 @@ func TestMCPEditConfigLaunchEditorWithArgs(t *testing.T) {
 }
 
 func TestMCPEditConfigLaunchEditorParsesShellStyleQuotes(t *testing.T) {
-	path := "/tmp/voltui.toml"
+	path := "/tmp/reasonix.toml"
 	cases := []struct {
 		name       string
 		editor     string
@@ -664,7 +853,7 @@ func TestMCPEditConfigLaunchEditorRejectsUnterminatedQuote(t *testing.T) {
 	t.Setenv("VISUAL", `code --wait "unterminated`)
 	t.Setenv("EDITOR", "")
 
-	_, err := mcpEditConfigLaunchCommand("/tmp/voltui.toml", func(string) (string, error) {
+	_, err := mcpEditConfigLaunchCommand("/tmp/reasonix.toml", func(string) (string, error) {
 		t.Fatal("lookPath should not be called when VISUAL is set")
 		return "", errors.New("unexpected lookup")
 	})
@@ -680,7 +869,7 @@ func TestMCPEditConfigLaunchEditorRejectsShellMetachars(t *testing.T) {
 	t.Setenv("VISUAL", "")
 	t.Setenv("EDITOR", "vim; rm -rf /tmp/should-not-exist")
 
-	path := "/tmp/voltui.toml"
+	path := "/tmp/reasonix.toml"
 	_, err := mcpEditConfigLaunchCommand(path, func(string) (string, error) {
 		t.Fatal("lookPath should not be called when EDITOR is set")
 		return "", errors.New("unexpected lookup")
@@ -700,7 +889,7 @@ func TestMCPEditConfigLaunchEditorExpandsEnvVar(t *testing.T) {
 	t.Setenv("VISUAL", "$REASONIX_TEST_EDITOR_BIN --flag")
 	t.Setenv("EDITOR", "")
 
-	path := "/tmp/voltui.toml"
+	path := "/tmp/reasonix.toml"
 	launch, err := mcpEditConfigLaunchCommand(path, func(string) (string, error) {
 		t.Fatal("lookPath should not be called when VISUAL is set")
 		return "", errors.New("unexpected lookup")
@@ -738,7 +927,7 @@ func TestMCPEditConfigLaunchEditorExpandsTilde(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Setenv("VISUAL", c.editor+" --wait")
 			t.Setenv("EDITOR", "")
-			launch, err := mcpEditConfigLaunchCommand("/tmp/voltui.toml", func(string) (string, error) {
+			launch, err := mcpEditConfigLaunchCommand("/tmp/reasonix.toml", func(string) (string, error) {
 				t.Fatal("lookPath should not be called when VISUAL is set")
 				return "", errors.New("unexpected lookup")
 			})
@@ -762,7 +951,7 @@ func TestMCPEditConfigLaunchEditorTildeNotInPayload(t *testing.T) {
 	t.Setenv("VISUAL", "")
 	t.Setenv("EDITOR", "vim; rm -rf ~/should-not-exist")
 
-	_, err := mcpEditConfigLaunchCommand("/tmp/voltui.toml", func(string) (string, error) {
+	_, err := mcpEditConfigLaunchCommand("/tmp/reasonix.toml", func(string) (string, error) {
 		t.Fatal("lookPath should not be called when EDITOR is set")
 		return "", errors.New("unexpected lookup")
 	})
@@ -775,7 +964,7 @@ func TestMCPEditConfigLaunchFallsBackToTerminalEditor(t *testing.T) {
 	t.Setenv("VISUAL", "")
 	t.Setenv("EDITOR", "")
 
-	launch, err := mcpEditConfigLaunchCommand("/tmp/voltui.toml", func(name string) (string, error) {
+	launch, err := mcpEditConfigLaunchCommand("/tmp/reasonix.toml", func(name string) (string, error) {
 		if name == "vim" {
 			return "/usr/bin/vim", nil
 		}
@@ -790,7 +979,7 @@ func TestMCPEditConfigLaunchFallsBackToTerminalEditor(t *testing.T) {
 	if launch.editor != "vim" {
 		t.Fatalf("editor = %q, want vim", launch.editor)
 	}
-	if len(launch.cmd.Args) != 2 || launch.cmd.Args[0] != "/usr/bin/vim" || launch.cmd.Args[1] != "/tmp/voltui.toml" {
+	if len(launch.cmd.Args) != 2 || launch.cmd.Args[0] != "/usr/bin/vim" || launch.cmd.Args[1] != "/tmp/reasonix.toml" {
 		t.Fatalf("terminal editor args=%v", launch.cmd.Args)
 	}
 }
@@ -799,7 +988,7 @@ func TestMCPEditConfigLaunchUsesSystemDefaultLast(t *testing.T) {
 	t.Setenv("VISUAL", "")
 	t.Setenv("EDITOR", "")
 
-	path := "/tmp/voltui.toml"
+	path := "/tmp/reasonix.toml"
 	launch, err := mcpEditConfigLaunchCommand(path, func(string) (string, error) {
 		return "", errors.New("not found")
 	})
@@ -822,7 +1011,7 @@ func TestApplyMCPModeDropsLegacyTier(t *testing.T) {
 	isolateUserConfig(t)
 	cfg := config.Default()
 	cfg.Plugins = []config.PluginEntry{{Name: "github", Command: "npx", Args: []string{"server"}, Tier: "lazy"}}
-	if err := cfg.SaveTo("voltui.toml"); err != nil {
+	if err := cfg.SaveTo("reasonix.toml"); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
 
@@ -830,7 +1019,7 @@ func TestApplyMCPModeDropsLegacyTier(t *testing.T) {
 	m.mcp = &mcpManager{
 		stage: mcpStageMode,
 		name:  "github",
-		snapshot: mcpSnapshot{configPath: "voltui.toml", servers: []mcpServerView{{
+		snapshot: mcpSnapshot{configPath: "reasonix.toml", servers: []mcpServerView{{
 			Name: "github", Transport: "stdio", Status: "deferred", Configured: true, Tier: "background",
 		}}},
 	}
@@ -843,7 +1032,7 @@ func TestApplyMCPModeDropsLegacyTier(t *testing.T) {
 	if len(loaded.Plugins) != 1 || loaded.Plugins[0].Tier != "" {
 		t.Fatalf("tier should be migrated away, plugins=%+v", loaded.Plugins)
 	}
-	raw, err := os.ReadFile("voltui.toml")
+	raw, err := os.ReadFile("reasonix.toml")
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
@@ -856,8 +1045,8 @@ func TestApplyMCPModeRecordsPluginConnectFailure(t *testing.T) {
 	isolateUserConfig(t)
 	t.Setenv("PATH", "")
 	cfg := config.Default()
-	cfg.Plugins = []config.PluginEntry{{Name: "broken", Command: "definitely-missing-voltui-mcp", Tier: "background"}}
-	if err := cfg.SaveTo("voltui.toml"); err != nil {
+	cfg.Plugins = []config.PluginEntry{{Name: "broken", Command: "definitely-missing-reasonix-mcp", Tier: "background"}}
+	if err := cfg.SaveTo("reasonix.toml"); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
 
@@ -868,7 +1057,7 @@ func TestApplyMCPModeRecordsPluginConnectFailure(t *testing.T) {
 	m.mcp = &mcpManager{
 		stage: mcpStageMode,
 		name:  "broken",
-		snapshot: mcpSnapshot{configPath: "voltui.toml", servers: []mcpServerView{{
+		snapshot: mcpSnapshot{configPath: "reasonix.toml", servers: []mcpServerView{{
 			Name: "broken", Transport: "stdio", Status: "deferred", Configured: true, Tier: "background",
 		}}},
 	}

@@ -1,4 +1,4 @@
-// Package store is the single authority for voltui's on-disk persistence
+// Package store is the single authority for reasonix's on-disk persistence
 // layout. Nothing else should construct a persistence path by hand.
 //
 // This first slice owns the session-artifact sidecars — the files and
@@ -11,7 +11,7 @@
 //
 // store is a leaf: it imports only the standard library, so any package may
 // depend on it without risking an import cycle. Root/directory resolution (the
-// ~/.voltui tree) and the desktop root unification land in later slices.
+// ~/.reasonix tree) and the desktop root unification land in later slices.
 package store
 
 import "strings"
@@ -26,6 +26,16 @@ func IsSessionTranscriptName(name string) bool {
 		!strings.HasSuffix(name, ".events.jsonl") &&
 		!strings.HasSuffix(name, ".conflicts.jsonl") &&
 		!strings.HasSuffix(name, ".guardian.jsonl")
+}
+
+// SessionRecoveryState is the persisted Auto-mode recovery checkpoint state
+// (<id>.recovery.json). It is a regular session-owned sidecar, not a transcript.
+func SessionRecoveryState(sessionPath string) string {
+	sessionPath = strings.TrimSpace(sessionPath)
+	if sessionPath == "" {
+		return ""
+	}
+	return sessionStem(sessionPath) + ".recovery.json"
 }
 
 // sessionStem strips the .jsonl suffix so a sidecar sits beside the session as
@@ -58,6 +68,18 @@ func SessionEventLog(sessionPath string) string {
 		return ""
 	}
 	return sessionStem(sessionPath) + ".events.jsonl"
+}
+
+// SessionEventLogDamaged is the salvage sidecar for event-log bytes that tail
+// repair would otherwise discard (<id>.events.jsonl.damaged). It must NOT end
+// in .jsonl: older binaries scanning a shared session directory classify any
+// non-excluded .jsonl file as a primary transcript and would resurrect the
+// damaged bytes as a phantom session.
+func SessionEventLogDamaged(sessionPath string) string {
+	if sessionPath == "" {
+		return ""
+	}
+	return SessionEventLog(sessionPath) + ".damaged"
 }
 
 // SessionEventIndex is the listing/checkpoint index for the event log
@@ -132,7 +154,7 @@ func SessionCleanupPending(sessionPath string) string {
 }
 
 // SessionSidecarFiles returns every regular-file sidecar owned by a session
-// transcript: branch meta, goal state, the event log, and the event index.
+// transcript: branch meta, goal state, event/index logs, and diagnostic logs.
 // Every surface that deletes a session (desktop trash, /clear, serve, ACP)
 // must remove all of these — the event log is the authoritative transcript, so
 // leaving it behind both leaks the "deleted" conversation and lets LoadSession
@@ -147,6 +169,9 @@ func SessionSidecarFiles(sessionPath string) []string {
 		SessionMeta(sessionPath),
 		SessionGoalState(sessionPath),
 		SessionEventLog(sessionPath),
+		SessionEventLogDamaged(sessionPath),
 		SessionEventIndex(sessionPath),
+		SessionConflictLog(sessionPath),
+		SessionRecoveryState(sessionPath),
 	}
 }

@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	NativeManifest = "voltui-plugin.json"
+	NativeManifest = "reasonix-plugin.json"
 	CodexManifest  = ".codex-plugin/plugin.json"
 	ClaudeManifest = ".claude-plugin/plugin.json"
 	StateFilename  = "plugin-packages.json"

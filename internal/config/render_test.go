@@ -54,7 +54,7 @@ func TestUserConfigDisplayPathCollapsesHome(t *testing.T) {
 		t.Fatalf("display path = %q, want ~/ prefix", got)
 	}
 	if !strings.HasSuffix(got, "voltui/config.toml") {
-		t.Fatalf("display path = %q, want reasonix/config.toml suffix", got)
+		t.Fatalf("display path = %q, want voltui/config.toml suffix", got)
 	}
 	if strings.Contains(got, home) {
 		t.Fatalf("display path %q must not embed the absolute home", got)
@@ -101,11 +101,11 @@ func TestVoltUIManagedConfigPathsAreConfigFilesOnly(t *testing.T) {
 		}
 		for _, forbidden := range []string{
 			home,
-			ReasonixHomeDir(),
+			VoltUIHomeDir(),
 			UserCredentialsPath(),
-			filepath.Join(ReasonixHomeDir(), "settings.json"),
-			filepath.Join(ReasonixHomeDir(), "skills"),
-			filepath.Join(ReasonixHomeDir(), "sessions"),
+			filepath.Join(VoltUIHomeDir(), "settings.json"),
+			filepath.Join(VoltUIHomeDir(), "skills"),
+			filepath.Join(VoltUIHomeDir(), "sessions"),
 		} {
 			if samePath(got, forbidden) {
 				t.Fatalf("managed config paths must not include %q: %v", forbidden, paths)
@@ -250,14 +250,14 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Skills.MaxDepth = 2
 	orig.Bot.ToolApprovalMode = "auto"
 	orig.Bot.Control = BotControlConfig{Enabled: true, Addr: "127.0.0.1:39001", TokenEnv: "BOT_CONTROL_TOKEN"}
-	orig.Bot.Feishu.OutboundMediaRoots = []string{"/tmp/voltui-media", "/srv/shots"}
+	orig.Bot.Feishu.OutboundMediaRoots = []string{"/tmp/reasonix-media", "/srv/shots"}
 	orig.Bot.Routes = []BotRouteConfig{{
 		ConnectionID:     "feishu-lark",
 		ChatType:         "group",
 		ChatID:           "oc_group",
 		Model:            "deepseek-pro",
 		ToolApprovalMode: "ask",
-		WorkspaceRoot:    "/tmp/voltui-route",
+		WorkspaceRoot:    "/tmp/reasonix-route",
 	}}
 	orig.Bot.DesktopWatchers = []BotDesktopWatcherConfig{{
 		Platform:     "feishu",
@@ -275,13 +275,13 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 		Status:           "connected",
 		Model:            "deepseek-pro",
 		ToolApprovalMode: "yolo",
-		WorkspaceRoot:    "/tmp/voltui-bot",
+		WorkspaceRoot:    "/tmp/reasonix-bot",
 		Credential:       BotConnectionCredential{AppID: "cli_lark", AppSecretEnv: "LARK_BOT_APP_SECRET"},
 		SessionMappings: []BotConnectionSessionMapping{{
 			RemoteID:      "ou_123",
 			SessionID:     "topic:topic_bot",
 			Scope:         "project",
-			WorkspaceRoot: "/tmp/voltui-bot",
+			WorkspaceRoot: "/tmp/reasonix-bot",
 			UpdatedAt:     "2026-06-11T00:00:00Z",
 		}},
 	}}
@@ -299,7 +299,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 		},
 	}
 	orig.Plugins = []PluginEntry{
-		{Name: "example", Command: "voltui-plugin-example"},
+		{Name: "example", Command: "reasonix-plugin-example"},
 		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, AutoStart: boolPtr(false), Tier: "background"},
 	}
 	mm, _ := orig.Provider("mimo-pro")
@@ -385,7 +385,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Agent.PlannerMaxSteps != orig.Agent.PlannerMaxSteps {
 		t.Errorf("planner_max_steps = %d, want %d", got.Agent.PlannerMaxSteps, orig.Agent.PlannerMaxSteps)
 	}
-	if len(got.Bot.Connections) != 1 || got.Bot.Connections[0].Model != "deepseek-pro" || got.Bot.Connections[0].WorkspaceRoot != "/tmp/voltui-bot" {
+	if len(got.Bot.Connections) != 1 || got.Bot.Connections[0].Model != "deepseek-pro" || got.Bot.Connections[0].WorkspaceRoot != "/tmp/reasonix-bot" {
 		t.Errorf("bot connection not preserved: %+v", got.Bot.Connections)
 	}
 	if got.Bot.ToolApprovalMode != "auto" || got.Bot.Connections[0].ToolApprovalMode != "yolo" {
@@ -394,16 +394,16 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if !got.Bot.Control.Enabled || got.Bot.Control.Addr != "127.0.0.1:39001" || got.Bot.Control.TokenEnv != "BOT_CONTROL_TOKEN" {
 		t.Errorf("bot control not preserved: %+v", got.Bot.Control)
 	}
-	if len(got.Bot.Feishu.OutboundMediaRoots) != 2 || got.Bot.Feishu.OutboundMediaRoots[0] != "/tmp/voltui-media" {
+	if len(got.Bot.Feishu.OutboundMediaRoots) != 2 || got.Bot.Feishu.OutboundMediaRoots[0] != "/tmp/reasonix-media" {
 		t.Errorf("feishu outbound_media_roots not preserved: %+v", got.Bot.Feishu.OutboundMediaRoots)
 	}
-	if len(got.Bot.Routes) != 1 || got.Bot.Routes[0].WorkspaceRoot != "/tmp/voltui-route" || got.Bot.Routes[0].ChatID != "oc_group" {
+	if len(got.Bot.Routes) != 1 || got.Bot.Routes[0].WorkspaceRoot != "/tmp/reasonix-route" || got.Bot.Routes[0].ChatID != "oc_group" {
 		t.Errorf("bot routes not preserved: %+v", got.Bot.Routes)
 	}
 	if len(got.Bot.DesktopWatchers) != 1 || got.Bot.DesktopWatchers[0].ChatID != "oc_watcher" || got.Bot.DesktopWatchers[0].Platform != "feishu" || got.Bot.DesktopWatchers[0].Domain != "lark" {
 		t.Errorf("bot desktop watchers not preserved: %+v", got.Bot.DesktopWatchers)
 	}
-	if len(got.Bot.Connections[0].SessionMappings) != 1 || got.Bot.Connections[0].SessionMappings[0].Scope != "project" || got.Bot.Connections[0].SessionMappings[0].WorkspaceRoot != "/tmp/voltui-bot" {
+	if len(got.Bot.Connections[0].SessionMappings) != 1 || got.Bot.Connections[0].SessionMappings[0].Scope != "project" || got.Bot.Connections[0].SessionMappings[0].WorkspaceRoot != "/tmp/reasonix-bot" {
 		t.Errorf("bot session mapping scope not preserved: %+v", got.Bot.Connections[0].SessionMappings)
 	}
 	if got.Agent.Temperature != orig.Agent.Temperature {

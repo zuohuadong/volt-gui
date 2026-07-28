@@ -6,9 +6,9 @@ import (
 )
 
 // StatePaths are the absolute remote-side paths for one workspace's serve
-// state. All are under ~/.reasonix/remote.
+// state. All are under ~/.voltui/remote.
 type StatePaths struct {
-	Dir       string // ~/.reasonix/remote
+	Dir       string // ~/.voltui/remote
 	StateJSON string
 	TokenFile string
 	LogFile   string

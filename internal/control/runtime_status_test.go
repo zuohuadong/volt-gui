@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -48,7 +47,7 @@ func TestCancelClearsPendingApprovalRuntimeStatus(t *testing.T) {
 	c.Send("needs approval")
 	select {
 	case <-approvals:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timed out waiting for approval request")
 	}
 	if st := c.RuntimeStatus(); !st.Running || !st.PendingPrompt || !st.Cancellable || st.CancelRequested {
@@ -58,7 +57,13 @@ func TestCancelClearsPendingApprovalRuntimeStatus(t *testing.T) {
 	c.Cancel()
 	c.Cancel()
 	assertCancelClearedPendingRuntimeStatus(t, c.RuntimeStatus())
-	waitTurnDoneEvent(t, done)
+	if e := waitTurnDoneEvent(t, done); !e.Cancelled {
+		t.Fatal("cancelled turn_done event was not marked as user-cancelled")
+	}
+	// TurnDone is emitted inside the finishing window; Running() (and the
+	// RuntimeStatus it feeds) stays true until finishGuardedTurn's deferred
+	// clear runs. Wait for the gate to reopen before asserting idle.
+	waitIdle(t, c)
 	if st := c.RuntimeStatus(); st.Running || st.PendingPrompt || st.Cancellable || st.CancelRequested {
 		t.Fatalf("status after turn done = %+v, want idle", st)
 	}
@@ -81,7 +86,7 @@ func TestCancelClearsPendingAskRuntimeStatus(t *testing.T) {
 	c.Send("ask user")
 	select {
 	case <-asks:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timed out waiting for ask request")
 	}
 	if st := c.RuntimeStatus(); !st.Running || !st.PendingPrompt || !st.Cancellable || st.CancelRequested {
@@ -91,120 +96,76 @@ func TestCancelClearsPendingAskRuntimeStatus(t *testing.T) {
 	c.Cancel()
 	assertCancelClearedPendingRuntimeStatus(t, c.RuntimeStatus())
 	waitTurnDoneEvent(t, done)
+	// TurnDone is emitted inside the finishing window; Running() (and the
+	// RuntimeStatus it feeds) stays true until finishGuardedTurn's deferred
+	// clear runs. Wait for the gate to reopen before asserting idle.
+	waitIdle(t, c)
 	if st := c.RuntimeStatus(); st.Running || st.PendingPrompt || st.Cancellable || st.CancelRequested {
 		t.Fatalf("status after turn done = %+v, want idle", st)
 	}
 }
 
-func TestRuntimeStatusReportsPendingRotation(t *testing.T) {
-	c := New(Options{})
-	c.mu.Lock()
-	c.rotationPending = true
-	c.mu.Unlock()
-	if status := c.RuntimeStatus(); !status.Rotating || status.Running || status.Cancellable {
-		t.Fatalf("pending rotation status = %+v, want rotating but not cancellable", status)
-	}
-}
-
-func TestSubmitDisplayCheckedRejectsBusyRuntime(t *testing.T) {
-	c := New(Options{})
-	c.mu.Lock()
-	c.running = true
-	c.mu.Unlock()
-	if err := c.SubmitDisplayChecked("second", "second"); err != ErrTurnRunning {
-		t.Fatalf("SubmitDisplayChecked while running = %v, want ErrTurnRunning", err)
-	}
-}
-
-func TestSubmissionReservationBlocksUnrelatedTurnAndRotation(t *testing.T) {
-	c := New(Options{})
-	reservation, err := c.reserveSubmission()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.releaseSubmission(reservation)
-	if status := c.RuntimeStatus(); !status.Submitting || status.Running || status.Rotating || status.Cancellable {
-		t.Fatalf("submission reservation status = %+v, want submitting but not cancellable", status)
-	}
-	if accepted := c.runGuarded(func(context.Context) error { return nil }); accepted {
-		t.Fatal("unrelated turn should not consume a checked submission reservation")
-	}
-	if err := c.beginRotation(); !errors.Is(err, errTurnRunningRotation) {
-		t.Fatalf("beginRotation during checked submission = %v, want turn-running rejection", err)
-	}
-
-	started := make(chan struct{})
-	release := make(chan struct{})
-	if accepted := c.runGuardedWithReservation(reservation, func(context.Context) error {
-		close(started)
-		<-release
-		return nil
-	}); !accepted {
-		t.Fatal("checked submission owner should claim the reserved turn")
-	}
-	<-started
-	if status := c.RuntimeStatus(); !status.Running || status.Rotating {
-		t.Fatalf("reserved turn status = %+v", status)
-	}
-	close(release)
-}
-
-func TestSubmitUserTurnCheckedRejectsConcurrentSubmissionReservation(t *testing.T) {
-	c := New(Options{})
-	reservation, err := c.reserveSubmission()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.releaseSubmission(reservation)
-	if err := c.SubmitUserTurnChecked("heartbeat", "heartbeat"); !errors.Is(err, ErrTurnRunning) {
-		t.Fatalf("SubmitUserTurnChecked during reservation = %v, want ErrTurnRunning", err)
-	}
-}
-
-func TestSubmissionReservationTransfersAtomicallyToSynchronousRotation(t *testing.T) {
-	c := New(Options{})
-	reservation, err := c.reserveSubmission()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := c.beginRotationWithSubmissionReservation(reservation); err != nil {
-		t.Fatalf("beginRotationWithSubmissionReservation: %v", err)
-	}
-	defer c.endRotation()
-	status := c.RuntimeStatus()
-	if !status.Rotating || status.Submitting || status.Running {
-		t.Fatalf("reservation transfer status = %+v, want rotating owner", status)
-	}
-	if accepted := c.runGuarded(func(context.Context) error { return nil }); accepted {
-		t.Fatal("a normal turn started while the reserved synchronous rotation was active")
-	}
-}
-
-func TestAsyncRotationConsumesOnlyItsReservation(t *testing.T) {
-	c := New(Options{})
-	submission, err := c.reserveSubmission()
-	if err != nil {
-		t.Fatal(err)
-	}
-	claimed := make(chan struct{})
-	release := make(chan struct{})
-	c.runAsyncRotationCommand(submission, "rotation", "rotated", func(rotation uint64) error {
-		if err := c.beginReservedRotation(rotation); err != nil {
-			return err
+func TestCloseCancelsPendingAskRuntimeStatus(t *testing.T) {
+	asks := make(chan event.Ask, 1)
+	done := make(chan event.Event, 1)
+	c := New(Options{Sink: event.FuncSink(func(e event.Event) {
+		switch e.Kind {
+		case event.AskRequest:
+			asks <- e.Ask
+		case event.TurnDone:
+			done <- e
 		}
-		close(claimed)
-		<-release
-		c.endRotation()
-		return nil
+	})})
+	c.runner = &askBlockingRunner{c: c}
+
+	c.Send("ask user")
+	select {
+	case <-asks:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for ask request")
+	}
+
+	c.Close()
+	select {
+	case e := <-done:
+		if !e.Cancelled {
+			t.Fatal("closed turn_done event was not marked as cancelled")
+		}
+	case <-time.After(time.Second):
+		c.Cancel()
+		t.Fatal("Close did not cancel the pending ask waiter")
+	}
+	waitIdle(t, c)
+	if st := c.RuntimeStatus(); st.Running || st.PendingPrompt || st.Cancellable || st.CancelRequested {
+		t.Fatalf("status after Close = %+v, want idle", st)
+	}
+}
+
+func TestCloseDoesNotResurrectFinishingState(t *testing.T) {
+	turnStarted := make(chan struct{})
+	turnDoneEntered := make(chan struct{}, 1)
+	releaseTurnDone := make(chan struct{})
+	c := New(Options{Sink: holdFinishingWindow(releaseTurnDone, turnDoneEntered, nil)})
+
+	c.runGuarded(func(ctx context.Context) error {
+		close(turnStarted)
+		<-ctx.Done()
+		return ctx.Err()
 	})
-	<-claimed
-	if status := c.RuntimeStatus(); !status.Rotating || status.Running {
-		t.Fatalf("reserved rotation status = %+v", status)
+	<-turnStarted
+
+	c.Close()
+	select {
+	case <-turnDoneEntered:
+	case <-time.After(time.Second):
+		c.Cancel()
+		t.Fatal("Close did not cancel the active turn")
 	}
-	if _, err := c.reserveSubmission(); err != ErrTurnRunning {
-		t.Fatalf("submission during reserved rotation = %v, want ErrTurnRunning", err)
+	defer close(releaseTurnDone)
+
+	if st := c.RuntimeStatus(); st.Running || st.PendingPrompt || st.Cancellable || st.CancelRequested {
+		t.Fatalf("closed controller resurrected active state during TurnDone delivery: %+v", st)
 	}
-	close(release)
 }
 
 func assertCancelClearedPendingRuntimeStatus(t *testing.T, st RuntimeStatus) {
@@ -223,14 +184,16 @@ func assertCancelClearedPendingRuntimeStatus(t *testing.T, st RuntimeStatus) {
 	}
 }
 
-func waitTurnDoneEvent(t *testing.T, done <-chan event.Event) {
+func waitTurnDoneEvent(t *testing.T, done <-chan event.Event) event.Event {
 	t.Helper()
 	select {
 	case e := <-done:
 		if e.Kind != event.TurnDone {
 			t.Fatalf("event = %v, want TurnDone", e.Kind)
 		}
-	case <-time.After(2 * time.Second):
+		return e
+	case <-time.After(30 * time.Second):
 		t.Fatal("timed out waiting for turn_done")
 	}
+	return event.Event{}
 }

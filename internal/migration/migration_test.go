@@ -31,14 +31,14 @@ func migrationRescueHome(t *testing.T) string {
 func isolateMigrationHome(t *testing.T) string {
 	t.Helper()
 	home := migrationRescueHome(t)
-	t.Setenv("REASONIX_HOME", filepath.Join(home, "new-voltui"))
+	t.Setenv("REASONIX_HOME", filepath.Join(home, "new-reasonix"))
 	t.Setenv("REASONIX_STATE_HOME", "")
 	return home
 }
 
 func TestRunLegacyRescueImportsSessionsAndEmitsProgress(t *testing.T) {
 	home := migrationRescueHome(t)
-	legacyDir := filepath.Join(home, ".voltui", "sessions")
+	legacyDir := filepath.Join(home, ".reasonix", "sessions")
 	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestRunLegacyRescueImportsSessionsAndEmitsProgress(t *testing.T) {
 
 func TestRunLegacyRescueImportsMemory(t *testing.T) {
 	home := migrationRescueHome(t)
-	legacyRoot := filepath.Join(home, ".voltui")
+	legacyRoot := filepath.Join(home, ".reasonix")
 	if err := os.MkdirAll(filepath.Join(legacyRoot, "memory", "global"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestRunLegacyRescueNoopStillShowsProgress(t *testing.T) {
 
 func TestRunLegacyRescueSkipsImplicitSourcesWhenIsolated(t *testing.T) {
 	home := isolateMigrationHome(t)
-	legacyRoot := filepath.Join(home, ".voltui")
+	legacyRoot := filepath.Join(home, ".reasonix")
 	if err := os.MkdirAll(filepath.Join(legacyRoot, "sessions"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestRunLegacyRescueSkipsImplicitSourcesWhenIsolated(t *testing.T) {
 
 func TestRunLegacyRescueCommandImportsFromExplicitInstallDir(t *testing.T) {
 	home := isolateMigrationHome(t)
-	installRoot := filepath.Join(home, "Custom Reasonix")
+	installRoot := filepath.Join(home, "Custom VoltUI")
 	legacySessions := filepath.Join(installRoot, "sessions")
 	if err := os.MkdirAll(legacySessions, 0o755); err != nil {
 		t.Fatal(err)
@@ -246,8 +246,8 @@ func TestMigrateLegacySessionSourcesSkipsCurrentProjectTree(t *testing.T) {
 	t.Setenv("AppData", filepath.Join(home, "AppData"))
 	t.Setenv("REASONIX_HOME", "")
 	t.Setenv("REASONIX_STATE_HOME", "")
-	if !samePath(config.MemoryUserDir(), filepath.Join(home, ".voltui")) {
-		t.Skip("current Reasonix home is not ~/.voltui on this platform")
+	if !samePath(config.MemoryUserDir(), filepath.Join(home, ".reasonix")) {
+		t.Skip("current VoltUI home is not ~/.reasonix on this platform")
 	}
 
 	projectSessions := filepath.Join(config.MemoryUserDir(), "projects", "current-project", "sessions")

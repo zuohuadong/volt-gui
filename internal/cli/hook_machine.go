@@ -68,7 +68,7 @@ func runHookCommand(args []string, out io.Writer) int {
 		options.projectRoot, _ = os.Getwd()
 	}
 	if options.homeDir == "" {
-		options.homeDir = config.ReasonixHomeDir()
+		options.homeDir = config.VoltUIHomeDir()
 	}
 	inspection := hook.Inspect(hook.LoadOptions{
 		ProjectRoot: options.projectRoot,

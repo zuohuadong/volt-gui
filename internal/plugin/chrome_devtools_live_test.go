@@ -115,23 +115,23 @@ func TestChromeDevtoolsMCPLive(t *testing.T) {
 	}
 	t.Logf("step 06/12 new_page=%s", strings.TrimSpace(out))
 
-	pageHTML := `data:text/html,<title>Reasonix%20MCP</title><h1>Reasonix%20MCP%20Ready</h1>`
+	pageHTML := `data:text/html,<title>VoltUI%20MCP</title><h1>VoltUI%20MCP%20Ready</h1>`
 	out = executeLiveChromeTool(t, callCtx, tools, "navigate_page", map[string]any{"type": "url", "url": pageHTML})
 	t.Logf("step 07/12 navigate_page=%s", strings.TrimSpace(out))
-	out = executeLiveChromeTool(t, callCtx, tools, "wait_for", map[string]any{"text": []string{"Reasonix MCP Ready"}, "timeout": 10_000})
-	if !strings.Contains(out, "Reasonix MCP Ready") {
+	out = executeLiveChromeTool(t, callCtx, tools, "wait_for", map[string]any{"text": []string{"VoltUI MCP Ready"}, "timeout": 10_000})
+	if !strings.Contains(out, "VoltUI MCP Ready") {
 		t.Fatalf("step 08/12 wait_for output = %q", out)
 	}
 	t.Log("step 08/12 page content became observable")
 	out = executeLiveChromeTool(t, callCtx, tools, "take_snapshot", map[string]any{})
-	if !strings.Contains(out, "Reasonix MCP Ready") {
+	if !strings.Contains(out, "VoltUI MCP Ready") {
 		t.Fatalf("step 09/12 snapshot output = %q", out)
 	}
 	t.Log("step 09/12 accessibility snapshot captured")
 	out = executeLiveChromeTool(t, callCtx, tools, "evaluate_script", map[string]any{
 		"function": `() => { console.log("reasonix-mcp-console"); return document.title; }`,
 	})
-	if !strings.Contains(out, "Reasonix MCP") {
+	if !strings.Contains(out, "VoltUI MCP") {
 		t.Fatalf("step 10/12 evaluate_script output = %q", out)
 	}
 	t.Log("step 10/12 evaluate_script returned the document title")

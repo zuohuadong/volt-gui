@@ -16,7 +16,7 @@ func (c *Controller) EnsureSessionPath() {
 	if c.SessionPath() != "" || c.SessionDir() == "" {
 		return
 	}
-	c.SetSessionPath(agent.NewSessionPath(c.SessionDir(), c.Label()))
+	c.SetFreshSessionPath(agent.NewSessionPath(c.SessionDir(), c.Label()))
 }
 
 // AdoptHistory makes a freshly built controller continue an existing
@@ -38,7 +38,7 @@ func (c *Controller) AdoptHistory(msgs []provider.Message, path string) {
 				}
 			}
 		}
-		c.Resume(&agent.Session{Messages: msgs}, path)
+		c.Resume(agent.NewSession("").CloneWithMessages(msgs), path)
 	} else if path != "" {
 		c.SetSessionPath(path)
 	}

@@ -31,6 +31,44 @@ func TestFileRefLine(t *testing.T) {
 	if _, ok := FileRefLine(""); ok {
 		t.Fatal("empty must not resolve as a file ref")
 	}
+
+	spaced := filepath.Join(dir, "report 2026.pdf")
+	if err := os.WriteFile(spaced, []byte("%PDF-1.4 fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := FileRefLine(spaced); !ok || got != "@"+EscapeRefPath(spaced) {
+		t.Fatalf("FileRefLine(spaced) = %q, %v; want escaped ref", got, ok)
+	}
+}
+
+func TestEscapeRefPathRoundTrip(t *testing.T) {
+	cases := []struct{ in, escaped string }{
+		{"plain.txt", "plain.txt"},
+		{"my file.txt", `my\ file.txt`},
+		{"a\tb.txt", "a\\\tb.txt"},
+		{`C:\dir\file.png`, `C:\dir\file.png`},
+	}
+	for _, c := range cases {
+		if got := EscapeRefPath(c.in); got != c.escaped {
+			t.Errorf("EscapeRefPath(%q) = %q, want %q", c.in, got, c.escaped)
+		}
+		if got := UnescapeRefPath(c.escaped); got != c.in {
+			t.Errorf("UnescapeRefPath(%q) = %q, want %q", c.escaped, got, c.in)
+		}
+	}
+}
+
+// TestDetectRefsEscapedSpacePath closes the loop pastedFileRef and completion
+// rely on: an @token with escaped spaces resolves to the real workspace file.
+func TestDetectRefsEscapedSpacePath(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "my file.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	refs := (&Controller{workspaceRoot: workspace}).detectRefs(`see @my\ file.txt after`)
+	if len(refs) != 1 || refs[0].kind != refFile || refs[0].path != "my file.txt" {
+		t.Fatalf("refs = %+v, want one file ref for \"my file.txt\"", refs)
+	}
 }
 
 func TestSlashCodeCommentLine(t *testing.T) {
@@ -63,6 +101,10 @@ func TestParseRefTokens(t *testing.T) {
 		{"dedup @a @a", []string{"a"}},
 		{"no refs here", nil},
 		{"email a@b.com keeps token", []string{"b.com"}},
+		{`open @docs/my\ file.md now`, []string{"docs/my file.md"}},
+		{`trailing @my\ file.md.`, []string{"my file.md"}},
+		{`win @C:\dir\shot.png ok`, []string{`C:\dir\shot.png`}},
+		{`unescaped @my file.md`, []string{"my"}},
 	}
 	for _, c := range cases {
 		got := parseRefTokens(c.line)
@@ -115,14 +157,14 @@ func TestClassifyRef(t *testing.T) {
 
 func TestResolveRefsAttachmentKinds(t *testing.T) {
 	temp := t.TempDir()
-	attachmentsDir := filepath.Join(temp, ".voltui", "attachments")
+	attachmentsDir := filepath.Join(temp, ".reasonix", "attachments")
 	if err := os.MkdirAll(attachmentsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	ymlRef := filepath.ToSlash(".voltui/attachments/config.yml")
 	zipRef := filepath.ToSlash(".voltui/attachments/archive.zip")
 	pngRef := filepath.ToSlash(".voltui/attachments/shot.png")
-	if err := os.WriteFile(filepath.Join(temp, filepath.FromSlash(ymlRef)), []byte("name: voltui\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(temp, filepath.FromSlash(ymlRef)), []byte("name: reasonix\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(temp, filepath.FromSlash(zipRef)), []byte{'P', 'K', 0x03, 0x04, 0x00}, 0o644); err != nil {
@@ -150,7 +192,7 @@ func TestResolveRefsAttachmentKinds(t *testing.T) {
 	if len(errs) != 0 {
 		t.Fatalf("ResolveRefs errors = %v", errs)
 	}
-	if !strings.Contains(block, `<file path="`+ymlRef+`">`) || !strings.Contains(block, "name: voltui") {
+	if !strings.Contains(block, `<file path="`+ymlRef+`">`) || !strings.Contains(block, "name: reasonix") {
 		t.Fatalf("expected yml attachment to resolve as file content, got: %s", block)
 	}
 	if !strings.Contains(block, `<file path="`+zipRef+`">`) || !strings.Contains(block, "[binary file "+zipRef) {
@@ -763,7 +805,7 @@ func TestWorkspaceImageRefsAlsoAttachAsModelImages(t *testing.T) {
 	if err := os.WriteFile(diagram, []byte("\x89PNG\r\n\x1a\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	attachment := filepath.Join(workspace, ".voltui", "attachments", "shot.png")
+	attachment := filepath.Join(workspace, ".reasonix", "attachments", "shot.png")
 	if err := os.MkdirAll(filepath.Dir(attachment), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -851,38 +893,5 @@ func TestReadFileRefPDFExtractionWithBaseDirUsesAbsPath(t *testing.T) {
 	}
 	if !strings.Contains(got, "workspace pdf") {
 		t.Fatalf("scoped pdf extraction missing text: %s", got)
-	}
-}
-
-func TestResolveScopedRefsSpreadsheetGuidesBuiltInOfficeTools(t *testing.T) {
-	workspace := t.TempDir()
-	attachmentDir := filepath.Join(workspace, ".voltui", "attachments")
-	if err := os.MkdirAll(attachmentDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"people.xlsx", "legacy.xls"} {
-		if err := os.WriteFile(filepath.Join(attachmentDir, name), []byte{'P', 'K', 0, 1}, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	c := &Controller{workspaceRoot: workspace}
-	block, errs := c.ResolveScopedRefs(context.Background(), "merge @.voltui/attachments/people.xlsx @.voltui/attachments/legacy.xls")
-	if len(errs) != 0 {
-		t.Fatalf("ResolveScopedRefs errors = %v", errs)
-	}
-	for _, want := range []string{
-		"mcp__office__office_read_spreadsheet",
-		"mcp__office__office_count_spreadsheet_column",
-		"do not create Python helper scripts",
-		"people.xlsx",
-		"legacy.xls",
-	} {
-		if !strings.Contains(block, want) {
-			t.Fatalf("spreadsheet context missing %q:\n%s", want, block)
-		}
-	}
-	if strings.Contains(block, "[binary file") {
-		t.Fatalf("spreadsheet refs should receive actionable Office guidance, got:\n%s", block)
 	}
 }

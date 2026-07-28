@@ -11,7 +11,7 @@ import (
 var providerToolIndexPattern = regexp.MustCompile(`(?i)\btool\s+(\d+)\s+function\b`)
 
 // AnnotateToolSchemaError resolves provider messages such as "Tool 197 function
-// has invalid 'parameters' schema" back to the stable Reasonix tool identity.
+// has invalid 'parameters' schema" back to the stable VoltUI tool identity.
 // MCP tool names carry their source server in mcp__<server>__<tool> form, so the
 // resulting diagnostic tells users which integration supplied the bad schema.
 func AnnotateToolSchemaError(err error, tools []ToolSchema) error {

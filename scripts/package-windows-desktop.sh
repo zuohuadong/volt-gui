@@ -118,14 +118,23 @@ export WINDOWS_PORTABLE_APP_NAME="$APPNAME"
 export WINDOWS_PORTABLE_BINARY_PREFIX="voltui"
 "$ROOT/scripts/verify-windows-portable.sh" "$portable_staging"
 
-portable_staging_win="$portable_staging"
-dist_portable_win="$dist_portable"
-if command -v cygpath >/dev/null 2>&1; then
-	portable_staging_win="$(cygpath -w "$portable_staging")"
-	dist_portable_win="$(cygpath -w "$dist_portable")"
+if command -v powershell.exe >/dev/null 2>&1; then
+	portable_staging_win="$portable_staging"
+	dist_portable_win="$dist_portable"
+	if command -v cygpath >/dev/null 2>&1; then
+		portable_staging_win="$(cygpath -w "$portable_staging")"
+		dist_portable_win="$(cygpath -w "$dist_portable")"
+	fi
+	powershell.exe -NoProfile -Command \
+		"Compress-Archive -Force -Path '$portable_staging_win\\*' -DestinationPath '$dist_portable_win'"
+else
+	command -v zip >/dev/null 2>&1 || { echo "zip or powershell.exe is required to build the Windows portable archive" >&2; exit 1; }
+	rm -f -- "$dist_portable"
+	(
+		cd "$portable_staging"
+		zip -q "$dist_portable" ./*
+	)
 fi
-powershell.exe -NoProfile -Command \
-	"Compress-Archive -Force -Path '$portable_staging_win\\*' -DestinationPath '$dist_portable_win'"
 
 # The second SignPath request signs the outer installer only after verifying
 # these already-signed payload files. Keeping one flat, exact bundle makes the

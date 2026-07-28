@@ -88,7 +88,7 @@ LangString reasonixUpdateSubtitle ${LANG_TRADCHINESE} "正在安裝已驗證的�
 ## The second pass provides ARG_REASONIX_SIGNED_UNINSTALLER and embeds that
 ## signed binary instead of generating another unsigned uninstaller.
 !ifndef ARG_REASONIX_SIGNED_UNINSTALLER
-!uninstfinalize 'cmd.exe /C copy /Y "%1" "voltui-uninstall.exe" >NUL'
+!uninstfinalize 'node "${__FILEDIR__}/../../../../scripts/copy-nsis-uninstaller.mjs" "%1" "${__FILEDIR__}/voltui-uninstall.exe"'
 !endif
 #!finalize 'signtool --file "%1"'
 

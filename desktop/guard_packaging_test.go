@@ -196,7 +196,7 @@ func TestDesktopPackagesPreserveNativePlatformLaunchers(t *testing.T) {
 	windows := string(windowsData)
 	for _, want := range []string{
 		`File "/oname=${REASONIX_CLI}" "${REASONIX_CLI}"`,
-		`!uninstfinalize 'cmd.exe /C copy /Y "%1" "reasonix-uninstall.exe" >NUL'`,
+		`!uninstfinalize 'node "${__FILEDIR__}/../../../../scripts/copy-nsis-uninstaller.mjs" "%1" "${__FILEDIR__}/voltui-uninstall.exe"'`,
 		`File "/oname=uninstall.exe" "${ARG_REASONIX_SIGNED_UNINSTALLER}"`,
 		`CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}" "launch --detach" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0`,
 		`CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}" "launch --detach" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0`,

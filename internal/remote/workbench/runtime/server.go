@@ -54,7 +54,7 @@ type Options struct {
 	SourceRevision  string
 	BuildController ControllerBuilder
 	// SessionDir and RegistryPath are injectable for tests. Production defaults
-	// keep transcripts in the normal Reasonix session directory and the Remote
+	// keep transcripts in the normal VoltUI session directory and the Remote
 	// registry beside the per-workspace runtime socket.
 	SessionDir   string
 	RegistryPath string

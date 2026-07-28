@@ -1,4 +1,4 @@
-// Package protocol defines the frozen Reasonix Remote V1 wire contract.
+// Package protocol defines the frozen VoltUI Remote V1 wire contract.
 package protocol
 
 // Opaque identities deliberately use distinct Go types. Their serialized form

@@ -232,7 +232,7 @@ func TestRouterMapsControlledDomainError(t *testing.T) {
 		t.Fatalf("domain error mapping = %#v", err)
 	}
 	data, ok := rpcErr.Data.(RemoteErrorData)
-	if !ok || data.ReasonixCode != ErrSessionBusy {
+	if !ok || data.VoltUICode != ErrSessionBusy {
 		t.Fatalf("domain error data = %#v", rpcErr.Data)
 	}
 }

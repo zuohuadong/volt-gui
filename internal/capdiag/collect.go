@@ -38,12 +38,12 @@ func Collect(opts Options) Report {
 			home = h
 		}
 	}
-	reasonixHome := opts.ReasonixHomeDir
+	reasonixHome := opts.VoltUIHomeDir
 	if reasonixHome == "" {
 		if opts.HomeDir != "" {
 			reasonixHome = filepath.Join(home, ".reasonix")
 		} else {
-			reasonixHome = config.ReasonixHomeDir()
+			reasonixHome = config.VoltUIHomeDir()
 		}
 	}
 
@@ -144,7 +144,7 @@ func buildSummary(r Report) Summary {
 func collectInstructions(root, home string, disp func(string) string) InstructionsReport {
 	userDir := config.MemoryUserDir()
 	if home != "" && (userDir == "" || strings.Contains(userDir, home)) {
-		// Prefer explicit test home when Reasonix home is under it.
+		// Prefer explicit test home when VoltUI home is under it.
 		if custom := filepath.Join(home, ".reasonix"); custom != "" {
 			if userDir == "" {
 				userDir = custom
@@ -170,7 +170,7 @@ func collectSkills(root, home, reasonixHome string, cfg *config.Config, disp fun
 	var issues []Issue
 	store := skill.New(skill.Options{
 		HomeDir:         home,
-		ReasonixHomeDir: reasonixHome,
+		VoltUIHomeDir: reasonixHome,
 		ProjectRoot:     root,
 		CustomPaths:     cfg.SkillCustomPaths(),
 		ExcludedPaths:   cfg.SkillExcludedPaths(),
@@ -366,7 +366,7 @@ func collectPlugins(reasonixHome string, disp func(string) string) (PluginPackag
 			Severity: "error", Code: "plugin.state_read_failed", Subsystem: "plugins",
 			Source:      rep.StatePath,
 			Message:     "failed to read plugin-packages state",
-			Remediation: "Ensure Reasonix home is readable or reinstall packages",
+			Remediation: "Ensure VoltUI home is readable or reinstall packages",
 			SettingsTab: "plugins",
 		})
 		return rep, issues

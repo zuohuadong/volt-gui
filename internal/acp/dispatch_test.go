@@ -9,7 +9,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"voltui/internal/agent"
+	"voltui/internal/control"
 	"voltui/internal/event"
+	"voltui/internal/provider"
 )
 
 // fakeNotifier captures Notify calls and answers Request via an injectable hook,
@@ -75,6 +78,21 @@ func (f *fakeNotifier) updateMap(t *testing.T, i int) map[string]any {
 		t.Errorf("notif %d sessionId = %q, want sess-1", i, decoded.SessionID)
 	}
 	return decoded.Update
+}
+
+func TestUpdateSinkReplayStripsSteerWrapper(t *testing.T) {
+	fn := &fakeNotifier{}
+	sink := newUpdateSink(fn, "sess-1")
+	sink.replay([]provider.Message{{
+		Role:    provider.RoleUser,
+		Content: agent.MidTurnSteerPrefix + "\nuse plan B",
+	}})
+
+	u := fn.updateMap(t, 0)
+	content, _ := u["content"].(map[string]any)
+	if content["text"] != "use plan B" {
+		t.Fatalf("replayed steer = %v, want raw user text", content["text"])
+	}
 }
 
 func TestUpdateSinkMapsEvents(t *testing.T) {
@@ -306,6 +324,56 @@ func TestUpdateSinkApprovalBashPrefix(t *testing.T) {
 	}
 }
 
+func TestUpdateSinkSandboxEscapeApprovalOffersSessionGrant(t *testing.T) {
+	fn := &fakeNotifier{onReq: func(_ string, params any) (json.RawMessage, error) {
+		raw, _ := json.Marshal(params)
+		var p PermissionRequestParams
+		if err := json.Unmarshal(raw, &p); err != nil {
+			t.Fatalf("permission params: %v", err)
+		}
+		assertACPv1PermissionOptionKinds(t, p.Options)
+		var hasOnce, hasSession, hasReject bool
+		for _, opt := range p.Options {
+			switch opt.OptionID {
+			case string(OptAllowOnce):
+				hasOnce = opt.Kind == OptAllowOnce
+			case string(OptAllowAlways):
+				hasSession = opt.Kind == OptAllowAlways && opt.Name == "Use real environment for this session"
+			case string(OptRejectOnce):
+				hasReject = opt.Kind == OptRejectOnce
+			default:
+				t.Fatalf("unexpected ACP permission option %+v in %+v", opt, p.Options)
+			}
+		}
+		if len(p.Options) != 3 || !hasOnce || !hasSession || !hasReject {
+			t.Fatalf("options = %+v, want allow once, session, reject", p.Options)
+		}
+		res, _ := json.Marshal(PermissionRequestResult{
+			Outcome: PermissionOutcome{Outcome: "selected", OptionID: string(OptAllowAlways)},
+		})
+		return res, nil
+	}}
+	sink := newUpdateSink(fn, "sess-1")
+	got := make(chan approveCall, 1)
+	sink.bindApprove(func(id string, allow, session, persist bool) { got <- approveCall{id, allow, session, persist} })
+
+	sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{
+		ID:      "11",
+		Tool:    control.SandboxEscapeApprovalTool,
+		Subject: "run unconfined once: go test ./...",
+	}})
+
+	select {
+	case c := <-got:
+		want := approveCall{id: "11", allow: true, session: true, persist: false}
+		if c != want {
+			t.Errorf("approve = %+v, want %+v", c, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("approve was never called")
+	}
+}
+
 func TestUpdateSinkApprovalDenied(t *testing.T) {
 	// Both a "cancelled" outcome and a transport error must deny the call.
 	for _, tc := range []struct {
@@ -459,6 +527,18 @@ func TestUpdateSinkApprovalUsesTurnContext(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("turn context cancellation did not deny permission request")
+	}
+}
+
+func TestApprovalOptionsFreshDynamicToolOnlyAllowOnceOrReject(t *testing.T) {
+	options := approvalOptions("extension__wipe", "extension/wipe", true)
+	if len(options) != 2 || options[0].Kind != OptAllowOnce || options[1].Kind != OptRejectOnce {
+		t.Fatalf("fresh dynamic-tool options = %+v, want allow-once/reject", options)
+	}
+	for _, option := range options {
+		if option.Kind == OptAllowAlways {
+			t.Fatalf("fresh dynamic-tool decision offered remembered permission: %+v", options)
+		}
 	}
 }
 

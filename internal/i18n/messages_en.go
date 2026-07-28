@@ -7,7 +7,7 @@ var English = Messages{
 	WelcomeTitleFmt: "Welcome to %s",
 	NoConfigYet:     "No configuration found yet — let's set it up.",
 	StartingChatFmt: "Starting %s…",
-	SetKeyHint:      "Set your API key, then run `voltui`.",
+	SetKeyHint:      "Set your API key, then run `reasonix`.",
 	ConfigLabel:     "config",
 	ModelsLabel:     "models",
 	ConfigNotFound:  "not found — using built-in defaults",
@@ -15,20 +15,22 @@ var English = Messages{
 	NoKey:           "no key",
 	Ready:           "ready",
 	GetStarted:      "Get started",
-	StepScaffold:    "scaffold voltui.toml",
+	StepScaffold:    "scaffold reasonix.toml",
 	StepSetKey:      "set API key",
 
-	InitHint:       "Project memory (AGENTS.md) is generated in-session: run `voltui`, then `/init` — the model analyzes the codebase and writes it. For configuration, use `voltui setup`.",
-	StepSetKeyHint: "run `voltui setup`, or export DEEPSEEK_API_KEY=…",
+	InitHint:       "Project memory (AGENTS.md) is generated in-session: run `reasonix`, then `/init` — the model analyzes the codebase and writes it. For configuration, use `reasonix setup`.",
+	StepSetKeyHint: "run `reasonix setup`, or export DEEPSEEK_API_KEY=…",
 	StepChatDesc:   "interactive session",
 	StepRunDesc:    "one-shot task",
-	HelpFooter:     "voltui help · all commands",
+	HelpFooter:     "reasonix help · all commands",
 
-	ChatTip:           "Context is kept across turns. Type 'exit' or Ctrl-D to quit.",
-	TurnCancelled:     "cancelled — back to prompt",
-	NoSessionToResume: "no saved session to resume — start a new one with `voltui`",
-	ResumeRequiresTTY: "--resume needs an interactive terminal; pass --continue for the most recent session",
-	PickSessionLabel:  "Resume which session?",
+	ChatTip:             "Context is kept across turns. Type 'exit' or Ctrl-D to quit.",
+	TurnCancelled:       "cancelled — back to prompt",
+	InterruptedRecovery: "This turn was interrupted. Partial output is kept for reference; only completed tool pairs and a bounded recovery summary enter the next model turn. Inspect the workspace before continuing or reverting changes.",
+	RecoveryPaused:      "Automatic retries paused. VoltUI stopped repeated attempts and kept completed work. Send “Continue” to start a fresh attempt, or add instructions to change direction.",
+	NoSessionToResume:   "no saved session to resume — start a new one with `reasonix`",
+	ResumeRequiresTTY:   "--resume needs an interactive terminal; pass --continue for the most recent session",
+	PickSessionLabel:    "Resume which session?",
 
 	ResumeListHeader:    "sessions (/resume <n> to switch)",
 	ResumeBusy:          "finish or cancel the current turn before resuming",
@@ -50,11 +52,22 @@ var English = Messages{
 	ChatStatusCancellingFmt:                "%s stopping… (%ds · Ctrl+C exits)",
 	ChatStatusIdle:                         "ready",
 	ChatStatusYoloIdle:                     "tool approvals skipped",
-	ChatStatusCycleHint:                    "shift+tab toggles plan · ctrl+y yolo",
+	ChatStatusCycleHint:                    "Shift+Tab ask/auto/plan · Ctrl+Y YOLO",
+	ChatStatusCycleHintCompact:             "Shift+Tab ask/auto/plan · Ctrl+Y YOLO",
+	ChatTurnReceiptLabel:                   "TURN",
+	ChatStatusModelLabel:                   "MODEL",
+	ChatStatusEffortLabel:                  "EFFORT",
+	ChatStatusWorkLabel:                    "WORK",
+	ChatStatusCacheLabel:                   "CACHE",
+	ChatStatusContextLabel:                 "CTX",
+	ChatStatusCompactLabel:                 "COMPACT",
+	ChatStatusJobsLabel:                    "JOBS",
+	ChatStatusBalanceLabel:                 "BAL",
 	ChatStatusCacheNowFmt:                  "turn hit %s",
 	ChatStatusCacheAvgFmt:                  "avg %s",
-	ChatStatusPlanApproval:                 "Enter/y approves & executes · n/Esc keeps planning · PgUp/PgDn/Ctrl+Home/End scrolls",
-	PlanApprovalPrompt:                     "Plan ready above — Enter/y to approve & execute, n/Esc to keep planning",
+	ChatStatusPlanApproval:                 "1 execute · 2 revise · 3 exit without executing · n/Esc keeps planning · PgUp/PgDn/Ctrl+Home/End scrolls",
+	PlanApprovalPrompt:                     "Plan ready above — choose what to do next",
+	PlanApprovalChoices:                    "1. Start execution\n2. Revise plan (keep planning)\n3. Exit without executing\nChoose [1/2/3] (y starts; n/Esc keeps planning)",
 	ChatStatusToolApproval:                 "1 approve once · 2 allow scope this session · 3/4 prefix or save when offered · n/Esc deny · Ctrl-C cancels turn",
 	AskTypeSomething:                       "Type something else",
 	AskTypingHint:                          "type below, Enter to confirm",
@@ -69,6 +82,12 @@ var English = Messages{
 	BashPrefixChoices:                      "1. Allow once\n2. Allow %s for this session\n3. Always allow %s (save to config)\n4. Deny\nChoose [1/2/3/4] (y/a/p/n also work)",
 	PlanModeReadOnlyCommandChoices:         "1. Trust once\n2. Trust this prefix for this session\n3. Always trust this prefix for plan mode (save to config)\n4. Deny\nChoose [1/2/3/4] (y/a/p/n also work)",
 	FreshHumanApprovalChoices:              "1. Allow once\n2. Deny\nChoose [1/2] (y/n also work)",
+	RecoveryApprovalChoices:                "1. Continue once\n2. Try another approach",
+	RecoveryPlanChangeChoices:              "1. Adopt the new plan and continue\n2. Do not adopt; let Auto adjust",
+	RecoveryPlanDecisionPrompt:             "The execution plan needs your decision",
+	RecoveryPlanBeforeFmt:                  "Previous plan: %s",
+	RecoveryPlanAfterFmt:                   "Proposed plan: %s",
+	RecoveryTaskGrantChoices:               "1. Continue once\n2. Continue and allow similar actions in this task\n3. Try another approach",
 	SandboxEscapeApprovalChoices:           "1. Allow once\n2. Use real environment for this session\n3. Deny\nChoose [1/2/3] (y/a/n also work)",
 	ApprovalNeededFmt:                      "approval needed: %s",
 	ApprovalNeededWithSubjectFmt:           "approval needed: %s %s",
@@ -89,17 +108,13 @@ var English = Messages{
 	MemoryApprovalSaveUpdate:               "Save/update memory",
 	MemoryApprovalBodyLabel:                "body",
 	MemoryApprovalArchiveFmt:               "Archive memory %q",
-	PlanModeMCPTrustMetadataMissing:        "this MCP tool did not expose enough metadata to remember a read-only trust decision.",
-	PlanModeMCPTrustSubjectFmt:             "MCP %s/%s as read-only for planning and research",
-	PlanModeMCPTrustReason:                 "This MCP tool reports read-only, but external read-only hints need your confirmation before plan mode can use them. Choose always allow to remember this trust for future planning and read-only research.",
-	PlanModeMCPTrustDeclined:               "the user declined to trust this MCP read-only hint - do not retry it; continue with other trusted read-only tools or ask how to proceed.",
 	PlanModeBashTrustSubjectFmt:            "Trust %q as a read-only command prefix while planning\nCommand: %s",
 	PlanModeBashTrustReason:                "This bash command is not in VoltUI's built-in read-only set. Confirm only if this exact prefix is read-only for planning and research. Auto/YOLO approval cannot answer this trust prompt.",
 	PlanModeBashTrustDeclined:              "the user declined to trust this bash command as read-only for plan mode - do not retry it; continue with other trusted read-only tools or ask how to proceed.",
 	SandboxEscapeSubjectFallback:           "run shell command unconfined once",
 	SandboxEscapeSubjectPrefix:             "run unconfined once: ",
-	SandboxEscapeWrapReason:                "Windows sandbox could not wrap this command. Run it unconfined one time? This bypasses the OS sandbox for this command only.",
-	SandboxEscapeRuntimeReason:             "Windows sandbox failed while starting this command. Run it unconfined one time? This bypasses the OS sandbox for this command only.",
+	SandboxEscapeWrapReason:                "Windows does not provide an OS-level Bash sandbox for this command. Run it unconfined one time? This bypasses OS isolation for this command only.",
+	SandboxEscapeRuntimeReason:             "The OS sandbox could not start this command. Run it unconfined one time? This bypasses OS isolation for this command only.",
 	SandboxEscapeDeclined:                  "the user declined to run this command without the OS sandbox - do not retry it unconfined; ask how they would like to proceed.",
 	ApprovalToolLabelConfigWrite:           "VoltUI config write",
 	ConfigWriteSubjectPrefix:               "write VoltUI config: ",
@@ -109,9 +124,6 @@ var English = Messages{
 	PermissionSavedFmt:                     "permission saved to %s: %s",
 	PermissionAlreadyAllowedFmt:            "permission already covered in %s: %s",
 	PermissionSaveFailedFmt:                "permission save failed for %s: %v",
-	MCPReadOnlyTrustSavedFmt:               "MCP read-only trust saved to %s: %s/%s",
-	MCPReadOnlyTrustAlreadyFmt:             "MCP read-only trust already saved in %s: %s/%s",
-	MCPReadOnlyTrustFailedFmt:              "MCP read-only trust save failed for %s/%s: %v",
 	PlanModeReadOnlyCommandTrustSavedFmt:   "plan-mode read-only command trust saved to %s: %s",
 	PlanModeReadOnlyCommandTrustAlreadyFmt: "plan-mode read-only command trust already saved in %s: %s",
 	PlanModeReadOnlyCommandTrustFailedFmt:  "plan-mode read-only command trust save failed for %s: %v",
@@ -121,7 +133,7 @@ var English = Messages{
 
 	OutputStyleNone:    "no output styles available",
 	OutputStyleHeader:  "output styles:",
-	OutputStyleHint:    "set agent.output_style in voltui.toml to apply one (takes effect next session)",
+	OutputStyleHint:    "set agent.output_style in reasonix.toml to apply one (takes effect next session)",
 	ThemeHeader:        "themes:",
 	ThemeHint:          "switch with /theme <auto|light|dark|style>",
 	ThemeChangedFmt:    "theme switched to %s / %s",
@@ -147,7 +159,7 @@ var English = Messages{
 	SlashUnavailable:   "command unavailable in this build",
 	SlashUnknown:       "unknown command",
 	SlashTodoCleared:   "task list dismissed",
-	SlashHelp:          "commands: /compact · /new · /clear · /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model (switch model) · /effort · /theme · /language · /mcp · /skills · /plugins · /hooks · /paste-image · /memory · /memory-v5 · /migrate · /goal · /remember · /quit · /help · plus skills (/init, /explore, …)",
+	SlashHelp:          "commands: /compact · /new · /clear · /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model (switch model) · /effort · /theme · /language · /mcp · /skills · /plugins · /hooks · /paste-image · /memory · /migrate · /goal · /remember · /quit · /help · plus skills (/init, /explore, …)",
 
 	SkillPickerTitle:             "Skills",
 	SkillPickerAvailableFmt:      "%d available",
@@ -194,11 +206,17 @@ var English = Messages{
 	SkillPickerStatusNotDir:      "not-directory",
 	SkillPickerStatusUnreadable:  "unreadable",
 	SlashPromptEmpty:             "the MCP prompt returned no content to send",
-	SlashMCPNone:                 "no MCP servers configured — add a [[plugins]] entry in voltui.toml",
+	SlashMCPNone:                 "no MCP servers configured — add a [[plugins]] entry in reasonix.toml",
 	CtrlCQuitHint:                "press Ctrl+C again to quit",
 	CompHintSlash:                "↑/↓ move · Tab/Enter select · Esc close",
 	CompHintFile:                 "↑/↓ move · Tab/Enter open folder or pick file · Esc close",
 	MouseCopiedHint:              "copied to clipboard",
+	ClipboardCopyOSC52Hint:       "copy sent via OSC 52 — terminal permission may be required",
+	ClipboardCopyFallbackHint:    "native clipboard unavailable — copy sent via OSC 52",
+	ClipboardTextPasteRemoteHint: "mouse paste cannot read your local clipboard or PRIMARY selection over SSH — use the terminal paste shortcut or /mouse",
+	ClipboardTextPasteFailedFmt:  "paste text failed: %v",
+	ClipboardImagePastingHint:    "Pasting image…",
+	ClipboardImagePasteFailedFmt: "paste image failed: %v",
 	MouseCaptureOnHint:           "mouse capture on — in-app drag-select/scrollbar/wheel active",
 	MouseCaptureOffHint:          "mouse capture off — your terminal now handles selection and right-click",
 	MouseCaptureTag:              "native mouse",
@@ -219,12 +237,15 @@ var English = Messages{
 	CmdResume:           "resume a saved session",
 	CmdRename:           "rename a session",
 	CmdModel:            "switch model",
+	CmdStatus:           "show session status",
+	CmdWorkMode:         "switch work mode",
 	CmdMemory:           "show memory files",
 	CmdMigrate:          "retry legacy data migration",
 	CmdGoal:             "set or clear the active goal",
 	CmdRemember:         "save a memory note",
 	CmdForget:           "archive a saved memory",
 	CmdMcp:              "MCP servers",
+	CmdRemote:           "remote SSH hosts",
 	CmdHooks:            "manage hooks",
 	CmdPlugins:          "manage plugin packages",
 	CmdPasteImage:       "paste clipboard image",
@@ -238,9 +259,7 @@ var English = Messages{
 	CmdSandbox:          "show sandbox status",
 	CmdEffort:           "set reasoning effort",
 	CmdMouse:            "toggle in-app mouse capture (off = native terminal selection/right-click)",
-	CmdAutoPlan:         "configure automatic plan mode",
 	CmdReasonLang:       "set visible reasoning language",
-	CmdMemoryV5:         "toggle Memory v5",
 	CmdHelp:             "list commands",
 	CmdTodo:             "dismiss the task list",
 	CmdQuit:             "exit the session",
@@ -260,7 +279,6 @@ var English = Messages{
 	ArgMcpList:          "show configured servers",
 	ArgMcpConnected:     "connected",
 	ArgHooksList:        "list active hooks",
-	ArgHooksTrust:       "trust this project's hooks",
 	ArgModelCurrent:     "current",
 	ArgEffortAuto:       "use the model default",
 	ArgEffortLow:        "lighter reasoning",
@@ -269,7 +287,7 @@ var English = Messages{
 	ArgEffortXHigh:      "extra deep reasoning",
 	ArgEffortMax:        "maximum reasoning",
 	ArgThemeCurrent:     "current",
-	ArgLanguageAuto:     "auto-detect from VOLTUI_LANG / locale",
+	ArgLanguageAuto:     "auto-detect from REASONIX_LANG / locale",
 	ArgLanguageEn:       "English",
 	ArgLanguageZh:       "中文",
 
@@ -282,50 +300,66 @@ var English = Messages{
 	ListSkillsHeaderFmt: "skills (%d)",
 	ListSkillsNone:      "skills: none defined — invoke a built-in like /init, or author one with install_skill",
 	ListHooksHeaderFmt:  "hooks (%d active)",
-	ListHooksNone:       "hooks: none active — configure in .voltui/settings.json (project, after trust) or ~/.voltui/settings.json (global)",
+	ListHooksNone:       "hooks: none active — configure in .voltui/settings.json (project) or <VoltUI home>/settings.json (global)",
 	ListMcpHeader:       "mcp servers",
-	ListMcpNone:         "mcp: no servers connected — add one in voltui.toml ([[plugins]]) or a project .mcp.json",
+	ListMcpNone:         "mcp: no servers connected — add one in reasonix.toml ([[plugins]]) or a project .mcp.json",
 
-	MemoryNone:             "memory: none — add with “/remember <note>” or create VOLTUI.md in the project root",
-	MemoryLoaded:           "memory loaded:",
-	MemorySavedHeader:      "  saved memories (archive with “/forget <name>”):",
-	MemoryStoredUnderFmt:   "  stored under %s",
-	MemoryEditHint:         "edit doc files or use “/remember <note>”; doc edits apply next session",
-	ForgetUsage:            "usage: /forget <name> — the slug shown under “saved memories” in /memory",
-	ForgetDoneFmt:          "forgot and archived memory: %s",
-	QuickRememberEmpty:     "nothing to remember",
-	QuickRememberDoneFmt:   "remembered → %s",
-	GoalEmpty:              "goal: none — set one with /goal <objective>",
-	GoalCurrentFmt:         "goal: %s",
-	GoalSetFmt:             "goal set → %s",
-	GoalCleared:            "goal cleared",
-	ModelSwitchUnavailable: "model switching is unavailable in this session",
-	ModelSwitchBusy:        "finish or cancel the current turn before switching models",
-	ModelAlreadyOnFmt:      "already on %s",
-	ModelSwitchingFmt:      "switching to %s…",
-	ModelSwitchedFmt:       "switched to %s (conversation carried over; prompt cache resets)",
-	ModelListHeader:        "models (/model <provider/model> to switch)",
-	RewindNone:             "nothing to rewind yet",
-	RewindCodeConversation: "Code + conversation",
-	RewindConversationOnly: "Conversation only",
-	RewindCodeOnly:         "Code only",
-	RewindFork:             "Fork (new branch, keep code)",
-	RewindSummarizeFrom:    "Summarize from here",
-	RewindSummarizeUpto:    "Summarize up to here",
-	RewindPickTitle:        "⟲ Rewind — pick a turn",
-	RewindPickHint:         "↑/↓ move · Enter choose · Esc close",
-	RewindRestoreTitleFmt:  "⟲ Restore to turn %d ",
-	RewindApplyHint:        "↑/↓ · Enter apply · Esc back",
-	RewindEmpty:            "(empty)",
+	MemoryNone:                "memory: none — add with “/remember <note>” or create REASONIX.md in the project root",
+	MemoryLoaded:              "memory loaded:",
+	MemorySavedHeader:         "  saved memories (archive with “/forget <name>”):",
+	MemoryStoredUnderFmt:      "  stored under %s",
+	MemoryEditHint:            "edit doc files or use “/remember <note>”; doc edits apply next session",
+	ForgetUsage:               "usage: /forget <name> — the slug shown under “saved memories” in /memory",
+	ForgetDoneFmt:             "forgot and archived memory: %s",
+	QuickRememberEmpty:        "nothing to remember",
+	QuickRememberDoneFmt:      "remembered → %s",
+	GoalEmpty:                 "goal: none — set one with /goal <objective>",
+	GoalCurrentFmt:            "goal: %s",
+	GoalSetFmt:                "goal set → %s",
+	GoalCleared:               "goal cleared",
+	ModelSwitchUnavailable:    "model switching is unavailable in this session",
+	ModelSwitchBusy:           "finish or cancel active work and stop background jobs before switching models",
+	ModelAlreadyOnFmt:         "already on %s",
+	ModelSwitchingFmt:         "switching to %s…",
+	ModelSwitchedFmt:          "switched to %s (conversation carried over; prompt cache resets)",
+	ModelListHeader:           "models (/model <provider/model> to switch)",
+	RuntimeSwitchPending:      "wait for the current runtime switch to finish",
+	WorkModeStatusFmt:         "work %s",
+	WorkModeListHeaderFmt:     "work modes (current: %s)",
+	WorkModeListHint:          "switch with /work-mode economy|balanced|delivery (/profile is an alias)",
+	WorkModeEconomyLabel:      "economy",
+	WorkModeBalancedLabel:     "balanced",
+	WorkModeDeliveryLabel:     "delivery",
+	WorkModeEconomyDesc:       "lower token use; optional tool sources connect on demand",
+	WorkModeBalancedDesc:      "full tool surface; model decides how much work is needed",
+	WorkModeDeliveryDesc:      "complete, verified delivery; stronger skill and plugin use",
+	WorkModeUsage:             "usage: /work-mode economy|balanced|delivery",
+	WorkModeSwitchUnavailable: "work-mode switching is unavailable in this session",
+	WorkModeSwitchBusy:        "finish or cancel active work before switching work modes",
+	WorkModeAlreadyOnFmt:      "work mode is already %s",
+	WorkModeSwitchingFmt:      "switching work mode to %s…",
+	WorkModeSwitchedFmt:       "work mode switched to %s (conversation carried over; prompt cache resets)",
+	RewindNone:                "nothing to rewind yet",
+	RewindCodeConversation:    "Code + conversation",
+	RewindConversationOnly:    "Conversation only",
+	RewindCodeOnly:            "Code only",
+	RewindFork:                "Fork (new branch, keep code)",
+	RewindSummarizeFrom:       "Summarize from here",
+	RewindSummarizeUpto:       "Summarize up to here",
+	RewindPickTitle:           "⟲ Rewind — pick a turn",
+	RewindPickHint:            "↑/↓ move · Enter choose · Esc close",
+	RewindRestoreTitleFmt:     "⟲ Restore to turn %d ",
+	RewindApplyHint:           "↑/↓ · Enter apply · Esc back",
+	RewindEmpty:               "(empty)",
 
 	SelectProvidersLabel:     "Select providers to enable",
 	EnterAPIKeysHeader:       "Enter API keys (Enter to skip and set later):",
-	MissingKeyIntro:          "voltui.toml is ready — just an API key away.",
+	MissingKeyIntro:          "reasonix.toml is ready — just an API key away.",
 	WroteFileFmt:             "Wrote %s",
 	SetupComplete:            "Setup complete.",
 	SetupCancelled:           "setup cancelled.",
 	TryHintFmt:               "Try: %s",
-	NextHint:                 "Next: set your API key (run `voltui setup` or export DEEPSEEK_API_KEY=...), then run `voltui run \"your task\"`.",
+	NextHint:                 "Next: set your API key (run `reasonix setup` or export DEEPSEEK_API_KEY=...), then run `reasonix run \"your task\"`.",
 	ConfirmReconfigureFmt:    "%s already exists. Reconfigure and overwrite?",
 	KeepingExisting:          "Keeping existing config.",
 	NotOverwritingFmt:        "%s already exists; not overwriting",
@@ -373,7 +407,7 @@ var English = Messages{
 	NoModelsAvailableFmt:       "%s: no models available, skipping",
 	CustomFetchEmpty:           "/models returned an empty list — falling back to manual entry",
 	AnthropicFetchEmpty:        "/models returned an empty list — Anthropic-compatible providers usually don't expose one, falling back to manual entry",
-	SkipStaleCustomEntryFmt:    "skipping stale %q entry from voltui.toml (pointing at %s) — please remove it from [[providers]]",
+	SkipStaleCustomEntryFmt:    "skipping stale %q entry from reasonix.toml (pointing at %s) — please remove it from [[providers]]",
 	APIKeyAlreadySetFmt:        "reusing existing value for %s",
 	APIKeyResetPromptFmt:       "Re-enter %s?",
 	InvalidAPIKeyEnvFmt:        "%q is not a valid API Key variable name. Use letters, numbers, and underscores (for example, MY_PROVIDER_API_KEY); do not enter a model name.",
@@ -407,18 +441,32 @@ var English = Messages{
 	AnthropicFetchModelsFailedFmt:  "Failed to fetch models for %s: %v",
 	AnthropicSelectModelsLabel:     "Select models to enable for %s",
 
+	RemoteConnectingFmt:       "connecting to %s…",
+	RemoteConnectedFmt:        "connected to %s",
+	RemoteReconnectingFmt:     "reconnecting to %s (attempt %d)…",
+	RemoteDegradedFmt:         "connected to %s, but some forwards are down",
+	RemoteDisconnected:        "disconnected (remote serve keeps running)",
+	RemoteServeReadyFmt:       "remote serve ready: %s",
+	RemoteHostKeyPromptFmt:    "unknown host key for %s\n  type:        %s\n  fingerprint: %s",
+	RemotePassphrasePromptFmt: "passphrase for %s:",
+	RemotePasswordPromptFmt:   "password for %s:",
+	RemoteBootstrapStepFmt:    "remote serve: %s %s",
+	RemoteNoHostsHint:         "no remote hosts configured; add one with `reasonix remote add <name> [user@]host`",
+
 	UnknownCommandFmt:         "unknown command %q",
-	UsageRunHint:              "usage: voltui run [--model NAME] <task>",
+	UsageRunHint:              "usage: reasonix -p [--model NAME] <task>",
 	ErrorPrefix:               "error:",
 	ReconfigureOnUnknownModel: "Configured model is no longer available — re-running setup.",
 	WriteConfigErr:            "write config:",
 	WriteEnvErr:               "write .env:",
 
 	ProviderErrBadRequest:          "Malformed request (HTTP 400): the request body was rejected. This is likely a bug — please report it if it persists.",
-	ProviderErrAuth:                "Authentication failed (HTTP 401): your API key is missing or unset. Add it to .env or run `voltui setup`.",
-	ProviderErrAuthRejected:        "Authentication failed (HTTP 401): the server rejected your API key. It may be wrong or expired, or the provider hit a transient auth/quota issue — retried with backoff and still failed. Try again shortly, or check the key in .env / run `voltui setup`.",
+	ProviderErrAuth:                "Authentication failed (HTTP 401): your API key is missing or unset. Add it to .env or run `reasonix setup`.",
+	ProviderErrAuthRejected:        "Authentication failed (HTTP 401): the server rejected your API key. It may be wrong or expired, or the provider hit a transient auth/quota issue — retried with backoff and still failed. Try again shortly, or check the key in .env / run `reasonix setup`.",
 	ProviderErrInsufficientBalance: "Insufficient balance (HTTP 402): your account is out of credit. Top up your account, then retry.",
 	ProviderErrUnprocessable:       "Invalid parameters (HTTP 422): a request parameter was rejected. This is likely a bug — please report it if it persists.",
+	ProviderErrInputSensitive:      "MiniMax rejected the input during content review (error 1026). The review may include conversation history and tool results; adjust the relevant content or start a new session with only the necessary context. Repeating the same request is unlikely to help.",
+	ProviderErrOutputSensitive:     "MiniMax rejected the generated output during content review (error 1027). Adjust the request and try again, or use another provider if the rejection persists.",
 	ProviderErrRateLimited:         "Rate limit reached (HTTP 429): too many requests (TPM/RPM). Retried with backoff — slow down or try again shortly.",
 	ProviderErrServer:              "Server error (HTTP 500): the provider hit an internal fault. Retried with backoff; if it keeps failing, try again later.",
 	ProviderErrServerBusy:          "Server busy (HTTP 503): the provider is overloaded. Retried with backoff; please try again shortly.",
@@ -457,37 +505,46 @@ var English = Messages{
 	UpgradeApplyFailed:         "failed to apply update: %v",
 	UpgradeSuccessFmt:          "Updated %s → %s",
 
-	UsageBody: `voltui — a config- and plugin-driven coding agent (multi-model)
+	UsageBody: `reasonix — a config- and plugin-driven coding agent (multi-model)
 
 Usage:
-  voltui [--model NAME] [-c|--continue] [--resume] [--copy] [--yolo] [--dir PATH]   interactive session (multi-turn; -c resumes the latest, --resume picks one, --copy continues in a duplicate)
-  voltui run  [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] <task>   run one task and exit
-  voltui review [--base BRANCH] [--commit SHA] [--model NAME]  AI-powered code review on local diffs
-  voltui serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  serve over HTTP+SSE (with optional auth)
-  voltui usage [--since 7d] [--all] [--json]       summarize local token/cache/cost usage (also: voltui stats)
-  voltui acp [--model NAME]                           serve Agent Client Protocol over stdio (also: voltui --acp)
-  voltui setup [path]                                 interactive config wizard; writes voltui.toml (+ .env)
-  voltui config auto-plan [off|on]                    configure automatic plan mode
-  voltui config memory-v5 [off|observe|compact|on|status]  configure Memory v5
-  voltui config reasoning-language [auto|zh|en]        configure visible reasoning language
-  voltui mcp <add|remove|list|import>                 manage MCP servers in voltui.toml
-  voltui init                                         show how to generate project memory (AGENTS.md)
-  voltui doctor [--json]                              print redacted local diagnostics
-  voltui bot start|doctor|weixin-login                multi-channel IM bot gateway
-  voltui upgrade [--check] [--force]                   self-update to the latest release (also: voltui update)
-  voltui version
-  voltui help
+  reasonix [--model NAME] [-c|--continue] [-r|--resume [QUERY]] [--permission-mode MODE] [--effort LEVEL] [--add-dir PATH]   interactive session
+  reasonix -p|--print [--model NAME] [--output-format text|json|stream-json] [--allowed-tools RULES] [--add-dir PATH] <task>
+  reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--output-format FORMAT] <task>
+  reasonix run --events-jsonl [--model NAME] <task>      emit redacted structured events as JSONL
+  reasonix review [--base BRANCH] [--commit SHA] [--model NAME]  AI-powered code review on local diffs
+  reasonix serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  serve over HTTP+SSE (with optional auth)
+  reasonix acp [--model NAME]                           serve Agent Client Protocol over stdio (also: reasonix --acp)
+  reasonix setup [path]                                 interactive config wizard; writes reasonix.toml (+ .env)
+  reasonix config reasoning-language [auto|zh|en]        configure visible reasoning language
+  reasonix mcp <add|remove|list|import>                 manage MCP servers in reasonix.toml
+  reasonix subagent <list|create|edit|delete|try|run>   manage and run isolated subagent profiles
+  reasonix init                                         show how to generate project memory (AGENTS.md)
+  reasonix doctor [--json]                              print redacted local diagnostics
+  reasonix doctor session <branch-id> [--zip] [--out PATH]  export a session conflict diagnostic zip
+  reasonix session list --json [--dir PATH]             list redacted sessions for machine clients
+  reasonix session show|status <machine-session-id> --json [--dir PATH]  query one redacted session
+  reasonix session recovery [<machine-session-id>] --json [--dir PATH]  query redacted recovery state
+  reasonix hook list|status --json [--dir PATH]         inspect redacted hook state
+  reasonix task list|show --json [--dir PATH]           inspect redacted task state
+  reasonix bot start|doctor|weixin-login                multi-channel IM bot gateway
+  reasonix upgrade [--check] [--force]                   self-update to the latest release (also: reasonix update)
+  reasonix version
+  reasonix help
 
 Examples:
-  voltui
-  voltui --continue
-  voltui run "implement the TODOs in main.go"
-  voltui run --model mimo-pro "add unit tests for this function"
-  echo "explain this code" | voltui run
+  reasonix
+  reasonix --continue
+  reasonix --resume provider-config
+  reasonix run "implement the TODOs in main.go"
+  reasonix run --model mimo-pro "add unit tests for this function"
+  reasonix -p "summarize this repository" --output-format json
+  reasonix subagent run review "review the current changes"
+  echo "explain this code" | reasonix run
 
 Configuration:
-  Resolution: flag > ./voltui.toml > ~/.voltui/config.toml > built-in defaults
+  Resolution: flag > ./reasonix.toml > <VoltUI home>/config.toml > built-in defaults
   Secrets come from the environment via api_key_env (e.g. DEEPSEEK_API_KEY).
-  Run 'voltui setup' to scaffold a config; see docs/SPEC.md.
+  Run 'reasonix setup' to scaffold a config; see docs/SPEC.md.
 `,
 }

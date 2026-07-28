@@ -14,23 +14,22 @@ import (
 // TestBuildUnknownModelErrorIsActionable: a default_model that doesn't resolve
 // (e.g. a stale preset name after [[providers]] replaced the built-in presets) must
 // fail with a message that names the model, lists what IS configured, and hints
-// at the [[providers]] trap — not a silent empty model.
+// at the [[providers]] trap — not a silent empty model. This contract holds when
+// the project file is the only config, so isolate REASONIX_HOME: a user-global
+// config with an explicit default_model would instead rescue the boot (#4218).
 func TestBuildUnknownModelErrorIsActionable(t *testing.T) {
-	isolateConfigHome(t)
+	t.Setenv("REASONIX_HOME", t.TempDir())
 	dir := robustTempDir(t)
 	t.Chdir(dir)
-	writeFile(t, dir, "voltui.toml", `
+	writeFile(t, dir, "reasonix.toml", `
 default_model = "legacy-missing"
-
-[codegraph]
-enabled = false
 
 [[providers]]
 name = "deepseek-flash"
 kind = "openai"
 base_url = "https://example.invalid"
 model = "deepseek-v4-flash"
-api_key_env = "VOLTUI_TEST_KEY_UNSET"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
 `)
 
 	_, err := Build(context.Background(), Options{Sink: event.Discard})
@@ -45,59 +44,62 @@ api_key_env = "VOLTUI_TEST_KEY_UNSET"
 	}
 }
 
-func TestBuildAmbiguousBareModelErrorIsActionable(t *testing.T) {
-	isolateConfigHome(t)
-	dir := robustTempDir(t)
-	t.Chdir(dir)
-	writeFile(t, dir, "voltui.toml", `
-default_model = "same-model"
-
-[codegraph]
-enabled = false
+func TestBuildNoticesProjectDefaultModelFallback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	writeFile(t, home, "config.toml", `
+default_model = "deepseek-pro"
 
 [[providers]]
-name = "provider-a"
+name = "deepseek-pro"
 kind = "openai"
-base_url = "https://example.invalid/a"
-model = "same-model"
-api_key_env = "VOLTUI_TEST_KEY_UNSET"
-
-[[providers]]
-name = "provider-b"
-kind = "openai"
-base_url = "https://example.invalid/b"
-model = "same-model"
-api_key_env = "VOLTUI_TEST_KEY_UNSET"
+base_url = "https://example.invalid"
+model = "deepseek-v4-pro"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
 `)
 
-	_, err := Build(context.Background(), Options{Sink: event.Discard})
-	if err == nil {
-		t.Fatal("expected an error for an ambiguous bare default_model")
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "deepseek-flash"
+`)
+
+	var notices []event.Event
+	ctrl, err := Build(context.Background(), Options{
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.Notice {
+				notices = append(notices, e)
+			}
+		}),
+	})
+	if err != nil {
+		t.Fatalf("Build should fall back to the user default model: %v", err)
 	}
-	msg := err.Error()
-	for _, want := range []string{"ambiguous model", "provider-a/same-model", "provider-b/same-model", "provider/model", "priority"} {
-		if !strings.Contains(msg, want) {
-			t.Fatalf("error %q should mention %q", msg, want)
+	defer ctrl.Close()
+
+	for _, notice := range notices {
+		if notice.Level == event.LevelWarn &&
+			notice.Text == "Ignored the project config's default_model." &&
+			strings.Contains(notice.Detail, `default_model = "deepseek-flash"`) &&
+			strings.Contains(notice.Detail, `using "deepseek-pro"`) {
+			return
 		}
 	}
+	t.Fatalf("expected a warning naming the ignored project model and user fallback; got %v", notices)
 }
 
 func TestBuildMigratesLegacyBareMimoModelOverride(t *testing.T) {
-	isolateConfigHome(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
-	writeFile(t, dir, "voltui.toml", `
+	writeFile(t, dir, "reasonix.toml", `
 default_model = "deepseek-flash"
-
-[codegraph]
-enabled = false
 
 [[providers]]
 name = "deepseek-flash"
 kind = "openai"
 base_url = "https://example.invalid"
 model = "deepseek-v4-flash"
-api_key_env = "VOLTUI_TEST_KEY_UNSET"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
 `)
 
 	ctrl, err := Build(context.Background(), Options{Sink: event.Discard, Model: "mimo-v2.5-pro"})
@@ -114,14 +116,11 @@ api_key_env = "VOLTUI_TEST_KEY_UNSET"
 // builds fine (RequireKey is false so the UI stays reachable) but must emit a
 // notice naming the env var, instead of silently showing a dead/empty model.
 func TestBuildNoticesMissingAPIKey(t *testing.T) {
-	const keyEnv = "VOLTUI_MISSING_KEY_FOR_TEST"
+	const keyEnv = "REASONIX_MISSING_KEY_FOR_TEST"
 	dir := robustTempDir(t)
 	t.Chdir(dir)
-	writeFile(t, dir, "voltui.toml", `
+	writeFile(t, dir, "reasonix.toml", `
 default_model = "x"
-
-[codegraph]
-enabled = false
 
 [[providers]]
 name = "x"
@@ -156,16 +155,12 @@ api_key_env = "`+keyEnv+`"
 }
 
 func TestBuildDoesNotNoticeMissingAPIKeyForNoAuthLoopback(t *testing.T) {
-	const keyEnv = "VOLTUI_LOCAL_GATEWAY_KEY_FOR_TEST"
-	isolateConfigHome(t)
+	const keyEnv = "REASONIX_LOCAL_GATEWAY_KEY_FOR_TEST"
 	dir := robustTempDir(t)
 	t.Chdir(dir)
 	t.Setenv(keyEnv, "")
-	writeFile(t, dir, "voltui.toml", `
+	writeFile(t, dir, "reasonix.toml", `
 default_model = "local/model-a"
-
-[codegraph]
-enabled = false
 
 [[providers]]
 name = "local"

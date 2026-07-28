@@ -27,6 +27,7 @@ import (
 
 	"voltui/internal/bot"
 	"voltui/internal/config"
+	fileencoding "voltui/internal/fileutil/encoding"
 )
 
 const (
@@ -253,7 +254,7 @@ func (a *adapter) loadContextTokens() {
 	if path == "" {
 		return
 	}
-	data, err := os.ReadFile(path)
+	data, err := fileencoding.ReadFileUTF8(path)
 	if err != nil {
 		return
 	}
@@ -569,7 +570,7 @@ func (a *adapter) sendMessage(ctx context.Context, msg bot.OutboundMessage) (bot
 		"msg": map[string]interface{}{
 			"from_user_id":  "",
 			"to_user_id":    msg.ChatID,
-			"client_id":     fmt.Sprintf("voltui-%d", time.Now().UnixNano()),
+			"client_id":     fmt.Sprintf("reasonix-%d", time.Now().UnixNano()),
 			"message_type":  weixinMsgTypeBot,
 			"message_state": weixinMsgStateDone,
 			"item_list": []map[string]interface{}{

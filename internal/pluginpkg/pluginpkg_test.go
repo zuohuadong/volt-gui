@@ -739,7 +739,7 @@ func TestParseClaudePluginMapsCommandsDir(t *testing.T) {
 }
 
 // TestNativeManifestCommandsField pins the explicit "commands" declaration in
-// voltui-plugin.json, including path validation.
+// reasonix-plugin.json, including path validation.
 func TestNativeManifestCommandsField(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, NativeManifest), `{"name": "native-pack", "commands": ["cmds"]}`)

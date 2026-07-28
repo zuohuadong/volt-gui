@@ -48,7 +48,7 @@ func TestExecFormPreservesLiteralArgumentsEndToEnd(t *testing.T) {
 		`a && b | c > out`,
 		`double"quote`,
 		"single'quote",
-		`C:\Program Files\Reasonix\hook.cmd`,
+		`C:\Program Files\VoltUI\hook.cmd`,
 		"第一行\n第二行",
 		"emoji-🧪",
 	}
@@ -292,7 +292,7 @@ func FuzzPowerShellCommandEncodingRoundTrip(f *testing.F) {
 	for _, seed := range []string{
 		"",
 		`Write-Output "a && 'b'"`,
-		`$value = "C:\Program Files\Reasonix"; $value`,
+		`$value = "C:\Program Files\VoltUI"; $value`,
 		"第一行\n第二行",
 		"Write-Output '🧪'",
 		"`$literal; $(Write-Output nested)",

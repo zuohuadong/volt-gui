@@ -7,8 +7,8 @@ import (
 	"voltui/internal/skill/builtincontent"
 )
 
-func TestLoadReasonixGuide(t *testing.T) {
-	sk, err := builtincontent.LoadReasonixGuide()
+func TestLoadVoltUIGuide(t *testing.T) {
+	sk, err := builtincontent.LoadVoltUIGuide()
 	if err != nil {
 		t.Fatal(err)
 	}

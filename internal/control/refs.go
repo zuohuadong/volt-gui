@@ -19,6 +19,7 @@ import (
 
 	"voltui/internal/fileref"
 	"voltui/internal/proc"
+	"voltui/internal/secrets"
 )
 
 // maxFileRefBytes caps how much of an @-referenced file is injected into a
@@ -68,22 +69,41 @@ type ExternalFolderRefEntry struct {
 	IsDir       bool
 }
 
-// refTokenRe matches an @reference token: '@' then a run of non-space chars.
-var refTokenRe = regexp.MustCompile(`@([^\s]+)`)
 var pathLocationSuffixRe = regexp.MustCompile(`:\d+(?::\d+)?:?$`)
 
-const (
-	externalFolderRefPrefix       = "__voltui_external_folder"
-	legacyExternalFolderRefPrefix = "__reasonix_external_folder"
-)
+const externalFolderRefPrefix = "__reasonix_external_folder"
 
 // parseRefTokens extracts the deduped, punctuation-trimmed tokens following '@'
-// in a line. Pure: classification (server? file?) happens in classifyRef.
+// in a line. A token is a run of non-whitespace bytes, except that a
+// backslash-escaped space or tab is part of the token with the backslash
+// dropped — that is how a path containing spaces survives the
+// whitespace-delimited grammar (EscapeRefPath produces that form). Any other
+// backslash stays literal so Windows separators keep their meaning. Pure:
+// classification (server? file?) happens in classifyRef.
 func parseRefTokens(line string) []string {
 	var toks []string
 	seen := map[string]bool{}
-	for _, g := range refTokenRe.FindAllStringSubmatch(line, -1) {
-		t := strings.TrimRight(g[1], ".,;!?)]}")
+	for i := 0; i < len(line); i++ {
+		if line[i] != '@' {
+			continue
+		}
+		var b strings.Builder
+		j := i + 1
+		for j < len(line) {
+			ch := line[j]
+			if ch == '\\' && j+1 < len(line) && (line[j+1] == ' ' || line[j+1] == '\t') {
+				b.WriteByte(line[j+1])
+				j += 2
+				continue
+			}
+			if isRefTokenBoundary(ch) {
+				break
+			}
+			b.WriteByte(ch)
+			j++
+		}
+		i = j - 1
+		t := strings.TrimRight(b.String(), ".,;!?)]}")
 		if t == "" || seen[t] {
 			continue
 		}
@@ -91,6 +111,53 @@ func parseRefTokens(line string) []string {
 		toks = append(toks, t)
 	}
 	return toks
+}
+
+// isRefTokenBoundary matches the whitespace class the old `@([^\s]+)` token
+// regexp stopped at.
+func isRefTokenBoundary(ch byte) bool {
+	switch ch {
+	case ' ', '\t', '\n', '\r', '\f':
+		return true
+	default:
+		return false
+	}
+}
+
+// EscapeRefPath returns path with spaces and tabs backslash-escaped so the
+// result survives whitespace-delimited @-token parsing (parseRefTokens
+// reverses it). Every other byte, including backslashes, passes through
+// unchanged so Windows separators keep their meaning.
+func EscapeRefPath(path string) string {
+	if !strings.ContainsAny(path, " \t") {
+		return path
+	}
+	var b strings.Builder
+	b.Grow(len(path) + 8)
+	for i := 0; i < len(path); i++ {
+		if path[i] == ' ' || path[i] == '\t' {
+			b.WriteByte('\\')
+		}
+		b.WriteByte(path[i])
+	}
+	return b.String()
+}
+
+// UnescapeRefPath reverses EscapeRefPath: a backslash before a space or tab is
+// dropped; any other backslash stays literal.
+func UnescapeRefPath(path string) string {
+	if !strings.Contains(path, `\`) {
+		return path
+	}
+	var b strings.Builder
+	b.Grow(len(path))
+	for i := 0; i < len(path); i++ {
+		if path[i] == '\\' && i+1 < len(path) && (path[i+1] == ' ' || path[i+1] == '\t') {
+			continue
+		}
+		b.WriteByte(path[i])
+	}
+	return b.String()
 }
 
 // classifyRef decides what a token refers to. A "server:uri" token whose server
@@ -226,23 +293,19 @@ func (c *Controller) externalFolderRef(token string) (ref, bool) {
 
 func (c *Controller) externalFolderRefTarget(token string) (rootToken, rel, abs string, ok bool) {
 	key := normalizeExternalFolderRefToken(token)
-	if !strings.HasPrefix(key, externalFolderRefPrefix+"/") && !strings.HasPrefix(key, legacyExternalFolderRefPrefix+"/") {
+	if !strings.HasPrefix(key, externalFolderRefPrefix+"/") {
 		return "", "", "", false
-	}
-	lookupKey := key
-	if strings.HasPrefix(key, legacyExternalFolderRefPrefix+"/") {
-		lookupKey = externalFolderRefPrefix + strings.TrimPrefix(key, legacyExternalFolderRefPrefix)
 	}
 	c.externalFolderRefsMu.RLock()
 	defer c.externalFolderRefsMu.RUnlock()
-	if abs, ok := c.externalFolderRefs[lookupKey]; ok {
-		return lookupKey, ".", abs, true
+	if abs, ok := c.externalFolderRefs[key]; ok {
+		return key, ".", abs, true
 	}
 	for registered, abs := range c.externalFolderRefs {
-		if !strings.HasPrefix(lookupKey, registered+"/") {
+		if !strings.HasPrefix(key, registered+"/") {
 			continue
 		}
-		sub, ok := cleanExternalFolderSubpath(strings.TrimPrefix(lookupKey, registered+"/"))
+		sub, ok := cleanExternalFolderSubpath(strings.TrimPrefix(key, registered+"/"))
 		if !ok {
 			return "", "", "", false
 		}
@@ -506,7 +569,7 @@ func (c *Controller) inputImages(line string) []string {
 func visionRefImageDataURL(r ref, baseDir string) (string, error) {
 	switch r.kind {
 	case refImage:
-		return visionImageDataURLInRoot(baseDir, r.path)
+		return visionImageDataURL(r.path)
 	case refFile:
 		return visionFileImageDataURL(r.path, baseDir)
 	default:
@@ -648,7 +711,7 @@ func FileRefLine(line string) (string, bool) {
 	if info, err := os.Stat(p); err != nil || info.IsDir() {
 		return "", false
 	}
-	return "@" + p, true
+	return "@" + EscapeRefPath(p), true
 }
 
 // SlashCodeCommentLine reports whether a slash-prefixed line is ordinary source
@@ -882,9 +945,6 @@ func readFileRef(path, baseDir string) (content string, isDir bool, err error) {
 	if strings.EqualFold(filepath.Ext(rel), ".pdf") {
 		return readPDFRef(absPath, info.Size()), false, nil
 	}
-	if isOfficeSpreadsheetRef(rel) {
-		return officeSpreadsheetRefNote(displayPath, info.Size()), false, nil
-	}
 
 	f, err := root.Open(rel)
 	if err != nil {
@@ -964,9 +1024,6 @@ func readFileRefUnscoped(path string) (content string, isDir bool, err error) {
 	if strings.EqualFold(filepath.Ext(path), ".pdf") {
 		return readPDFRef(path, info.Size()), false, nil
 	}
-	if isOfficeSpreadsheetRef(path) {
-		return officeSpreadsheetRefNote(filepath.ToSlash(path), info.Size()), false, nil
-	}
 
 	f, err := os.Open(path)
 	if err != nil {
@@ -998,19 +1055,6 @@ func imageFileRefNote(displayPath, mime string, size int64, attached bool) strin
 		return fmt.Sprintf("[image file %s, mime=%s, %d bytes — sent as direct model image input only when the selected model supports vision. Text-only models can still use an available OCR/image/vision tool with this local path; image bytes are not inlined into prompt text.]", displayPath, mime, size)
 	}
 	return fmt.Sprintf("[image file %s, mime=%s, %d bytes — not sent as direct model image input because no workspace root is available. Use a workspace-scoped file reference, image attachment, or an available OCR/image/vision tool with a readable local path.]", displayPath, mime, size)
-}
-
-func isOfficeSpreadsheetRef(path string) bool {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".xls", ".xlsx":
-		return true
-	default:
-		return false
-	}
-}
-
-func officeSpreadsheetRefNote(displayPath string, size int64) string {
-	return fmt.Sprintf("[spreadsheet file %s, %d bytes — workbook contents are not inlined into prompt text. Use mcp__office__office_read_spreadsheet first to inspect worksheets, headers, and bounded rows; use mcp__office__office_count_spreadsheet_column for exact column totals. These built-in tools read .xls/.xlsx without Microsoft Office or Python. If the Office tool is unavailable or reports an unsupported workbook, explain that blocker; do not create Python helper scripts as the default fallback.]", displayPath, size)
 }
 
 // walkRootDir walks a directory under a sandboxed *os.Root and writes each
@@ -1150,6 +1194,7 @@ func runPDFTextCommand(name string, args []string) (string, bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), pdfExtractTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = secrets.ProcessEnv()
 	setShellKillTree(cmd)
 	cmd.WaitDelay = pdfExtractWaitDelay
 	proc.HideWindow(cmd)

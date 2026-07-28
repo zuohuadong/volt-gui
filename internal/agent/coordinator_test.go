@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"voltui/internal/event"
 	"strings"
 	"testing"
-	"voltui/internal/event"
 
 	"voltui/internal/provider"
 	"voltui/internal/tool"

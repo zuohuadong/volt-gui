@@ -1,4 +1,4 @@
-// Command reasonix-guard diagnoses and repairs Reasonix without loading the
+// Command reasonix-guard diagnoses and repairs VoltUI without loading the
 // desktop shell. It is packaged beside the desktop application so recovery
 // remains available when Wails, WebView, or user configuration cannot start.
 package main
@@ -82,7 +82,7 @@ func runDiagnose(args []string) int {
 			return code
 		}
 	} else {
-		fmt.Println("Reasonix Guard diagnostics")
+		fmt.Println("VoltUI Guard diagnostics")
 		if len(report.Findings) == 0 {
 			fmt.Println("  ok: no issues found")
 		}
@@ -204,7 +204,7 @@ func runCheck(args []string, apply bool) int {
 			return 1
 		}
 	} else {
-		fmt.Println("Reasonix Guard")
+		fmt.Println("VoltUI Guard")
 		for _, check := range report.Checks {
 			status := "ok"
 			if !check.Exists {
@@ -255,11 +255,11 @@ func runLaunch(args []string) int {
 	if result, failure, err := repair.RecoverFailedInstall(); err != nil {
 		fmt.Fprintln(os.Stderr, "update rollback after failed install failed:", err)
 		if failedInstallBlocksLaunch(result, err) {
-			fmt.Fprintln(os.Stderr, "error: the failed installer may have left a mix of two releases and the rollback did not complete; refusing to start. Re-run reasonix-guard to retry the rollback, or reinstall Reasonix.")
+			fmt.Fprintln(os.Stderr, "error: the failed installer may have left a mix of two releases and the rollback did not complete; refusing to start. Re-run reasonix-guard to retry the rollback, or reinstall VoltUI.")
 			return 1
 		}
 	} else if failure != nil && result.RolledBack {
-		fmt.Fprintf(os.Stderr, "Reasonix Guard restored %s after the %s installer failed.\n", result.ToVersion, result.FromVersion)
+		fmt.Fprintf(os.Stderr, "VoltUI Guard restored %s after the %s installer failed.\n", result.ToVersion, result.FromVersion)
 	}
 	tracker := repair.NewStartupTracker("")
 	useSafeMode := *safeMode
@@ -267,7 +267,7 @@ func runLaunch(args []string) int {
 		if result, err := repair.RollbackPendingUpdate(); err != nil {
 			fmt.Fprintln(os.Stderr, "update rollback failed:", err)
 			if result.MixedInstall {
-				fmt.Fprintln(os.Stderr, "error: the installation now mixes two releases; refusing to start. Re-run reasonix-guard to retry the rollback, or reinstall Reasonix.")
+				fmt.Fprintln(os.Stderr, "error: the installation now mixes two releases; refusing to start. Re-run reasonix-guard to retry the rollback, or reinstall VoltUI.")
 				return 1
 			}
 			// The compensated install is still a coherent (new-version) release
@@ -275,7 +275,7 @@ func runLaunch(args []string) int {
 			// transaction stays on disk for the next rollback attempt.
 			useSafeMode = true
 		} else if result.RolledBack {
-			fmt.Fprintf(os.Stderr, "Reasonix Guard restored %s after %s failed to start.\n", result.ToVersion, result.FromVersion)
+			fmt.Fprintf(os.Stderr, "VoltUI Guard restored %s after %s failed to start.\n", result.ToVersion, result.FromVersion)
 			_ = tracker.MarkClean()
 		} else {
 			switch nativeRecoveryChoice() {

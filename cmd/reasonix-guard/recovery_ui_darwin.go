@@ -8,7 +8,7 @@ import (
 )
 
 func nativeRecoveryChoice() recoveryChoice {
-	script := `button returned of (display dialog "Reasonix failed to start repeatedly. You can repair damaged configuration or start with external integrations disabled." with title "Reasonix Recovery" buttons {"Quit", "Safe Mode", "Repair and Start"} default button "Repair and Start" with icon caution)`
+	script := `button returned of (display dialog "VoltUI failed to start repeatedly. You can repair damaged configuration or start with external integrations disabled." with title "VoltUI Recovery" buttons {"Quit", "Safe Mode", "Repair and Start"} default button "Repair and Start" with icon caution)`
 	out, err := exec.Command("osascript", "-e", script).Output()
 	if err != nil {
 		return recoverySafeMode

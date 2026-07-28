@@ -77,11 +77,11 @@ func TestCompareVersions(t *testing.T) {
 // cannot break out of the launch command.
 func TestLaunchCommandQuotesHostilePaths(t *testing.T) {
 	paths := StatePaths{
-		Dir:       "/home/dev/.reasonix/remote",
-		TokenFile: "/home/dev/.reasonix/remote/serve-x.token",
-		PortFile:  "/home/dev/.reasonix/remote/serve-x.port",
-		PidFile:   "/home/dev/.reasonix/remote/serve-x.pid",
-		LogFile:   "/home/dev/.reasonix/remote/serve-x.log",
+		Dir:       "/home/dev/.voltui/remote",
+		TokenFile: "/home/dev/.voltui/remote/serve-x.token",
+		PortFile:  "/home/dev/.voltui/remote/serve-x.port",
+		PidFile:   "/home/dev/.voltui/remote/serve-x.pid",
+		LogFile:   "/home/dev/.voltui/remote/serve-x.log",
 	}
 	hostile := "/tmp/'; rm -rf ~; echo '"
 	cmd := LaunchCommand("/usr/bin/reasonix", hostile, paths)
@@ -157,7 +157,7 @@ func TestLaunchCommandDetachAndLogHardening(t *testing.T) {
 }
 
 func TestLocateCommandProbesPortFileFlag(t *testing.T) {
-	cmd := LocateCommand("/home/x/.reasonix/remote/bin/reasonix")
+	cmd := LocateCommand("/home/x/.voltui/remote/bin/reasonix")
 	for _, want := range []string{"serve --help", "port-file", "portfile:yes", "portfile:no"} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("LocateCommand missing %q:\n%s", want, cmd)

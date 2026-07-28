@@ -1,5 +1,5 @@
 // Package builtincontent holds shipped skill markdown that is embedded into the
-// Reasonix binary. Bodies stay out of the system prompt until the skill is
+// VoltUI binary. Bodies stay out of the system prompt until the skill is
 // invoked; only the name+description index line is cache-stable.
 package builtincontent
 
@@ -28,8 +28,8 @@ type SkillMarkdown struct {
 	Frontmatter map[string]string
 }
 
-// LoadReasonixGuide returns the shipped reasonix-guide skill markdown.
-func LoadReasonixGuide() (SkillMarkdown, error) {
+// LoadVoltUIGuide returns the shipped reasonix-guide skill markdown.
+func LoadVoltUIGuide() (SkillMarkdown, error) {
 	return loadSkill("reasonix-guide/SKILL.md")
 }
 

@@ -1492,7 +1492,7 @@ func TestRuntimeProbeAndRejectedInitializePreserveCommittedConnection(t *testing
 		t.Fatalf("initialize error = %T %v", err, err)
 	}
 	var errorData protocol.RemoteErrorData
-	if json.Unmarshal(responseErr.Data, &errorData) != nil || errorData.ReasonixCode != protocol.ErrDaemonRestartRequired {
+	if json.Unmarshal(responseErr.Data, &errorData) != nil || errorData.VoltUICode != protocol.ErrDaemonRestartRequired {
 		t.Fatalf("initialize error data = %s", responseErr.Data)
 	}
 	_ = rejectedStream.Close()

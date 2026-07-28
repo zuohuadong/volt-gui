@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   assetsForTarget,
@@ -188,25 +189,15 @@ mkdir -p build/windows/installer/tmp
 printf 'tools\n' > build/windows/installer/wails_tools.nsh
 printf 'webview2\n' > build/windows/installer/tmp/MicrosoftEdgeWebview2Setup.exe
 `);
-    writeExecutable(join(bin, 'zip'), String.raw`#!/usr/bin/env bash
-mkdir -p "$(dirname "$3")"
-    : > "$3"
-`);
     writeExecutable(join(bin, 'makensis'), String.raw`#!/usr/bin/env bash
 mkdir -p ../../bin
 printf 'installer\n' > ../../bin/voltui-desktop-amd64-installer.exe
 `);
-    writeExecutable(join(bin, 'powershell.exe'), String.raw`#!/usr/bin/env bash
-destination=$(printf '%s\n' "$3" | sed -n "s/.*-DestinationPath '\([^']*\)'.*/\1/p")
-mkdir -p "$(dirname "$destination")"
-printf 'archive\n' > "$destination"
-`);
-
     const result = spawnSync(script, ['windows/amd64', 'v1.2.3'], {
       cwd: fixture,
       env: {
         ...process.env,
-        PATH: `${bin}:${process.env.PATH}`,
+        PATH: `${bin}:/usr/bin:/bin`,
         DESKTOP_APP_NAME: 'Anyong',
       },
       encoding: 'utf8',
@@ -216,6 +207,43 @@ printf 'archive\n' > "$destination"
       'Anyong-windows-amd64-installer.exe',
       'Anyong-windows-amd64.zip',
     ]);
+    const archiveEntries = spawnSync('unzip', ['-Z1', join(fixture, 'dist', 'Anyong-windows-amd64.zip')], {
+      env: { ...process.env, PATH: '/usr/bin:/bin' },
+      encoding: 'utf8',
+    });
+    assert.equal(archiveEntries.status, 0, archiveEntries.stderr || archiveEntries.stdout);
+    assert.deepEqual(archiveEntries.stdout.trim().split('\n').sort(), [
+      'Anyong.exe',
+      'voltui-cli.exe',
+      'voltui-desktop.exe',
+      'voltui-guard.exe',
+      'voltui-launcher.exe',
+      'voltui-update-helper.exe',
+    ]);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('NSIS preserves its generated uninstaller without a Windows command shell', () => {
+  const fixture = join(tmpdir(), `nsis-uninstaller-${process.pid}-${Date.now()}`);
+  const generatedUninstaller = join(fixture, 'generated.exe');
+  const preservedUninstaller = join(fixture, 'voltui-uninstall.exe');
+  const copyScript = fileURLToPath(new URL('./copy-nsis-uninstaller.mjs', import.meta.url));
+  try {
+    mkdirSync(fixture, { recursive: true });
+    writeFileSync(generatedUninstaller, 'generated-uninstaller');
+    const copy = spawnSync(process.execPath, [copyScript, generatedUninstaller, preservedUninstaller], {
+      encoding: 'utf8',
+    });
+    assert.equal(copy.status, 0, copy.stderr || copy.stdout);
+    assert.equal(readFileSync(preservedUninstaller, 'utf8'), 'generated-uninstaller');
+
+    const installer = readFileSync(new URL('../desktop/build/windows/installer/project.nsi', import.meta.url), 'utf8');
+    const nsisFileDir = '${__FILEDIR__}';
+    const expectedFinalizer = `!uninstfinalize 'node "${nsisFileDir}/../../../../scripts/copy-nsis-uninstaller.mjs" "%1" "${nsisFileDir}/voltui-uninstall.exe"'`;
+    assert.ok(installer.includes(expectedFinalizer));
+    assert.doesNotMatch(installer, /!uninstfinalize 'cmd\.exe/);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

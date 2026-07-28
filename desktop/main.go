@@ -54,8 +54,9 @@ var channel = "stable"
 var macSelfUpdate = "false"
 
 const (
-	disableWebview2GPUEnv  = "REASONIX_DESKTOP_DISABLE_WEBVIEW2_GPU"
-	linuxDRIRenderNodeGlob = "/dev/dri/renderD*"
+	disableWebview2GPUEnv       = "VOLTUI_DESKTOP_DISABLE_WEBVIEW2_GPU"
+	legacyDisableWebview2GPUEnv = "REASONIX_DESKTOP_DISABLE_WEBVIEW2_GPU"
+	linuxDRIRenderNodeGlob      = "/dev/dri/renderD*"
 )
 
 func macSelfUpdateAllowed() bool {
@@ -68,7 +69,11 @@ func macSelfUpdateAllowed() bool {
 }
 
 func windowsWebview2GPUDisabled() bool {
-	if raw, ok := os.LookupEnv(disableWebview2GPUEnv); ok {
+	for _, key := range []string{disableWebview2GPUEnv, legacyDisableWebview2GPUEnv} {
+		raw, ok := os.LookupEnv(key)
+		if !ok {
+			continue
+		}
 		switch strings.ToLower(strings.TrimSpace(raw)) {
 		case "1", "true", "yes", "on":
 			return true

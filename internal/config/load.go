@@ -582,6 +582,14 @@ func LoadForEditWithoutCredentials(path string) *Config {
 	return loadForEdit(path, false, true)
 }
 
+func LoadForView(path string) *Config {
+	return loadForEdit(path, true, false)
+}
+
+func LoadForViewWithoutCredentials(path string) *Config {
+	return loadForEdit(path, false, false)
+}
+
 func loadForEditStrict(path string, loadCredentials, persistMigrations bool) (*Config, error) {
 	if loadCredentials {
 		loadDotEnvForEditPath(path)

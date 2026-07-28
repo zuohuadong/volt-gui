@@ -15,6 +15,15 @@ import (
 	"voltui/internal/control"
 )
 
+type runtimeStatusSessionController struct {
+	control.SessionAPI
+	status control.RuntimeStatus
+}
+
+func (c *runtimeStatusSessionController) RuntimeStatus() control.RuntimeStatus {
+	return c.status
+}
+
 func waitForTabReady(t *testing.T, app *App, tabID string) *WorkspaceTab {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

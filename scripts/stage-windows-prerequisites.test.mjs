@@ -136,7 +136,11 @@ test('full mocked desktop build does not stage or emit prerequisites assets', {
     mkdirSync(join(fixture, 'scripts'), { recursive: true });
     mkdirSync(bin, { recursive: true });
     copyFileSync(new URL('./desktop-build.sh', import.meta.url), script);
+    copyFileSync(new URL('./package-windows-desktop.sh', import.meta.url), join(fixture, 'scripts', 'package-windows-desktop.sh'));
+    copyFileSync(new URL('./verify-windows-portable.sh', import.meta.url), join(fixture, 'scripts', 'verify-windows-portable.sh'));
     chmodSync(script, 0o755);
+    chmodSync(join(fixture, 'scripts', 'package-windows-desktop.sh'), 0o755);
+    chmodSync(join(fixture, 'scripts', 'verify-windows-portable.sh'), 0o755);
     writeFileSync(join(fixture, 'desktop', 'wails.json'), '{}\n');
 
     writeExecutable(join(bin, 'node'), String.raw`#!/usr/bin/env bash
@@ -164,20 +168,38 @@ esac
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "-o" ]; then
     mkdir -p "$(dirname "$2")"
-    : > "$2"
+    case "$2" in
+      *voltui-cli.exe) printf '#!/usr/bin/env bash\necho cli\n' > "$2" ;;
+      *voltui-launcher.exe) printf '#!/usr/bin/env bash\necho launcher\n' > "$2" ;;
+      *) printf '#!/usr/bin/env bash\nexit 0\n' > "$2" ;;
+    esac
+    chmod +x "$2"
     exit 0
   fi
   shift
 done
 `);
     writeExecutable(join(bin, 'wails'), String.raw`#!/usr/bin/env bash
-mkdir -p build/bin
-: > build/bin/voltui-desktop-amd64-installer.exe
-: > build/bin/voltui-desktop.exe
+mkdir -p build/bin build/windows/installer
+printf 'installer\n' > build/bin/voltui-desktop-amd64-installer.exe
+printf 'desktop\n' > build/bin/voltui-desktop.exe
+printf 'uninstaller\n' > build/windows/installer/voltui-uninstall.exe
+mkdir -p build/windows/installer/tmp
+printf 'tools\n' > build/windows/installer/wails_tools.nsh
+printf 'webview2\n' > build/windows/installer/tmp/MicrosoftEdgeWebview2Setup.exe
 `);
     writeExecutable(join(bin, 'zip'), String.raw`#!/usr/bin/env bash
 mkdir -p "$(dirname "$3")"
-: > "$3"
+    : > "$3"
+`);
+    writeExecutable(join(bin, 'makensis'), String.raw`#!/usr/bin/env bash
+mkdir -p ../../bin
+printf 'installer\n' > ../../bin/voltui-desktop-amd64-installer.exe
+`);
+    writeExecutable(join(bin, 'powershell.exe'), String.raw`#!/usr/bin/env bash
+destination=$(printf '%s\n' "$3" | sed -n "s/.*-DestinationPath '\([^']*\)'.*/\1/p")
+mkdir -p "$(dirname "$destination")"
+printf 'archive\n' > "$destination"
 `);
 
     const result = spawnSync(script, ['windows/amd64', 'v1.2.3'], {

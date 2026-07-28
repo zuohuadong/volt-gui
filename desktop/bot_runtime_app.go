@@ -61,12 +61,25 @@ func (a *App) refreshBotRuntime() {
 	if a.botRuntime == nil {
 		return
 	}
+	var watcherVersion uint64
+	if a.botBridge != nil {
+		watcherVersion = a.botBridge.watcherVersion()
+	}
 	cfg, err := a.loadDesktopBotRuntimeStartupConfig()
 	if err != nil {
 		a.botRuntime.stop("error", err.Error())
 		return
 	}
-	_ = a.botRuntime.apply(a.bootContext(), cfg, globalTabWorkspaceRoot(), a.persistRemoteBotToolApprovalMode)
+	var bridge bot.DesktopBridge
+	if a.botBridge != nil {
+		a.botBridge.seedWatchers(bridgeRoutesFromConfig(cfg.Bot.DesktopWatchers), watcherVersion)
+		bridge = a.botBridge
+	}
+	_ = a.botRuntime.apply(a.bootContext(), cfg, desktopBotRuntimeApplyOptions{
+		workspaceRoot:            globalTabWorkspaceRoot(),
+		onToolApprovalModeChange: a.persistRemoteBotToolApprovalMode,
+		bridge:                   bridge,
+	})
 }
 
 func (a *App) loadDesktopBotConfig() (*config.Config, error) {
@@ -103,7 +116,13 @@ func (a *App) BotRuntimeStatus() BotRuntimeStatusView {
 	return a.botRuntime.snapshot()
 }
 
-func (r *desktopBotRuntime) apply(parent context.Context, cfg *config.Config, workspaceRoot string, onToolApprovalModeChange func(bot.InboundMessage, string) error) error {
+type desktopBotRuntimeApplyOptions struct {
+	workspaceRoot            string
+	onToolApprovalModeChange func(bot.InboundMessage, string) error
+	bridge                   bot.DesktopBridge
+}
+
+func (r *desktopBotRuntime) apply(parent context.Context, cfg *config.Config, options desktopBotRuntimeApplyOptions) error {
 	if r == nil {
 		return nil
 	}
@@ -121,7 +140,8 @@ func (r *desktopBotRuntime) apply(parent context.Context, cfg *config.Config, wo
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	ctx, cancel := context.WithCancel(parent)
-	gwCfg := desktopBotGatewayConfig(cfg, plan.Enabled, workspaceRoot, logger, onToolApprovalModeChange)
+	gwCfg := desktopBotGatewayConfig(cfg, plan.Enabled, options.workspaceRoot, logger, options.onToolApprovalModeChange)
+	gwCfg.Desktop = options.bridge
 	remoteStore, err := bot.NewDefaultRemoteStore()
 	if err != nil {
 		cancel()

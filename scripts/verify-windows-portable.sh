@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 # Verify the exact Windows portable release unit before Compress-Archive sees it.
 # This must run on the Windows staging directory: NTFS treats file names
-# case-insensitively, so Reasonix.exe and reasonix.exe silently overwrite each
-# other even though a source-level packaging test sees two different strings.
+# case-insensitively, so the branded entry point and the CLI must never collide.
 set -euo pipefail
 
 staging="${1:?usage: verify-windows-portable.sh STAGING_DIR}"
+portable_app_name="${WINDOWS_PORTABLE_APP_NAME:-Reasonix}"
+portable_binary_prefix="${WINDOWS_PORTABLE_BINARY_PREFIX:-reasonix}"
 [ -d "$staging" ] || { echo "Windows portable staging directory is missing: $staging" >&2; exit 1; }
 
 required=(
-	"Reasonix.exe"
-	"reasonix-cli.exe"
-	"reasonix-desktop.exe"
-	"reasonix-guard.exe"
-	"reasonix-launcher.exe"
-	"reasonix-update-helper.exe"
+	"$portable_app_name.exe"
+	"$portable_binary_prefix-cli.exe"
+	"$portable_binary_prefix-desktop.exe"
+	"$portable_binary_prefix-guard.exe"
+	"$portable_binary_prefix-launcher.exe"
+	"$portable_binary_prefix-update-helper.exe"
 )
 
 actual=()
@@ -50,13 +51,13 @@ for expected in "${required[@]}"; do
 	$found || { echo "Windows portable entry is missing or has wrong case: $expected" >&2; exit 1; }
 done
 
-# Reasonix.exe is the backward-compatible desktop entry point. Prove it is the
+# The branded entry point is the backward-compatible desktop entry point. Prove it is the
 # GUI Guard launcher rather than merely trusting the copy commands above.
-cmp -s "$staging/Reasonix.exe" "$staging/reasonix-launcher.exe" || {
-	echo "Reasonix.exe is not the packaged GUI launcher" >&2
+cmp -s "$staging/$portable_app_name.exe" "$staging/$portable_binary_prefix-launcher.exe" || {
+	echo "$portable_app_name.exe is not the packaged GUI launcher" >&2
 	exit 1
 }
-if cmp -s "$staging/Reasonix.exe" "$staging/reasonix-cli.exe"; then
-	echo "Reasonix.exe was overwritten by the CLI sidecar" >&2
+if cmp -s "$staging/$portable_app_name.exe" "$staging/$portable_binary_prefix-cli.exe"; then
+	echo "$portable_app_name.exe was overwritten by the CLI sidecar" >&2
 	exit 1
 fi

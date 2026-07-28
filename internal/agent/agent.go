@@ -226,6 +226,16 @@ func NormalizeMaxSubagentDepth(depth int) int {
 	return depth
 }
 
+func NormalizeSubagentConcurrency(limit int) int {
+	if limit <= 0 {
+		return DefaultMaxSubagentConcurrency
+	}
+	if limit > MaxSubagentConcurrencyLimit {
+		return MaxSubagentConcurrencyLimit
+	}
+	return limit
+}
+
 // ToolHooks fires user-configured shell hooks around each tool call. PreToolUse
 // runs before the call and may block it (block=true; message is the reason fed
 // back to the model); PostToolUse runs after and only surfaces output to the

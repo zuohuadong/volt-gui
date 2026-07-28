@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	fileencoding "voltui/internal/fileutil/encoding"
 )
@@ -57,6 +58,15 @@ type MigrationResult struct {
 	Plugins  int
 	Warnings []string
 }
+
+type SupportDataMigrationResult struct {
+	From     string
+	To       string
+	Copied   []string
+	Warnings []string
+}
+
+const legacySupportDataMigrationMarker = ".legacy-support-data-migrated-v1"
 
 // MCPGlobalMigrationResult summarizes the v1.9.1 MCP backfill that lifts MCP
 // servers from legacy and project-local sources into the user-global config.
@@ -175,6 +185,41 @@ func MigrateLegacyCredentialsForRoot(root string) error {
 		return nil
 	}
 	return migrateLegacyCredentialsIfNeededForRoot(root)
+}
+
+func MigrateLegacySupportDataOnUpgrade() *SupportDataMigrationResult {
+	legacyDir := legacyOSSupportDir()
+	newDir := userSupportDir()
+	if legacyDir == "" || newDir == "" || samePath(legacyDir, newDir) {
+		return nil
+	}
+	if info, err := os.Stat(legacyDir); err != nil || !info.IsDir() {
+		return nil
+	}
+	marker := filepath.Join(newDir, legacySupportDataMigrationMarker)
+	if markerInfo, err := os.Stat(marker); err == nil && !legacySupportDataNewerThan(legacyDir, markerInfo.ModTime()) {
+		return nil
+	}
+	result := &SupportDataMigrationResult{From: legacyDir, To: newDir}
+	result.Copied, result.Warnings = migrateSupportDataItems(legacyDir, newDir)
+	if len(result.Warnings) == 0 {
+		if err := os.MkdirAll(newDir, 0o700); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("failed to create migration marker directory: %v", err))
+		} else if err := os.WriteFile(marker, []byte("v1\n"), 0o600); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("failed to write migration marker: %v", err))
+		}
+	}
+	return result
+}
+
+func legacySupportDataNewerThan(legacyDir string, markerTime time.Time) bool {
+	for _, item := range legacySupportDataItems {
+		info, err := os.Stat(filepath.Join(legacyDir, item))
+		if err == nil && info.ModTime().After(markerTime) {
+			return true
+		}
+	}
+	return false
 }
 
 // MigrateMCPToUserConfigOnUpgrade runs a one-time best-effort backfill for the
@@ -613,6 +658,183 @@ func writeCredentialsEnv(home string, lines []string) error {
 		return err
 	}
 	return nil
+}
+
+var legacySupportDataItems = []string{
+	"sessions",
+	"projects",
+	"skills",
+	"archive",
+	"hooks.json",
+	"desktop-workspace",
+	"desktop-workspaces.json",
+	"desktop-window.json",
+	"desktop-workbench-state.json",
+	"workbench-projects.json",
+	"workbench-project-materials.json",
+	"workbench-data.json",
+	"todos.json",
+	"agents.json",
+	"automations.json",
+	"automation-runs.json",
+	"heartbeat-tasks.json",
+	"knowledge.db",
+}
+
+func migrateSupportDataItems(legacyDir, newDir string) ([]string, []string) {
+	var copied []string
+	var warnings []string
+	for _, item := range legacySupportDataItems {
+		src := filepath.Join(legacyDir, item)
+		info, err := os.Lstat(src)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			warnings = append(warnings, fmt.Sprintf("failed to read legacy item %s: %v", item, err))
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			warnings = append(warnings, fmt.Sprintf("skipped legacy symlink %s", item))
+			continue
+		}
+		dst := filepath.Join(newDir, item)
+		var itemCopied bool
+		if info.IsDir() {
+			itemCopied, err = copyDirMissing(src, dst)
+		} else {
+			itemCopied, err = copyFileIfMissing(src, dst)
+		}
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("failed to migrate %s: %v", item, err))
+			continue
+		}
+		if itemCopied {
+			copied = append(copied, item)
+		}
+	}
+	return copied, warnings
+}
+
+func copyFileIfMissing(src, dst string) (bool, error) {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return false, fmt.Errorf("source is not a regular file")
+	}
+	if _, err := os.Lstat(dst); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	parentMode := os.FileMode(0o755)
+	if info.Mode().Perm()&0o077 == 0 {
+		parentMode = 0o700
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), parentMode); err != nil {
+		return false, err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return false, err
+	}
+	defer in.Close()
+	tmp, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+".migration-*.tmp")
+	if err != nil {
+		return false, err
+	}
+	tmpPath := tmp.Name()
+	keep := false
+	defer func() {
+		_ = tmp.Close()
+		if !keep {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	perm := info.Mode().Perm()
+	if perm == 0 {
+		perm = 0o600
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		return false, err
+	}
+	if _, err := io.Copy(tmp, in); err != nil {
+		return false, err
+	}
+	if err := tmp.Sync(); err != nil {
+		return false, err
+	}
+	if err := tmp.Close(); err != nil {
+		return false, err
+	}
+	if _, err := os.Lstat(dst); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	if err := os.Rename(tmpPath, dst); err != nil {
+		if _, statErr := os.Lstat(dst); statErr == nil {
+			return false, nil
+		}
+		return false, err
+	}
+	keep = true
+	return true, nil
+}
+
+func copyDirMissing(src, dst string) (bool, error) {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return false, fmt.Errorf("source is not a directory")
+	}
+	copied := false
+	if dstInfo, err := os.Lstat(dst); err == nil {
+		if dstInfo.Mode()&os.ModeSymlink != 0 || !dstInfo.IsDir() {
+			return false, nil
+		}
+	} else if os.IsNotExist(err) {
+		perm := info.Mode().Perm()
+		if perm == 0 {
+			perm = 0o700
+		}
+		if err := os.MkdirAll(dst, perm); err != nil {
+			return false, err
+		}
+		copied = true
+	} else {
+		return false, err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return copied, err
+	}
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+		entryInfo, err := os.Lstat(srcPath)
+		if err != nil {
+			return copied, err
+		}
+		if entryInfo.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		var itemCopied bool
+		if entryInfo.IsDir() {
+			itemCopied, err = copyDirMissing(srcPath, dstPath)
+		} else if entryInfo.Mode().IsRegular() {
+			itemCopied, err = copyFileIfMissing(srcPath, dstPath)
+		}
+		if err != nil {
+			return copied, err
+		}
+		copied = copied || itemCopied
+	}
+	return copied, nil
 }
 
 func migrateSupportData(legacyDir, newDir string) []string {

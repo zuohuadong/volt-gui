@@ -37,11 +37,13 @@ windows_resource_tool_dir=""
 # repository VCS revision for the Wails binary. Link the same source identity
 # into both Desktop and its CLI sidecar before this script mutates packaging
 # metadata such as wails.json.
-SOURCE_REVISION="$(git -C "$ROOT" rev-parse --verify HEAD)"
-if ! git -C "$ROOT" diff-index --quiet HEAD --; then
+SOURCE_REVISION="$(git -C "$ROOT" rev-parse --verify HEAD)" 2>/dev/null || SOURCE_REVISION=""
+if [ -z "$SOURCE_REVISION" ]; then
+	SOURCE_REVISION="0000000000000000000000000000000000000000"
+elif ! git -C "$ROOT" diff-index --quiet HEAD --; then
 	SOURCE_REVISION="$SOURCE_REVISION+dirty"
 fi
-source_revision_ldflag="-X reasonix/internal/remote/protocol.linkedSourceRevision=$SOURCE_REVISION"
+source_revision_ldflag="-X voltui/internal/remote/protocol.linkedSourceRevision=$SOURCE_REVISION"
 
 cleanup() {
 	if [ -n "$windows_resource_tool_dir" ]; then

@@ -112,7 +112,7 @@ func (a *App) bridgeAnnounce(tabID, text string) {
 // bridgeDrive 把远程文本提交为可见 tab 的新 turn，并为这一轮挂上事件转发器,
 // 让输出流回接管聊天（转发器在 TurnDone 自动卸载）。
 func (a *App) bridgeDrive(tabID, text string, route bot.DesktopWatchRoute) error {
-	admission, ctrl, err := a.beginTabTurn(tabID, false)
+	admission, ctrl, err := a.beginSinkTurn(tabID)
 	if err != nil {
 		if err == control.ErrTurnRunning {
 			return errDriveBusy
@@ -138,7 +138,14 @@ func (a *App) bridgeDrive(tabID, text string, route bot.DesktopWatchRoute) error
 	}
 	generation := tab.sink.SetBotSink(newBotEventForwarder(a.botRuntime, []botForwardTarget{target}))
 	a.ensureTabTopicIndexedForUserTurn(tab)
-	ctrl.SubmitDisplay(text, text)
+	if checked, ok := ctrl.(checkedDisplaySubmitter); ok {
+		if err := checked.SubmitDisplayChecked(text, text); err != nil {
+			tab.sink.clearBotSink(generation)
+			return err
+		}
+	} else {
+		ctrl.SubmitDisplay(text, text)
+	}
 	// Confirm the submit actually started a turn. If nothing is running now, the
 	// controller was rotating and the submit no-oped — detach this exact
 	// generation so a later turn's output does not leak.

@@ -12,25 +12,27 @@ import (
 
 const windowsUpdateHelperFileName = "voltui-update-helper.exe"
 
-// installerCommand runs the NSIS updater, forcing $INSTDIR to dir via /D= so the
-// update overwrites the current install in place. NSIS requires /D= to be the
-// final, unquoted token taken verbatim to the end of the line, so the raw command
-// line is set directly — exec.Command would quote a path containing spaces (e.g.
-// C:\Users\Jane Doe\...) and NSIS would then mis-parse the target directory.
+// installerCommand runs the NSIS updater in its visible, progress-only update
+// mode, forcing $INSTDIR to dir via /D= so the update overwrites the current
+// install in place. NSIS requires /D= to be the final, unquoted token taken
+// verbatim to the end of the line, so the raw command line is set directly —
+// exec.Command would quote a path containing spaces (e.g. C:\Users\Jane Doe\...)
+// and NSIS would then mis-parse the target directory.
 func installerCommand(name, dir string) *exec.Cmd {
 	cmd := exec.Command(name)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: installerCommandLine(name, dir), HideWindow: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: installerCommandLine(name, dir)}
 	return cmd
 }
 
-func startWindowsUpdateHandoff(installerPath, installDir, relaunchPath string) error {
-	if err := startWindowsUpdateHelper(installerPath, installDir, relaunchPath); err == nil {
-		return nil
-	}
-	return installerCommand(installerPath, installDir).Start()
+func startWindowsUpdateHandoff(installerPath, installDir, relaunchPath, toVersion string) error {
+	// The helper is the only process that can observe an installer failure after
+	// the desktop exits and route recovery back through Guard. Starting NSIS
+	// directly here would make a failed/partial install indistinguishable from a
+	// successful handoff, so a missing or quarantined helper must fail safely.
+	return startWindowsUpdateHelper(installerPath, installDir, relaunchPath, toVersion)
 }
 
-func startWindowsUpdateHelper(installerPath, installDir, relaunchPath string) error {
+func startWindowsUpdateHelper(installerPath, installDir, relaunchPath, toVersion string) error {
 	if installDir == "" {
 		return os.ErrNotExist
 	}
@@ -38,7 +40,7 @@ func startWindowsUpdateHelper(installerPath, installDir, relaunchPath string) er
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(helperPath, windowsUpdateHandoffArgs(os.Getpid(), installerPath, installDir, relaunchPath)...)
+	cmd := exec.Command(helperPath, windowsUpdateHandoffArgs(os.Getpid(), installerPath, installDir, relaunchPath, toVersion)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	return cmd.Start()
 }

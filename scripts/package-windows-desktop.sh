@@ -23,12 +23,13 @@ DESKTOP="$ROOT/desktop"
 INSTALLER_DIR="$DESKTOP/build/windows/installer"
 BIN_DIR="$DESKTOP/build/bin"
 DIST="$ROOT/dist"
-APPNAME="Reasonix"
-BINNAME="reasonix-desktop"
-GUARDNAME="reasonix-guard"
-LAUNCHERNAME="reasonix-launcher"
-UPDATE_HELPER="reasonix-update-helper.exe"
-WINDOWS_CLINAME="reasonix-cli"
+APPNAME="${DESKTOP_APP_NAME:-VoltUI}"
+BINNAME="voltui-desktop"
+GUARDNAME="voltui-guard"
+LAUNCHERNAME="voltui-launcher"
+UPDATE_HELPER="voltui-update-helper.exe"
+WINDOWS_CLINAME="voltui-cli"
+UNINSTALLER="voltui-uninstall.exe"
 
 [ -d "$payload_input" ] || { echo "Windows payload directory is missing: $payload_input" >&2; exit 1; }
 PAYLOAD="$(cd "$payload_input" && pwd)"
@@ -39,7 +40,7 @@ required_payload=(
 	"$LAUNCHERNAME.exe"
 	"$UPDATE_HELPER"
 	"$WINDOWS_CLINAME.exe"
-	"reasonix-uninstall.exe"
+	"$UNINSTALLER"
 )
 for name in "${required_payload[@]}"; do
 	[ -s "$PAYLOAD/$name" ] || { echo "Windows payload file is missing or empty: $name" >&2; exit 1; }
@@ -78,7 +79,7 @@ if command -v cygpath >/dev/null 2>&1; then
 fi
 binary_define="ARG_WAILS_AMD64_BINARY"
 [ "$arch" = arm64 ] && binary_define="ARG_WAILS_ARM64_BINARY"
-uninstaller_path="$PAYLOAD/reasonix-uninstall.exe"
+uninstaller_path="$PAYLOAD/$UNINSTALLER"
 if command -v cygpath >/dev/null 2>&1; then
 	uninstaller_path="$(cygpath -w "$uninstaller_path")"
 fi
@@ -98,7 +99,7 @@ dist_installer="$DIST/${APPNAME}-windows-${arch}-installer.exe"
 dist_portable="$DIST/${APPNAME}-windows-${arch}.zip"
 cp "$installer" "$dist_installer"
 
-portable_staging=$(mktemp -d)
+portable_staging=$(mktemp -d "${TMPDIR:-/tmp}/voltui-portable.XXXXXX")
 cleanup() {
 	case "$portable_staging" in
 	"${TMPDIR:-/tmp}"/* | /tmp/*) rm -rf -- "$portable_staging" ;;
@@ -113,6 +114,8 @@ cp "$PAYLOAD/$LAUNCHERNAME.exe" "$portable_staging/$LAUNCHERNAME.exe"
 cp "$PAYLOAD/$LAUNCHERNAME.exe" "$portable_staging/$APPNAME.exe"
 cp "$PAYLOAD/$UPDATE_HELPER" "$portable_staging/$UPDATE_HELPER"
 cp "$PAYLOAD/$WINDOWS_CLINAME.exe" "$portable_staging/$WINDOWS_CLINAME.exe"
+export WINDOWS_PORTABLE_APP_NAME="$APPNAME"
+export WINDOWS_PORTABLE_BINARY_PREFIX="voltui"
 "$ROOT/scripts/verify-windows-portable.sh" "$portable_staging"
 
 portable_staging_win="$portable_staging"

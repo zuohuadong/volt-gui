@@ -74,6 +74,14 @@ type GatewayConfig struct {
 	// status, event subscriptions, and remote approvals for any live desktop
 	// session. Nil when the gateway runs standalone (reasonix bot start).
 	Desktop DesktopBridge
+	// RemoteStore persists remote task bindings and task records when the
+	// gateway drives remote agents (reasonix bot start with remote tasks).
+	// nil disables the remote task subsystem.
+	RemoteStore *RemoteStore
+	// ResolveRemoteRuntime lets the host override or fill in the remote
+	// runtime (workspace/project/profile/permission) derived from a message.
+	// nil keeps the gateway-derived candidate.
+	ResolveRemoteRuntime RemoteRuntimeResolver
 }
 
 // ChannelConfig overrides gateway defaults for one IM channel.
@@ -87,15 +95,19 @@ type ChannelConfig struct {
 // SessionMapping is the runtime subset of a saved bot connection mapping used
 // to route a remote chat/user/thread back to its intended workspace.
 type SessionMapping struct {
-	RemoteID      string
-	SessionID     string
-	SessionSource string
-	ChatType      string
-	UserID        string
-	ThreadID      string
-	Scope         string
-	WorkspaceRoot string
-	UpdatedAt     string
+	RemoteID               string
+	SessionID              string
+	SessionSource          string
+	ChatType               string
+	UserID                 string
+	ThreadID               string
+	Scope                  string
+	WorkspaceRoot          string
+	ProjectID              string
+	AgentProfileID         string
+	PermissionCeiling      string
+	RequireHighRiskConfirm bool
+	UpdatedAt              string
 }
 
 // RouteConfig applies per-remote overrides. Empty match fields are wildcards;
@@ -132,13 +144,18 @@ type AllowlistConfig struct {
 
 // AccessConfig controls who may use one concrete bot connection.
 type AccessConfig struct {
-	Enabled        bool
-	AllowAll       bool
-	PairingEnabled bool
-	Users          []string
-	Groups         []string
-	Approvers      []string
-	Admins         []string
+	Enabled                bool
+	AllowAll               bool
+	PairingEnabled         bool
+	Users                  []string
+	Groups                 []string
+	Approvers              []string
+	Admins                 []string
+	WorkspaceRoots         []string
+	ProjectIDs             []string
+	AgentProfileIDs        []string
+	PermissionCeiling      string
+	RequireHighRiskConfirm bool
 }
 
 // AdapterHealthSnapshot describes the gateway's current view of one adapter.

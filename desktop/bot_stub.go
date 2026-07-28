@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"voltui/internal/bot"
 	"voltui/internal/config"
 )
 
@@ -102,6 +104,18 @@ func newDesktopBotRuntime() *desktopBotRuntime { return &desktopBotRuntime{} }
 
 func (r *desktopBotRuntime) updateConnectionToolApprovalMode(connID, mode string) bool {
 	return false
+}
+
+func (*desktopBotRuntime) SendToAdapter(context.Context, string, string, bot.OutboundMessage) (bot.SendResult, error) {
+	return bot.SendResult{}, fmt.Errorf("bot runtime is not included in this build")
+}
+
+func (*desktopBotRuntime) Running() bool {
+	return false
+}
+
+func (*desktopBotRuntime) ForwardTargets(*config.Config) []botForwardTarget {
+	return nil
 }
 
 func forgetAutoSessionMappingsForPath(sessionPath string) error {

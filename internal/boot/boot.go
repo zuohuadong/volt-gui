@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"voltui/internal/agent"
+	"voltui/internal/browserauth"
 	"voltui/internal/capability"
 	"voltui/internal/command"
 	"voltui/internal/config"
@@ -107,10 +108,19 @@ type Options struct {
 	// so each tab loads its own config/skills/hooks without changing the process
 	// cwd — enabling concurrent multi-project sessions.
 	WorkspaceRoot string
+	// AgentProfile overlays the selected desktop/thread profile onto this
+	// controller. Empty profile fields inherit the normal configuration.
+	AgentProfile *AgentProfile
+	// ScopedMemoryBlock is a pre-filtered, provenance-labelled memory block for
+	// the current rich-client context. Empty preserves legacy memory behavior.
+	ScopedMemoryBlock string
 	// ExtraPlugins are session-scoped MCP servers supplied by a host transport
 	// (for example ACP session/new). They are connected eagerly for this
 	// controller but are not persisted to reasonix.toml.
 	ExtraPlugins []plugin.Spec
+	// ExtraTools are host-supplied capabilities that share this session's
+	// registry policy without becoming process-global built-ins.
+	ExtraTools []tool.Tool
 	// TokenMode selects the session's runtime profile. Empty/full/balanced preserves
 	// the normal capability surface. "economy" keeps the core coding tools visible
 	// and moves optional sources behind connect_tool_source. "delivery" keeps the
@@ -411,6 +421,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	projectChecks := instruction.ExtractHostChecks(mem.Docs)
 	sysPrompt = memory.Compose(sysPrompt, mem)
+	if block := strings.TrimSpace(opts.ScopedMemoryBlock); block != "" {
+		sysPrompt = strings.TrimRight(sysPrompt, "\n") + "\n\n" + block
+	}
+	sysPrompt = applyAgentProfilePrompt(sysPrompt, opts.AgentProfile)
 
 	// Skills: discover playbooks (built-in + project/custom/global) and fold their
 	// one-liner index into the same cache-stable prefix — names + descriptions
@@ -423,6 +437,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		PluginAgentPaths: cfg.PluginPackageAgentOwners(),
 		ExcludedPaths:    cfg.SkillExcludedPaths(),
 		DisabledNames:    cfg.DisabledSkillNames(),
+		AllowedNames:     agentProfileSkillNames(opts.AgentProfile),
 		MaxDepth:         cfg.SkillMaxDepth(),
 		DisableDiscovery: cfg.SafeMode(),
 		Stderr:           opts.Stderr,
@@ -434,7 +449,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	skills := skillStore.List()
 	allSkillStore := skillStore
 	if !cfg.SafeMode() {
-		allSkillStore = skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(), PluginAgentPaths: cfg.PluginPackageAgentOwners(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard})
+		allSkillStore = skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(), PluginAgentPaths: cfg.PluginPackageAgentOwners(), ExcludedPaths: cfg.SkillExcludedPaths(), AllowedNames: agentProfileSkillNames(opts.AgentProfile), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard})
 	}
 	allSkills := allSkillStore.List()
 	if !tokenEconomy && !cfg.SafeMode() {
@@ -442,6 +457,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 
 	reg := tool.NewRegistry()
+	reg.SetAllowPolicy(agentProfileToolAllowPolicy(opts.AgentProfile))
 	writeRoots := cfg.WriteRootsForRoot(root)
 	writeRoots = appendUniquePaths(writeRoots, additionalDirs...)
 	forbidReadRoots := RuntimeForbidReadRoots(cfg, root)
@@ -475,6 +491,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// where an empty list intentionally means "all built-ins".
 	if !tokenEconomy || len(cfg.Tools.Enabled) == 0 || len(enabledBuiltins) > 0 {
 		addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner)
+	}
+	for _, extraTool := range opts.ExtraTools {
+		if extraTool != nil {
+			reg.Add(extraTool)
+		}
 	}
 	// Use the caller-supplied shared host when set, so controllers for the same
 	// workspace root reuse running MCP processes (e.g. one CodeGraph daemon
@@ -1657,6 +1678,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		DisableColdResumePrune: !cfg.ColdResumePruneEnabled(),
 		Shell:                  shell,
 		ApprovalTimeout:        opts.ApprovalTimeout,
+		BrowserCredentialVault: browserauth.NewVault(),
 		RuntimeProfile:         runtimeProfile,
 		OnRemember: func(rule string) control.RememberResult {
 			return rememberPermissionRule(root, rule)

@@ -1473,6 +1473,38 @@ func reasonixHome(override string) string {
 	return ""
 }
 
+// legacyTrustPath returns the pre-isolation trust path under the user's home
+// directory, or "" when the current VoltUI home already lives there. Used only
+// to migrate an existing trust.json when the user first opts into an isolated
+// data home.
+func legacyTrustPath(homeDir string) string {
+	dir := legacyReasonixHome(homeDir)
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, TrustFilename)
+}
+
+// legacyReasonixHome reports the legacy ~/.voltui home when the configured home
+// is not already there, so a one-time migration can read the old files.
+func legacyReasonixHome(override string) string {
+	if override != "" {
+		return ""
+	}
+	if config.IsolatedHomeDir() != "" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	legacy := filepath.Join(home, SettingsDirname)
+	if sameCleanPath(legacy, reasonixHome("")) {
+		return ""
+	}
+	return legacy
+}
+
 func legacyGlobalSettingsPath(homeDir string) string {
 	dir := legacyVoltUIHome(homeDir)
 	if dir == "" {

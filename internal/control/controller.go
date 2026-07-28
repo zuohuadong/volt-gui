@@ -32,6 +32,7 @@ import (
 	"voltui/internal/agent"
 	"voltui/internal/autoresearch"
 	"voltui/internal/billing"
+	"voltui/internal/browserauth"
 	"voltui/internal/capability"
 	"voltui/internal/checkpoint"
 	"voltui/internal/command"
@@ -199,6 +200,9 @@ type Controller struct {
 	// (requestApproval/Ask emit events + fire hooks + rebuild the executor gate).
 	// See approval.go.
 	approval approvalManager
+	// browserPrompts owns browser credential/verification prompts behind its
+	// own locks; secrets never enter the approval/ask channels.
+	browserPrompts browserPromptManager
 
 	// mu guards the run state; every critical section under it is short and
 	// non-blocking.
@@ -295,6 +299,8 @@ type plannerSessionResetter interface {
 // jobs.
 type RuntimeStatus struct {
 	Running         bool
+	Rotating        bool
+	Submitting      bool
 	PendingPrompt   bool
 	BackgroundJobs  int
 	CancelRequested bool
@@ -453,6 +459,9 @@ type Options struct {
 	// terminal. Bot/headless frontends set a positive value so an unanswered
 	// prompt can't wedge the session indefinitely (#4626, #4402).
 	ApprovalTimeout time.Duration
+	// BrowserCredentialVault optionally stores browser credentials so prompts can
+	// offer a saved entry. nil disables save/restore (prompts still work).
+	BrowserCredentialVault *browserauth.Vault
 	// RuntimeProfile selects capability routing/filtering behavior. Empty keeps
 	// the backward-compatible Balanced profile.
 	RuntimeProfile capability.Profile
@@ -516,6 +525,7 @@ func New(opts Options) *Controller {
 		workspaceRoot:                     opts.WorkspaceRoot,
 		externalFolderToolRefs:            opts.ExternalFolderToolRefs,
 		approval:                          newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
+		browserPrompts:                    newBrowserPromptManager(opts.BrowserCredentialVault, opts.ApprovalTimeout),
 	}
 	if strings.TrimSpace(opts.WorkspaceRoot) != "" {
 		c.autoResearch = autoresearch.NewStore(opts.WorkspaceRoot)
@@ -1706,6 +1716,7 @@ func (c *Controller) Cancel() {
 	c.mu.Unlock()
 	if cancel != nil {
 		c.approval.clearAll()
+		c.browserPrompts.clearAll()
 		cancel()
 		return
 	}
@@ -1756,7 +1767,7 @@ func (c *Controller) CancelRequested() bool {
 // PendingPrompt reports whether the current turn is blocked waiting for a user
 // approval, plan approval, memory approval, or ask-tool answer.
 func (c *Controller) PendingPrompt() bool {
-	return c.approval.hasPending()
+	return c.approval.hasPending() || c.browserPrompts.hasPending()
 }
 
 // RuntimeStatus reports the active work owned by the foreground controller.
@@ -1764,12 +1775,14 @@ func (c *Controller) RuntimeStatus() RuntimeStatus {
 	c.mu.Lock()
 	running := c.running
 	active := running || c.finishing
+	rotating := c.rotating
 	canceling := c.canceling
 	c.mu.Unlock()
-	pending := c.approval.hasPending()
+	pending := c.approval.hasPending() || c.browserPrompts.hasPending()
 	backgroundJobs := len(c.Jobs())
 	return RuntimeStatus{
 		Running:         active,
+		Rotating:        rotating,
 		PendingPrompt:   pending,
 		BackgroundJobs:  backgroundJobs,
 		CancelRequested: canceling,
@@ -2025,13 +2038,31 @@ func (c *Controller) TrySteer(text string) bool {
 
 // Steer queues mid-turn guidance without interrupting the in-flight request.
 func (c *Controller) Steer(text string) {
-	if c.TrySteer(text) {
-		return
+	switch c.SteerWithResult(text) {
+	case SteerDispatchNewTurn:
+		c.submitSteerFallback(text)
 	}
-	// No active turn accepted the steer: the frontend's runningRef was stale,
-	// the turn exited between our running check and the enqueue, or no
-	// executor is bound yet. Deliver it as a regular turn instead.
-	c.submitSteerFallback(text)
+}
+
+const (
+	SteerDispatchMidTurn  = "steer"
+	SteerDispatchNewTurn  = "new_turn"
+	SteerDispatchRejected = "rejected"
+)
+
+// SteerWithResult reports whether guidance joined the active turn, should be
+// submitted as a new turn by the caller, or cannot be accepted yet.
+func (c *Controller) SteerWithResult(text string) string {
+	c.mu.Lock()
+	exec := c.executor
+	c.mu.Unlock()
+	if exec == nil {
+		return SteerDispatchRejected
+	}
+	if c.TrySteer(text) {
+		return SteerDispatchMidTurn
+	}
+	return SteerDispatchNewTurn
 }
 
 // submitSteerFallback delivers steer text that no active turn accepted as a
@@ -5085,6 +5116,7 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 			// clearAll deliberately does not signal waiters. Pair it with the
 			// foreground cancellation so approval/ask waits always unblock.
 			c.approval.clearAll()
+			c.browserPrompts.clearAll()
 			cancel()
 		}
 		if fireSessionEnd && started {

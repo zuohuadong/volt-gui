@@ -64,6 +64,7 @@ const (
 // Skill is a loaded playbook.
 type Skill struct {
 	Name        string // canonical identifier; matches the directory / filename stem
+	DisplayName string // human-readable title for UI surfaces; falls back to Name
 	Description string // one-liner shown in the pinned index
 	Body        string // full markdown body (post-frontmatter), loaded eagerly
 	Scope       Scope  // where it came from
@@ -101,6 +102,8 @@ type Skill struct {
 	AutoUse          string // off | suggest | prefer | require
 	NeedsFreshData   bool
 	Cost             string // low | medium | high (advisory)
+	Tags             []string
+	ExamplePrompts   []string
 	// Requires lists capability IDs this skill depends on (e.g. mcp-server:github).
 	// Optional; empty keeps full backward compatibility with older skills.
 	Requires []string
@@ -134,13 +137,14 @@ func IsValidName(name string) bool { return config.IsValidSkillName(name) }
 // config.VoltUIHomeDir(), or HomeDir/.reasonix when HomeDir is explicitly set.
 type Options struct {
 	HomeDir          string
-	VoltUIHomeDir  string
+	VoltUIHomeDir    string
 	ProjectRoot      string
 	CustomPaths      []string
 	PluginPaths      map[string][]string // canonical custom root -> installed plugin package names
 	PluginAgentPaths map[string][]string // plugin roots whose flat Markdown files are Claude agents
 	ExcludedPaths    []string
 	DisabledNames    []string
+	AllowedNames     []string
 	MaxDepth         int
 	DisableBuiltins  bool // suppress shipped built-ins (test-only knob)
 	// DisableDiscovery returns an empty store without probing project, custom,
@@ -163,6 +167,7 @@ type Store struct {
 	pluginAgentPaths map[string][]string
 	excludedPaths    map[string]bool
 	disabled         map[string]bool
+	allowed          map[string]bool
 	maxDepth         int
 	disableBuiltins  bool
 	disableDiscovery bool
@@ -221,6 +226,7 @@ func New(opts Options) *Store {
 		pluginAgentPaths: pluginAgentPaths,
 		excludedPaths:    excluded,
 		disabled:         disabledNameSet(opts.DisabledNames),
+		allowed:          allowedNameSet(opts.AllowedNames),
 		maxDepth:         normalizeMaxDepth(opts.MaxDepth),
 		disableBuiltins:  opts.DisableBuiltins,
 		disableDiscovery: opts.DisableDiscovery,
@@ -543,8 +549,22 @@ func disabledNameSet(names []string) map[string]bool {
 	return out
 }
 
+func allowedNameSet(names []string) map[string]bool {
+	out := map[string]bool{}
+	for _, name := range names {
+		if key := config.SkillNameKey(name); key != "" {
+			out[key] = true
+		}
+	}
+	return out
+}
+
 func (s *Store) disabledName(name string) bool {
 	return s.disabled[config.SkillNameKey(name)]
+}
+
+func (s *Store) allowedName(name string) bool {
+	return len(s.allowed) == 0 || s.allowed[config.SkillNameKey(name)]
 }
 
 func normalizeMaxDepth(depth int) int {
@@ -595,7 +615,7 @@ func (s *Store) discoveredSkills() []Skill {
 			continue
 		}
 		for _, sk := range s.discoverRoot(r) {
-			if s.disabledName(sk.Name) {
+			if s.disabledName(sk.Name) || !s.allowedName(sk.Name) {
 				continue
 			}
 			if len(r.plugins) == 0 {
@@ -614,7 +634,7 @@ func (s *Store) discoveredSkills() []Skill {
 	}
 	if !s.disableBuiltins {
 		for _, sk := range builtinSkills() {
-			if !s.disabledName(sk.Name) {
+			if !s.disabledName(sk.Name) && s.allowedName(sk.Name) {
 				out = append(out, sk)
 			}
 		}
@@ -715,6 +735,9 @@ func (s *Store) Read(name string) (Skill, bool) {
 		return Skill{}, false
 	}
 	if s.disabledName(name) {
+		return Skill{}, false
+	}
+	if !s.allowedName(name) {
 		return Skill{}, false
 	}
 	for _, sk := range s.enabledSkills() {
@@ -879,8 +902,13 @@ func (s *Store) parseSkill(path, stem string, scope Scope, requireSkillMarker bo
 	if desc == "" {
 		fmt.Fprintf(s.stderr, "warning: skill %q at %s has no description: — it will load but won't appear in the skills index\n", name, path)
 	}
+	displayName := strings.TrimSpace(fm[skillFrontmatterTitle])
+	if displayName == "" {
+		displayName = firstMarkdownH1(body)
+	}
 	sk := Skill{
 		Name:         name,
+		DisplayName:  displayName,
 		Description:  desc,
 		Body:         loadBodyWithScripts(path, loadBodyWithReferences(path, strings.TrimSpace(body))),
 		Scope:        scope,
@@ -897,12 +925,30 @@ func (s *Store) parseSkill(path, stem string, scope Scope, requireSkillMarker bo
 		AutoUse:        parseAutoUse(fm[skillFrontmatterAutoUse]),
 		NeedsFreshData: parseBoolFrontmatter(fm[skillFrontmatterNeedsFreshData]),
 		Cost:           parseCost(fm[skillFrontmatterCost]),
-		Color:          strings.TrimSpace(fm[skillFrontmatterColor]),
-		Invocation:     parseInvocation(fm[skillFrontmatterInvocation]),
-		Requires:       parseCSVFrontmatter(fm[skillFrontmatterRequires]),
+		Tags:           parseSkillMetadataList(content, fm[skillFrontmatterTags], skillFrontmatterTags, maxSkillTags, maxSkillTagRunes),
+		ExamplePrompts: parseSkillMetadataList(
+			content,
+			fm[skillFrontmatterExamplePrompts],
+			skillFrontmatterExamplePrompts,
+			maxSkillExamplePrompts,
+			maxSkillExamplePromptRunes,
+		),
+		Color:      strings.TrimSpace(fm[skillFrontmatterColor]),
+		Invocation: parseInvocation(fm[skillFrontmatterInvocation]),
+		Requires:   parseCSVFrontmatter(fm[skillFrontmatterRequires]),
 	}
 	sk.Profiles, sk.InvalidProfiles = parseProfilesFrontmatter(fm[skillFrontmatterProfiles])
 	return sk, true
+}
+
+func firstMarkdownH1(body string) string {
+	for _, line := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "# ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "# "))
+		}
+	}
+	return ""
 }
 
 func firstNonEmptySkillValue(values ...string) string {
@@ -947,6 +993,7 @@ func mapClaudeAgentTools(in []string) []string {
 const (
 	skillFrontmatterDescription      = "description"
 	skillFrontmatterName             = "name"
+	skillFrontmatterTitle            = "title"
 	skillFrontmatterRunAs            = "runas"
 	skillFrontmatterContext          = "context"
 	skillFrontmatterAgent            = "agent"
@@ -963,11 +1010,18 @@ const (
 	skillFrontmatterInvocation       = "invocation"
 	skillFrontmatterRequires         = "requires"
 	skillFrontmatterProfiles         = "profiles"
+	skillFrontmatterTags             = "tags"
+	skillFrontmatterExamplePrompts   = "example-prompts"
+	maxSkillTags                     = 12
+	maxSkillTagRunes                 = 48
+	maxSkillExamplePrompts           = 8
+	maxSkillExamplePromptRunes       = 240
 )
 
 var skillMarkerFrontmatterKeys = []string{
 	skillFrontmatterDescription,
 	skillFrontmatterName,
+	skillFrontmatterTitle,
 	skillFrontmatterRunAs,
 	skillFrontmatterContext,
 	skillFrontmatterAgent,
@@ -984,6 +1038,8 @@ var skillMarkerFrontmatterKeys = []string{
 	skillFrontmatterInvocation,
 	skillFrontmatterRequires,
 	skillFrontmatterProfiles,
+	skillFrontmatterTags,
+	skillFrontmatterExamplePrompts,
 }
 
 func hasSkillMarker(content string, fm map[string]string) bool {
@@ -1296,6 +1352,125 @@ func parseCSVFrontmatter(raw string) []string {
 		if t := strings.Trim(strings.TrimSpace(p), `"'`); t != "" {
 			out = append(out, t)
 		}
+	}
+	return out
+}
+
+func parseSkillMetadataList(content, raw, key string, maxItems, maxRunes int) []string {
+	values := frontmatterListValues(content, key)
+	if values == nil {
+		trimmed := strings.TrimSpace(raw)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			values = parseFlowFrontmatterList(strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]")))
+		} else {
+			values = parseCSVFrontmatter(trimmed)
+		}
+	}
+	return normalizeSkillMetadata(values, maxItems, maxRunes)
+}
+
+func parseFlowFrontmatterList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var values []string
+	var current strings.Builder
+	var quote rune
+	escaped := false
+	flush := func() {
+		if value := strings.TrimSpace(current.String()); value != "" {
+			values = append(values, value)
+		}
+		current.Reset()
+	}
+	for _, char := range raw {
+		if escaped {
+			current.WriteRune(char)
+			escaped = false
+			continue
+		}
+		if quote != 0 {
+			switch {
+			case char == '\\' && quote == '"':
+				escaped = true
+			case char == quote:
+				quote = 0
+			default:
+				current.WriteRune(char)
+			}
+			continue
+		}
+		switch char {
+		case '\'', '"':
+			quote = char
+		case ',':
+			flush()
+		default:
+			current.WriteRune(char)
+		}
+	}
+	flush()
+	return values
+}
+
+func frontmatterListValues(content, wantKey string) []string {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return nil
+	}
+	for lineIndex := 1; lineIndex < len(lines); lineIndex++ {
+		if strings.TrimSpace(lines[lineIndex]) == "---" {
+			return nil
+		}
+		key, value, ok := strings.Cut(lines[lineIndex], ":")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), wantKey) || strings.TrimSpace(value) != "" {
+			continue
+		}
+		var values []string
+		for lineIndex+1 < len(lines) {
+			next := strings.TrimSpace(lines[lineIndex+1])
+			if next == "---" {
+				break
+			}
+			listItem, ok := strings.CutPrefix(next, "-")
+			if !ok {
+				break
+			}
+			values = append(values, strings.Trim(strings.TrimSpace(listItem), `"'`))
+			lineIndex++
+		}
+		return values
+	}
+	return nil
+}
+
+func normalizeSkillMetadata(values []string, maxItems, maxRunes int) []string {
+	if len(values) == 0 || maxItems <= 0 || maxRunes <= 0 {
+		return nil
+	}
+	out := make([]string, 0, min(len(values), maxItems))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if value == "" {
+			continue
+		}
+		runes := []rune(value)
+		if len(runes) > maxRunes {
+			value = string(runes[:maxRunes])
+		}
+		key := strings.ToLower(value)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, value)
+		if len(out) == maxItems {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

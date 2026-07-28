@@ -15,7 +15,7 @@ func TestDesktopBuildLinksSharedSourceRevision(t *testing.T) {
 	for _, want := range []string{
 		`SOURCE_REVISION="$(git -C "$ROOT" rev-parse --verify HEAD)"`,
 		`SOURCE_REVISION="$SOURCE_REVISION+dirty"`,
-		`source_revision_ldflag="-X reasonix/internal/remote/protocol.linkedSourceRevision=$SOURCE_REVISION"`,
+		`source_revision_ldflag="-X voltui/internal/remote/protocol.linkedSourceRevision=$SOURCE_REVISION"`,
 		`ldflags="-X main.version=$VERSION -X main.channel=$CHANNEL $source_revision_ldflag"`,
 		`-X main.version=$VERSION $source_revision_ldflag`,
 	} {

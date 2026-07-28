@@ -164,6 +164,13 @@ func legacyOSSupportDir() string {
 	return path
 }
 
+// LegacyOSSupportDir returns the pre-current-home OS application-support
+// directory used by older desktop builds. Callers must treat it as read-only.
+func LegacyOSSupportDir() string { return legacyOSSupportDir() }
+
+// ReasonixHomeDir returns the current product support-data directory.
+func ReasonixHomeDir() string { return reasonixHomeDir() }
+
 func userCacheDir() string {
 	if dir := cleanEnvDir("REASONIX_CACHE_HOME"); dir != "" {
 		return dir
@@ -290,6 +297,10 @@ func VoltUIManagedConfigPaths() []string {
 	}
 	out = appendUniquePath(out, legacyConfigPath())
 	return out
+}
+
+func ReasonixManagedConfigPaths() []string {
+	return VoltUIManagedConfigPaths()
 }
 
 func appendUniquePath(paths []string, path string) []string {

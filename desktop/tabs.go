@@ -33,9 +33,113 @@ import (
 	"voltui/internal/provider"
 	"voltui/internal/scopedmemory"
 	"voltui/internal/store"
+	"voltui/internal/worktree"
 )
 
 // --- WorkspaceTab -----------------------------------------------------------
+
+type tabDisplayState struct {
+	mu             sync.Mutex
+	planner        displayTurnBuffer
+	executor       displayTurnBuffer
+	pendingWrites  []*pendingDisplayWrite
+	persistRunning bool
+}
+
+const displayPersistRetryLimit = 4
+
+type pendingDisplayWrite struct {
+	dir         string
+	sessionPath string
+	userContent string
+	messages    []HistoryMessage
+	persist     func(string, string, string, []HistoryMessage) error
+}
+
+type displayTextAccumulator struct {
+	parts []string
+	size  int
+}
+
+func (a *displayTextAccumulator) append(text string) {
+	if text == "" {
+		return
+	}
+	a.parts = append(a.parts, text)
+	a.size += len(text)
+}
+
+func (a *displayTextAccumulator) replace(text string) {
+	a.parts = nil
+	a.size = 0
+	a.append(text)
+}
+
+func (a *displayTextAccumulator) hasNonWhitespace() bool {
+	for _, part := range a.parts {
+		if strings.TrimSpace(part) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *displayTextAccumulator) string() string {
+	switch len(a.parts) {
+	case 0:
+		return ""
+	case 1:
+		return a.parts[0]
+	}
+	var out strings.Builder
+	out.Grow(a.size)
+	for _, part := range a.parts {
+		out.WriteString(part)
+	}
+	return out.String()
+}
+
+type bufferedHistoryMessage struct {
+	message   HistoryMessage
+	content   displayTextAccumulator
+	reasoning displayTextAccumulator
+}
+
+func (m *bufferedHistoryMessage) materialize() HistoryMessage {
+	out := m.message
+	if out.Role == "assistant" {
+		out.Content = m.content.string()
+		out.Reasoning = m.reasoning.string()
+	}
+	if len(out.MemoryCitations) > 0 {
+		out.MemoryCitations = append([]provider.MemoryCitation(nil), out.MemoryCitations...)
+	}
+	if len(out.ToolCalls) > 0 {
+		out.ToolCalls = append([]HistoryToolCall(nil), out.ToolCalls...)
+	}
+	return out
+}
+
+type displayTurnBuffer struct {
+	messages []*bufferedHistoryMessage
+	tools    map[string]string
+}
+
+func (b *displayTurnBuffer) reset() {
+	b.messages = nil
+	b.tools = nil
+}
+
+func (b *displayTurnBuffer) materialize() []HistoryMessage {
+	if len(b.messages) == 0 {
+		return nil
+	}
+	out := make([]HistoryMessage, 0, len(b.messages))
+	for _, message := range b.messages {
+		out = append(out, message.materialize())
+	}
+	return out
+}
 
 // WorkspaceTab is one open conversation tab in the desktop. Each tab owns an
 // independent controller (its own agent, session, tool registry, plugin host,
@@ -69,6 +173,8 @@ type WorkspaceTab struct {
 	buildGeneration       uint64             // identifies the current in-flight build
 	removed               bool               // set when the visible tab is pruned/closed before build completes
 	reconcileMu           sync.Mutex         // serializes stale controller workspace repair for this tab
+	turnStartMu           sync.Mutex         // serializes bridge turn admission with runtime mutations
+	runtimeID             string             // process-local session runtime identity
 
 	ActivityStatus string // transient project-tree status for the in-flight turn
 
@@ -103,12 +209,10 @@ type WorkspaceTab struct {
 	telemetrySessionKey string
 	telemMu             sync.Mutex
 
-	// plannerDisplay keeps display-only planner output for the in-flight turn.
-	// The executor session remains the model-facing transcript; this sidecar
-	// lets frontend history restore the planner cards after a rebuild/reload.
-	plannerDisplay      []HistoryMessage
-	plannerDisplayTools map[string]string
-	plannerDisplayMu    sync.Mutex
+	// Display-only output belongs to the live runtime, not a particular visible
+	// tab wrapper. Detach/reattach paths share this state before rebinding the sink.
+	displayStateMu sync.Mutex
+	displayState   *tabDisplayState
 
 	model            string // active model ref (for meta)
 	effort           *string
@@ -503,6 +607,7 @@ func cloneDetachedRuntimeTab(tab *WorkspaceTab, key, path string) *WorkspaceTab 
 		readTelemetry:         readTelemetry,
 		usageTelemetry:        usageTelemetry,
 		telemetrySessionKey:   telemetrySessionKey,
+		displayState:          tab.displayBufferState(),
 		model:                 tab.model,
 		effort:                cloneStringPtr(tab.effort),
 		tokenMode:             tab.tokenMode,
@@ -575,6 +680,7 @@ func applyRuntimeTab(target, source *WorkspaceTab, path string, wailsCtx context
 	usageTelemetry := cloneSessionUsageStats(source.usageTelemetry)
 	telemetrySessionKey := source.telemetrySessionKey
 	source.telemMu.Unlock()
+	target.adoptDisplayState(source.displayBufferState())
 
 	if source.sink != nil {
 		source.sink.setBinding(target.ID, app)
@@ -785,123 +891,138 @@ func (t *WorkspaceTab) syncTelemetryToSession(sessionPath string) {
 	t.telemMu.Unlock()
 }
 
-func (t *WorkspaceTab) resetPlannerDisplayTurn() {
-	t.plannerDisplayMu.Lock()
-	if len(t.plannerDisplay) == 0 {
-		t.plannerDisplayTools = nil
+func (t *WorkspaceTab) resetDisplayTurn() {
+	state := t.displayBufferState()
+	state.mu.Lock()
+	if len(state.planner.messages) == 0 {
+		state.planner.tools = nil
 	}
-	t.plannerDisplayMu.Unlock()
+	if len(state.executor.messages) == 0 {
+		state.executor.tools = nil
+	}
+	state.mu.Unlock()
 }
 
-func (t *WorkspaceTab) recordPlannerDisplayEvent(e event.Event) {
-	if strings.TrimSpace(e.Source) != event.UsageSourcePlanner {
+func (t *WorkspaceTab) recordDisplayEvent(e event.Event) {
+	state := t.displayBufferState()
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	buffer := &state.executor
+	if strings.TrimSpace(e.Source) == event.UsageSourcePlanner {
+		buffer = &state.planner
+	}
+	recordHistoryDisplayEvent(buffer, e)
+}
+
+func (t *WorkspaceTab) displayBufferState() *tabDisplayState {
+	t.displayStateMu.Lock()
+	defer t.displayStateMu.Unlock()
+	if t.displayState == nil {
+		t.displayState = &tabDisplayState{}
+	}
+	return t.displayState
+}
+
+func (t *WorkspaceTab) adoptDisplayState(state *tabDisplayState) {
+	if t == nil || state == nil {
 		return
 	}
-	t.plannerDisplayMu.Lock()
-	defer t.plannerDisplayMu.Unlock()
+	t.displayStateMu.Lock()
+	t.displayState = state
+	t.displayStateMu.Unlock()
+}
+
+func recordHistoryDisplayEvent(buffer *displayTurnBuffer, e event.Event) {
 	switch e.Kind {
 	case event.Phase:
 		if strings.TrimSpace(e.Text) != "" {
-			t.plannerDisplay = append(t.plannerDisplay, HistoryMessage{Role: "phase", Content: e.Text})
+			buffer.messages = append(buffer.messages, &bufferedHistoryMessage{message: HistoryMessage{Role: "phase", Content: e.Text}})
 		}
 	case event.Reasoning:
 		if e.Text != "" {
-			hm := t.ensurePlannerAssistantLocked()
-			hm.Reasoning += e.Text
+			hm := ensureDisplayAssistant(buffer)
+			hm.reasoning.append(e.Text)
 		}
 	case event.Text:
 		if e.Text != "" {
-			hm := t.ensurePlannerAssistantLocked()
-			hm.Content += e.Text
+			hm := ensureDisplayAssistant(buffer)
+			hm.content.append(e.Text)
 		}
 	case event.Message:
 		if e.Text != "" || e.Reasoning != "" || len(e.MemoryCitations) > 0 {
-			hm := t.ensurePlannerAssistantLocked()
+			hm := ensureDisplayAssistant(buffer)
 			if e.Text != "" {
-				hm.Content = e.Text
+				hm.content.replace(e.Text)
 			}
 			if e.Reasoning != "" {
-				hm.Reasoning = e.Reasoning
+				hm.reasoning.replace(e.Reasoning)
 			}
 			if len(e.MemoryCitations) > 0 {
-				hm.MemoryCitations = append([]provider.MemoryCitation(nil), e.MemoryCitations...)
+				hm.message.MemoryCitations = append([]provider.MemoryCitation(nil), e.MemoryCitations...)
 			}
 		}
 	case event.ToolDispatch:
 		if e.Tool.Partial || strings.TrimSpace(e.Tool.Name) == "" {
 			return
 		}
-		hm := t.ensurePlannerAssistantForToolLocked()
-		call := HistoryToolCall{
-			ID:        e.Tool.ID,
-			Name:      e.Tool.Name,
-			Arguments: e.Tool.Args,
-			Subject:   historyToolSubject(e.Tool.Name, e.Tool.Args),
-			Summary:   historyToolSummary(e.Tool.Name, e.Tool.Args, ""),
-			Diff:      e.Tool.Diff,
-			Added:     e.Tool.Added,
-			Removed:   e.Tool.Removed,
-		}
+		hm := ensureDisplayAssistantForTool(buffer)
+		call := HistoryToolCall{ID: e.Tool.ID, Name: e.Tool.Name, Arguments: e.Tool.Args, Subject: historyToolSubject(e.Tool.Name, e.Tool.Args), Summary: historyToolSummary(e.Tool.Name, e.Tool.Args, ""), Diff: e.Tool.Diff, Added: e.Tool.Added, Removed: e.Tool.Removed}
 		replaced := false
 		if call.ID != "" {
-			for i := range hm.ToolCalls {
-				if hm.ToolCalls[i].ID == call.ID {
-					hm.ToolCalls[i] = call
+			for i := range hm.message.ToolCalls {
+				if hm.message.ToolCalls[i].ID == call.ID {
+					hm.message.ToolCalls[i] = call
 					replaced = true
 					break
 				}
 			}
-			if t.plannerDisplayTools == nil {
-				t.plannerDisplayTools = map[string]string{}
+			if buffer.tools == nil {
+				buffer.tools = map[string]string{}
 			}
-			t.plannerDisplayTools[call.ID] = call.Name
+			buffer.tools[call.ID] = call.Name
 		}
 		if !replaced {
-			hm.ToolCalls = append(hm.ToolCalls, call)
+			hm.message.ToolCalls = append(hm.message.ToolCalls, call)
 		}
 	case event.ToolResult:
 		callID := strings.TrimSpace(e.Tool.ID)
 		content := firstNonEmpty(e.Tool.Output, e.Tool.Err)
 		display, errPreview := plannerToolResultDisplay(content, e.Tool.Err != "")
 		if callID != "" {
-			updateHistoryToolCallSummary(t.plannerDisplay, callID, content)
+			updateBufferedHistoryToolCallSummary(buffer.messages, callID, content)
 		}
 		toolName := e.Tool.Name
-		if toolName == "" && t.plannerDisplayTools != nil {
-			toolName = t.plannerDisplayTools[callID]
+		if toolName == "" && buffer.tools != nil {
+			toolName = buffer.tools[callID]
 		}
-		t.plannerDisplay = append(t.plannerDisplay, HistoryMessage{
-			Role:            "tool",
-			ToolCallID:      callID,
-			ToolName:        toolName,
-			Content:         display,
-			ToolResultError: errPreview,
-		})
+		buffer.messages = append(buffer.messages, &bufferedHistoryMessage{message: HistoryMessage{Role: "tool", ToolCallID: callID, ToolName: toolName, Content: display, ToolResultError: errPreview}})
 	case event.Notice:
 		if strings.TrimSpace(e.Text) != "" {
 			level := "info"
 			if e.Level == event.LevelWarn {
 				level = "warn"
 			}
-			t.plannerDisplay = append(t.plannerDisplay, HistoryMessage{Role: "notice", Level: level, Content: e.Text, Detail: e.Detail})
+			buffer.messages = append(buffer.messages, &bufferedHistoryMessage{message: HistoryMessage{Role: "notice", Level: level, Content: e.Text, Detail: e.Detail, Code: e.Code}})
 		}
 	}
 }
 
-func (t *WorkspaceTab) ensurePlannerAssistantLocked() *HistoryMessage {
-	if n := len(t.plannerDisplay); n > 0 && t.plannerDisplay[n-1].Role == "assistant" {
-		return &t.plannerDisplay[n-1]
+func ensureDisplayAssistant(buffer *displayTurnBuffer) *bufferedHistoryMessage {
+	if n := len(buffer.messages); n > 0 && buffer.messages[n-1].message.Role == "assistant" {
+		return buffer.messages[n-1]
 	}
-	t.plannerDisplay = append(t.plannerDisplay, HistoryMessage{Role: "assistant"})
-	return &t.plannerDisplay[len(t.plannerDisplay)-1]
+	message := &bufferedHistoryMessage{message: HistoryMessage{Role: "assistant"}}
+	buffer.messages = append(buffer.messages, message)
+	return message
 }
 
-func (t *WorkspaceTab) ensurePlannerAssistantForToolLocked() *HistoryMessage {
-	if n := len(t.plannerDisplay); n > 0 && t.plannerDisplay[n-1].Role == "assistant" && strings.TrimSpace(t.plannerDisplay[n-1].Content) == "" {
-		return &t.plannerDisplay[n-1]
+func ensureDisplayAssistantForTool(buffer *displayTurnBuffer) *bufferedHistoryMessage {
+	if n := len(buffer.messages); n > 0 && buffer.messages[n-1].message.Role == "assistant" && !buffer.messages[n-1].content.hasNonWhitespace() {
+		return buffer.messages[n-1]
 	}
-	t.plannerDisplay = append(t.plannerDisplay, HistoryMessage{Role: "assistant"})
-	return &t.plannerDisplay[len(t.plannerDisplay)-1]
+	message := &bufferedHistoryMessage{message: HistoryMessage{Role: "assistant"}}
+	buffer.messages = append(buffer.messages, message)
+	return message
 }
 
 func plannerToolResultDisplay(content string, failed bool) (display, errPreview string) {
@@ -915,13 +1036,103 @@ func plannerToolResultDisplay(content string, failed bool) (display, errPreview 
 	return "", ""
 }
 
-func (t *WorkspaceTab) takePlannerDisplayTurn() []HistoryMessage {
-	t.plannerDisplayMu.Lock()
-	defer t.plannerDisplayMu.Unlock()
-	out := cloneHistoryMessages(t.plannerDisplay)
-	t.plannerDisplay = nil
-	t.plannerDisplayTools = nil
+func updateBufferedHistoryToolCallSummary(messages []*bufferedHistoryMessage, callID, output string) {
+	if callID == "" {
+		return
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		for j := range messages[i].message.ToolCalls {
+			call := &messages[i].message.ToolCalls[j]
+			if call.ID == callID {
+				if call.Summary == "" {
+					call.Summary = historyToolSummary(call.Name, call.Arguments, output)
+				}
+				return
+			}
+		}
+	}
+}
+
+func (t *WorkspaceTab) takeDisplayTurn(cancelled bool) []HistoryMessage {
+	state := t.displayBufferState()
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	out := state.planner.materialize()
+	if cancelled {
+		out = append(out, state.executor.materialize()...)
+		if len(out) > 0 {
+			out = append(out, HistoryMessage{Role: "notice", Level: "info", Code: event.NoticeCodeCancelledTurn, Content: "This turn was interrupted. Partial output is kept for reference but is not included in the model's next-turn history; inspect the workspace before continuing or reverting changes."})
+		}
+	}
+	state.planner.reset()
+	state.executor.reset()
 	return out
+}
+
+func enqueuePendingDisplayWrite(state *tabDisplayState, write *pendingDisplayWrite) {
+	if state == nil || write == nil || write.persist == nil {
+		return
+	}
+	state.mu.Lock()
+	state.pendingWrites = append(state.pendingWrites, write)
+	if state.persistRunning {
+		state.mu.Unlock()
+		return
+	}
+	state.persistRunning = true
+	state.mu.Unlock()
+	go retryPendingDisplayWrites(state)
+}
+
+func persistOrEnqueueDisplayWrite(state *tabDisplayState, write *pendingDisplayWrite) {
+	if state == nil || write == nil || write.persist == nil {
+		return
+	}
+	state.mu.Lock()
+	hasPending := len(state.pendingWrites) > 0
+	state.mu.Unlock()
+	if hasPending {
+		enqueuePendingDisplayWrite(state, write)
+		return
+	}
+	if err := write.persist(write.dir, write.sessionPath, write.userContent, write.messages); err != nil {
+		slog.Warn("desktop: persist display-only turn history; queued for retry", "err", err)
+		enqueuePendingDisplayWrite(state, write)
+	}
+}
+
+func retryPendingDisplayWrites(state *tabDisplayState) {
+	failures := 0
+	for {
+		state.mu.Lock()
+		if len(state.pendingWrites) == 0 {
+			state.persistRunning = false
+			state.mu.Unlock()
+			return
+		}
+		write := state.pendingWrites[0]
+		state.mu.Unlock()
+		if failures > 0 {
+			time.Sleep(time.Duration(failures*failures) * 50 * time.Millisecond)
+		}
+		if err := write.persist(write.dir, write.sessionPath, write.userContent, write.messages); err != nil {
+			failures++
+			if failures < displayPersistRetryLimit {
+				continue
+			}
+			state.mu.Lock()
+			state.persistRunning = false
+			state.mu.Unlock()
+			slog.Warn("desktop: display-only turn history remains pending after retries", "err", err)
+			return
+		}
+		state.mu.Lock()
+		if len(state.pendingWrites) > 0 && state.pendingWrites[0] == write {
+			state.pendingWrites = state.pendingWrites[1:]
+		}
+		state.mu.Unlock()
+		failures = 0
+	}
 }
 
 // tabEventSink wraps a parent event.Sink and prepends a tabId to every wire
@@ -938,6 +1149,9 @@ type tabEventSink struct {
 	ctx           context.Context
 	runtimeEvents asyncRuntimeEmitter
 	botSink       event.Sink // optional: when set, events are also forwarded here
+	botSinkGen    uint64
+	turnInFlight  bool
+	runtimeEpoch  string
 }
 
 type closeableEventSink interface {
@@ -962,12 +1176,35 @@ func (s *tabEventSink) setBinding(tabID string, app *App) {
 	s.mu.Unlock()
 }
 
+func (s *tabEventSink) setRuntimeEpoch(epoch string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.runtimeEpoch = epoch
+	s.mu.Unlock()
+}
+
+func (s *tabEventSink) runtimeEpochSnapshot() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.runtimeEpoch
+}
+
 func (s *tabEventSink) Emit(e event.Event) {
+	if e.Kind == event.TurnStarted {
+		s.mu.Lock()
+		s.turnInFlight = true
+		s.mu.Unlock()
+	}
 	tabID, app := s.binding()
 	if app != nil {
 		switch e.Kind {
 		case event.TurnStarted:
-			s.resetPlannerDisplayTurn()
+			s.resetDisplayTurn()
 			s.recordTurnStarted()
 		case event.Usage:
 			s.recordUsageTelemetry(e)
@@ -981,7 +1218,7 @@ func (s *tabEventSink) Emit(e event.Event) {
 			}
 		}
 		if e.Kind == event.TurnDone {
-			s.flushPlannerDisplay()
+			s.flushDisplay(e.Cancelled)
 		}
 	}
 	s.emitRuntimeEvent(eventChannel, toWireTab(e, tabID))
@@ -998,7 +1235,7 @@ func (s *tabEventSink) Emit(e event.Event) {
 		s.recordReadTelemetry(e)
 	}
 	if app != nil {
-		s.recordPlannerDisplay(e)
+		s.recordDisplay(e)
 	}
 	// Persist after each turn so a force-kill loses at most the in-flight prompt.
 	if e.Kind == event.TurnDone && app != nil {
@@ -1007,31 +1244,77 @@ func (s *tabEventSink) Emit(e event.Event) {
 	// Forward event to bot channels when a bot forwarder is attached.
 	// Read the sink under the read lock so SetBotSink can safely swap it
 	// from another goroutine.
-	s.mu.RLock()
-	bs := s.botSink
-	s.mu.RUnlock()
+	bs, botSinkGen := s.botSinkSnapshot()
 	if bs != nil {
 		bs.Emit(e)
 		// Detach the forwarder after TurnDone so subsequent turns on the
 		// same tab do not keep pushing to bot channels.
 		if e.Kind == event.TurnDone {
-			s.SetBotSink(nil)
+			s.clearBotSink(botSinkGen)
 		}
+	}
+	if app != nil && app.botBridge != nil {
+		app.botBridge.observe(tabID, e)
+	}
+	if e.Kind == event.TurnDone {
+		s.mu.Lock()
+		s.turnInFlight = false
+		s.mu.Unlock()
 	}
 }
 
 // SetBotSink atomically sets or clears the bot event forwarder on this sink.
 // It is safe to call concurrently with Emit.
-func (s *tabEventSink) SetBotSink(sink event.Sink) {
+func (s *tabEventSink) SetBotSink(sink event.Sink) uint64 {
 	s.mu.Lock()
 	old := s.botSink
 	s.botSink = sink
+	s.botSinkGen++
+	generation := s.botSinkGen
 	s.mu.Unlock()
 	if old != nil && old != sink {
 		if closer, ok := old.(closeableEventSink); ok {
 			closer.Close()
 		}
 	}
+	return generation
+}
+
+func (s *tabEventSink) botSinkSnapshot() (event.Sink, uint64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.botSink, s.botSinkGen
+}
+
+func (s *tabEventSink) clearBotSink(generation uint64) {
+	s.mu.Lock()
+	if s.botSinkGen != generation {
+		s.mu.Unlock()
+		return
+	}
+	old := s.botSink
+	s.botSink = nil
+	s.botSinkGen++
+	s.mu.Unlock()
+	if closer, ok := old.(closeableEventSink); ok {
+		closer.Close()
+	}
+}
+
+func (s *tabEventSink) tryBeginTurn() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turnInFlight {
+		return false
+	}
+	s.turnInFlight = true
+	return true
+}
+
+func (s *tabEventSink) cancelTurnStart() {
+	s.mu.Lock()
+	s.turnInFlight = false
+	s.mu.Unlock()
 }
 
 func (s *tabEventSink) setContext(ctx context.Context) {
@@ -1327,26 +1610,28 @@ func (s *tabEventSink) recordUsageTelemetry(e event.Event) {
 	}
 }
 
-func (s *tabEventSink) resetPlannerDisplayTurn() {
+func (s *tabEventSink) resetDisplayTurn() {
 	tab, _ := s.eventTabAndController()
 	if tab != nil {
-		tab.resetPlannerDisplayTurn()
+		tab.resetDisplayTurn()
 	}
 }
 
-func (s *tabEventSink) recordPlannerDisplay(e event.Event) {
+func (s *tabEventSink) recordDisplay(e event.Event) {
 	tab, _ := s.eventTabAndController()
 	if tab != nil {
-		tab.recordPlannerDisplayEvent(e)
+		tab.recordDisplayEvent(e)
 	}
 }
 
-func (s *tabEventSink) flushPlannerDisplay() {
+func (s *tabEventSink) flushDisplay(cancelRequested bool) {
 	tab, ctrl := s.eventTabAndController()
 	if tab == nil || ctrl == nil {
 		return
 	}
-	messages := tab.takePlannerDisplayTurn()
+	history := ctrl.History()
+	keepExecutorDisplay := cancelRequested && len(history) > 0 && history[len(history)-1].Role == provider.RoleUser
+	messages := tab.takeDisplayTurn(keepExecutorDisplay)
 	if len(messages) == 0 {
 		return
 	}
@@ -1354,11 +1639,17 @@ func (s *tabEventSink) flushPlannerDisplay() {
 	if sessionPath == "" {
 		return
 	}
-	userContent := lastUserMessageContent(ctrl.History())
+	userContent := lastUserMessageContent(history)
 	if strings.TrimSpace(userContent) == "" {
 		return
 	}
-	_ = recordSessionPlannerDisplay(controllerSessionDir(ctrl), sessionPath, userContent, messages)
+	persistOrEnqueueDisplayWrite(tab.displayBufferState(), &pendingDisplayWrite{
+		dir:         controllerSessionDir(ctrl),
+		sessionPath: sessionPath,
+		userContent: userContent,
+		messages:    messages,
+		persist:     recordSessionPlannerDisplay,
+	})
 }
 
 func (s *tabEventSink) eventTabAndController() (*WorkspaceTab, control.SessionAPI) {
@@ -1450,6 +1741,7 @@ type TabMeta struct {
 	WorkspaceName         string                   `json:"workspaceName"`
 	WorkspacePath         string                   `json:"workspacePath,omitempty"`
 	GitBranch             string                   `json:"gitBranch,omitempty"`
+	IsolatedWorktree      bool                     `json:"isolatedWorktree,omitempty"`
 	TopicID               string                   `json:"topicId"`
 	TopicTitle            string                   `json:"topicTitle"`
 	SessionPath           string                   `json:"sessionPath,omitempty"`
@@ -1533,6 +1825,7 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 		StartupErr:            tab.StartupErr,
 		Active:                active,
 		Cwd:                   tab.WorkspaceRoot,
+		IsolatedWorktree:      worktree.IsManagedPath(tab.WorkspaceRoot, config.DeliveryWorktreeDir()),
 	}
 	switch tab.Scope {
 	case "global":
@@ -5398,6 +5691,7 @@ type ProjectNode struct {
 	RecoveryReason   string        `json:"recoveryReason,omitempty"`
 	RecoveryDigest   string        `json:"recoveryDigest,omitempty"`
 	RecoveryParentID string        `json:"recoveryParentId,omitempty"`
+	IsolatedWorktree bool          `json:"isolatedWorktree,omitempty"`
 	Children         []ProjectNode `json:"children,omitempty"`
 }
 
@@ -5559,7 +5853,7 @@ func migrateLegacySessionsIntoGlobalTopics(dir string) []string {
 	// unmarked so the next render retries instead of the gate hiding it forever.
 	deferred := false
 	for _, info := range infos {
-		if sessionOrderInfoIsUnmodifiedRecoveryCopy(info) {
+		if sessionOrderInfoIsUnmodifiedRecoveryCopy(info, dir) {
 			continue
 		}
 		if strings.TrimSpace(info.TopicID) != "" {
@@ -5739,7 +6033,7 @@ func repairIndexedSessionTopics(dir string) []string {
 	sourcesChanged := false
 	deferred := false
 	for _, info := range infos {
-		if sessionOrderInfoIsUnmodifiedRecoveryCopy(info) {
+		if sessionOrderInfoIsUnmodifiedRecoveryCopy(info, dir) {
 			continue
 		}
 		topicID := strings.TrimSpace(info.TopicID)
@@ -5850,33 +6144,14 @@ func sessionInfoIsAutomaticRecovery(info agent.SessionInfo) bool {
 		isAutomaticRecoverySessionPath(info.Path)
 }
 
-// recoveryDigestsIdentifyUnmodifiedCopy is deliberately conservative: recovery
-// provenance (a flag, digest, or filename) is not enough to authorize hiding or
-// bulk deletion. Both digests must be present and equal, proving that no save
-// has changed the recovered branch since it was forked.
-func recoveryDigestsIdentifyUnmodifiedCopy(recoveryDigest, contentDigest string) bool {
-	recoveryDigest = strings.TrimSpace(recoveryDigest)
-	contentDigest = strings.TrimSpace(contentDigest)
-	if len(recoveryDigest) != 64 || len(contentDigest) != 64 || recoveryDigest != contentDigest {
-		return false
-	}
-	for _, r := range recoveryDigest {
-		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-func sessionOrderInfoIsUnmodifiedRecoveryCopy(info agent.SessionOrderInfo) bool {
+func sessionOrderInfoIsUnmodifiedRecoveryCopy(info agent.SessionOrderInfo, parentDir string) bool {
 	return sessionOrderInfoIsAutomaticRecovery(info) &&
-		recoveryDigestsIdentifyUnmodifiedCopy(info.RecoveryDigest, info.ContentDigest)
+		agent.RecoveryBranchCoveredByParent(info.Path, parentDir)
 }
 
-func sessionInfoIsUnmodifiedRecoveryCopy(info agent.SessionInfo) bool {
+func sessionInfoIsUnmodifiedRecoveryCopy(info agent.SessionInfo, parentDir string) bool {
 	return sessionInfoIsAutomaticRecovery(info) &&
-		recoveryDigestsIdentifyUnmodifiedCopy(info.RecoveryDigest, info.ContentDigest)
+		agent.RecoveryBranchCoveredByParent(info.Path, parentDir)
 }
 
 func isAutomaticRecoverySessionPath(path string) bool {
@@ -6955,10 +7230,11 @@ func (a *App) ListProjectTree() []ProjectNode {
 			title = workspaceName(p.Root)
 		}
 		node := ProjectNode{
-			Key:    "project_" + p.Root,
-			Kind:   "project",
-			Root:   p.Root,
-			Pinned: containsDesktopString(f.PinnedProjects, p.Root),
+			Key:              "project_" + p.Root,
+			Kind:             "project",
+			Root:             p.Root,
+			Pinned:           containsDesktopString(f.PinnedProjects, p.Root),
+			IsolatedWorktree: worktree.IsManagedPath(p.Root, config.DeliveryWorktreeDir()),
 		}
 
 		// Gather topics: explicit topic list + all known topic titles.
@@ -8139,7 +8415,7 @@ func mergeSessionInfos(dir string, infos []agent.SessionInfo, titles map[string]
 			// An unchanged conflict copy duplicates its original, so its turns
 			// must not be added. Once its content digest diverges, however, the
 			// branch contains unique user work and must keep the topic visible.
-			if sessionInfoIsUnmodifiedRecoveryCopy(info) {
+			if sessionInfoIsUnmodifiedRecoveryCopy(info, dir) {
 				summary.hasRecoveryOnly = true
 			} else {
 				summary.hasAdoptedRecovery = true

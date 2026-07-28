@@ -11,6 +11,7 @@ import (
 
 	"voltui/internal/fileutil"
 	fileencoding "voltui/internal/fileutil/encoding"
+	"voltui/internal/scopedmemory"
 	"voltui/internal/store"
 )
 
@@ -62,9 +63,73 @@ type BranchMeta struct {
 	// in-memory conversation, so ListSessions stays O(1) per session instead of
 	// O(file size). Gated by SchemaVersion (above), not Turns == 0, so a
 	// genuinely-empty session is recorded once and never re-decoded.
-	Turns        int               `json:"turns,omitempty"`
-	Preview      string            `json:"preview,omitempty"`
-	InFlightTurn *InFlightTurnMeta `json:"in_flight_turn,omitempty"`
+	Turns                 int                   `json:"turns,omitempty"`
+	Preview               string                `json:"preview,omitempty"`
+	InFlightTurn          *InFlightTurnMeta     `json:"in_flight_turn,omitempty"`
+	AgentProfileID        string                `json:"agent_profile_id,omitempty"`
+	AgentProfileName      string                `json:"agent_profile_name,omitempty"`
+	AgentProfileBaseModel string                `json:"agent_profile_base_model,omitempty"`
+	AgentProfileUpdatedAt string                `json:"agent_profile_updated_at,omitempty"`
+	AgentProfileHistory   []AgentProfileSwitch  `json:"agent_profile_history,omitempty"`
+	MemoryContext         *scopedmemory.Context `json:"memory_context,omitempty"`
+	MemoryScopes          []string              `json:"memory_scopes,omitempty"`
+	MemorySourceIDs       []string              `json:"memory_source_ids,omitempty"`
+	MemoryUpdatedAt       string                `json:"memory_updated_at,omitempty"`
+}
+
+// AgentProfileSwitch is an auditable record of a thread runtime changing its
+// selected Agent Profile. The main transcript remains provider-compatible;
+// profile evidence stays in the branch sidecar.
+type AgentProfileSwitch struct {
+	ProfileID       string    `json:"profile_id,omitempty"`
+	ProfileName     string    `json:"profile_name,omitempty"`
+	ModelRef        string    `json:"model_ref,omitempty"`
+	ToolIDs         []string  `json:"tool_ids,omitempty"`
+	SkillNames      []string  `json:"skill_names,omitempty"`
+	MemoryScopes    []string  `json:"memory_scopes,omitempty"`
+	MemorySourceIDs []string  `json:"memory_source_ids,omitempty"`
+	PermissionMode  string    `json:"permission_mode,omitempty"`
+	Action          string    `json:"action"`
+	ChangedAt       time.Time `json:"changed_at"`
+}
+
+// InheritAgentProfile copies the reusable runtime axes to a child branch. The
+// caller assigns the child's thread id and refreshes its visible memory audit;
+// parent thread memory must never become child thread memory by inheritance.
+func (m *BranchMeta) InheritAgentProfile(parent BranchMeta) {
+	if m == nil {
+		return
+	}
+	m.AgentProfileID = parent.AgentProfileID
+	m.AgentProfileName = parent.AgentProfileName
+	m.AgentProfileBaseModel = parent.AgentProfileBaseModel
+	m.AgentProfileUpdatedAt = parent.AgentProfileUpdatedAt
+	m.AgentProfileHistory = cloneAgentProfileHistory(parent.AgentProfileHistory)
+	if parent.MemoryContext != nil {
+		memoryContext := *parent.MemoryContext
+		memoryContext.ThreadID = ""
+		m.MemoryContext = &memoryContext
+	} else {
+		m.MemoryContext = nil
+	}
+	m.MemoryScopes = nil
+	m.MemorySourceIDs = nil
+	m.MemoryUpdatedAt = ""
+}
+
+func cloneAgentProfileHistory(history []AgentProfileSwitch) []AgentProfileSwitch {
+	if len(history) == 0 {
+		return nil
+	}
+	out := make([]AgentProfileSwitch, len(history))
+	for i := range history {
+		out[i] = history[i]
+		out[i].ToolIDs = append([]string(nil), history[i].ToolIDs...)
+		out[i].SkillNames = append([]string(nil), history[i].SkillNames...)
+		out[i].MemoryScopes = append([]string(nil), history[i].MemoryScopes...)
+		out[i].MemorySourceIDs = append([]string(nil), history[i].MemorySourceIDs...)
+	}
+	return out
 }
 
 // BranchMetaCountsVersion is stamped into BranchMeta.SchemaVersion whenever a

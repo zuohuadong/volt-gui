@@ -42,6 +42,22 @@ vet / test ./...` skip this directory, while the import path stays under
   24.04+, Arch) build with `-tags webkit2_41` — see [Build](#build). Run
   `wails doctor` to verify.
 
+### Independently versioned Windows prerequisites
+
+The large offline Microsoft Visual C++ and WebView2 bundle has its own version
+source, `desktop/prerequisites-version.txt`, and its own `prerequisites-v*` CNB
+Release namespace. Normal `desktop-v*` builds keep Wails' small online WebView2
+bootstrapper (`-webview2 embed`) but do not include the offline prerequisites ZIP.
+
+The current bundle version is `v1.0.0` (`prerequisites-v1.0.0`). Build it without
+building Wails, the frontend, or NSIS:
+
+```sh
+DESKTOP_APP_NAME=Anyong \
+VOLTUI_BRAND_NAME="西谷智灯暗涌系统" \
+scripts/build-windows-prerequisites.sh windows/amd64
+```
+
 ## Develop
 
 ```sh

@@ -732,8 +732,8 @@ func trustDiagnosticFlows(cfg *config.Config) []TrustFlow {
 		}
 		return TrustStatusDisabled
 	}
-	updateDestinations := make([]TrustDestination, 0, len(manifestEndpoints()))
-	for _, endpoint := range manifestEndpoints() {
+	updateDestinations := make([]TrustDestination, 0, len(manifestEndpoints(cfg.DesktopUpdateChannel())))
+	for _, endpoint := range manifestEndpoints(cfg.DesktopUpdateChannel()) {
 		updateDestinations = append(updateDestinations, sanitizeTrustDestination(endpoint, ""))
 	}
 	return []TrustFlow{

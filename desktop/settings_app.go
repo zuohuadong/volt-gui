@@ -94,6 +94,7 @@ type ProviderModelOverrideView struct {
 	SupportedEfforts  []string `json:"supportedEfforts"`
 	DefaultEffort     string   `json:"defaultEffort"`
 	Vision            *bool    `json:"vision"`
+	ContextWindow     int      `json:"contextWindow,omitempty"`
 }
 
 type PermissionsView struct {
@@ -379,6 +380,7 @@ func providerModelOverridesForView(overrides map[string]config.ProviderModelOver
 			SupportedEfforts:  nonNil(ov.SupportedEfforts),
 			DefaultEffort:     ov.DefaultEffort,
 			Vision:            ov.Vision,
+			ContextWindow:     ov.ContextWindow,
 		})
 	}
 	return out
@@ -403,8 +405,9 @@ func providerModelOverridesForSave(overrides []ProviderModelOverrideView, models
 			SupportedEfforts:  nonNil(item.SupportedEfforts),
 			DefaultEffort:     strings.TrimSpace(item.DefaultEffort),
 			Vision:            item.Vision,
+			ContextWindow:     max(item.ContextWindow, 0),
 		}
-		if strings.TrimSpace(ov.ReasoningProtocol) == "" && len(ov.SupportedEfforts) == 0 && strings.TrimSpace(ov.DefaultEffort) == "" && ov.Vision == nil {
+		if strings.TrimSpace(ov.ReasoningProtocol) == "" && len(ov.SupportedEfforts) == 0 && strings.TrimSpace(ov.DefaultEffort) == "" && ov.Vision == nil && ov.ContextWindow == 0 {
 			continue
 		}
 		out[model] = ov
@@ -1265,6 +1268,10 @@ func appendSettingsWarning(existing, warning string) string {
 // callers must use loadDesktopUserConfigForView (or its WithCredentials
 // variant), which never writes to disk.
 func (a *App) loadDesktopUserConfigForEdit() (*config.Config, string, error) {
+	return a.loadDesktopUserConfigForEditForRoot(a.activeWorkspaceRoot())
+}
+
+func (a *App) loadDesktopUserConfigForEditForRoot(root string) (*config.Config, string, error) {
 	userPath := config.UserConfigPath()
 	if userPath == "" {
 		return nil, "", fmt.Errorf("cannot resolve user config directory")
@@ -1274,13 +1281,13 @@ func (a *App) loadDesktopUserConfigForEdit() (*config.Config, string, error) {
 		if err := normalizeLegacyDesktopProviderAccessForSettings(cfg, userPath); err != nil {
 			return nil, "", err
 		}
-		if err := a.migrateLegacyBotConfigToUser(cfg, userPath); err != nil {
+		if err := a.migrateLegacyBotConfigToUserForRoot(root, cfg, userPath); err != nil {
 			return nil, "", err
 		}
 		return cfg, userPath, nil
 	}
 	cfg := config.LoadForEdit(userPath)
-	legacyPath := config.SourcePathForRoot(a.activeWorkspaceRoot())
+	legacyPath := config.SourcePathForRoot(root)
 	if legacyPath == "" || sameConfigPath(legacyPath, userPath) {
 		if err := normalizeLegacyDesktopProviderAccessForSettings(cfg, userPath); err != nil {
 			return nil, "", err
@@ -1305,7 +1312,11 @@ func (a *App) loadDesktopUserConfigForEdit() (*config.Config, string, error) {
 // loaded; callers that hand the config to a runtime resolving secrets from the
 // process env must use loadDesktopUserConfigForViewWithCredentials.
 func (a *App) loadDesktopUserConfigForView() (*config.Config, string, error) {
-	return a.loadDesktopUserConfigReadOnly(config.LoadForViewWithoutCredentials)
+	return a.loadDesktopUserConfigForViewForRoot(a.activeWorkspaceRoot())
+}
+
+func (a *App) loadDesktopUserConfigForViewForRoot(root string) (*config.Config, string, error) {
+	return a.loadDesktopUserConfigReadOnlyForRoot(root, config.LoadForViewWithoutCredentials)
 }
 
 // loadDesktopUserConfigForViewWithCredentials is loadDesktopUserConfigForView
@@ -1315,13 +1326,17 @@ func (a *App) loadDesktopUserConfigForView() (*config.Config, string, error) {
 // (app-secret/control-token envs) and MCP server connects. It still never
 // writes to disk.
 func (a *App) loadDesktopUserConfigForViewWithCredentials() (*config.Config, string, error) {
-	return a.loadDesktopUserConfigReadOnly(config.LoadForView)
+	return a.loadDesktopUserConfigForViewWithCredentialsForRoot(a.activeWorkspaceRoot())
 }
 
-// loadDesktopUserConfigReadOnly is the shared pure-read loader behind the View
-// variants: same shape as loadDesktopUserConfigForEdit, but every legacy
-// migration stays in memory (zero SaveTo).
-func (a *App) loadDesktopUserConfigReadOnly(load func(string) *config.Config) (*config.Config, string, error) {
+func (a *App) loadDesktopUserConfigForViewWithCredentialsForRoot(root string) (*config.Config, string, error) {
+	return a.loadDesktopUserConfigReadOnlyForRoot(root, config.LoadForView)
+}
+
+// loadDesktopUserConfigReadOnlyForRoot is the shared pure-read loader behind
+// the View variants: same shape as loadDesktopUserConfigForEdit, but every
+// legacy migration stays in memory (zero SaveTo) and resolves from root.
+func (a *App) loadDesktopUserConfigReadOnlyForRoot(root string, load func(string) *config.Config) (*config.Config, string, error) {
 	userPath := config.UserConfigPath()
 	if userPath == "" {
 		return nil, "", fmt.Errorf("cannot resolve user config directory")
@@ -1329,14 +1344,14 @@ func (a *App) loadDesktopUserConfigReadOnly(load func(string) *config.Config) (*
 	if _, err := os.Stat(userPath); err == nil {
 		cfg := load(userPath)
 		normalizeLegacyDesktopProviderAccessInMemory(cfg, userPath)
-		legacyPath := config.SourcePathForRoot(a.activeWorkspaceRoot())
+		legacyPath := config.SourcePathForRoot(root)
 		if legacyPath != "" && !sameConfigPath(legacyPath, userPath) {
 			mergeLegacyBotConfigInMemory(cfg, load(legacyPath))
 		}
 		return cfg, userPath, nil
 	}
 	cfg := load(userPath)
-	legacyPath := config.SourcePathForRoot(a.activeWorkspaceRoot())
+	legacyPath := config.SourcePathForRoot(root)
 	if legacyPath == "" || sameConfigPath(legacyPath, userPath) {
 		normalizeLegacyDesktopProviderAccessInMemory(cfg, userPath)
 		return cfg, userPath, nil
@@ -1350,14 +1365,14 @@ func (a *App) loadDesktopUserConfigReadOnly(load func(string) *config.Config) (*
 	return legacyCfg, userPath, nil
 }
 
-// migrateLegacyBotConfigToUser (method) is the write-path legacy bot-config
-// migration against the active workspace's legacy config file. Callers must
+// migrateLegacyBotConfigToUserForRoot is the write-path legacy bot-config
+// migration against an explicit workspace's legacy config file. Callers must
 // hold config.LockUserConfigEdits() (see loadDesktopUserConfigForEdit).
-func (a *App) migrateLegacyBotConfigToUser(userCfg *config.Config, userPath string) error {
+func (a *App) migrateLegacyBotConfigToUserForRoot(root string, userCfg *config.Config, userPath string) error {
 	if userCfg == nil {
 		return nil
 	}
-	legacyPath := config.SourcePathForRoot(a.activeWorkspaceRoot())
+	legacyPath := config.SourcePathForRoot(root)
 	if legacyPath == "" || sameConfigPath(legacyPath, userPath) {
 		return nil
 	}
@@ -1806,6 +1821,75 @@ func (a *App) SetSubagentEffort(level string) error {
 	})
 }
 
+// deleteSubagentOverrideAliases removes every underscore/hyphen alias entry
+// for name using the same key set as runtime dispatch.
+func deleteSubagentOverrideAliases(overrides map[string]string, name string) {
+	for _, key := range boot.SubagentModelKeys(name) {
+		delete(overrides, key)
+	}
+}
+
+// SetSubagentProfileModel sets or clears a per-name subagent model override.
+func (a *App) SetSubagentProfileModel(name, ref string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	return a.applyConfigChange(func(c *config.Config) error {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			deleteSubagentOverrideAliases(c.Agent.SubagentModels, name)
+			return nil
+		}
+		resolved, err := selectableDesktopModelRef(c, ref)
+		if err != nil {
+			return err
+		}
+		if c.Agent.SubagentModels == nil {
+			c.Agent.SubagentModels = map[string]string{}
+		}
+		deleteSubagentOverrideAliases(c.Agent.SubagentModels, name)
+		c.Agent.SubagentModels[name] = resolved
+		return nil
+	})
+}
+
+// SetSubagentProfileEffort sets or clears a per-name subagent effort override.
+func (a *App) SetSubagentProfileEffort(name, level string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	return a.applyConfigChange(func(c *config.Config) error {
+		level = strings.TrimSpace(level)
+		if level == "" || level == "auto" {
+			deleteSubagentOverrideAliases(c.Agent.SubagentEfforts, name)
+			return nil
+		}
+		model := subagentOverrideFor(c.Agent.SubagentModels, name)
+		if model == "" {
+			model = strings.TrimSpace(c.Agent.SubagentModel)
+		}
+		if model == "" {
+			model = c.DefaultModel
+		}
+		entry, ok := c.ResolveModel(model)
+		if !ok {
+			return fmt.Errorf("unknown subagent model %q", model)
+		}
+		effort, err := config.NormalizeEffort(entry, level)
+		if err != nil {
+			return err
+		}
+		if c.Agent.SubagentEfforts == nil {
+			c.Agent.SubagentEfforts = map[string]string{}
+		}
+		deleteSubagentOverrideAliases(c.Agent.SubagentEfforts, name)
+		c.Agent.SubagentEfforts[name] = effort
+		return nil
+	})
+}
+
 func desktopMaxSubagentDepth(depth int) int {
 	if depth <= 0 {
 		return agent.DefaultMaxSubagentDepth
@@ -1911,7 +1995,9 @@ func (a *App) applyMemoryCompilerToLiveControllers(enabled bool) {
 		if tab == nil || tab.Ctrl == nil {
 			continue
 		}
-		controllers = append(controllers, tab.Ctrl)
+		if target, ok := tab.Ctrl.(memoryCompilerTarget); ok {
+			controllers = append(controllers, target)
+		}
 	}
 	a.mu.RUnlock()
 	applyMemoryCompilerToControllers(enabled, controllers)
@@ -1956,9 +2042,15 @@ func (a *App) applyAutoPlanToLiveControllers(fallback string) {
 		if cfg, err := config.LoadForRoot(tab.root); err == nil {
 			mode = cfg.Agent.AutoPlan
 		}
-		tab.ctrl.SetAutoPlan(mode)
+		if target, ok := tab.ctrl.(interface{ SetAutoPlan(string) }); ok {
+			target.SetAutoPlan(mode)
+		}
 	}
 }
+
+// SetDefaultAutoRecoveryCheckpoint is retained as a no-op Wails surface for
+// older generated frontends. Auto Guard is always built into Auto.
+func (a *App) SetDefaultAutoRecoveryCheckpoint(_ bool) error { return nil }
 
 func officialProviderTemplate(kind, pricingLanguage string) ([]config.ProviderEntry, string, error) {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
@@ -3077,6 +3169,12 @@ func (a *App) SetDesktopMetrics(enabled bool) error {
 // the desktop. It is desktop-only and does not rebuild the controller.
 func (a *App) SetExpandThinking(on bool) error {
 	return a.applyConfigOnly(func(c *config.Config) error { return c.SetExpandThinking(on) })
+}
+
+// SetDesktopConversationWidth sets the max transcript width preference.
+// standard = 960px fixed; full = 90% of the parent, with a 960px floor. Pure config-only.
+func (a *App) SetDesktopConversationWidth(width string) error {
+	return a.applyConfigOnly(func(c *config.Config) error { return c.SetDesktopConversationWidth(width) })
 }
 
 // MigrateDesktopPreferences imports old browser-local desktop preferences into

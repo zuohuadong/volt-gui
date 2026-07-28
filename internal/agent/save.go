@@ -1356,6 +1356,7 @@ type SessionInfo struct {
 	Recovered      bool
 	RecoveryReason string
 	RecoveryDigest string
+	ContentDigest  string
 	ParentID       string
 }
 
@@ -1375,6 +1376,7 @@ type SessionOrderInfo struct {
 	Recovered      bool
 	RecoveryReason string
 	RecoveryDigest string
+	ContentDigest  string
 	ParentID       string
 	// Turns and Preview are the cached listing fields from the sidecar; SchemaVersion
 	// >= agent.BranchMetaCountsVersion means they were recorded from content and can
@@ -1893,6 +1895,7 @@ func ListSessionOrder(dir string) ([]SessionOrderInfo, error) {
 		recovered := false
 		recoveryReason := ""
 		recoveryDigest := ""
+		contentDigest := ""
 		parentID := ""
 		turns := 0
 		preview := ""
@@ -1912,6 +1915,7 @@ func ListSessionOrder(dir string) ([]SessionOrderInfo, error) {
 			recovered = meta.Recovered
 			recoveryReason = meta.RecoveryReason
 			recoveryDigest = meta.RecoveryDigest
+			contentDigest = meta.ContentDigest
 			parentID = meta.ParentID
 			turns = meta.Turns
 			preview = meta.Preview
@@ -1930,6 +1934,7 @@ func ListSessionOrder(dir string) ([]SessionOrderInfo, error) {
 			Recovered:      recovered,
 			RecoveryReason: recoveryReason,
 			RecoveryDigest: recoveryDigest,
+			ContentDigest:  contentDigest,
 			ParentID:       parentID,
 			Turns:          turns,
 			Preview:        preview,
@@ -1986,6 +1991,7 @@ func ListSessions(dir string) ([]SessionInfo, error) {
 			Recovered:      session.Recovered,
 			RecoveryReason: session.RecoveryReason,
 			RecoveryDigest: session.RecoveryDigest,
+			ContentDigest:  session.ContentDigest,
 			ParentID:       session.ParentID,
 		})
 	}

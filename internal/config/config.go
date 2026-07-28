@@ -42,6 +42,8 @@ type Config struct {
 	ConfigVersion    int                 `toml:"config_version"`
 	DefaultModel     string              `toml:"default_model"`
 	Language         string              `toml:"language"` // ui/model language tag (e.g. "zh"); empty = auto-detect from $LANG / $REASONIX_LANG
+	Brand            BrandConfig         `toml:"brand"`
+	Auth             AuthConfig          `toml:"auth"`
 	CredentialsStore string              `toml:"credentials_store"`
 	UI               UIConfig            `toml:"ui"`
 	Desktop          DesktopConfig       `toml:"desktop"`
@@ -57,6 +59,7 @@ type Config struct {
 	Skills           SkillsConfig        `toml:"skills"`
 	Statusline       StatuslineConfig    `toml:"statusline"`
 	LSP              LSPConfig           `toml:"lsp"`
+	Workbench        WorkbenchConfig     `toml:"workbench"`
 	Bot              BotConfig           `toml:"bot"`
 	Serve            ServeConfig         `toml:"serve"`
 	Secrets          SecretsConfig       `toml:"secrets"`
@@ -71,6 +74,136 @@ type Config struct {
 	pluginPackageSkillOwners   map[string][]string
 	pluginPackageAgentOwners   map[string][]string
 	safeMode                   bool
+}
+
+// BrandConfig controls the white-label identity exposed by the desktop and
+// serve frontends without requiring a rebuild.
+type BrandConfig struct {
+	Name         string `toml:"name"`
+	ShortName    string `toml:"short_name"`
+	LogoPath     string `toml:"logo_path"`
+	WordmarkPath string `toml:"wordmark_path"`
+	IconPath     string `toml:"icon_path"`
+}
+
+type AuthConfig struct {
+	Provider        string `toml:"provider"`
+	Issuer          string `toml:"issuer"`
+	ClientID        string `toml:"client_id"`
+	Scope           string `toml:"scope"`
+	CallbackMinPort int    `toml:"callback_port_min"`
+	CallbackMaxPort int    `toml:"callback_port_max"`
+}
+
+func (c *Config) AuthProvider() string {
+	return strings.ToLower(strings.TrimSpace(c.Auth.Provider))
+}
+
+func (c *Config) AuthScope() string {
+	if scope := strings.TrimSpace(c.Auth.Scope); scope != "" {
+		return scope
+	}
+	return "openid profile email"
+}
+
+func (c *Config) AuthCallbackPorts() (int, int) {
+	minPort, maxPort := c.Auth.CallbackMinPort, c.Auth.CallbackMaxPort
+	if minPort <= 0 {
+		minPort = 42000
+	}
+	if maxPort <= 0 {
+		maxPort = 42099
+	}
+	if maxPort < minPort {
+		maxPort = minPort
+	}
+	return minPort, maxPort
+}
+
+func (c *Config) AuthConfigured() bool {
+	return c.AuthProvider() != "" ||
+		strings.TrimSpace(c.Auth.Issuer) != "" ||
+		strings.TrimSpace(c.Auth.ClientID) != ""
+}
+
+func (c *Config) AuthEnabled() bool {
+	return c.AuthProvider() == "oidc" &&
+		strings.TrimSpace(c.Auth.Issuer) != "" &&
+		strings.TrimSpace(c.Auth.ClientID) != ""
+}
+
+func (c *Config) BrandName() string {
+	if c == nil {
+		return "VoltUI"
+	}
+	for _, envName := range []string{"VOLTUI_BRAND_NAME", "REASONIX_BRAND_NAME"} {
+		if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
+			return value
+		}
+	}
+	if value := strings.TrimSpace(c.Brand.Name); value != "" {
+		return value
+	}
+	return "VoltUI"
+}
+
+func (c *Config) BrandShortName() string {
+	if c == nil {
+		return "VoltUI"
+	}
+	for _, envName := range []string{"VOLTUI_BRAND_SHORT_NAME", "REASONIX_SHORT_NAME"} {
+		if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
+			return value
+		}
+	}
+	if value := strings.TrimSpace(c.Brand.ShortName); value != "" {
+		return value
+	}
+	return c.BrandName()
+}
+
+func (c *Config) BrandLogoPath() string {
+	if c == nil {
+		return ""
+	}
+	for _, envName := range []string{"VOLTUI_BRAND_LOGO", "REASONIX_BRAND_LOGO"} {
+		if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
+			return value
+		}
+	}
+	return c.expandVars(strings.TrimSpace(c.Brand.LogoPath))
+}
+
+func (c *Config) BrandWordmarkPath() string {
+	if c == nil {
+		return ""
+	}
+	for _, envName := range []string{"VOLTUI_BRAND_WORDMARK", "REASONIX_BRAND_WORDMARK"} {
+		if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
+			return value
+		}
+	}
+	return c.expandVars(strings.TrimSpace(c.Brand.WordmarkPath))
+}
+
+func (c *Config) BrandIconPath() string {
+	if c == nil {
+		return ""
+	}
+	for _, envName := range []string{"VOLTUI_BRAND_ICON", "REASONIX_BRAND_ICON"} {
+		if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
+			return value
+		}
+	}
+	return c.expandVars(strings.TrimSpace(c.Brand.IconPath))
+}
+
+func (c *Config) ApplyBrandName(raw string) string {
+	name := c.BrandName()
+	if name == "" || name == "VoltUI" {
+		return raw
+	}
+	return strings.ReplaceAll(raw, "VoltUI", name)
 }
 
 // SafeMode reports whether this configuration was built for recovery startup.
@@ -102,6 +235,7 @@ func (c *Config) IgnoredProjectDefaultModel() string {
 // cloned repository cannot silently opt the user into workflow-breaking
 // protections.
 type SecretsConfig struct {
+	RedactToolOutput *bool `toml:"redact_tool_output"`
 	// FilterSubprocessEnv strips credential-like environment variables
 	// (*_API_KEY, *TOKEN*, *SECRET*, ...) from tool subprocesses (bash, hooks,
 	// LSP, MCP stdio). Default off: it breaks token-based workflows such as
@@ -112,6 +246,10 @@ type SecretsConfig struct {
 	// as invisible. Default off because hiding the files breaks legitimate
 	// "edit my .env" workflows.
 	ProtectSensitiveFiles bool `toml:"protect_sensitive_files"`
+}
+
+func (c *Config) SecretsRedactToolOutput() bool {
+	return c == nil || c.Secrets.RedactToolOutput == nil || *c.Secrets.RedactToolOutput
 }
 
 type providerSourceScope string
@@ -657,13 +795,18 @@ type BotPairingConfig struct {
 
 // BotAccessConfig controls who may use one concrete bot connection.
 type BotAccessConfig struct {
-	Enabled        bool     `toml:"enabled"`
-	AllowAll       bool     `toml:"allow_all"`
-	PairingEnabled bool     `toml:"pairing_enabled"`
-	Users          []string `toml:"users"`
-	Groups         []string `toml:"groups"`
-	Approvers      []string `toml:"approvers"`
-	Admins         []string `toml:"admins"`
+	Enabled                bool     `toml:"enabled"`
+	AllowAll               bool     `toml:"allow_all"`
+	PairingEnabled         bool     `toml:"pairing_enabled"`
+	Users                  []string `toml:"users"`
+	Groups                 []string `toml:"groups"`
+	Approvers              []string `toml:"approvers"`
+	Admins                 []string `toml:"admins"`
+	WorkspaceRoots         []string `toml:"workspace_roots"`
+	ProjectIDs             []string `toml:"project_ids"`
+	AgentProfileIDs        []string `toml:"agent_profile_ids"`
+	PermissionCeiling      string   `toml:"permission_ceiling"`
+	RequireHighRiskConfirm bool     `toml:"require_high_risk_confirm"`
 }
 
 // QQBotConfig QQ 官方 Bot API v2 配置。
@@ -733,15 +876,19 @@ type BotConnectionCredential struct {
 }
 
 type BotConnectionSessionMapping struct {
-	RemoteID      string `toml:"remote_id"`
-	SessionID     string `toml:"session_id"`
-	SessionSource string `toml:"session_source"`
-	ChatType      string `toml:"chat_type"`
-	UserID        string `toml:"user_id"`
-	ThreadID      string `toml:"thread_id"`
-	Scope         string `toml:"scope"`
-	WorkspaceRoot string `toml:"workspace_root"`
-	UpdatedAt     string `toml:"updated_at"`
+	RemoteID               string `toml:"remote_id"`
+	SessionID              string `toml:"session_id"`
+	SessionSource          string `toml:"session_source"`
+	ChatType               string `toml:"chat_type"`
+	UserID                 string `toml:"user_id"`
+	ThreadID               string `toml:"thread_id"`
+	ProjectID              string `toml:"project_id"`
+	AgentProfileID         string `toml:"agent_profile_id"`
+	PermissionCeiling      string `toml:"permission_ceiling"`
+	RequireHighRiskConfirm bool   `toml:"require_high_risk_confirm"`
+	Scope                  string `toml:"scope"`
+	WorkspaceRoot          string `toml:"workspace_root"`
+	UpdatedAt              string `toml:"updated_at"`
 }
 
 // ServeConfig controls the HTTP serve frontend security settings.
@@ -781,6 +928,23 @@ type NetworkConfig struct {
 	// process environment instead.
 	NoProxy string             `toml:"no_proxy"`
 	Proxy   NetworkProxyConfig `toml:"proxy"`
+	// TrustedIntranet is a user-global allowlist for web_fetch targets that
+	// bypass the cloud relay but are confined to private RFC1918/ULA ranges.
+	TrustedIntranet TrustedIntranetConfig `toml:"trusted_intranet"`
+}
+
+// TrustedIntranetConfig holds the persisted intranet allowlist.
+type TrustedIntranetConfig struct {
+	Enabled bool                        `toml:"enabled"`
+	Sites   []TrustedIntranetSiteConfig `toml:"sites"`
+}
+
+// TrustedIntranetSiteConfig is one host grant: an exact host plus the private
+// CIDRs and ports web_fetch may reach there.
+type TrustedIntranetSiteConfig struct {
+	Host  string   `toml:"host"`
+	CIDRs []string `toml:"cidrs"`
+	Ports []int    `toml:"ports"`
 }
 
 // NetworkProxyConfig is the structured custom-proxy editor shape. Password is
@@ -1126,7 +1290,43 @@ type AgentConfig struct {
 	ColdResumePrune *bool `toml:"cold_resume_prune"`
 	// PlanModeReadOnlyCommands is retained for old config/session round trips. Main
 	// Plan bash calls now use the ordinary Permissions classifier and Sandbox.
-	PlanModeReadOnlyCommands []string `toml:"plan_mode_read_only_commands"`
+	PlanModeReadOnlyCommands []string             `toml:"plan_mode_read_only_commands"`
+	MemoryCompiler           MemoryCompilerConfig `toml:"memory_compiler"`
+}
+
+type MemoryCompilerConfig struct {
+	Enabled   *bool  `toml:"enabled"`
+	Verbosity string `toml:"verbosity"`
+}
+
+const (
+	MemoryCompilerVerbosityObserve = "observe"
+	MemoryCompilerVerbosityCompact = "compact"
+)
+
+func (c *Config) MemoryCompilerEnabled() bool {
+	if c == nil || c.Agent.MemoryCompiler.Enabled == nil {
+		return true
+	}
+	return *c.Agent.MemoryCompiler.Enabled
+}
+
+func (c *Config) MemoryCompilerVerbosity() string {
+	if c == nil {
+		return MemoryCompilerVerbosityObserve
+	}
+	return NormalizeMemoryCompilerVerbosity(c.Agent.MemoryCompiler.Verbosity)
+}
+
+func NormalizeMemoryCompilerVerbosity(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "observe", "observed", "silent", "minimal", "none":
+		return MemoryCompilerVerbosityObserve
+	case "compact", "inject", "injected", "contract", "on":
+		return MemoryCompilerVerbosityCompact
+	default:
+		return MemoryCompilerVerbosityObserve
+	}
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's
@@ -1137,6 +1337,8 @@ type ProviderEntry struct {
 	Kind           string            `toml:"kind"`
 	BaseURL        string            `toml:"base_url"`
 	ChatURL        string            `toml:"chat_url"`
+	APISurface     string            `toml:"api_surface"`
+	ResponsesURL   string            `toml:"responses_url"`
 	Model          string            `toml:"model"`      // a single model (back-compat)
 	Models         []string          `toml:"models"`     // a vendor's model list (one base_url/key, many models)
 	ModelsURL      string            `toml:"models_url"` // auto-fetch models from this URL on startup
@@ -1208,6 +1410,32 @@ type ProviderModelOverride struct {
 	// Zero inherits ProviderEntry.ContextWindow so existing configurations keep
 	// their current compaction behavior.
 	ContextWindow int `toml:"context_window"`
+}
+
+const (
+	APISurfaceChatCompletions = "chat_completions"
+	APISurfaceResponses       = "responses"
+)
+
+func NormalizeAPISurface(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "chat", "chat_completions", "chat-completions", "chat.completions":
+		return "", nil
+	case "responses", "response":
+		return APISurfaceResponses, nil
+	default:
+		return "", fmt.Errorf("api_surface %q: must be chat_completions or responses", raw)
+	}
+}
+
+func EffectiveAPISurface(entry *ProviderEntry) string {
+	if entry == nil {
+		return APISurfaceChatCompletions
+	}
+	if surface, err := NormalizeAPISurface(entry.APISurface); err == nil && surface != "" {
+		return surface
+	}
+	return APISurfaceChatCompletions
 }
 
 // ModelList returns the models this provider exposes: the explicit `models` list,
@@ -1469,6 +1697,40 @@ type PermissionsConfig struct {
 	Deny  []string `toml:"deny"`
 }
 
+type WorkbenchConfig struct {
+	Plugins   []WorkbenchPluginEntry   `toml:"plugins"`
+	Providers []WorkbenchProviderEntry `toml:"providers"`
+}
+
+type WorkbenchPluginEntry struct {
+	ID           string            `toml:"id"`
+	Name         string            `toml:"name"`
+	Kind         string            `toml:"kind"`
+	Entry        string            `toml:"entry"`
+	Version      string            `toml:"version"`
+	Capabilities []string          `toml:"capabilities"`
+	ProviderIDs  []string          `toml:"provider_ids"`
+	Config       map[string]string `toml:"config"`
+	Enabled      *bool             `toml:"enabled"`
+}
+
+func (e WorkbenchPluginEntry) IsEnabled() bool {
+	return e.Enabled == nil || *e.Enabled
+}
+
+type WorkbenchProviderEntry struct {
+	ID           string            `toml:"id"`
+	Type         string            `toml:"type"`
+	Server       string            `toml:"server"`
+	URL          string            `toml:"url"`
+	Command      string            `toml:"command"`
+	Args         []string          `toml:"args"`
+	Capabilities []string          `toml:"capabilities"`
+	Headers      map[string]string `toml:"headers"`
+	Env          map[string]string `toml:"env"`
+	Config       map[string]string `toml:"config"`
+}
+
 // MCPConfigSource records where a merged MCP entry came from. It is runtime
 // provenance only and is never serialized back into TOML or .mcp.json.
 type MCPConfigSource string
@@ -1521,6 +1783,9 @@ type PluginEntry struct {
 	// from this server. Keys are server-local tool names, not model-visible
 	// mcp__server__tool names.
 	ToolTimeoutSeconds map[string]int `toml:"tool_timeout_seconds"`
+	// TrustedReadOnlyTools names server-local tools whose behavior is known to be
+	// side-effect free even when the MCP schema omits readOnlyHint.
+	TrustedReadOnlyTools []string `toml:"trusted_read_only_tools"`
 	// AutoStart controls whether the server connects during session startup.
 	// Nil preserves historical behavior: configured servers start automatically.
 	AutoStart *bool `toml:"auto_start"`
@@ -1619,6 +1884,8 @@ func Default() *Config {
 	return &Config{
 		ConfigVersion:    5,
 		DefaultModel:     "deepseek-flash",
+		Brand:            BrandConfig{Name: "VoltUI"},
+		Auth:             AuthConfig{Scope: "openid profile email", CallbackMinPort: 42000, CallbackMaxPort: 42099},
 		CredentialsStore: CredentialsStoreAuto,
 		UI:               UIConfig{Theme: "auto"},
 		Desktop:          DesktopConfig{DefaultToolApprovalMode: "auto", ConversationWidth: "standard"},

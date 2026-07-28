@@ -2,6 +2,7 @@
 // Wails desktop runtime. For browser-only development, the Wails dev server
 // (wails dev) provides the real bindings on localhost.
 
+import { addBreadcrumb } from "./breadcrumbs";
 import type {
   CommandInfo,
   BrandInfo,
@@ -327,7 +328,7 @@ interface AppBindings {
   SetStatusBarItems(items: string[]): Promise<void>;
   SetDesktopLanguage(lang: string): Promise<void>;
   SetDesktopAppearance(theme: string, style: string): Promise<void>;
-  ListThemePacks(): Promise<import("./themePack").ThemePackView[];
+  ListThemePacks(): Promise<import("./themePack").ThemePackView[]>;
   GetActiveThemePack(): Promise<import("./themePack").ThemeActiveView>;
   GetThemeExperience(): Promise<import("./themeExperience").ThemeExperienceView>;
   ActivateThemePack(id: string): Promise<void>;
@@ -387,6 +388,8 @@ interface AppBindings {
   WorkbenchArtifactDir(jobID: string): Promise<string>;
 }
 
+type AppBridge = AppBindings & (() => AppBindings);
+
 interface WailsRuntime {
   EventsOn(name: string, cb: (...data: unknown[]) => void): () => void;
   OnFileDrop?(cb: (x: number, y: number, paths: string[]) => void, useDropTarget: boolean): void;
@@ -404,18 +407,18 @@ const EVENT_CHANNEL = "agent:event";
 const PROJECT_TREE_CHANNEL = "project-tree:changed";
 const AGENT_READY_CHANNEL = "agent:ready";
 
+function realApp(): AppBindings | undefined {
+  return typeof window === "undefined" ? undefined : window.go?.main?.App;
+}
+
 function bindings(): AppBindings {
-  const real = typeof window === "undefined" ? undefined : window.go?.main?.App;
+  const real = realApp();
   if (!real) {
     throw new Error(
       "Wails bindings are unavailable. Run inside `wails dev` or `wails build` — browser-only mode does not fabricate desktop data.",
     );
   }
   return real;
-}
-
-export function app(): AppBindings {
-  return bindings();
 }
 
 export function onAgentEvent(cb: (event: WireEvent) => void): () => void {
@@ -534,7 +537,7 @@ function elapsedMs(startedAt: number): number {
   return Math.max(0, Math.round(now - startedAt));
 }
 
-export const app: AppBindings = new Proxy({} as AppBindings, {
+export const app: AppBridge = new Proxy((() => bindings()) as AppBridge, {
   get(_t, prop) {
     const target = realApp() ?? getMock();
     const v = (target as unknown as Record<string, unknown>)[String(prop)];

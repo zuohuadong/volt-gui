@@ -51,6 +51,7 @@ window.go = {
     } as never,
   },
 };
+ok(app() === window.go.main?.App, "supports callable Svelte bridge access");
 
 const successStart = snapshotBreadcrumbs().length;
 now = 10;

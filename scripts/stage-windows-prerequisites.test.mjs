@@ -230,6 +230,8 @@ test('desktop packaging excludes prerequisites while keeping the online WebView2
   const desktopReadme = readFileSync(new URL('../desktop/README.md', import.meta.url), 'utf8');
 
   assert.match(buildScript, /-nsis -webview2 embed/);
+  assert.match(buildScript, /\.\/cmd\/reasonix-guard/);
+  assert.doesNotMatch(buildScript, /\.\/cmd\/voltui-guard/);
   assert.doesNotMatch(buildScript, /stage-windows-prerequisites/);
   assert.doesNotMatch(buildScript, /WINDOWS_PREREQUISITES_/);
   assert.doesNotMatch(buildScript, /-prerequisites\.zip/);

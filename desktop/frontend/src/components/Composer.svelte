@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { AtSign, Check, FileText, FileType, Folder, FolderKanban, Image, ListChecks, Paperclip, Plus, Presentation, Search, Send, ShieldCheck, Square, Table, Target, WandSparkles, X } from "@lucide/svelte";
   import { t } from "../lib/i18n";
-  import { app, onFilesDropped } from "../lib/bridge";
+  import { app, onFilesDropped, openExternal } from "../lib/bridge";
   import { contextRemainingPercent, formatSessionCost } from "../lib/thread-ux";
   import type { QueuedThreadMessage } from "../lib/task-lifecycle";
   import type { ComposerToolApprovalMode } from "../lib/tool-approval-mode";
@@ -724,10 +724,10 @@
           <div class="composer-permission-menu" role="menu">
             <div class="composer-permission-menu__head">
               <strong>应如何批准操作？</strong>
-              <span>了解更多</span>
+              <button class="composer-permission-menu__learn-more" type="button" onclick={() => openExternal("https://github.com/zuohuadong/volt-gui/blob/main/docs/TOOL_APPROVAL_MODES.zh-CN.md")}>了解更多</button>
             </div>
             {#each workPermissionOptions as option (option.id)}
-              <button class:active={workPermission === option.id} type="button" role="menuitem" disabled={permissionChanging} onclick={() => setWorkPermission(option.id)}>
+              <button class="composer-permission-menu__option" class:active={workPermission === option.id} type="button" role="menuitem" disabled={permissionChanging} onclick={() => setWorkPermission(option.id)}>
                 <i>{option.mark}</i>
                 <span>
                   <strong>{option.label}</strong>

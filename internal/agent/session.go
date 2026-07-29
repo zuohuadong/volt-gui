@@ -71,6 +71,17 @@ func (s *Session) Replace(msgs []provider.Message) {
 	s.version++
 }
 
+// Rewrite swaps the whole message log and marks a history rewrite, used when a
+// turn is rolled back to its starting state (for example after a failed
+// context preflight) so persistence treats it as a rewritten history.
+func (s *Session) Rewrite(msgs []provider.Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Messages = msgs
+	s.rewriteVersion++
+	s.version++
+}
+
 // Snapshot returns a copy of the messages, safe to read from another goroutine
 // while a turn appends. Frontends (History, Save) use it instead of touching the
 // live slice.

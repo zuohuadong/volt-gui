@@ -31,19 +31,10 @@ func requireClipboardCommand(t *testing.T, cmd tea.Cmd, want string) {
 	if cmd == nil {
 		t.Fatal("expected clipboard command, got nil")
 	}
-	t.Setenv("SSH_CONNECTION", "")
-	t.Setenv("SSH_CLIENT", "")
-	t.Setenv("SSH_TTY", "")
-	previous := writeNativeClipboardText
-	defer func() { writeNativeClipboardText = previous }()
-	var written string
-	writeNativeClipboardText = func(text string) error {
-		written = text
-		return nil
-	}
-	gotMsg, ok := cmd().(clipboardCopyMsg)
-	if !ok || gotMsg.text != want || written != want || gotMsg.err != nil || gotMsg.osc52 {
-		t.Fatalf("clipboard command = %#v, native write = %q, want %q", gotMsg, written, want)
+	gotMsg := cmd()
+	wantMsg := tea.SetClipboard(want)()
+	if !reflect.DeepEqual(gotMsg, wantMsg) {
+		t.Fatalf("clipboard command = %#v, want %#v", gotMsg, wantMsg)
 	}
 }
 
@@ -142,7 +133,7 @@ func TestSlashExportFiltersInternalAndReferencedContext(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		"# reasonix session",
+		"# voltui session",
 		"## User",
 		"please explain @auth_private.go",
 		"## Assistant",

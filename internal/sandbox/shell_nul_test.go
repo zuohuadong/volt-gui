@@ -1,6 +1,9 @@
 package sandbox
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizeNullRedirects(t *testing.T) {
 	const bash = "/dev/null"
@@ -39,18 +42,6 @@ func TestNormalizeNullRedirects(t *testing.T) {
 	}
 }
 
-func TestNormalizeNullRedirectsPreservesHereDocBody(t *testing.T) {
-	in := "cat > out.go <<'EOF'\n" +
-		"func main() {\n" +
-		"\tdata := []byte(`{\"token\":\"TOKEN_EXAMPLE\"}`)\n" +
-		"\tjson.Unmarshal(data, &v)\n" +
-		"}\n" +
-		"EOF\n"
-	if got := normalizeNullRedirects(in, "/dev/null"); got != in {
-		t.Fatalf("normalizeNullRedirects changed heredoc body:\n--- got ---\n%s\n--- want ---\n%s", got, in)
-	}
-}
-
 func TestArgvNormalizesNullRedirects(t *testing.T) {
 	bashArgv := Shell{Kind: ShellBash, Path: "bash"}.argv("echo hi 2>nul")
 	if last := bashArgv[len(bashArgv)-1]; last != "echo hi 2>/dev/null" {
@@ -59,5 +50,15 @@ func TestArgvNormalizesNullRedirects(t *testing.T) {
 	psArgv := Shell{Kind: ShellPowerShell, Path: "powershell"}.argv("echo hi 2>/dev/null")
 	if last := psArgv[len(psArgv)-1]; last != psUTF8Prologue+"echo hi 2>$null" {
 		t.Errorf("powershell argv command = %q, want /dev/null rewritten to $null", last)
+	}
+}
+
+func TestPowerShellUTF8PrologueConfiguresPythonSubprocesses(t *testing.T) {
+	argv := Shell{Kind: ShellPowerShell, Path: "powershell"}.argv("python verify.py")
+	command := argv[len(argv)-1]
+	for _, want := range []string{"$env:PYTHONUTF8='1'", "$env:PYTHONIOENCODING='utf-8'"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("PowerShell command %q should contain %q", command, want)
+		}
 	}
 }

@@ -11,7 +11,7 @@ import (
 
 func TestLoadForEdit(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "reasonix.toml")
+	path := filepath.Join(dir, "voltui.toml")
 	custom := `default_model = "custom"
 [[providers]]
 name = "custom"
@@ -42,7 +42,7 @@ api_key_env = "X_KEY"
 
 func TestLoadForEditDecodesGB18030TOML(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
+	path := filepath.Join(dir, "voltui.toml")
 	body := `default_model = "local/中文模型"
 
 [[providers]]
@@ -67,7 +67,7 @@ api_key_env = "LOCAL_KEY"
 
 func TestLoadForEditMigratesLegacyMCPTiers(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "reasonix.toml")
+	path := filepath.Join(dir, "voltui.toml")
 	body := `
 [[plugins]]
 name = "playwright"
@@ -101,7 +101,7 @@ model = "m"
 }
 
 func TestLoadForEditReadOnlyStrictDoesNotMigrateDisk(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "reasonix.toml")
+	path := filepath.Join(t.TempDir(), "voltui.toml")
 	body := []byte(`
 [[plugins]]
 name = "playwright"
@@ -131,7 +131,7 @@ func TestLoadForEditIgnoresProjectDotEnvForProviderCredentials(t *testing.T) {
 	project := t.TempDir()
 	launch := t.TempDir()
 	home := t.TempDir()
-	path := filepath.Join(project, "reasonix.toml")
+	path := filepath.Join(project, "voltui.toml")
 	body := `default_model = "custom/m"
 [[providers]]
 name = "custom"

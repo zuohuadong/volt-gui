@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -12,8 +13,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-
-	"voltui/internal/secrets"
 )
 
 const gitStatusTimeout = 700 * time.Millisecond
@@ -77,7 +76,7 @@ func runGit(ctx context.Context, cwd string, args ...string) (string, error) {
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
-	cmd.Env = append(secrets.ProcessEnv(), "GIT_OPTIONAL_LOCKS=0")
+	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -207,7 +206,7 @@ func (s gitStatus) dirtyPlain() string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return "  " + strings.Join(parts, " ")
+	return " (" + strings.Join(parts, " ") + ")"
 }
 
 func (s gitStatus) render(repo, branch string) string {
@@ -217,9 +216,7 @@ func (s gitStatus) render(repo, branch string) string {
 	if s.Detached {
 		b.WriteString(yellow(branch))
 	} else {
-		// A branch name is identity, not a success condition. Keep semantic green
-		// for additions and use the theme's readable neutral value colour here.
-		b.WriteString(footerValue(branch))
+		b.WriteString(green(branch))
 	}
 
 	var parts []string
@@ -230,8 +227,9 @@ func (s gitStatus) render(repo, branch string) string {
 		parts = append(parts, yellow(fmt.Sprintf("?%d", s.Untracked)))
 	}
 	if len(parts) > 0 {
-		b.WriteString("  ")
+		b.WriteString(dim(" ("))
 		b.WriteString(strings.Join(parts, " "))
+		b.WriteString(dim(")"))
 	}
 	return b.String()
 }

@@ -33,6 +33,28 @@ func TestResolveIn(t *testing.T) {
 	}
 }
 
+func TestResolveInMapsWindowsVirtualWorkspacePaths(t *testing.T) {
+	workDir := t.TempDir()
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{path: "/opt/workspace", want: workDir},
+		{path: "/opt/workspace/quick_sort.py", want: filepath.Join(workDir, "quick_sort.py")},
+		{path: "/opt/workspace/src/main.go", want: filepath.Join(workDir, "src", "main.go")},
+	} {
+		if got := resolveInForOS(workDir, tc.path, true); got != tc.want {
+			t.Errorf("resolveInForOS(%q, %q, windows) = %q, want %q", workDir, tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestWindowsVirtualWorkspacePathRejectsTraversal(t *testing.T) {
+	if _, ok := windowsVirtualWorkspaceRelativePath("/opt/workspace/../../outside.py"); ok {
+		t.Fatal("virtual workspace path traversal must not resolve")
+	}
+}
+
 // TestWorkspaceBindsReadAndWrite checks that relative paths land inside the
 // workspace directory rather than the process cwd, for both a reader and a
 // writer, and that write confinement defaults to the workspace.
@@ -72,6 +94,34 @@ func TestWorkspaceWriteConfinement(t *testing.T) {
 	// Absolute path outside the workspace: refused by the confiner.
 	if _, err := wf.Execute(context.Background(), argsJSON(t, map[string]any{"path": outside, "content": "x"})); err == nil {
 		t.Error("write outside the workspace should be refused")
+	}
+}
+
+func TestWorkspaceAutomationOutputPathBinding(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "screen.png")
+	tools := byName(Workspace{Dir: dir}.Tools())
+
+	ds, ok := tools["desktop_screenshot"].(desktopScreenshot)
+	if !ok {
+		t.Fatalf("desktop_screenshot was not workspace-bound: %T", tools["desktop_screenshot"])
+	}
+	if ds.workDir != dir {
+		t.Fatalf("desktop_screenshot workDir = %q, want %q", ds.workDir, dir)
+	}
+	if got, err := resolveAutomationOutputPath("shots/screen.png", "desktop-screenshot", ds.roots, ds.workDir); err != nil || got != filepath.Join(dir, "shots", "screen.png") {
+		t.Fatalf("relative desktop screenshot path = %q err=%v", got, err)
+	}
+	if _, err := resolveAutomationOutputPath(outside, "desktop-screenshot", ds.roots, ds.workDir); err == nil {
+		t.Fatal("desktop screenshot outside workspace should be refused")
+	}
+
+	bc, ok := tools["browser_control"].(browserControl)
+	if !ok {
+		t.Fatalf("browser_control was not workspace-bound: %T", tools["browser_control"])
+	}
+	if _, err := resolveAutomationOutputPath(outside, "browser-control", bc.roots, bc.workDir); err == nil {
+		t.Fatal("browser screenshot outside workspace should be refused")
 	}
 }
 
@@ -169,7 +219,7 @@ func TestWorkspaceToolSchemasStableAcrossRoots(t *testing.T) {
 	}
 
 	resolver := NewPathResolver()
-	resolver.RegisterReadRoot("__reasonix_external_folder/schema/root", t.TempDir())
+	resolver.RegisterReadRoot("__voltui_external_folder/schema/root", t.TempDir())
 	withResolver := workspaceSchemasJSONWithResolver(t, firstRoot, resolver)
 	if first != withResolver {
 		t.Fatalf("workspace tool schemas should not depend on external read roots:\nfirst=%s\nwith=%s", first, withResolver)
@@ -201,7 +251,7 @@ func TestWorkspaceReadToolsResolveExternalReadRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	token := "__reasonix_external_folder/abc123/External"
+	token := "__voltui_external_folder/abc123/External"
 	resolver := NewPathResolver()
 	resolver.RegisterReadRoot(token, external)
 	tools := byName(Workspace{Dir: workspace, ReadPaths: resolver}.Tools("read_file", "ls", "grep", "glob"))

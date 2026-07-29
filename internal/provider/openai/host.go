@@ -3,8 +3,6 @@ package openai
 import (
 	"net/url"
 	"strings"
-
-	"voltui/internal/provider"
 )
 
 // matchesVendorHost reports whether baseURL points at one of the canonical
@@ -51,7 +49,7 @@ func IsMiniMax(baseURL string) bool {
 // MiMo follows the OpenAI chat shape but authenticates with an `api-key` header
 // instead of the usual Authorization bearer header.
 func IsMiMo(baseURL string) bool {
-	return provider.IsMiMoEndpoint(baseURL)
+	return matchesVendorHost(baseURL, "xiaomimimo.com", "api.xiaomimimo.com")
 }
 
 // IsZhipu reports whether baseURL points at Zhipu's OpenAI-compatible endpoint

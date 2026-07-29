@@ -42,7 +42,7 @@ func runTool(t *testing.T, tl tool.Tool, m map[string]any) string {
 }
 
 func TestBuiltinsRegistered(t *testing.T) {
-	want := []string{"bash", "code_index", "edit_file", "glob", "grep", "ls", "move_file", "multi_edit", "read_file", "web_fetch", "write_file"}
+	want := []string{"bash", "browser_control", "desktop_keyboard", "desktop_mouse", "desktop_screenshot", "edit_file", "glob", "grep", "knowledge_search", "ls", "multi_edit", "read_file", "web_fetch", "write_file"}
 	for _, name := range want {
 		if _, ok := tool.LookupBuiltin(name); !ok {
 			t.Errorf("built-in %q not registered", name)
@@ -57,8 +57,9 @@ func TestBuiltinsRegistered(t *testing.T) {
 // many invocations are pure reads — args aren't introspected.
 func TestBuiltinReadOnlyClassification(t *testing.T) {
 	readOnly := map[string]bool{
-		"read_file": true, "ls": true, "glob": true, "grep": true, "code_index": true, "web_fetch": true,
-		"write_file": false, "edit_file": false, "multi_edit": false, "move_file": false, "bash": false,
+		"read_file": true, "ls": true, "glob": true, "grep": true, "knowledge_search": true, "web_fetch": true,
+		"write_file": false, "edit_file": false, "multi_edit": false, "bash": false,
+		"browser_control": false, "desktop_keyboard": false, "desktop_mouse": false, "desktop_screenshot": false,
 	}
 	for name, want := range readOnly {
 		tl, ok := tool.LookupBuiltin(name)
@@ -182,16 +183,8 @@ func TestEditFile(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "a.txt")
 	os.WriteFile(f, []byte("hello world\n"), 0o644)
 
-	out := runTool(t, editFile{}, map[string]any{"path": f, "old_string": "world", "new_string": "reasonix"})
-	for _, want := range []string{"Actual replacement receipt after write:", "-world", "+reasonix"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("edit result should contain %q in actual post-write receipt:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "hello") {
-		t.Fatalf("edit receipt should not include unchanged same-line content:\n%s", out)
-	}
-	if b, _ := os.ReadFile(f); string(b) != "hello reasonix\n" {
+	runTool(t, editFile{}, map[string]any{"path": f, "old_string": "world", "new_string": "voltui"})
+	if b, _ := os.ReadFile(f); string(b) != "hello voltui\n" {
 		t.Fatalf("after edit = %q", b)
 	}
 
@@ -218,22 +211,14 @@ func TestMultiEdit(t *testing.T) {
 		"path": f,
 		"edits": []map[string]any{
 			{"old_string": "package old", "new_string": "package new"},
-			{"old_string": "old", "new_string": "reasonix", "replace_all": true},
+			{"old_string": "old", "new_string": "voltui", "replace_all": true},
 		},
 	})
 	if !strings.Contains(out, "multi_edit") || !strings.Contains(out, "2 edits applied") {
 		t.Errorf("summary unexpected: %q", out)
 	}
-	for _, want := range []string{"Actual replacement receipt after write:", "-package old", "+package new", "-old", "+reasonix"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("multi_edit result should contain %q in actual post-write receipt:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "func reasonix") {
-		t.Fatalf("multi_edit receipt should not include unchanged same-line content:\n%s", out)
-	}
 	got, _ := os.ReadFile(f)
-	want := "package new\n\nfunc reasonix() {\n\treasonix()\n}\n"
+	want := "package new\n\nfunc voltui() {\n\tvoltui()\n}\n"
 	if string(got) != want {
 		t.Errorf("after multi_edit = %q\n          want = %q", got, want)
 	}
@@ -299,55 +284,6 @@ func TestWebFetchHTML(t *testing.T) {
 	for _, leak := range []string{"<script", "alert(", "<style", "<h1>", "&amp;"} {
 		if strings.Contains(out, leak) {
 			t.Errorf("leaked raw HTML/script %q", leak)
-		}
-	}
-}
-
-func TestWebFetchHTMLTokenizerHandlesAttributesAndEntities(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(`<html><body><p title="1 > 0">Tom&#39;s &nbsp; docs</p><script>visible = false</script><p>Next</p></body></html>`))
-	}))
-	defer srv.Close()
-
-	out := runTool(t, webFetch{}, map[string]any{"url": srv.URL})
-	for _, want := range []string{"Tom's docs", "Next"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("missing %q in:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "visible = false") || strings.Contains(out, "title=") || strings.Contains(out, "&#39;") {
-		t.Fatalf("HTML tokenizer leaked markup/script/entity:\n%s", out)
-	}
-}
-
-func TestWebFetchHTMLStructuredText(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(`<html><head><title>Doc title</title></head><body>
-<h1>Main</h1>
-<p>Read the <a href="/guide?a=1&amp;b=2">guide</a>.</p>
-<ul><li>First</li><li>Second</li></ul>
-<pre>go test ./...
-line two</pre>
-<table><tr><th>Name</th><th>Value</th></tr><tr><td>A</td><td>42</td></tr></table>
-</body></html>`))
-	}))
-	defer srv.Close()
-
-	out := runTool(t, webFetch{}, map[string]any{"url": srv.URL})
-	for _, want := range []string{
-		"# Doc title",
-		"# Main",
-		"guide (/guide?a=1&b=2)",
-		"- First",
-		"- Second",
-		"```\ngo test ./...\nline two\n```",
-		"Name | Value",
-		"A | 42",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("structured HTML output missing %q:\n%s", want, out)
 		}
 	}
 }
@@ -455,21 +391,6 @@ func TestGlobForwardSlashPattern(t *testing.T) {
 	}
 }
 
-func TestGlobRecursiveDoublestarBracePattern(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.go"), []byte("go"), 0o644)
-	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("txt"), 0o644)
-	os.WriteFile(filepath.Join(dir, "c.md"), []byte("md"), 0o644)
-
-	out := runTool(t, globTool{}, map[string]any{"pattern": filepath.Join(dir, "**", "*.{go,txt}")})
-	if !strings.Contains(out, "a.go") || !strings.Contains(out, "b.txt") {
-		t.Fatalf("brace pattern should match go and txt:\n%s", out)
-	}
-	if strings.Contains(out, "c.md") {
-		t.Fatalf("brace pattern should not match markdown:\n%s", out)
-	}
-}
-
 func TestGlobRecursiveNoMatches(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "sub"), 0o755)
@@ -533,13 +454,13 @@ func TestMultiEditGB18030RoundTrip(t *testing.T) {
 		"path": f,
 		"edits": []map[string]any{
 			{"old_string": "package old", "new_string": "package new"},
-			{"old_string": "old", "new_string": "reasonix", "replace_all": true},
+			{"old_string": "old", "new_string": "voltui", "replace_all": true},
 		},
 	})
 
 	got, _ := os.ReadFile(f)
 	dec, _ := simplifiedchinese.GB18030.NewDecoder().Bytes(got)
-	want := "package new\n\nfunc reasonix() {\n\treasonix()\n}\n"
+	want := "package new\n\nfunc voltui() {\n\tvoltui()\n}\n"
 	if string(dec) != want {
 		t.Errorf("after multi_edit = %q (decoded), want %q", dec, want)
 	}

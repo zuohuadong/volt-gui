@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"voltui/internal/event"
+	"voltui/internal/instruction"
 	"voltui/internal/provider"
 	"voltui/internal/tool"
 )
@@ -19,14 +20,21 @@ import (
 // own goroutine, emitting nested events so the frontend renders independent
 // cards for each sub-task.
 type ParallelTasksTool struct {
-	taskTool *TaskTool
-	reg      *tool.Registry
+	taskTool       *TaskTool
+	reg            *tool.Registry
+	maxConcurrency int
 }
 
 // NewParallelTasksTool creates a parallel dispatch tool that reuses the given
 // TaskTool's sub-agent infrastructure.
 func NewParallelTasksTool(taskTool *TaskTool, reg *tool.Registry) *ParallelTasksTool {
-	return &ParallelTasksTool{taskTool: taskTool, reg: reg}
+	return &ParallelTasksTool{taskTool: taskTool, reg: reg, maxConcurrency: DefaultMaxSubagentConcurrency}
+}
+
+// WithMaxConcurrency bounds how many children this batch runs at once.
+func (p *ParallelTasksTool) WithMaxConcurrency(limit int) *ParallelTasksTool {
+	p.maxConcurrency = NormalizeSubagentConcurrency(limit)
+	return p
 }
 
 func (p *ParallelTasksTool) Name() string { return "parallel_tasks" }
@@ -60,7 +68,7 @@ func (p *ParallelTasksTool) Schema() json.RawMessage {
 }`)
 }
 
-func (p *ParallelTasksTool) ReadOnly() bool { return true }
+func (p *ParallelTasksTool) ReadOnly() bool { return false }
 
 func (p *ParallelTasksTool) PlanModeSafe() bool { return true }
 
@@ -71,6 +79,7 @@ type parallelTaskItem struct {
 	MaxSteps    int      `json:"max_steps"`
 	Model       string   `json:"model"`
 	Effort      string   `json:"effort"`
+	DependsOn   []int    `json:"depends_on"`
 }
 
 type parallelTaskStatus string
@@ -155,23 +164,6 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		go func() {
 			defer wg.Done()
 			nested := subSinkFor(subID, sink)
-			// Session scheduler bounds total concurrency for parallel_tasks the
-			// same way as fleet (read-only slots; no write claims).
-			releaseSlot, slotErr := p.taskTool.acquireSlot(ctx, AcquireRequest{
-				Writer: false,
-				Nested: SubagentDepth(ctx) > 0,
-				Label:  label,
-			})
-			if slotErr != nil {
-				sink.Emit(event.Event{
-					Kind: event.ToolResult,
-					Tool: event.Tool{ID: subID, ParentID: parentID, Name: "task", Err: slotErr.Error()},
-				})
-				doneCh <- subResult{index: idx, err: slotErr}
-				return
-			}
-			defer releaseSlot()
-
 			modelRef, effortRef := p.taskTool.effectiveProfile(t.Model, t.Effort)
 			childDepth, depthErr := p.taskTool.nextSubagentDepth(ctx)
 			if depthErr != nil {
@@ -182,7 +174,7 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 				doneCh <- subResult{index: idx, err: depthErr}
 				return
 			}
-			subReg := ReadOnlySubagentToolRegistryForDepthWithRuntime(p.taskTool.parentReg, t.Tools, childDepth, p.taskTool.maxDepth(), p.taskTool.capabilityRuntime)
+			subReg := ReadOnlySubagentToolRegistryForDepth(p.taskTool.parentReg, t.Tools, childDepth, p.taskTool.maxDepth())
 
 			max := p.taskTool.childMaxSteps(t.MaxSteps)
 
@@ -196,16 +188,9 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 				return
 			}
 
-			// Ordinary parallel_tasks (no profile) keep the concise read-only
-			// default system prompt — profile-aware batches use fleet instead.
-			sess := NewSession(DefaultReadOnlyTaskSystemPrompt)
-			opts := p.taskTool.subagentOptions(ctx, max, pricing, ctxWin, childDepth, "subagent:"+subID)
-			// Same contract as runSubSession: capture the pristine task before
-			// host framing is prepended so delivery intent classification judges
-			// the task, not the wrapper.
-			opts.ClassifierTaskText = t.Prompt
-			output, runErr := RunReadOnlySubAgentWithSession(ctx, prov, subReg, sess, p.taskTool.withWorkspaceContext(t.Prompt),
-				opts, nested)
+			sess := NewSession(instruction.WithCalculationPolicy(DefaultReadOnlyTaskSystemPrompt))
+			output, runErr := RunSubAgentWithSession(ctx, prov, subReg, sess, p.taskTool.withWorkspaceContext(t.Prompt),
+				p.taskTool.subagentOptions(ctx, max, pricing, ctxWin, childDepth), nested)
 
 			if ctx.Err() != nil && runErr == nil {
 				runErr = ctx.Err()
@@ -247,14 +232,31 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 	}
 
 	completed := 0
-	for i := range params.Tasks {
-		startTask(i)
+	active := 0
+	nextTask := 0
+	startAvailable := func() {
+		if ctx.Err() != nil {
+			return
+		}
+		limit := NormalizeSubagentConcurrency(p.maxConcurrency)
+		for nextTask < n && active < limit {
+			if ctx.Err() != nil {
+				return
+			}
+			startTask(nextTask)
+			nextTask++
+			active++
+		}
 	}
+	startAvailable()
 	processResult := func(r subResult) {
 		if done[r.index] {
 			return
 		}
 		completed++
+		if active > 0 {
+			active--
+		}
 		done[r.index] = true
 		outputs[r.index] = r.output
 		taskErrs[r.index] = r.err
@@ -271,6 +273,7 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		select {
 		case r := <-doneCh:
 			processResult(r)
+			startAvailable()
 		case <-ctx.Done():
 			err := ctx.Err()
 		drain:
@@ -351,6 +354,41 @@ func validateParallelTaskItems(tasks []parallelTaskItem) error {
 	for i, t := range tasks {
 		if strings.TrimSpace(t.Prompt) == "" {
 			return fmt.Errorf("task %d: prompt is required", i+1)
+		}
+		for _, dep := range t.DependsOn {
+			if dep < 0 || dep >= len(tasks) {
+				return fmt.Errorf("task %d: dependency %d is out of range", i+1, dep)
+			}
+			if dep == i {
+				return fmt.Errorf("task %d: dependency cycle detected", i+1)
+			}
+		}
+	}
+	return validateParallelTaskDependencyAcyclic(tasks)
+}
+
+func validateParallelTaskDependencyAcyclic(tasks []parallelTaskItem) error {
+	state := make([]int, len(tasks))
+	var visit func(int) error
+	visit = func(i int) error {
+		switch state[i] {
+		case 1:
+			return fmt.Errorf("task dependency cycle detected")
+		case 2:
+			return nil
+		}
+		state[i] = 1
+		for _, dep := range tasks[i].DependsOn {
+			if err := visit(dep); err != nil {
+				return err
+			}
+		}
+		state[i] = 2
+		return nil
+	}
+	for i := range tasks {
+		if err := visit(i); err != nil {
+			return err
 		}
 	}
 	return nil

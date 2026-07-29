@@ -36,7 +36,7 @@ func TryAcquireSessionRemovalGuard(path string) (*SessionRemovalGuard, error) {
 	}
 	leaseLock, err := tryTakeSessionLockFile(store.SessionLeaseLock(path))
 	if err != nil {
-		if errors.Is(err, ErrSessionFileLockHeld) {
+		if errors.Is(err, errSessionFileLockHeld) {
 			info, _ := LoadSessionLeaseInfo(path)
 			return nil, &SessionLeaseError{Path: path, Info: info}
 		}
@@ -45,7 +45,7 @@ func TryAcquireSessionRemovalGuard(path string) (*SessionRemovalGuard, error) {
 	saveLock, err := tryTakeSessionLockFile(store.SessionLockFile(path))
 	if err != nil {
 		leaseLock.Unlock()
-		if errors.Is(err, ErrSessionFileLockHeld) {
+		if errors.Is(err, errSessionFileLockHeld) {
 			// A save is in flight; deleting mid-write would race it.
 			return nil, &SessionLeaseError{Path: path}
 		}

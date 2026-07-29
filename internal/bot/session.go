@@ -29,12 +29,13 @@ type QueueOptions struct {
 }
 
 type QueueResult struct {
-	Acquired bool
-	Queued   bool
-	Rejected bool
-	Dropped  bool
-	Pending  int
-	Mode     string
+	Acquired        bool
+	Queued          bool
+	Rejected        bool
+	Dropped         bool
+	DroppedMessages []InboundMessage
+	Pending         int
+	Mode            string
 }
 
 type QueueSnapshot struct {
@@ -140,7 +141,6 @@ var slashCommands = map[string]bool{
 	"/sessions": true,
 	"/attach":   true,
 	"/search":   true,
-	"/desktop":  true,
 	"/status":   true,
 	"/help":     true,
 }
@@ -225,9 +225,13 @@ func (sm *SessionManager) TryAcquireWithQueue(key string, msg InboundMessage, op
 			case QueueDropOld, QueueDropSummarize:
 				removed := queue[0]
 				queue = queue[1:]
+				droppedMessages := []InboundMessage{removed.msg}
 				if drop == QueueDropSummarize {
 					sm.dropped[key] = append(sm.dropped[key], queueSummary(removed.msg.Text))
 				}
+				queue = append(queue, pendingTurn{msg: msg, timestamp: time.Now(), mode: mode})
+				sm.pending[key] = queue
+				return QueueResult{Queued: true, Dropped: true, DroppedMessages: droppedMessages, Pending: len(queue), Mode: mode}
 			}
 		}
 		if mode == QueueModeCollect && len(queue) > 0 {
@@ -260,9 +264,14 @@ func (sm *SessionManager) ReplacePending(key string, msg InboundMessage) QueueRe
 		sm.active[key] = true
 		return QueueResult{Acquired: true, Mode: QueueModeInterrupt}
 	}
+	old := sm.pending[key]
+	dropped := make([]InboundMessage, 0, len(old))
+	for _, pending := range old {
+		dropped = append(dropped, pending.msg)
+	}
 	sm.pending[key] = []pendingTurn{{msg: msg, timestamp: time.Now(), mode: QueueModeFollowup}}
 	delete(sm.dropped, key)
-	return QueueResult{Queued: true, Pending: 1, Mode: QueueModeInterrupt}
+	return QueueResult{Queued: true, Dropped: len(dropped) > 0, DroppedMessages: dropped, Pending: 1, Mode: QueueModeInterrupt}
 }
 
 // Release 释放 session 锁，返回等待队列中的下一条消息（合并后）。
@@ -352,23 +361,6 @@ func (sm *SessionManager) IsActive(key string) bool {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	return sm.active[key]
-}
-
-// runIfIdle holds the per-gateway admission lock while fn switches runtime
-// ownership for key. A normal message cannot become active between the idle
-// check and the controller unlink/close sequence.
-func (sm *SessionManager) runIfIdle(key string, fn func() bool) bool {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	if sm.active[key] || fn == nil {
-		return false
-	}
-	if !fn() {
-		return false
-	}
-	delete(sm.pending, key)
-	delete(sm.dropped, key)
-	return true
 }
 
 // ActiveCount 返回当前活跃 session 数。

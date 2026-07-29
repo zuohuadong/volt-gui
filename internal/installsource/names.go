@@ -255,19 +255,19 @@ func normalizeTransport(t string) string {
 	}
 }
 
-// normalizeTier maps a tier value into the supported set. The boolean returned
-// reports whether the original value was already recognized; callers use it to
-// surface a warning when a typo'd tier quietly becomes "background".
+// normalizeTier maps a tier value into a known set. The boolean returned
+// reports whether the original value was already in the set; callers use it
+// to surface a warning when a typo'd tier quietly becomes "lazy".
 func normalizeTier(tier string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(tier)) {
 	case "eager":
 		return "eager", true
-	case "background", "lazy":
+	case "background":
 		return "background", true
-	case "":
-		return "background", true
+	case "", "lazy":
+		return "lazy", true
 	default:
-		return "background", false
+		return "lazy", false
 	}
 }
 

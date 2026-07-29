@@ -20,19 +20,17 @@ import (
 const mcpJSONFile = ".mcp.json"
 
 // mcpServerSpec mirrors one entry of Claude Code's "mcpServers" map. The field
-// names and semantics match PluginEntry: command/args/env describe a local
-// stdio server; type/url/headers describe a remote one. VoltUI also accepts
-// timeout fields as MCP call policy extensions.
+// names and semantics match PluginEntry (and Claude): command/args/env describe
+// a local stdio server; type/url/headers describe a remote one.
 type mcpServerSpec struct {
-	Type               string            `json:"type"`
-	Command            string            `json:"command"`
-	Args               []string          `json:"args"`
-	Env                map[string]string `json:"env"`
-	URL                string            `json:"url"`
-	Headers            map[string]string `json:"headers"`
-	CallTimeoutSeconds int               `json:"call_timeout_seconds"`
-	ToolTimeoutSeconds map[string]int    `json:"tool_timeout_seconds"`
-	AutoStart          *bool             `json:"auto_start"`
+	Type                 string            `json:"type"`
+	Command              string            `json:"command"`
+	Args                 []string          `json:"args"`
+	Env                  map[string]string `json:"env"`
+	URL                  string            `json:"url"`
+	Headers              map[string]string `json:"headers"`
+	AutoStart            *bool             `json:"auto_start"`
+	TrustedReadOnlyTools []string          `json:"trusted_read_only_tools"`
 }
 
 // loadMCPJSON reads path (Claude Code's .mcp.json) and returns its servers as
@@ -83,9 +81,7 @@ func specsToEntries(specs map[string]mcpServerSpec, skip map[string]bool) []Plug
 	sort.Strings(names)
 	entries := make([]PluginEntry, 0, len(names))
 	for _, name := range names {
-		entry := pluginEntryFromMCPSpec(name, specs[name])
-		entry.Source = MCPSourceProjectMCPJSON
-		entries = append(entries, entry)
+		entries = append(entries, pluginEntryFromMCPSpec(name, specs[name]))
 	}
 	return entries
 }
@@ -99,17 +95,15 @@ func legacyConfigPath() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".reasonix", "config.json")
+	return filepath.Join(home, ".voltui", "config.json")
 }
 
 // loadLegacyMCP reads the v0.x ~/.voltui/config.json and returns its enabled
-// MCP servers as PluginEntry values — both the canonical mcpServers map and the
-// older `mcp` string list (mcpServers wins on a name collision, matching v0.x;
-// servers listed in mcpDisabled are skipped) — so upgrading from v0.x keeps MCP
-// servers working without rewriting them as [[plugins]]. Absent or malformed →
-// nil: a stale legacy file must never block startup, and it is the
-// lowest-priority source anyway (the v2 config and .mcp.json win on a name
-// collision — see Load).
+// mcpServers as PluginEntry values (servers listed in its mcpDisabled are
+// skipped), so upgrading from v0.x keeps MCP servers working without rewriting
+// them as [[plugins]]. Absent or malformed → nil: a stale legacy file must never
+// block startup, and it is the lowest-priority source anyway (the v2 config and
+// .mcp.json win on a name collision — see Load).
 func loadLegacyMCP(path string) []PluginEntry {
 	if path == "" {
 		return nil
@@ -119,10 +113,8 @@ func loadLegacyMCP(path string) []PluginEntry {
 		return nil
 	}
 	var doc struct {
-		MCP         []string                     `json:"mcp"`
-		MCPServers  map[string]mcpServerSpec     `json:"mcpServers"`
-		MCPEnv      map[string]map[string]string `json:"mcpEnv"`
-		MCPDisabled []string                     `json:"mcpDisabled"`
+		MCPServers  map[string]mcpServerSpec `json:"mcpServers"`
+		MCPDisabled []string                 `json:"mcpDisabled"`
 	}
 	if err := json.Unmarshal(b, &doc); err != nil {
 		return nil
@@ -131,39 +123,11 @@ func loadLegacyMCP(path string) []PluginEntry {
 	for _, n := range doc.MCPDisabled {
 		disabled[n] = true
 	}
-	entries := specsToEntries(doc.MCPServers, disabled)
-	have := make(map[string]bool, len(entries))
-	for _, e := range entries {
-		have[e.Name] = true
-	}
-	for i, raw := range doc.MCP {
-		pe, ok := parseLegacyMCPSpec(raw)
-		if !ok || disabled[pe.Name] {
-			continue
-		}
-		if pe.Name == "" {
-			pe.Name = anonymousMCPName(i)
-		} else if pe.Command != "" {
-			pe.Env = doc.MCPEnv[pe.Name]
-		}
-		if have[pe.Name] {
-			continue
-		}
-		have[pe.Name] = true
-		pe, _ = NormalizePluginCommandLine(pe)
-		entries = append(entries, pe)
-	}
-	for i := range entries {
-		entries[i].Source = MCPSourceLegacyUser
-	}
-	return entries
+	return specsToEntries(doc.MCPServers, disabled)
 }
 
 var legacyMCPSpecName = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_-]*)=(.*)$`)
 
-// parseLegacyMCPSpec parses one v0.x `--mcp`-format string: "name=cmd args...",
-// "name=https://url" (SSE), or "name=streamable+https://url" (streamable HTTP);
-// the name= prefix is optional.
 func parseLegacyMCPSpec(raw string) (PluginEntry, bool) {
 	body := strings.TrimSpace(raw)
 	var name string
@@ -190,49 +154,38 @@ func parseLegacyMCPSpec(raw string) (PluginEntry, bool) {
 	return PluginEntry{Name: name, Command: body}, true
 }
 
-// anonymousMCPName names a v0.x spec that carried no name= prefix (its tools
-// registered unprefixed in v0.x; v1+ plugins require a name).
 func anonymousMCPName(i int) string {
 	return fmt.Sprintf("mcp-%d", i+1)
 }
 
 func pluginEntryFromMCPSpec(name string, s mcpServerSpec) PluginEntry {
-	e := PluginEntry{
-		Name:               name,
-		Type:               s.Type,
-		Command:            s.Command,
-		Args:               s.Args,
-		Env:                s.Env,
-		URL:                s.URL,
-		Headers:            s.Headers,
-		CallTimeoutSeconds: s.CallTimeoutSeconds,
-		ToolTimeoutSeconds: s.ToolTimeoutSeconds,
-		AutoStart:          s.AutoStart,
+	return PluginEntry{
+		Name:                 name,
+		Type:                 s.Type,
+		Command:              s.Command,
+		Args:                 s.Args,
+		Env:                  s.Env,
+		URL:                  s.URL,
+		Headers:              s.Headers,
+		AutoStart:            s.AutoStart,
+		TrustedReadOnlyTools: s.TrustedReadOnlyTools,
 	}
-	e, _ = NormalizePluginCommandLine(e)
-	return e
 }
 
 // mergeMCPJSON appends servers from .mcp.json that the TOML config did not
-// already declare. reasonix.toml's [[plugins]] win on a name collision: it is the
+// already declare. voltui.toml's [[plugins]] win on a name collision: it is the
 // VoltUI-specific, more explicit of the two, so it overrides the shared,
 // checked-in .mcp.json rather than the other way round.
 func (c *Config) mergeMCPJSON(entries []PluginEntry) {
-	index := make(map[string]int, len(c.Plugins))
-	for i, p := range c.Plugins {
-		index[p.Name] = i
+	have := make(map[string]bool, len(c.Plugins))
+	for _, p := range c.Plugins {
+		have[p.Name] = true
 	}
 	for _, e := range entries {
-		if i, exists := index[e.Name]; exists {
-			// Project configuration always wins over user-global configuration.
-			// Within one project, reasonix.toml remains more specific than the
-			// Claude-compatible .mcp.json file.
-			if e.Source == MCPSourceProjectMCPJSON && !c.Plugins[i].Source.ProjectScoped() {
-				c.Plugins[i] = e
-			}
+		if have[e.Name] {
 			continue
 		}
-		index[e.Name] = len(c.Plugins)
+		have[e.Name] = true
 		c.Plugins = append(c.Plugins, e)
 	}
 }
@@ -255,9 +208,7 @@ func UpsertMCPJSONPlugin(path string, entry PluginEntry) (bool, error) {
 			return false, fmt.Errorf("mcp config %s: server %q is not an object", path, entry.Name)
 		}
 	}
-	if err := applyPluginEntryToMCPJSONServer(server, entry); err != nil {
-		return false, fmt.Errorf("mcp config %s: server %q: %w", path, entry.Name, err)
-	}
+	applyPluginEntryToMCPJSONServer(server, entry)
 	updatedRaw, err := json.Marshal(server)
 	if err != nil {
 		return false, fmt.Errorf("mcp config %s: server %q: %w", path, entry.Name, err)
@@ -312,7 +263,7 @@ func readMCPJSONRaw(path string) (map[string]json.RawMessage, map[string]json.Ra
 	return root, servers, nil
 }
 
-func applyPluginEntryToMCPJSONServer(server map[string]json.RawMessage, entry PluginEntry) error {
+func applyPluginEntryToMCPJSONServer(server map[string]json.RawMessage, entry PluginEntry) {
 	transport := strings.ToLower(strings.TrimSpace(entry.Type))
 	if transport == "" {
 		transport = "stdio"
@@ -332,59 +283,8 @@ func applyPluginEntryToMCPJSONServer(server map[string]json.RawMessage, entry Pl
 		delete(server, "command")
 		delete(server, "args")
 	}
-	setMCPJSONInt(server, "call_timeout_seconds", entry.CallTimeoutSeconds)
-	setMCPJSONIntMap(server, "tool_timeout_seconds", entry.ToolTimeoutSeconds)
-	// The removed per-tool reader list is accepted on load for compatibility but
-	// never persisted. Explicitly delete it when updating an existing shared
-	// .mcp.json entry so the obsolete setting disappears naturally.
-	delete(server, "trusted_read_only_tools")
-	delete(server, "default_tools_approval_mode")
-	delete(server, "approvals_reviewer")
 	setMCPJSONBool(server, "auto_start", entry.AutoStart)
-	if err := removeMCPJSONApprovalModes(server); err != nil {
-		return err
-	}
-	return nil
-}
-
-func removeMCPJSONApprovalModes(server map[string]json.RawMessage) error {
-	const key = "tools"
-	tools := map[string]json.RawMessage{}
-	if raw, ok := server[key]; ok && len(raw) > 0 && strings.TrimSpace(string(raw)) != "null" {
-		if err := json.Unmarshal(raw, &tools); err != nil || tools == nil {
-			return fmt.Errorf("%s must be an object", key)
-		}
-	}
-
-	// Remove VoltUI's retired approval_mode while preserving tool fields owned
-	// by other MCP clients.
-	for name, raw := range tools {
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
-			continue
-		}
-		delete(fields, "approval_mode")
-		if len(fields) == 0 {
-			delete(tools, name)
-			continue
-		}
-		updated, err := json.Marshal(fields)
-		if err != nil {
-			return fmt.Errorf("%s[%q]: %w", key, name, err)
-		}
-		tools[name] = updated
-	}
-
-	if len(tools) == 0 {
-		delete(server, key)
-		return nil
-	}
-	raw, err := json.Marshal(tools)
-	if err != nil {
-		return fmt.Errorf("%s: %w", key, err)
-	}
-	server[key] = raw
-	return nil
+	setMCPJSONStringArray(server, "trusted_read_only_tools", entry.TrustedReadOnlyTools)
 }
 
 func writeMCPJSONServers(path string, root map[string]json.RawMessage, servers map[string]json.RawMessage) error {
@@ -483,39 +383,6 @@ func setMCPJSONStringArray(server map[string]json.RawMessage, key string, values
 		return
 	}
 	raw, err := json.Marshal(values)
-	if err != nil {
-		delete(server, key)
-		return
-	}
-	server[key] = raw
-}
-
-func setMCPJSONInt(server map[string]json.RawMessage, key string, value int) {
-	if value <= 0 {
-		delete(server, key)
-		return
-	}
-	raw, err := json.Marshal(value)
-	if err != nil {
-		delete(server, key)
-		return
-	}
-	server[key] = raw
-}
-
-func setMCPJSONIntMap(server map[string]json.RawMessage, key string, values map[string]int) {
-	clean := make(map[string]int, len(values))
-	for k, v := range values {
-		if strings.TrimSpace(k) == "" || v <= 0 {
-			continue
-		}
-		clean[k] = v
-	}
-	if len(clean) == 0 {
-		delete(server, key)
-		return
-	}
-	raw, err := json.Marshal(clean)
 	if err != nil {
 		delete(server, key)
 		return

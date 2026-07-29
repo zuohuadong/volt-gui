@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	fileencoding "voltui/internal/fileutil/encoding"
 )
 
 // quickAddHeading marks the section quick-added notes accumulate under, so
@@ -29,7 +27,7 @@ func AppendDoc(path, note string) error {
 		}
 	}
 
-	existing, _ := fileencoding.ReadFileUTF8(path) // missing → new file
+	existing, _ := os.ReadFile(path) // missing → new file
 	body := string(existing)
 	bullet := "- " + note
 

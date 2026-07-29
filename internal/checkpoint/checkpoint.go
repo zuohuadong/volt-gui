@@ -1,4 +1,4 @@
-// Package checkpoint is reasonix's snapshot-based edit safety net. Before a writer
+// Package checkpoint is voltui's snapshot-based edit safety net. Before a writer
 // tool changes a file, the agent records the file's pre-edit content here, keyed
 // to the current user turn; a frontend can then rewind the workspace (and, via the
 // controller, the conversation) to an earlier turn.
@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,14 +31,6 @@ type FileSnap struct {
 	Path     string        `json:"path"`
 	Content  *string       `json:"content"`
 	Encoding *fileenc.Kind `json:"encoding,omitempty"`
-}
-
-// FileState is the earliest pre-edit state recorded for a file in this
-// session. Content == nil means the file did not exist before the session's
-// first tracked edit.
-type FileState struct {
-	Content  *string
-	Encoding *fileenc.Kind
 }
 
 // Checkpoint anchors the pre-edit state of every distinct file touched during one
@@ -224,35 +217,6 @@ func (s *Store) List() []Meta {
 	return out
 }
 
-// FileState returns the earliest pre-edit state recorded for p across the
-// session. Paths are compared after resolving them against the workspace root,
-// because older checkpoints may contain absolute paths while newer writers use
-// workspace-relative paths.
-func (s *Store) FileState(p string) (FileState, bool) {
-	want, err := safePath(s.root, p)
-	if err != nil {
-		return FileState{}, false
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, c := range s.all() {
-		for _, f := range c.Files {
-			got, err := safePath(s.root, f.Path)
-			if err != nil || got != want {
-				continue
-			}
-			state := FileState{Encoding: f.Encoding}
-			if f.Content != nil {
-				content := *f.Content
-				state.Content = &content
-			}
-			return state, true
-		}
-	}
-	return FileState{}, false
-}
-
 // all returns done + cur in turn order. Caller holds the lock.
 func (s *Store) all() []*Checkpoint {
 	cps := append([]*Checkpoint(nil), s.done...)
@@ -378,8 +342,7 @@ func safePath(root, p string) (string, error) {
 	abs = filepath.Clean(abs)
 	if root != "" {
 		r := filepath.Clean(root)
-		rel, err := filepath.Rel(r, abs)
-		if err != nil || !filepath.IsLocal(rel) {
+		if abs != r && !strings.HasPrefix(abs, r+string(os.PathSeparator)) {
 			return "", fmt.Errorf("checkpoint path %q escapes workspace %q", p, root)
 		}
 	}

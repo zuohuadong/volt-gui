@@ -12,7 +12,6 @@ import (
 
 	"voltui/internal/agent"
 	"voltui/internal/event"
-	fileencoding "voltui/internal/fileutil/encoding"
 	"voltui/internal/nilutil"
 	"voltui/internal/provider"
 	"voltui/internal/tool"
@@ -89,11 +88,10 @@ func NewSession(prov provider.Provider, readOnlyReg *tool.Registry, policyPrompt
 		Temperature: temperature,
 		// Use the shared context window so the guardian session can compact
 		// itself when it grows too large across many reviews.
-		ContextWindow:       100_000,
-		CompactRatio:        0.8,
-		SoftCompactRatio:    0.5,
-		ToolResultSnipRatio: 0.6,
-		CompactForceRatio:   0.9,
+		ContextWindow:     100_000,
+		CompactRatio:      0.8,
+		SoftCompactRatio:  0.5,
+		CompactForceRatio: 0.9,
 		// Guardian's own sink drops everything — the audit line (emitTo) is the
 		// only user-visible output. Usage events are captured internally for
 		// per-review cost reporting.
@@ -107,32 +105,13 @@ func NewSession(prov provider.Provider, readOnlyReg *tool.Registry, policyPrompt
 // It reads the parent agent session to build a transcript, constructs a review
 // prompt, asks the guardian model (which may use read-only tools to investigate),
 // and returns allow/deny with a structured reason.
-//
-// Review keeps the legacy contract: an unavailable or unparseable review is
-// folded into a high-risk deny verdict (err is always nil), which downstream
-// surfaces as a reasoned human prompt. Callers that must tell an authentic
-// verdict apart from a failed review use ReviewVerdict.
+// A non-nil error means the review could not complete (fail-closed: deny).
 //
 // The mutex serialises access to the guardian agent.session so concurrent
 // reviews cannot interleave their messages (guardian reuses one session for
 // prefix-cache warmth). Event emission is deferred to outside the lock so a
 // slow sink does not stall the next review.
-func (gs *Session) Review(ctx context.Context, toolName string, args json.RawMessage, parentSession *agent.Session) (allow bool, reason string, err error) {
-	allow, reason, _ = gs.review(ctx, toolName, args, parentSession)
-	return allow, reason, nil
-}
-
-// ReviewVerdict is Review for callers that must distinguish an authentic
-// verdict from an unavailable or indeterminate review. Transport errors,
-// timeouts, and unparseable assessments return a non-nil error (alongside the
-// same circuit-breaker bookkeeping); authentic allow/deny verdicts return a
-// nil error. auto_review uses this so a failed review degrades to a fresh
-// human decision instead of masquerading as a reviewer deny.
-func (gs *Session) ReviewVerdict(ctx context.Context, toolName string, args json.RawMessage, parentSession *agent.Session) (allow bool, reason string, err error) {
-	return gs.review(ctx, toolName, args, parentSession)
-}
-
-func (gs *Session) review(ctx context.Context, toolName string, args json.RawMessage, parentSession *agent.Session) (allow bool, reason string, failure error) {
+func (gs *Session) Review(ctx context.Context, toolName string, args json.RawMessage, parentSession *agent.Session) (allow bool, reason string, result event.GuardianResult, err error) {
 	reviewCtx, cancel := context.WithTimeout(ctx, reviewTimeout)
 	defer cancel()
 
@@ -194,7 +173,6 @@ func (gs *Session) review(ctx context.Context, toolName string, args json.RawMes
 	var assessment Assessment
 	if agentErr != nil {
 		gs.rollbackReview(before, rewriteBefore)
-		failure = fmt.Errorf("guardian review failed: %w", agentErr)
 		assessment = Assessment{
 			RiskLevel:         "high",
 			UserAuthorization: "unknown",
@@ -206,7 +184,6 @@ func (gs *Session) review(ctx context.Context, toolName string, args json.RawMes
 		var parseErr error
 		assessment, parseErr = ParseAssessment(last)
 		if parseErr != nil {
-			failure = fmt.Errorf("guardian verdict unparseable: %w", parseErr)
 			assessment = Assessment{
 				RiskLevel:         "high",
 				UserAuthorization: "unknown",
@@ -235,12 +212,13 @@ func (gs *Session) review(ctx context.Context, toolName string, args json.RawMes
 	gs.mu.Unlock()
 
 	// Emit event outside the lock.
-	gs.emitTo(sink, assessment, toolName, subject(args), dur, reviewUsage)
+	result = guardianResult(assessment, toolName, subject(args), dur, reviewUsage, gs.pricing)
+	gs.emitTo(sink, result)
 
 	if assessment.Outcome == "deny" {
-		return false, reason, failure
+		return false, reason, result, nil
 	}
-	return true, "", nil
+	return true, "", result, nil
 }
 
 // PathFor returns the guardian session file path for a given main session path.
@@ -390,7 +368,7 @@ func loadCursor(path string) TranscriptCursor {
 	if path == "" {
 		return TranscriptCursor{}
 	}
-	data, err := fileencoding.ReadFileUTF8(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return TranscriptCursor{}
 	}
@@ -486,22 +464,25 @@ func (gs *Session) countRecentDenials() int {
 
 // emitTo sends a GuardianAssessment event (with per-review token cost) to the
 // captured sink. Must be called outside the Session mutex to avoid blocking.
-func (gs *Session) emitTo(sink event.Sink, a Assessment, tool, subj string, durMs int64, usage *provider.Usage) {
-	id := fmt.Sprintf("guardian-%d", time.Now().UnixNano())
+func guardianResult(a Assessment, tool, subj string, durMs int64, usage *provider.Usage, pricing *provider.Pricing) event.GuardianResult {
+	return event.GuardianResult{
+		ID:                fmt.Sprintf("guardian-%d", time.Now().UnixNano()),
+		Tool:              tool,
+		Subject:           subj,
+		Outcome:           a.Outcome,
+		RiskLevel:         a.RiskLevel,
+		UserAuthorization: a.UserAuthorization,
+		Rationale:         a.Rationale,
+		DurationMs:        durMs,
+		Usage:             usage,
+		Pricing:           pricing,
+	}
+}
+
+func (gs *Session) emitTo(sink event.Sink, result event.GuardianResult) {
 	sink.Emit(event.Event{
-		Kind: event.GuardianAssessment,
-		Guardian: event.GuardianResult{
-			ID:                id,
-			Tool:              tool,
-			Subject:           subj,
-			Outcome:           a.Outcome,
-			RiskLevel:         a.RiskLevel,
-			UserAuthorization: a.UserAuthorization,
-			Rationale:         a.Rationale,
-			DurationMs:        durMs,
-			Usage:             usage,
-			Pricing:           gs.pricing,
-		},
+		Kind:     event.GuardianAssessment,
+		Guardian: result,
 	})
 }
 

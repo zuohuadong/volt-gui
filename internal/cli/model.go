@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -10,14 +9,14 @@ import (
 	"voltui/internal/i18n"
 )
 
-// runModelSubcommand handles "/model": with no argument it opens the configured
-// model picker; "/model <ref>" switches the
+// runModelSubcommand handles "/model": with no argument it lists the configured
+// (provider, model) refs and marks the active one; "/model <ref>" switches the
 // session to that model in place, carrying the conversation across. The actual
 // controller build runs asynchronously so it cannot block the TUI event loop.
 func (m *chatTUI) runModelSubcommand(input string) {
 	args := tokenizeArgs(input) // args[0] == "/model"
 	if len(args) < 2 {
-		m.openModelPicker()
+		m.showModels()
 		return
 	}
 	ref := args[1]
@@ -25,12 +24,8 @@ func (m *chatTUI) runModelSubcommand(input string) {
 		m.notice(i18n.M.ModelSwitchUnavailable)
 		return
 	}
-	if m.runtimeSwitchBusy() {
+	if m.ctrl.Running() {
 		m.notice(i18n.M.ModelSwitchBusy)
-		return
-	}
-	if m.modelSwitchPending {
-		m.notice(i18n.M.RuntimeSwitchPending)
 		return
 	}
 	if ref == m.modelRef {
@@ -73,12 +68,7 @@ func (m *chatTUI) runModelSubcommand(input string) {
 	// must happen here, before we hand the new controller back.
 	m.modelSwitchPending = true
 	m.pendingModelSwitch = func() tea.Msg {
-		c, err := build(controllerBuildSpec{
-			ModelRef:         ref,
-			RuntimeProfile:   m.runtimeProfile,
-			ToolApprovalMode: oldCtrl.ToolApprovalMode(),
-			PlanMode:         oldCtrl.PlanMode(),
-		}, carried, prevPath, oldCtrl)
+		c, err := build(controllerBuildSpec{ModelRef: ref}, carried, prevPath)
 		if err != nil {
 			return modelSwitchMsg{ref: ref, err: err}
 		}
@@ -94,34 +84,30 @@ func (m *chatTUI) runModelSubcommand(input string) {
 			oldCtrl:  oldCtrl,
 			label:    c.Label(),
 			commands: c.Commands(),
-			skills:   c.SlashSkills(),
+			skills:   c.Skills(),
 			host:     c.Host(),
 		}
 	}
 }
 
-func (m *chatTUI) openModelPicker() {
-	refs := modelRefs()
-	if len(refs) == 0 {
-		m.notice("model: no configured chat models")
+// showModels lists the configured provider/model refs, marking the active one.
+func (m *chatTUI) showModels() {
+	cfg, err := config.Load()
+	if err != nil {
+		m.notice("model: " + err.Error())
 		return
 	}
-	items := make([]quickPickerItem, 0, len(refs))
-	selected := 0
-	for _, ref := range refs {
-		parts := strings.SplitN(ref, "/", 2)
-		description := ""
-		if len(parts) == 2 {
-			description = "Provider: " + parts[0]
+	var refs []string
+	for i := range cfg.Providers {
+		p := &cfg.Providers[i]
+		if !p.Configured() {
+			continue
 		}
-		status := ""
-		if ref == m.modelRef {
-			status = "active"
-			selected = len(items)
+		for _, model := range p.ChatModelList() {
+			refs = append(refs, p.Name+"/"+model)
 		}
-		items = append(items, quickPickerItem{ID: ref, Label: ref, Description: description, Status: status})
 	}
-	m.quickPick = &quickPicker{kind: quickPickerModel, title: "Select model", items: items, selected: selected}
+	m.commitLine(renderModels(m.width, refs, m.modelRef))
 }
 
 // persistModel writes ref (a "provider/model" string) to default_model in the

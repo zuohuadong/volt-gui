@@ -284,7 +284,6 @@ func TestStormBreakerResetsOnSuccess(t *testing.T) {
 
 // executeBatchOutputs runs the batch and returns just the model-facing outputs.
 func executeBatchOutputs(a *Agent, ctx context.Context, calls []provider.ToolCall) []string {
-	batch := a.executeBatch(ctx, calls)
-	outputs := batch.results
+	outputs, _ := a.executeBatch(ctx, calls)
 	return outputs
 }

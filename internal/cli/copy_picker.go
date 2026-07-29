@@ -59,6 +59,7 @@ func (m chatTUI) applyCopyPick() (tea.Model, tea.Cmd) {
 	}
 	text := p.parts[p.sel]
 	m.copyPick = nil
+	m.notice(i18n.M.SlashCopyDone)
 	return m, copyToClipboard(text)
 }
 

@@ -1,168 +1,120 @@
 package control
 
 import (
-	"context"
-	"encoding/json"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
-	"voltui/internal/capability"
 	"voltui/internal/skill"
 	"voltui/internal/tool"
 )
 
-type capabilityRecordingRunner struct {
-	input string
-}
-
-func TestEconomyRoutesOnlyEconomyEligibleSkills(t *testing.T) {
-	runner := &capabilityRecordingRunner{}
+func TestCapabilityRouteAutoEnablesBuiltinSkillOnlyOnce(t *testing.T) {
+	store := skill.New(skill.Options{HomeDir: t.TempDir()})
 	reg := tool.NewRegistry()
-	reg.Add(capabilityTestTool{name: "run_skill"})
-	c := New(Options{
-		Runner: runner,
-		Skills: []skill.Skill{
-			{Name: "economy-review", Description: "review code", Triggers: []string{"review code"}, Profiles: []string{"economy"}},
-			{Name: "balanced-review", Description: "review code", Triggers: []string{"review code"}, Profiles: []string{"balanced"}},
+	calls := 0
+	ctrl := New(Options{
+		Registry:   reg,
+		Skills:     store.List(),
+		SkillStore: store,
+		AutoEnableBuiltinSkills: func() bool {
+			calls++
+			reg.Add(skill.NewRunSkillTool(store, nil))
+			return true
 		},
-		Registry:       reg,
-		RuntimeProfile: capability.ProfileEconomy,
 	})
 
-	if err := c.Run(context.Background(), "review code"); err != nil {
-		t.Fatalf("Run: %v", err)
+	for range 2 {
+		routed := ctrl.withCapabilityRoute("请审查这段代码有没有问题", "请审查这段代码有没有问题")
+		if !strings.Contains(routed, "skill:review prefer") || strings.Contains(routed, "source:skills") {
+			t.Fatalf("route should target the ready built-in review skill:\n%s", routed)
+		}
 	}
-	if !strings.Contains(runner.input, "skill:economy-review prefer") {
-		t.Fatalf("economy skill missing from route:\n%s", runner.input)
-	}
-	if strings.Contains(runner.input, "skill:balanced-review") {
-		t.Fatalf("balanced-only skill leaked into economy route:\n%s", runner.input)
+	if calls != 1 {
+		t.Fatalf("auto-enable calls = %d, want 1", calls)
 	}
 }
 
-func (r *capabilityRecordingRunner) Run(_ context.Context, input string) error {
-	r.input = input
-	return nil
-}
-
-type capabilityTestTool struct{ name string }
-
-func (t capabilityTestTool) Name() string { return t.name }
-func (t capabilityTestTool) Description() string {
-	return "test tool"
-}
-func (t capabilityTestTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{}}`)
-}
-func (t capabilityTestTool) Execute(context.Context, json.RawMessage) (string, error) {
-	return "ok", nil
-}
-func (t capabilityTestTool) ReadOnly() bool { return true }
-
-func TestRunInjectsCapabilityRouteForRelevantSkill(t *testing.T) {
-	runner := &capabilityRecordingRunner{}
+func TestCapabilityRouteAutoEnablesFullSurfaceAfterPlanMode(t *testing.T) {
+	store := skill.New(skill.Options{HomeDir: t.TempDir()})
 	reg := tool.NewRegistry()
-	reg.Add(capabilityTestTool{name: "run_skill"})
-	c := New(Options{
-		Runner: runner,
-		Skills: []skill.Skill{{
-			Name:        "review",
-			Description: "review code",
-			Scope:       skill.ScopeBuiltin,
-		}},
-		Registry: reg,
+	reg.Add(skill.NewReadOnlySkillTool(store, nil))
+	var calls atomic.Int32
+	ctrl := New(Options{
+		Registry:   reg,
+		Skills:     store.List(),
+		SkillStore: store,
+		AutoEnableBuiltinSkills: func() bool {
+			calls.Add(1)
+			reg.Add(skill.NewRunSkillTool(store, nil))
+			return true
+		},
 	})
 
-	if err := c.Run(context.Background(), "帮我看看这段代码有没有问题"); err != nil {
-		t.Fatalf("Run: %v", err)
+	ctrl.SetPlanMode(true)
+	planRoute := ctrl.withCapabilityRoute("请审查这段代码有没有问题", "请审查这段代码有没有问题")
+	if !strings.Contains(planRoute, "skill:review prefer") || strings.Contains(planRoute, "source:skills") {
+		t.Fatalf("plan-mode route should use the read-only skill surface:\n%s", planRoute)
 	}
-	if !strings.Contains(runner.input, `<capability-route version="1">`) ||
-		!strings.Contains(runner.input, "skill:review prefer") {
-		t.Fatalf("input missing capability route:\n%s", runner.input)
+
+	ctrl.SetPlanMode(false)
+	normalRoute := ctrl.withCapabilityRoute("请运行测试并修复失败", "请运行测试并修复失败")
+	if !strings.Contains(normalRoute, "skill:test prefer") || strings.Contains(normalRoute, "source:skills") {
+		t.Fatalf("normal-mode route should enable the full skill surface:\n%s", normalRoute)
 	}
-	if got := StripComposePrefixes(runner.input); got != "帮我看看这段代码有没有问题" {
-		t.Fatalf("StripComposePrefixes = %q", got)
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("full-surface auto-enable calls = %d, want 1", got)
 	}
 }
 
-func TestCreateSkillWritesThroughAndIsImmediatelyReadable(t *testing.T) {
-	home := t.TempDir()
-	st := skill.New(skill.Options{HomeDir: home, DisableBuiltins: true})
-	c := New(Options{AllSkillStore: st, SkillStore: st})
-
-	content := skill.RenderSkillFile(skill.SkillFileOptions{
-		Name: "helper", Description: "a helper", Body: "be helpful",
-		RunAs: skill.RunSubagent, Invocation: "manual",
-	})
-	path, err := c.CreateSkill("helper", skill.ScopeGlobal, content)
-	if err != nil {
-		t.Fatalf("CreateSkill: %v", err)
-	}
-	if path == "" {
-		t.Fatal("CreateSkill returned empty path")
-	}
-
-	// No rebuild — the live store re-scans on every call.
-	sk, found := c.RunSkill("/helper do a thing")
-	if !found {
-		t.Fatal("newly created skill should be immediately invocable by name")
-	}
-	if !strings.Contains(sk, "be helpful") {
-		t.Fatalf("rendered skill body missing from RunSkill output: %s", sk)
-	}
-}
-
-func TestCreateSkillRefusesWithoutWritableStore(t *testing.T) {
-	c := New(Options{Skills: []skill.Skill{}, AllSkills: []skill.Skill{}})
-	if _, err := c.CreateSkill("x", skill.ScopeGlobal, "---\ndescription: x\n---\nbody"); err == nil {
-		t.Error("CreateSkill without a writable store should error")
-	}
-	if err := c.DeleteSkill("x", skill.ScopeGlobal); err == nil {
-		t.Error("DeleteSkill without a writable store should error")
-	}
-}
-
-func TestUpdateSkillOverwritesAndIsImmediatelyReadable(t *testing.T) {
-	home := t.TempDir()
-	st := skill.New(skill.Options{HomeDir: home, DisableBuiltins: true})
-	c := New(Options{AllSkillStore: st, SkillStore: st})
-
-	if _, err := c.CreateSkill("helper", skill.ScopeGlobal, skill.RenderSkillFile(skill.SkillFileOptions{
-		Name: "helper", Description: "v1", Body: "old", RunAs: skill.RunSubagent, Invocation: "manual",
-	})); err != nil {
-		t.Fatalf("CreateSkill: %v", err)
-	}
-	if err := c.UpdateSkill("helper", skill.ScopeGlobal, skill.RenderSkillFile(skill.SkillFileOptions{
-		Name: "helper", Description: "v2", Body: "new", RunAs: skill.RunSubagent, Invocation: "manual",
-	})); err != nil {
-		t.Fatalf("UpdateSkill: %v", err)
-	}
-	for _, sk := range c.AllSkills() {
-		if sk.Name == "helper" {
-			if sk.Description != "v2" || sk.Body != "new" {
-				t.Fatalf("update did not take effect: description=%q body=%q", sk.Description, sk.Body)
+func TestCapabilityRouteConcurrentAutoEnableRecomputesAfterIdempotentCallback(t *testing.T) {
+	store := skill.New(skill.Options{HomeDir: t.TempDir()})
+	reg := tool.NewRegistry()
+	var mu sync.Mutex
+	added := false
+	var calls atomic.Int32
+	secondArrived := make(chan struct{})
+	ctrl := New(Options{
+		Registry:   reg,
+		Skills:     store.List(),
+		SkillStore: store,
+		AutoEnableBuiltinSkills: func() bool {
+			call := calls.Add(1)
+			if call == 1 {
+				<-secondArrived
+			} else if call == 2 {
+				close(secondArrived)
 			}
-			return
+			mu.Lock()
+			defer mu.Unlock()
+			if added {
+				return false
+			}
+			reg.Add(skill.NewRunSkillTool(store, nil))
+			added = true
+			return true
+		},
+	})
+
+	const workers = 2
+	results := make(chan string, workers)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- ctrl.withCapabilityRoute("请审查这段代码有没有问题", "请审查这段代码有没有问题")
+		}()
+	}
+	wg.Wait()
+	close(results)
+	for routed := range results {
+		if !strings.Contains(routed, "skill:review prefer") || strings.Contains(routed, "source:skills") || strings.Contains(routed, "connect_tool_source") {
+			t.Fatalf("concurrent route should reflect the registered skill surface:\n%s", routed)
 		}
 	}
-	t.Fatal("helper missing from AllSkills after update")
-}
-
-func TestDeleteSkillRemovesLiveEntry(t *testing.T) {
-	home := t.TempDir()
-	st := skill.New(skill.Options{HomeDir: home, DisableBuiltins: true})
-	c := New(Options{AllSkillStore: st, SkillStore: st})
-
-	content := skill.RenderSkillFile(skill.SkillFileOptions{Name: "temp", Description: "temp", Body: "b"})
-	if _, err := c.CreateSkill("temp", skill.ScopeGlobal, content); err != nil {
-		t.Fatalf("CreateSkill: %v", err)
-	}
-	if err := c.DeleteSkill("temp", skill.ScopeGlobal); err != nil {
-		t.Fatalf("DeleteSkill: %v", err)
-	}
-	for _, sk := range c.AllSkills() {
-		if sk.Name == "temp" {
-			t.Fatal("deleted skill still present in AllSkills")
-		}
+	if got := calls.Load(); got != workers {
+		t.Fatalf("auto-enable callback calls = %d, want %d", got, workers)
 	}
 }

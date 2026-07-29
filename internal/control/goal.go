@@ -1,7 +1,6 @@
 package control
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -9,11 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 	"unicode"
 
 	"voltui/internal/evidence"
-	fileencoding "voltui/internal/fileutil/encoding"
 	"voltui/internal/store"
 )
 
@@ -40,8 +37,6 @@ type goalMachine struct {
 	status             string
 	researchMode       GoalResearchMode
 	autoResearchTaskID string
-	scopeID            string
-	deliveryCheckpoint evidence.DeliveryCheckpoint
 	turns              int
 	blocks             int
 	block              string
@@ -60,17 +55,15 @@ type goalMachine struct {
 
 // goalState is the serializable form of a running goal.
 type goalState struct {
-	Goal               string                      `json:"goal,omitempty"`
-	Status             string                      `json:"status,omitempty"`
-	ResearchMode       GoalResearchMode            `json:"researchMode,omitempty"`
-	AutoResearchTaskID string                      `json:"autoResearchTaskID,omitempty"`
-	ScopeID            string                      `json:"scopeID,omitempty"`
-	DeliveryCheckpoint evidence.DeliveryCheckpoint `json:"deliveryCheckpoint,omitempty"`
-	Turns              int                         `json:"turns,omitempty"`
-	Blocks             int                         `json:"blocks,omitempty"`
-	Block              string                      `json:"block,omitempty"`
-	Strict             bool                        `json:"strict,omitempty"`
-	Todos              []evidence.TodoItem         `json:"todos,omitempty"`
+	Goal               string              `json:"goal,omitempty"`
+	Status             string              `json:"status,omitempty"`
+	ResearchMode       GoalResearchMode    `json:"researchMode,omitempty"`
+	AutoResearchTaskID string              `json:"autoResearchTaskID,omitempty"`
+	Turns              int                 `json:"turns,omitempty"`
+	Blocks             int                 `json:"blocks,omitempty"`
+	Block              string              `json:"block,omitempty"`
+	Strict             bool                `json:"strict,omitempty"`
+	Todos              []evidence.TodoItem `json:"todos,omitempty"`
 }
 
 // goalAdvanceInput carries everything the FSM needs for one continuation step,
@@ -127,26 +120,6 @@ func (g *goalMachine) currentAutoResearchTaskID() string {
 	return g.autoResearchTaskID
 }
 
-func (g *goalMachine) deliveryScope() (id, task string, ok bool) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if strings.TrimSpace(g.goal) == "" || g.status != GoalStatusRunning {
-		return "", "", false
-	}
-	if g.scopeID == "" {
-		g.scopeID = newGoalScopeID()
-	}
-	return g.scopeID, g.goal, true
-}
-
-func newGoalScopeID() string {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err == nil {
-		return fmt.Sprintf("goal-%x", raw[:])
-	}
-	return fmt.Sprintf("goal-fallback-%d-%d", os.Getpid(), time.Now().UnixNano())
-}
-
 // active reports whether a goal is currently running.
 func (g *goalMachine) active() bool {
 	g.mu.Lock()
@@ -179,12 +152,8 @@ func (g *goalMachine) set(goal string, mode GoalResearchMode, autoResearchTaskID
 	g.selfCheckDone, g.idleTurns, g.strict = false, 0, false
 	if goal == "" {
 		g.goal, g.status, g.researchMode, g.autoResearchTaskID = "", GoalStatusStopped, GoalResearchAuto, ""
-		g.scopeID = ""
-		g.deliveryCheckpoint = evidence.DeliveryCheckpoint{}
 	} else {
 		g.goal, g.status, g.researchMode, g.autoResearchTaskID = goal, GoalStatusRunning, mode, autoResearchTaskID
-		g.scopeID = newGoalScopeID()
-		g.deliveryCheckpoint = evidence.DeliveryCheckpoint{ScopeID: g.scopeID}
 	}
 	return g.buildStateLocked(todos)
 }
@@ -209,39 +178,6 @@ func (g *goalMachine) stop(status string, todos []evidence.TodoItem) (string, []
 	g.selfCheckDone = false
 	g.idleTurns = 0
 	return g.buildStateLocked(todos)
-}
-
-func (g *goalMachine) resume(todos []evidence.TodoItem) (path string, data []byte, persist, resumed bool) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if strings.TrimSpace(g.goal) == "" || g.status == GoalStatusComplete {
-		return "", nil, false, false
-	}
-	g.status = GoalStatusRunning
-	g.blocks, g.block = 0, ""
-	g.interceptMsg, g.intercepts = "", 0
-	g.selfCheckDone, g.idleTurns = false, 0
-	if g.scopeID == "" {
-		g.scopeID = newGoalScopeID()
-	}
-	path, data, persist = g.buildStateLocked(todos)
-	return path, data, persist, true
-}
-
-func (g *goalMachine) setDeliveryCheckpoint(checkpoint evidence.DeliveryCheckpoint, todos []evidence.TodoItem) (string, []byte, bool) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.scopeID == "" || checkpoint.ScopeID != g.scopeID {
-		return "", nil, false
-	}
-	g.deliveryCheckpoint = checkpoint
-	return g.buildStateLocked(todos)
-}
-
-func (g *goalMachine) deliveryState() evidence.DeliveryCheckpoint {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.deliveryCheckpoint
 }
 
 // takeIntercept consumes a pending continuation-turn override, if any.
@@ -358,8 +294,6 @@ func (g *goalMachine) buildStateLocked(todos []evidence.TodoItem) (path string, 
 		Status:             g.status,
 		ResearchMode:       g.researchMode,
 		AutoResearchTaskID: g.autoResearchTaskID,
-		ScopeID:            g.scopeID,
-		DeliveryCheckpoint: g.deliveryCheckpoint,
 		Turns:              g.turns,
 		Blocks:             g.blocks,
 		Block:              g.block,
@@ -413,7 +347,7 @@ func (g *goalMachine) terminalTodosFromState(sessionPath string) ([]evidence.Tod
 	if strings.TrimSpace(sessionPath) == "" {
 		return nil, false
 	}
-	data, err := fileencoding.ReadFileUTF8(goalStatePath(sessionPath))
+	data, err := os.ReadFile(goalStatePath(sessionPath))
 	if err != nil {
 		if !os.IsNotExist(err) {
 			slog.Warn("controller: read goal state", "err", err)
@@ -436,15 +370,15 @@ func (g *goalMachine) terminalTodosFromState(sessionPath string) ([]evidence.Tod
 	return append([]evidence.TodoItem(nil), state.Todos...), true
 }
 
-// restoreFromState reloads Goal state from the persisted sidecar during resume.
-// The sidecar is authoritative when present: a stale tab profile must not turn
-// a blocked or stopped Goal back into a running one during a controller rebuild.
-// Recoverable terminal states retain their scope for an explicit ResumeGoal.
-func (g *goalMachine) restoreFromState(sessionPath string) {
+// restoreRunningFromState reloads the active running goal from the persisted
+// sidecar during cold resume. Terminal sidecar data is intentionally ignored:
+// terminal todo repair is handled by terminalTodosFromState without reviving the
+// goal loop.
+func (g *goalMachine) restoreRunningFromState(sessionPath string) {
 	if strings.TrimSpace(sessionPath) == "" {
 		return
 	}
-	data, err := fileencoding.ReadFileUTF8(goalStatePath(sessionPath))
+	data, err := os.ReadFile(goalStatePath(sessionPath))
 	if err != nil {
 		if !os.IsNotExist(err) {
 			slog.Warn("controller: read goal state", "err", err)
@@ -456,27 +390,15 @@ func (g *goalMachine) restoreFromState(sessionPath string) {
 		slog.Warn("controller: parse goal state", "err", err)
 		return
 	}
+	if state.Status != GoalStatusRunning || strings.TrimSpace(state.Goal) == "" {
+		return
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.goal = strings.TrimSpace(state.Goal)
-	g.status = state.Status
-	if g.status == "" {
-		g.status = GoalStatusStopped
-	}
+	g.status = GoalStatusRunning
 	g.researchMode = state.ResearchMode
 	g.autoResearchTaskID = strings.TrimSpace(state.AutoResearchTaskID)
-	g.scopeID = strings.TrimSpace(state.ScopeID)
-	if g.goal != "" && g.scopeID == "" {
-		g.scopeID = newGoalScopeID()
-	}
-	g.deliveryCheckpoint = state.DeliveryCheckpoint
-	if g.scopeID == "" {
-		g.deliveryCheckpoint = evidence.DeliveryCheckpoint{}
-	} else if g.deliveryCheckpoint.ScopeID == "" {
-		g.deliveryCheckpoint.ScopeID = g.scopeID
-	} else if g.deliveryCheckpoint.ScopeID != g.scopeID {
-		g.deliveryCheckpoint = evidence.DeliveryCheckpoint{ScopeID: g.scopeID}
-	}
 	g.turns = state.Turns
 	g.blocks = state.Blocks
 	g.block = state.Block

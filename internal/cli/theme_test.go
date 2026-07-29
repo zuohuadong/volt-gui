@@ -13,8 +13,8 @@ import (
 func TestConfigureCLIThemeSwitchesModeAndDefaultStyle(t *testing.T) {
 	t.Setenv("COLORTERM", "")
 	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("REASONIX_THEME", "")
-	t.Setenv("REASONIX_THEME_STYLE", "")
+	t.Setenv("VOLTUI_THEME", "")
+	t.Setenv("VOLTUI_THEME_STYLE", "")
 	defer restoreThemeForTest(colorEnabled, activeCLITheme)
 	colorEnabled = true
 
@@ -38,8 +38,8 @@ func TestConfigureCLIThemeSwitchesModeAndDefaultStyle(t *testing.T) {
 func TestConfigureCLIThemeStyleOverride(t *testing.T) {
 	t.Setenv("COLORTERM", "")
 	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("REASONIX_THEME", "")
-	t.Setenv("REASONIX_THEME_STYLE", "")
+	t.Setenv("VOLTUI_THEME", "")
+	t.Setenv("VOLTUI_THEME_STYLE", "")
 	defer restoreThemeForTest(colorEnabled, activeCLITheme)
 	colorEnabled = true
 
@@ -60,14 +60,14 @@ func TestConfigureCLIThemeStyleOverride(t *testing.T) {
 func TestConfigureCLIThemeHonorsEnvOverride(t *testing.T) {
 	t.Setenv("COLORTERM", "")
 	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("REASONIX_THEME", "ember")
-	t.Setenv("REASONIX_THEME_STYLE", "")
+	t.Setenv("VOLTUI_THEME", "ember")
+	t.Setenv("VOLTUI_THEME_STYLE", "")
 	defer restoreThemeForTest(colorEnabled, activeCLITheme)
 	colorEnabled = true
 
 	configureCLIThemeWithStyle("light", "glacier")
 	if activeCLITheme.name != "dark" || activeCLITheme.style != "ember" {
-		t.Fatalf("REASONIX_THEME override resolved %s/%s, want dark/ember", activeCLITheme.name, activeCLITheme.style)
+		t.Fatalf("VOLTUI_THEME override resolved %s/%s, want dark/ember", activeCLITheme.name, activeCLITheme.style)
 	}
 }
 
@@ -89,8 +89,8 @@ func TestThemeArgCompletion(t *testing.T) {
 func TestRunThemeSubcommandSwitchesAccentAndTextarea(t *testing.T) {
 	t.Setenv("COLORTERM", "")
 	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("REASONIX_THEME", "")
-	t.Setenv("REASONIX_THEME_STYLE", "")
+	t.Setenv("VOLTUI_THEME", "")
+	t.Setenv("VOLTUI_THEME_STYLE", "")
 	defer restoreThemeForTest(colorEnabled, activeCLITheme)
 	colorEnabled = true
 	configureCLIThemeWithStyle("dark", "graphite")
@@ -167,8 +167,8 @@ func TestAutoThemeFallsBackToColorFGBG(t *testing.T) {
 func TestApplyTextareaThemeClearsCursorLineBackground(t *testing.T) {
 	t.Setenv("COLORTERM", "")
 	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("REASONIX_THEME", "")
-	t.Setenv("REASONIX_THEME_STYLE", "")
+	t.Setenv("VOLTUI_THEME", "")
+	t.Setenv("VOLTUI_THEME_STYLE", "")
 	defer restoreThemeForTest(colorEnabled, activeCLITheme)
 	colorEnabled = true
 
@@ -205,8 +205,8 @@ func TestApplyTextareaThemeClearsCursorLineBackground(t *testing.T) {
 func TestApplyTextareaThemeHonorsCursorShape(t *testing.T) {
 	t.Setenv("COLORTERM", "")
 	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("REASONIX_THEME", "")
-	t.Setenv("REASONIX_THEME_STYLE", "")
+	t.Setenv("VOLTUI_THEME", "")
+	t.Setenv("VOLTUI_THEME_STYLE", "")
 	defer restoreThemeForTest(colorEnabled, activeCLITheme)
 	prevShape := cliCursorShape
 	defer func() { cliCursorShape = prevShape }()
@@ -218,11 +218,11 @@ func TestApplyTextareaThemeHonorsCursorShape(t *testing.T) {
 		in   string
 		want tea.CursorShape
 	}{
-		{name: "default", in: "", want: tea.CursorBar},
+		{name: "default", in: "", want: tea.CursorUnderline},
 		{name: "underline", in: "underline", want: tea.CursorUnderline},
 		{name: "block", in: "block", want: tea.CursorBlock},
 		{name: "bar", in: "bar", want: tea.CursorBar},
-		{name: "unknown", in: "unknown", want: tea.CursorBar},
+		{name: "unknown", in: "unknown", want: tea.CursorUnderline},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cliCursorShape = tt.in
@@ -235,44 +235,6 @@ func TestApplyTextareaThemeHonorsCursorShape(t *testing.T) {
 	}
 }
 
-func TestComposerBorderAndCursorTrackThemeAccent(t *testing.T) {
-	t.Setenv("COLORTERM", "")
-	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("REASONIX_THEME", "")
-	t.Setenv("REASONIX_THEME_STYLE", "")
-	defer restoreThemeForTest(colorEnabled, activeCLITheme)
-	colorEnabled = true
-
-	for _, theme := range cliThemeStyles {
-		t.Run(theme.name, func(t *testing.T) {
-			configureCLITheme(theme.name)
-			want := themeLipColor(activeCLITheme.accent)
-			if got := inputBoxStyle.GetBorderTopForeground(); !reflect.DeepEqual(got, want) {
-				t.Fatalf("composer top border color = %v, want theme accent %v", got, want)
-			}
-			if got := inputBoxStyle.GetBorderBottomForeground(); !reflect.DeepEqual(got, want) {
-				t.Fatalf("composer bottom border color = %v, want theme accent %v", got, want)
-			}
-
-			ti := textarea.New()
-			applyTextareaTheme(&ti)
-			if got := ti.Styles().Cursor.Color; !reflect.DeepEqual(got, want) {
-				t.Fatalf("composer cursor color = %v, want theme accent %v", got, want)
-			}
-		})
-	}
-
-	colorEnabled = false
-	configureCLITheme("dark")
-	empty := lipgloss.NewStyle().GetBorderTopForeground()
-	if got := inputBoxStyle.GetBorderTopForeground(); !reflect.DeepEqual(got, empty) {
-		t.Fatalf("NO_COLOR composer top border color = %v, want no color", got)
-	}
-	if got := inputBoxStyle.GetBorderBottomForeground(); !reflect.DeepEqual(got, empty) {
-		t.Fatalf("NO_COLOR composer bottom border color = %v, want no color", got)
-	}
-}
-
 // TestRuntimeAutoThemeDoesNotProbeStdin guards the fix for a runtime `/theme auto`
 // that live-probed the terminal (raw-mode stdin read) while the TUI owned stdin,
 // racing bubbletea's input reader. The switch must resolve via the COLORFGBG
@@ -280,8 +242,8 @@ func TestComposerBorderAndCursorTrackThemeAccent(t *testing.T) {
 func TestRuntimeAutoThemeDoesNotProbeStdin(t *testing.T) {
 	t.Setenv("COLORTERM", "")
 	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("REASONIX_THEME", "")
-	t.Setenv("REASONIX_THEME_STYLE", "")
+	t.Setenv("VOLTUI_THEME", "")
+	t.Setenv("VOLTUI_THEME_STYLE", "")
 	t.Setenv("COLORFGBG", "15;0")
 	defer restoreThemeForTest(colorEnabled, activeCLITheme)
 	colorEnabled = true

@@ -27,7 +27,7 @@ func (m chatTUI) applyMCPAction(v mcpServerView, action mcpAction) (tea.Model, t
 		m.mcp.stage = mcpStageMode
 		m.mcp.mode = mcpModeIndex(v.Tier)
 	case mcpActionEdit:
-		return m.openMCPConfig(v)
+		return m.openMCPConfig()
 	case mcpActionAuth:
 		return m.authenticateMCP(v)
 	case mcpActionClearAuth:
@@ -135,21 +135,20 @@ func (m chatTUI) applyMCPMode(tier string) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	workspace := m.mcpWorkspaceRoot()
-	cfg, err := config.LoadForRoot(workspace)
+	cfg, err := config.Load()
 	if err != nil {
 		m.notice("mcp mode: " + err.Error())
 		return m, nil
 	}
 	found := false
 	var selected config.PluginEntry
-	for _, entry := range cfg.Plugins {
-		if entry.Name == v.Name {
-			entry.Tier = normalizeMCPTierForCLI(tier)
-			if !entry.ShouldAutoStart() {
-				entry.AutoStart = mcpBoolPtr(true)
+	for i := range cfg.Plugins {
+		if cfg.Plugins[i].Name == v.Name {
+			cfg.Plugins[i].Tier = normalizeMCPTierForCLI(tier)
+			if !cfg.Plugins[i].ShouldAutoStart() {
+				cfg.Plugins[i].AutoStart = mcpBoolPtr(true)
 			}
-			selected = entry
+			selected = cfg.Plugins[i]
 			found = true
 			break
 		}
@@ -158,7 +157,7 @@ func (m chatTUI) applyMCPMode(tier string) (tea.Model, tea.Cmd) {
 		m.notice(fmt.Sprintf("mcp mode: no configured MCP server named %q", v.Name))
 		return m, nil
 	}
-	if _, err := config.UpsertPluginInSourceForRoot(workspace, selected); err != nil {
+	if err := cfg.Save(); err != nil {
 		m.notice("mcp mode: " + err.Error())
 		return m, nil
 	}
@@ -197,12 +196,14 @@ func recordMCPModePluginFailure(ctrl control.Capabilities, e config.PluginEntry,
 	}, err)
 }
 
-func (m chatTUI) openMCPConfig(v mcpServerView) (tea.Model, tea.Cmd) {
-	fallback := config.UserConfigPath()
-	if m.mcp != nil && strings.TrimSpace(m.mcp.snapshot.configPath) != "" {
-		fallback = m.mcp.snapshot.configPath
+func (m chatTUI) openMCPConfig() (tea.Model, tea.Cmd) {
+	path := ""
+	if m.mcp != nil {
+		path = m.mcp.snapshot.configPath
 	}
-	path := mcpConfigPathForView(v, fallback)
+	if strings.TrimSpace(path) == "" {
+		path = mcpConfigLocation()
+	}
 	launch, err := mcpEditConfigLaunchCommand(path, exec.LookPath)
 	if err != nil {
 		m.notice("edit config: " + err.Error())
@@ -251,7 +252,7 @@ func (m chatTUI) clearMCPAuthentication(v mcpServerView) (tea.Model, tea.Cmd) {
 		m.notice("managed MCP servers do not store authentication")
 		return m, nil
 	}
-	_, changed, _, err := config.ClearPluginAuthenticationInSourceForRoot(m.mcpWorkspaceRoot(), v.Name)
+	_, changed, _, err := config.ClearPluginAuthenticationInSource(v.Name)
 	if err != nil {
 		m.notice("clear authentication: " + err.Error())
 		return m, nil
@@ -297,6 +298,19 @@ func normalizeMCPTierForCLI(tier string) string {
 	default:
 		return "background"
 	}
+}
+
+func mcpConfigLocation() string {
+	if path := config.SourcePath(); path != "" {
+		return path
+	}
+	if _, err := os.Stat(".mcp.json"); err == nil {
+		return ".mcp.json"
+	}
+	if path := config.UserConfigPath(); path != "" {
+		return path
+	}
+	return "voltui.toml"
 }
 
 type mcpEditConfigLaunch struct {

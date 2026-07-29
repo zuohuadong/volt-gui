@@ -39,21 +39,16 @@ func Available() bool {
 // seatbeltProfile builds an SBPL profile that allows everything, then denies
 // all file writes and re-allows them only under the write-roots (workspace +
 // temp + caches). Network is denied unless allowed. Forbid-read roots get
-// individual deny-read rules. Reads elsewhere are left open so the
-// toolchain (compilers reading GOROOT, git reading ~/.gitconfig, …) keeps
-// working — the boundary this draws is "can't write outside the configured
-// writable roots, and optionally can't talk to the network", which is the Phase
-// 0 blast-radius made to also cover arbitrary shell commands.
+// individual deny-read rules. Reads elsewhere are left open so the toolchain
+// keeps working — the boundary this draws is "can't write outside the
+// configured writable roots, and optionally can't talk to the network".
 func seatbeltProfile(spec Spec) string {
 	var b strings.Builder
 	b.WriteString("(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write*\n")
-	for _, p := range writeAllowDirsForSpec(spec) {
+	for _, p := range writeAllowDirs(spec.WriteRoots) {
 		fmt.Fprintf(&b, "    (subpath %s)\n", sbplString(p))
 	}
 	b.WriteString(")\n")
-	// Deny reads under forbid-read roots so even a permitted shell command
-	// cannot peek at them through the OS sandbox. Each path gets its own deny
-	// rule; (allow default) above keeps reads working everywhere else.
 	for _, p := range forbidReadDirs(spec.ForbidReadRoots) {
 		fmt.Fprintf(&b, "(deny file-read* (subpath %s))\n", sbplString(p))
 	}
@@ -68,22 +63,12 @@ func seatbeltProfile(spec Spec) string {
 // common toolchain caches under $HOME. Symlinks are resolved because macOS's
 // /tmp and $TMPDIR live under /private, which is the path Seatbelt matches.
 func writeAllowDirs(roots []string) []string {
-	return writeAllowDirsForSpec(Spec{WriteRoots: roots})
-}
-
-func writeAllowDirsForSpec(spec Spec) []string {
-	roots := spec.WriteRoots
 	dirs := append([]string{}, roots...)
-	dirs = append(dirs, "/dev")
-	if !spec.MinimalWrites {
-		dirs = append(dirs, "/tmp", "/private/tmp", "/private/var/folders", os.TempDir())
-	}
-	if !spec.MinimalWrites {
-		if home, err := os.UserHomeDir(); err == nil {
-			// go build/test → Library/Caches + go; pip/etc → .cache; npm/cargo too.
-			for _, sub := range []string{"Library/Caches", ".cache", ".npm", ".cargo", "go"} {
-				dirs = append(dirs, filepath.Join(home, sub))
-			}
+	dirs = append(dirs, "/dev", "/tmp", "/private/tmp", "/private/var/folders", os.TempDir())
+	if home, err := os.UserHomeDir(); err == nil {
+		// go build/test → Library/Caches + go; pip/etc → .cache; npm/cargo too.
+		for _, sub := range []string{"Library/Caches", ".cache", ".npm", ".cargo", "go"} {
+			dirs = append(dirs, filepath.Join(home, sub))
 		}
 	}
 	seen := map[string]bool{}
@@ -115,8 +100,6 @@ func sbplString(s string) string {
 	return `"` + s + `"`
 }
 
-// forbidReadDirs resolves forbid-read roots to absolute, symlink-free paths so
-// Seatbelt matches the canonical on-disk location (e.g. /private/tmp for /tmp).
 func forbidReadDirs(roots []string) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(roots))

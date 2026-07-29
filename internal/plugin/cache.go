@@ -1,10 +1,10 @@
 // Package-internal cache for MCP handshake results. The handshake (initialize +
 // listTools, plus optional listPrompts/listResources) costs hundreds of ms to a
 // few seconds per server on cold start. We persist the tool schema +
-// capabilities under the user cache dir keyed by load-bearing, non-secret Spec
-// fields, so the next launch can register tools optimistically
+// capabilities under the user cache dir keyed by a fingerprint of the load-
+// bearing Spec fields, so the next launch can register tools optimistically
 // without waiting for the network/subprocess. Caching is purely an
-// optimisation: any failure (missing dir, bad JSON, key mismatch) silently
+// optimisation: any failure (missing dir, bad JSON, hash mismatch) silently
 // degrades to a fresh handshake.
 package plugin
 
@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -21,8 +22,6 @@ import (
 	"time"
 
 	"voltui/internal/config"
-	"voltui/internal/fileutil"
-	fileencoding "voltui/internal/fileutil/encoding"
 	"voltui/internal/tool"
 )
 
@@ -36,14 +35,11 @@ func cacheableToolsOf(tools []tool.Tool) []CachedTool {
 		if !ok {
 			continue
 		}
-		declaredReadOnly, _, destructive := rt.securitySnapshot()
 		out = append(out, CachedTool{
-			Name:         rt.rawName,
-			Description:  rt.desc,
-			Schema:       rt.schema,
-			OutputSchema: rt.outputSchema,
-			ReadOnly:     declaredReadOnly,
-			Destructive:  destructive,
+			Name:        rt.rawName,
+			Description: rt.desc,
+			Schema:      rt.schema,
+			ReadOnly:    rt.readOnly,
 		})
 	}
 	return out
@@ -52,17 +48,15 @@ func cacheableToolsOf(tools []tool.Tool) []CachedTool {
 // cacheVersion bumps whenever CachedSchema shape changes incompatibly. Old
 // files with a smaller version are treated as a miss so a stale layout never
 // crashes a reader.
-const cacheVersion = 2
+const cacheVersion = 1
 
 // CachedSchema is the persisted snapshot of one server's handshake result.
-// CacheKey gates reuse — Capabilities/Tools are only trusted when the
-// caller's expectedKey (from SchemaCacheKey of the current Spec) matches,
+// SpecHash gates reuse — Capabilities/Tools are only trusted when the
+// caller's expectedHash (from SpecFingerprint of the current Spec) matches,
 // so renaming env vars or swapping a command never serves stale tools.
 type CachedSchema struct {
-	Version int `json:"version"`
-	// Keep the historical JSON key so older versions can reuse the same
-	// best-effort cache during rolling upgrades.
-	CacheKey      string          `json:"spec_hash"`
+	Version       int             `json:"version"`
+	SpecHash      string          `json:"spec_hash"`
 	Capabilities  map[string]bool `json:"capabilities"`
 	Tools         []CachedTool    `json:"tools"`
 	LastValidated time.Time       `json:"last_validated"`
@@ -71,131 +65,72 @@ type CachedSchema struct {
 // CachedTool mirrors the subset of an MCP tool definition we need to register
 // a placeholder before the real handshake completes: Name (raw, server-local),
 // Description (model-visible), Schema (raw JSON for input validation),
-// ReadOnly and Destructive (drive Plan/read-only safety classification).
+// ReadOnly (drives confirmation prompts).
 type CachedTool struct {
-	Name         string          `json:"name"`
-	Description  string          `json:"description"`
-	Schema       json.RawMessage `json:"schema"`
-	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
-	ReadOnly     bool            `json:"read_only"`
-	Destructive  bool            `json:"destructive,omitempty"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Schema      json.RawMessage `json:"schema"`
+	ReadOnly    bool            `json:"read_only"`
 }
 
-// SchemaCacheKey hashes the load-bearing, non-secret parts of a Spec. Secret
-// values in env and headers are intentionally excluded: credential rotation
-// must not leak through a stable digest or force an unrelated trust review.
-// Their sorted key names remain identity-bearing, so adding/removing a runtime
-// input still invalidates the cached schema.
-func SchemaCacheKey(s Spec) string {
-	return schemaCacheKeyForURL(s, normalizeIdentityURL(s.URL))
-}
-
-// legacySchemaCacheKey recomputes the cache key with the
-// pre-credential-aware URL normalization, or ("", false) when it cannot
-// differ. LoadCachedSchemaForSpec uses it to upgrade old cache entries in
-// place; remove together with legacyNormalizeIdentityURL.
-func legacySchemaCacheKey(s Spec) (string, bool) {
-	legacyURL := legacyNormalizeIdentityURL(s.URL)
-	if strings.TrimSpace(s.URL) == "" || legacyURL == normalizeIdentityURL(s.URL) {
-		return "", false
-	}
-	return schemaCacheKeyForURL(s, legacyURL), true
-}
-
-func schemaCacheKeyForURL(s Spec, urlValue string) string {
+// SpecFingerprint hashes the load-bearing parts of a Spec so changing the
+// command/url/args/env (not just renaming) invalidates the cache. Env map
+// keys are sorted so ordering doesn't perturb the hash — Go map iteration
+// order is randomised, so we'd otherwise get fingerprint churn on every
+// launch.
+func SpecFingerprint(s Spec) string {
 	h := sha256.New()
-	writeField(h, "name", s.Name)
 	writeField(h, "type", s.Type)
 	writeField(h, "command", s.Command)
-	writeField(h, "url", urlValue)
+	writeField(h, "url", s.URL)
 	writeField(h, "dir", s.Dir)
 	for _, a := range s.Args {
 		writeField(h, "arg", a)
 	}
-	writeKeys(h, "env", s.Env)
-	writeKeys(h, "headers", s.Headers)
+	writeKV(h, "env", s.Env)
+	writeKV(h, "headers", s.Headers)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
 // LoadCachedSchema returns the cached schema for name iff it exists, parses,
-// and matches expectedKey. Any error → (nil, false): cache is best-effort,
+// and matches expectedHash. Any error → (nil, false): cache is best-effort,
 // a corrupt file just means we re-handshake. Returning an error here would
 // only invite callers to log it on every launch — silence is intentional.
-func LoadCachedSchema(name, expectedKey string) (*CachedSchema, bool) {
-	cs, ok, keyOK := LoadCachedSchemaAny(name, expectedKey)
-	if !ok || !keyOK {
-		return nil, false
-	}
-	return cs, true
-}
-
-// LoadCachedSchemaForSpec returns the cached schema matching the spec's
-// current key, transparently rewriting an entry still saved under the legacy
-// URL key. Without the in-place upgrade, credential rotation or
-// the credential-aware normalization rollout would force a pointless
-// re-handshake even though nothing observable changed.
-func LoadCachedSchemaForSpec(s Spec) (*CachedSchema, bool) {
-	current := SchemaCacheKey(s)
-	if cs, ok := LoadCachedSchema(s.Name, current); ok {
-		return cs, true
-	}
-	legacy, ok := legacySchemaCacheKey(s)
-	if !ok {
-		return nil, false
-	}
-	cs, ok := LoadCachedSchema(s.Name, legacy)
-	if !ok {
-		return nil, false
-	}
-	cs.CacheKey = current
-	_ = SaveCachedSchema(s.Name, *cs)
-	return cs, true
-}
-
-// LoadCachedSchemaAny returns the cached schema regardless of cache-key match,
-// plus whether the key matched expectedKey. Catalog building uses it so a
-// mismatched cache can still surface tools as stale candidates;
-// execution paths must keep using LoadCachedSchema, which refuses mismatches.
-func LoadCachedSchemaAny(name, expectedKey string) (cs *CachedSchema, ok bool, keyOK bool) {
+func LoadCachedSchema(name, expectedHash string) (*CachedSchema, bool) {
 	p := cachePath(name)
 	if p == "" {
-		return nil, false, false
+		return nil, false
 	}
-	b, err := fileencoding.ReadFileUTF8(p)
+	b, err := os.ReadFile(p)
 	if err != nil {
-		return nil, false, false
+		return nil, false
 	}
-	var out CachedSchema
-	if err := json.Unmarshal(b, &out); err != nil {
-		return nil, false, false
+	var cs CachedSchema
+	if err := json.Unmarshal(b, &cs); err != nil {
+		return nil, false
 	}
-	if out.Version != cacheVersion {
-		return nil, false, false
+	if cs.Version != cacheVersion {
+		return nil, false
 	}
-	out.Tools = filterValidCachedTools(out.Tools)
-	return &out, true, out.CacheKey == expectedKey
+	if cs.SpecHash != expectedHash {
+		return nil, false
+	}
+	return &cs, true
 }
 
-func filterValidCachedTools(tools []CachedTool) []CachedTool {
-	out := make([]CachedTool, 0, len(tools))
-	for _, t := range tools {
-		schema, err := normalizeAndValidateToolSchema(t.Schema)
-		if err != nil {
-			continue
-		}
-		t.Schema = schema
-		out = append(out, t)
-	}
-	return out
-}
-
-// SaveCachedSchema atomically writes cs under name. Best-effort: an error is
-// logged at debug level and returned. The shared replacement helper preserves
-// overwrite semantics on Windows as well as crash safety on Unix.
+// SaveCachedSchema atomically writes cs under name. Best-effort: an error
+// is logged at debug level and dropped. Uses tmpfile + os.Rename in the
+// parent dir so a crash mid-write can't leave a half-written JSON behind
+// that the next Load would mis-parse.
 func SaveCachedSchema(name string, cs CachedSchema) error {
 	p := cachePath(name)
 	if p == "" {
 		return nil
+	}
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		slog.Debug("plugin cache: mkdir", "name", name, "err", err)
+		return err
 	}
 	cs.Version = cacheVersion
 	if cs.LastValidated.IsZero() {
@@ -206,8 +141,26 @@ func SaveCachedSchema(name string, cs CachedSchema) error {
 		slog.Debug("plugin cache: marshal", "name", name, "err", err)
 		return err
 	}
-	if err := fileutil.AtomicWriteFile(p, b, 0o600); err != nil {
-		slog.Debug("plugin cache: atomic write", "name", name, "err", err)
+	tmp, err := os.CreateTemp(dir, ".mcp-*.tmp")
+	if err != nil {
+		slog.Debug("plugin cache: tempfile", "name", name, "err", err)
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		slog.Debug("plugin cache: write", "name", name, "err", err)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		slog.Debug("plugin cache: close", "name", name, "err", err)
+		return err
+	}
+	if err := os.Rename(tmpPath, p); err != nil {
+		os.Remove(tmpPath)
+		slog.Debug("plugin cache: rename", "name", name, "err", err)
 		return err
 	}
 	return nil
@@ -228,30 +181,14 @@ func cachePath(name string) string {
 // the user's display capitalisation.
 var slugReplace = regexp.MustCompile(`[^a-z0-9_-]+`)
 
-// windowsReservedDeviceNames are DOS device names Windows reserves as file
-// stems (with or without an extension), matched case-insensitively.
-var windowsReservedDeviceNames = map[string]bool{
-	"con": true, "prn": true, "aux": true, "nul": true,
-	"com1": true, "com2": true, "com3": true, "com4": true, "com5": true,
-	"com6": true, "com7": true, "com8": true, "com9": true,
-	"lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true, "lpt5": true,
-	"lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
-}
-
-// slug sanitises name for use as a filename. Names changed by sanitization —
-// and Windows-reserved device stems such as "con" or "com1", which would name
-// a device rather than a file — get a strong suffix so confusable names cannot
-// make one MCP server consume another server's cached schemas, stats, or
-// private state directory. Ordinary safe names stay byte-identical.
+// slug sanitises name for use as a filename: lowercase, only [a-z0-9_-]. An
+// empty result (all chars stripped) falls back to "_" so cachePath stays
+// valid for any input.
 func slug(name string) string {
 	s := slugReplace.ReplaceAllString(strings.ToLower(name), "-")
 	s = strings.Trim(s, "-")
 	if s == "" {
-		s = "_"
-	}
-	if s != name || windowsReservedDeviceNames[s] {
-		sum := sha256.Sum256([]byte(name))
-		s += "-" + hex.EncodeToString(sum[:6])
+		return "_"
 	}
 	return s
 }
@@ -266,9 +203,9 @@ func writeField(h io.Writer, key, val string) {
 	_, _ = h.Write([]byte{1})
 }
 
-// writeKeys hashes only sorted map keys, so Go's randomised iteration order
-// cannot perturb the non-secret identity digest.
-func writeKeys(h io.Writer, key string, m map[string]string) {
+// writeKV hashes a map deterministically by sorting keys, so Go's randomised
+// map iteration doesn't churn the fingerprint between launches.
+func writeKV(h io.Writer, key string, m map[string]string) {
 	if len(m) == 0 {
 		writeField(h, key, "")
 		return
@@ -279,6 +216,6 @@ func writeKeys(h io.Writer, key string, m map[string]string) {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		writeField(h, key+"."+k, "present")
+		writeField(h, key+"."+k, m[k])
 	}
 }

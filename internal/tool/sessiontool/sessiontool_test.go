@@ -338,7 +338,6 @@ func TestTruncateRunes(t *testing.T) {
 		{"hello world", 5, "hello..."},
 		{"", 10, ""},
 		{"   spaced   ", 10, "spaced"},
-		{"a👨‍👩‍👧‍👦bc", 2, "a👨‍👩‍👧‍👦..."},
 	}
 	for _, tt := range tests {
 		got := truncateRunes(tt.s, tt.max)

@@ -450,7 +450,7 @@ func TestCancelInsideLargeParallelBatchStopsSchedulingNewTools(t *testing.T) {
 func toolMessagesByID(msgs []provider.Message) map[string]string {
 	out := make(map[string]string)
 	for _, m := range msgs {
-		if m.Role == provider.RoleTool && !m.LocalOnly {
+		if m.Role == provider.RoleTool {
 			out[m.ToolCallID] = m.Content
 		}
 	}

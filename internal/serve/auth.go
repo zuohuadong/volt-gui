@@ -38,13 +38,16 @@ const (
 )
 
 const (
-	cookieToken     = "reasonix_token"    // holds the token for token mode
-	cookieSession   = "reasonix_session"  // holds the HMAC-signed session for password mode
-	cookieRedirect  = "reasonix_redirect" // temporary: where to go after login
-	tokenByteLen    = 32                  // 256-bit random token
-	sessionDuration = 30 * 24 * time.Hour // how long a password session lasts
-	bcryptCost      = 12                  // bcrypt cost factor
-	pbkdf2Iter      = 4096                // deterministic session-key derivation from password_hash
+	cookieToken          = "voltui_token"      // holds the token for token mode
+	cookieSession        = "voltui_session"    // holds the HMAC-signed session for password mode
+	cookieRedirect       = "voltui_redirect"   // temporary: where to go after login
+	legacyCookieToken    = "reasonix_token"    // previous brand cookie name
+	legacyCookieSession  = "reasonix_session"  // previous brand cookie name
+	legacyCookieRedirect = "reasonix_redirect" // previous brand cookie name
+	tokenByteLen         = 32                  // 256-bit random token
+	sessionDuration      = 30 * 24 * time.Hour // how long a password session lasts
+	bcryptCost           = 12                  // bcrypt cost factor
+	pbkdf2Iter           = 4096                // deterministic session-key derivation from password_hash
 )
 
 // NormalizeAuthMode normalizes and validates the serve auth mode.
@@ -183,7 +186,7 @@ func HashPassword(password string) (string, error) {
 
 func sessionKeyForPasswordHash(passwordHash string) []byte {
 	if passwordHash != "" {
-		key, err := pbkdf2.Key(sha256.New, passwordHash, []byte("reasonix serve session key"), pbkdf2Iter, 32)
+		key, err := pbkdf2.Key(sha256.New, passwordHash, []byte("voltui serve session key"), pbkdf2Iter, 32)
 		if err != nil {
 			panic("serve/auth: pbkdf2 failed: " + err.Error())
 		}
@@ -231,7 +234,7 @@ func (ag *authGate) middleware(next http.Handler) http.Handler {
 // URL (preventing it from leaking via browser history or referrer headers).
 func (ag *authGate) checkToken(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	// 1. Check cookie first (fast path).
-	if c, err := r.Cookie(cookieToken); err == nil && strings.TrimSpace(c.Value) != "" {
+	if c, ok := firstCookie(r, cookieToken, legacyCookieToken); ok && strings.TrimSpace(c.Value) != "" {
 		if subtle.ConstantTimeCompare([]byte(c.Value), []byte(ag.token)) == 1 {
 			next.ServeHTTP(w, r)
 			return
@@ -273,7 +276,7 @@ func (ag *authGate) checkToken(w http.ResponseWriter, r *http.Request, next http
 // get a 401. The /login path is intercepted before this function by middleware.
 func (ag *authGate) checkSession(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	// Check session cookie.
-	if c, err := r.Cookie(cookieSession); err == nil {
+	if c, ok := firstCookie(r, cookieSession, legacyCookieSession); ok {
 		if ag.verifySession(c.Value) {
 			next.ServeHTTP(w, r)
 			return
@@ -322,7 +325,7 @@ func (ag *authGate) handleLogin(w http.ResponseWriter, r *http.Request) {
 // loginPage serves the embedded login HTML.
 func (ag *authGate) loginPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(loginHTML)
+	_, _ = w.Write(renderBrandHTML(loginHTML))
 }
 
 // loginSubmit verifies the password and issues a session cookie.
@@ -384,10 +387,19 @@ func (ag *authGate) loginSubmit(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect to the original destination, or /.
 	dest := "/"
-	if c, err := r.Cookie(cookieRedirect); err == nil && c.Value != "" {
+	if c, ok := firstCookie(r, cookieRedirect, legacyCookieRedirect); ok && c.Value != "" {
 		dest = safeRedirectTarget(c.Value)
 	}
 	redirectToSafeTarget(w, r, dest, http.StatusFound)
+}
+
+func firstCookie(r *http.Request, names ...string) (*http.Cookie, bool) {
+	for _, name := range names {
+		if c, err := r.Cookie(name); err == nil {
+			return c, true
+		}
+	}
+	return nil, false
 }
 
 func (ag *authGate) setAuthCookie(w http.ResponseWriter, r *http.Request, c *http.Cookie) {
@@ -504,7 +516,7 @@ func (ag *authGate) verifySession(token string) bool {
 func (ag *authGate) loginPageWithError(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusUnauthorized)
-	html := strings.Replace(string(loginHTML), "<!--ERROR-->",
+	html := strings.Replace(string(renderBrandHTML(loginHTML)), "<!--ERROR-->",
 		`<div class="error">`+htmlEscape(msg)+`</div>`, 1)
 	_, _ = w.Write([]byte(html))
 }

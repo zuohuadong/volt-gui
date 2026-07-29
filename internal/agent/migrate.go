@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	fileencoding "voltui/internal/fileutil/encoding"
 	"voltui/internal/provider"
 )
 
@@ -76,7 +75,7 @@ func MigrateLegacySessions(srcDir, globalDest string, projectDir func(workspaceR
 
 // MigrateLegacySessionsFromConfigDir imports v0.x event-log sessions found in
 // the current user config session directory. It uses an independent marker so a
-// previous ~/.reasonix import marker cannot hide sessions from a redirected
+// previous ~/.voltui import marker cannot hide sessions from a redirected
 // config root on Windows/macOS.
 func MigrateLegacySessionsFromConfigDir(srcDir, globalDest string, projectDir func(workspaceRoot string) string) (int, error) {
 	return migrateLegacySessions(srcDir, globalDest, legacyRoutedConfigImportMarker, projectDir)
@@ -133,7 +132,7 @@ func migrateLegacySessionsWithMarkers(srcDir, globalDest, marker, jsonlMarker st
 	hasEvents := map[string]bool{}
 	for _, e := range entries {
 		name := e.Name()
-		if !e.IsDir() && strings.HasSuffix(name, ".events.jsonl") && !isNativeSessionEventLog(filepath.Join(srcDir, name)) {
+		if !e.IsDir() && strings.HasSuffix(name, ".events.jsonl") {
 			hasEvents[strings.TrimSuffix(name, ".events.jsonl")] = true
 		}
 	}
@@ -147,9 +146,6 @@ func migrateLegacySessionsWithMarkers(srcDir, globalDest, marker, jsonlMarker st
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".events.jsonl") {
-			continue
-		}
-		if isNativeSessionEventLog(filepath.Join(srcDir, name)) {
 			continue
 		}
 		base := strings.TrimSuffix(name, ".events.jsonl")
@@ -333,11 +329,7 @@ func importJsonlSessions(entries []os.DirEntry, srcDir, globalDest string, hasEv
 			continue
 		}
 		srcInfo, _ := e.Info()
-		if isNativeSessionEventLog(SessionEventLogPath(jsonlPath)) {
-			if err := saveNativeSessionCopy(jsonlPath, dest); err != nil {
-				continue
-			}
-		} else if err := transformAndCopyJsonl(jsonlPath, dest); err != nil {
+		if err := transformAndCopyJsonl(jsonlPath, dest); err != nil {
 			continue
 		}
 		if srcInfo != nil {
@@ -392,7 +384,7 @@ func migrateSubDirectory(subDir, globalDest string, projectDir func(string) stri
 	hasEvents := map[string]bool{}
 	for _, e := range entries {
 		name := e.Name()
-		if !e.IsDir() && strings.HasSuffix(name, ".events.jsonl") && !isNativeSessionEventLog(filepath.Join(subDir, name)) {
+		if !e.IsDir() && strings.HasSuffix(name, ".events.jsonl") {
 			hasEvents[strings.TrimSuffix(name, ".events.jsonl")] = true
 		}
 	}
@@ -407,9 +399,6 @@ func migrateSubDirectory(subDir, globalDest string, projectDir func(string) stri
 		reconstruct := false
 		switch {
 		case strings.HasSuffix(name, ".events.jsonl"):
-			if isNativeSessionEventLog(filepath.Join(subDir, name)) {
-				continue
-			}
 			base = strings.TrimSuffix(name, ".events.jsonl")
 			srcPath = filepath.Join(subDir, name)
 			// Prefer .jsonl sidecar if it's newer.
@@ -462,10 +451,6 @@ func migrateSubDirectory(subDir, globalDest string, projectDir func(string) stri
 			if err := s.Save(dest); err != nil {
 				return imported, err
 			}
-		} else if isNativeSessionEventLog(SessionEventLogPath(srcPath)) {
-			if err := saveNativeSessionCopy(srcPath, dest); err != nil {
-				continue
-			}
 		} else {
 			if err := transformAndCopyJsonl(srcPath, dest); err != nil {
 				continue
@@ -493,23 +478,6 @@ func isMessageFormat(path string) bool {
 	n, _ := f.Read(buf[:])
 	s := strings.TrimLeft(string(buf[:n]), " \t\r\n")
 	return strings.HasPrefix(s, `{"role":`)
-}
-
-// isNativeSessionEventLog reports whether the file at an .events.jsonl path is
-// a native session event log (as opposed to a legacy v0.x event transcript
-// that happens to share the suffix).
-func isNativeSessionEventLog(path string) bool {
-	sessionPath := strings.TrimSuffix(path, ".events.jsonl") + ".jsonl"
-	probe, err := probeSessionEventLog(sessionPath)
-	return err == nil && probe.native && probe.size > 0
-}
-
-func saveNativeSessionCopy(src, dst string) error {
-	session, err := LoadSession(src)
-	if err != nil {
-		return err
-	}
-	return session.Save(dst)
 }
 
 func fileExists(path string) bool {
@@ -630,7 +598,7 @@ func transformAndCopyJsonl(src, dst string) error {
 // sidecars yield the zero value (session routes to the global dir, untitled).
 func readLegacyMeta(srcDir, base string) legacyMeta {
 	var m legacyMeta
-	b, err := fileencoding.ReadFileUTF8(filepath.Join(srcDir, base+".meta.json"))
+	b, err := os.ReadFile(filepath.Join(srcDir, base+".meta.json"))
 	if err != nil {
 		return m
 	}
@@ -675,7 +643,7 @@ func recordImportedTitle(destDir, base, summary string) {
 	}
 	path := filepath.Join(destDir, ".titles.json")
 	titles := map[string]string{}
-	if b, err := fileencoding.ReadFileUTF8(path); err == nil {
+	if b, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(b, &titles)
 	}
 	key := base + ".jsonl"

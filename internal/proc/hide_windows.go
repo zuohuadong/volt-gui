@@ -20,3 +20,10 @@ func HideWindow(cmd *exec.Cmd) {
 	cmd.SysProcAttr.HideWindow = true
 	cmd.SysProcAttr.CreationFlags |= createNoWindow
 }
+
+// HideWindowDetached is for short-lived desktop probes whose child process
+// should not flash a console window and should not stay attached to the GUI app.
+func HideWindowDetached(cmd *exec.Cmd) {
+	HideWindow(cmd)
+	cmd.SysProcAttr.CreationFlags |= syscall.CREATE_NEW_PROCESS_GROUP
+}

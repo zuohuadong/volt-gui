@@ -17,13 +17,7 @@ type ProviderPreset struct {
 	Entries     []ProviderEntry
 }
 
-const (
-	ProviderPresetVersion        = 1
-	longCat20ContextWindow       = 1_048_576
-	legacyLongCat20ContextWindow = 131_072
-	longCatOpenAIBaseURL         = "https://api.longcat.chat/openai/v1"
-	longCatAnthropicBaseURL      = "https://api.longcat.chat/anthropic"
-)
+const ProviderPresetVersion = 1
 
 // CuratedProviderPresets returns one-click provider templates for common
 // OpenAI-compatible and Anthropic-compatible coding-plan services. These are
@@ -110,12 +104,12 @@ var curatedProviderPresets = []ProviderPreset{
 		Entries: []ProviderEntry{{
 			Name:             "longcat-openai",
 			Kind:             "openai",
-			BaseURL:          longCatOpenAIBaseURL,
+			BaseURL:          "https://api.longcat.chat/openai/v1",
 			ModelsURL:        "https://api.longcat.chat/openai/v1/models",
 			Models:           longCat20Models,
 			Default:          "LongCat-2.0",
 			APIKeyEnv:        "LONGCAT_API_KEY",
-			ContextWindow:    longCat20ContextWindow,
+			ContextWindow:    131072,
 			Prices:           longCat20Prices(longCat20Models),
 			Thinking:         "enabled",
 			SupportedEfforts: []string{"enabled", "disabled"},
@@ -130,7 +124,7 @@ var curatedProviderPresets = []ProviderPreset{
 		Entries: []ProviderEntry{{
 			Name:             "longcat-anthropic",
 			Kind:             "anthropic",
-			BaseURL:          longCatAnthropicBaseURL,
+			BaseURL:          "https://api.longcat.chat/anthropic",
 			ModelsURL:        "https://api.longcat.chat/anthropic/v1/models",
 			Models:           longCat20Models,
 			Default:          "LongCat-2.0",
@@ -139,7 +133,7 @@ var curatedProviderPresets = []ProviderPreset{
 			Thinking:         "enabled",
 			SupportedEfforts: []string{"enabled", "disabled"},
 			DefaultEffort:    "enabled",
-			ContextWindow:    longCat20ContextWindow,
+			ContextWindow:    131072,
 			Prices:           longCat20Prices(longCat20Models),
 		}},
 	},
@@ -799,12 +793,14 @@ var curatedProviderPresets = []ProviderPreset{
 		Description: "Hosted Ollama Cloud OpenAI-compatible endpoint with max reasoning effort.",
 		KeyEnv:      "OLLAMA_API_KEY",
 		Entries: []ProviderEntry{{
-			Name:      "ollama-cloud",
-			Kind:      "openai",
-			BaseURL:   "https://ollama.com/v1",
-			Models:    ollamaCloudModels,
-			Default:   "glm-5.2",
-			APIKeyEnv: "OLLAMA_API_KEY",
+			Name:             "ollama-cloud",
+			Kind:             "openai",
+			BaseURL:          "https://ollama.com/v1",
+			Models:           ollamaCloudModels,
+			Default:          "glm-5.2",
+			APIKeyEnv:        "OLLAMA_API_KEY",
+			SupportedEfforts: []string{"max", "none", "low", "medium", "high"},
+			DefaultEffort:    "auto",
 		}},
 	},
 }

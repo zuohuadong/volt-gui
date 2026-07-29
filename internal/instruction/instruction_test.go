@@ -37,7 +37,7 @@ func TestExtractHostChecksFromStructuredSection(t *testing.T) {
 
 func TestExtractHostChecksIgnoresOrdinaryGuidance(t *testing.T) {
 	docs := []memory.Source{{
-		Path: "REASONIX.md",
+		Path: "VOLTUI.md",
 		Body: "Always run go test before committing.\n\n- verify: go test ./...",
 	}}
 
@@ -48,12 +48,22 @@ func TestExtractHostChecksIgnoresOrdinaryGuidance(t *testing.T) {
 
 func TestExtractHostChecksIsCaseInsensitive(t *testing.T) {
 	docs := []memory.Source{{
-		Path: "REASONIX.md",
-		Body: "## reasonix HOST checks\n- verify: go test ./...",
+		Path: "VOLTUI.md",
+		Body: "## voltui HOST checks\n- verify: go test ./...",
 	}}
 
 	checks := ExtractHostChecks(docs)
 	if len(checks) != 1 || checks[0].Command != "go test ./..." {
 		t.Fatalf("case-insensitive heading not extracted: %#v", checks)
+	}
+}
+
+func TestWithCalculationPolicyAppendsPolicyOnce(t *testing.T) {
+	got := WithCalculationPolicy("BASE")
+	if !strings.HasPrefix(got, "BASE\n\n") || !strings.Contains(got, CalculationPolicy) {
+		t.Fatalf("calculation policy was not appended: %q", got)
+	}
+	if twice := WithCalculationPolicy(got); twice != got {
+		t.Fatalf("calculation policy appended twice:\n%s", twice)
 	}
 }

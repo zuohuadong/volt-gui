@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	fileencoding "voltui/internal/fileutil/encoding"
-	"voltui/internal/secrets"
 )
 
 const ccSwitchDir = ".cc-switch"
@@ -26,8 +25,7 @@ type ccSwitchLegacyServer struct {
 	Name   string        `json:"name"`
 	Server mcpServerSpec `json:"server"`
 	Apps   struct {
-		Codex    bool  `json:"codex"`
-		VoltUI *bool `json:"reasonix"`
+		Codex bool `json:"codex"`
 	} `json:"apps"`
 }
 
@@ -49,13 +47,9 @@ func LoadCCSwitchMCPCandidates() ([]MCPImportCandidate, error) {
 	return candidates, nil
 }
 
-// LoadCCSwitchMCP reads MCP servers enabled for VoltUI from cc-switch and maps
+// LoadCCSwitchMCP reads MCP servers enabled for Codex from cc-switch and maps
 // them to VoltUI plugin entries. Newer cc-switch stores servers in SQLite;
 // older installs kept them in config.json(.migrated/.bak), so we support both.
-//
-// CC Switch v16+ stores dedicated enabled_reasonix / apps.reasonix flags.
-// Treat those as authoritative when present, and fall back to Codex only for
-// pre-v16 SQLite schemas or legacy JSON entries without VoltUI enablement.
 func LoadCCSwitchMCP() ([]PluginEntry, error) {
 	if IsolatedHomeDir() != "" {
 		return nil, nil
@@ -76,6 +70,7 @@ func loadCCSwitchMCPFromRoot(root string) ([]PluginEntry, error) {
 		}
 		return entries, nil
 	} else if !os.IsNotExist(err) {
+		// A present but unreadable/corrupt database should be visible to the user.
 		return nil, err
 	}
 
@@ -88,31 +83,32 @@ func loadCCSwitchMCPFromRoot(root string) ([]PluginEntry, error) {
 			return nil, err
 		}
 	}
-	return nil, fmt.Errorf("cc-switch import: no VoltUI-enabled MCP servers found in %s", root)
+	return nil, fmt.Errorf("cc-switch import: no Codex-enabled MCP servers found in %s", root)
 }
 
 func ImportCCSwitchMCPEntries(entries []PluginEntry) (total, added, updated int, err error) {
-	return importMCPEntries(entries)
+	cfg, err := Load()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return importMCPEntries(cfg, entries)
 }
 
-// ImportCCSwitchMCP upserts cc-switch's VoltUI-enabled MCP servers into the
-// user-global VoltUI config and saves it.
+// ImportCCSwitchMCP upserts cc-switch's Codex-enabled MCP servers into the
+// active VoltUI config and saves it.
 func ImportCCSwitchMCP() (total, added, updated int, err error) {
 	entries, err := LoadCCSwitchMCP()
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	return importMCPEntries(entries)
+	cfg, err := Load()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return importMCPEntries(cfg, entries)
 }
 
-func importMCPEntries(entries []PluginEntry) (total, added, updated int, err error) {
-	path := UserConfigPath()
-	if strings.TrimSpace(path) == "" {
-		return 0, 0, 0, fmt.Errorf("cc-switch import: cannot resolve user config path")
-	}
-	unlock := LockUserConfigEdits()
-	defer unlock()
-	cfg := LoadForEdit(path)
+func importMCPEntries(cfg *Config, entries []PluginEntry) (total, added, updated int, err error) {
 	existing := make(map[string]PluginEntry, len(cfg.Plugins))
 	for _, p := range cfg.Plugins {
 		existing[p.Name] = p
@@ -123,13 +119,12 @@ func importMCPEntries(entries []PluginEntry) (total, added, updated int, err err
 		} else {
 			added++
 		}
-		e.Source = MCPSourceUserConfig
 		if err := cfg.UpsertPlugin(e); err != nil {
 			return 0, 0, 0, err
 		}
 		existing[e.Name] = e
 	}
-	if err := cfg.SaveTo(path); err != nil {
+	if err := cfg.Save(); err != nil {
 		return 0, 0, 0, err
 	}
 	return len(entries), added, updated, nil
@@ -144,16 +139,7 @@ func loadCCSwitchMCPDB(path string) ([]PluginEntry, error) {
 		return nil, fmt.Errorf("cc-switch import: sqlite3 not found to read %s", path)
 	}
 	query := `SELECT id, name, server_config FROM mcp_servers WHERE enabled_codex = 1 ORDER BY name, id`
-	hasVoltUI, err := ccSwitchDBHasVoltUIColumn(sqlite, path)
-	if err != nil {
-		return nil, err
-	}
-	if hasVoltUI {
-		query = `SELECT id, name, server_config FROM mcp_servers WHERE enabled_reasonix = 1 ORDER BY name, id`
-	}
-	cmd := exec.Command(sqlite, "-readonly", "-json", path, query)
-	cmd.Env = secrets.ProcessEnv()
-	out, err := cmd.Output()
+	out, err := exec.Command(sqlite, "-readonly", "-json", path, query).Output()
 	if err != nil {
 		return nil, fmt.Errorf("cc-switch import: read %s: %w", path, err)
 	}
@@ -165,24 +151,6 @@ func loadCCSwitchMCPDB(path string) ([]PluginEntry, error) {
 		return nil, fmt.Errorf("cc-switch import: parse sqlite output: %w", err)
 	}
 	return ccSwitchRowsToPlugins(rows)
-}
-
-func ccSwitchDBHasVoltUIColumn(sqlite, path string) (bool, error) {
-	const query = `SELECT COUNT(*) FROM pragma_table_info('mcp_servers') WHERE name = 'enabled_reasonix'`
-	cmd := exec.Command(sqlite, "-readonly", path, query)
-	cmd.Env = secrets.ProcessEnv()
-	out, err := cmd.Output()
-	if err != nil {
-		return false, fmt.Errorf("cc-switch import: inspect %s: %w", path, err)
-	}
-	switch strings.TrimSpace(string(out)) {
-	case "0":
-		return false, nil
-	case "1":
-		return true, nil
-	default:
-		return false, fmt.Errorf("cc-switch import: inspect %s: unexpected enabled_reasonix column count %q", path, strings.TrimSpace(string(out)))
-	}
 }
 
 func ccSwitchRowsToPlugins(rows []ccSwitchMCPRow) ([]PluginEntry, error) {
@@ -226,11 +194,7 @@ func loadCCSwitchLegacyConfig(path string) ([]PluginEntry, error) {
 	var entries []PluginEntry
 	for _, key := range keys {
 		srv := doc.MCP.Servers[key]
-		enabled := srv.Apps.Codex
-		if srv.Apps.VoltUI != nil {
-			enabled = *srv.Apps.VoltUI
-		}
-		if !enabled {
+		if !srv.Apps.Codex {
 			continue
 		}
 		name := srv.Name

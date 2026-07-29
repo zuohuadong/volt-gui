@@ -100,8 +100,9 @@ func TestRedactSessionsHandlesQuotedSecretsWithoutCorruption(t *testing.T) {
 	}
 }
 
-// TestRedactSessionsIsNoOpOnHealthyStore pins idempotence: after an explicit
-// cleanup, rerunning the command must not rewrite or corrupt the clean store.
+// TestRedactSessionsIsNoOpOnHealthyStore pins idempotence: a store written by
+// a redacting build must survive the doctor untouched — rerunning cleanup on
+// clean sessions must never rewrite (or worse, corrupt) them.
 func TestRedactSessionsIsNoOpOnHealthyStore(t *testing.T) {
 	dir := t.TempDir()
 	sessionPath := filepath.Join(dir, "abc.jsonl")
@@ -116,21 +117,17 @@ func TestRedactSessionsIsNoOpOnHealthyStore(t *testing.T) {
 	if err := s.Save(sessionPath); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	first := RedactSessions(RedactSessionsOptions{Dirs: []string{dir}})
-	if len(first.Errors) > 0 || first.FilesChanged == 0 {
-		t.Fatalf("first RedactSessions() = %+v, want a successful rewrite", first)
-	}
 	before, err := os.ReadFile(sessionPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	second := RedactSessions(RedactSessionsOptions{Dirs: []string{dir}})
-	if len(second.Errors) > 0 {
-		t.Fatalf("second RedactSessions errors = %v", second.Errors)
+	res := RedactSessions(RedactSessionsOptions{Dirs: []string{dir}})
+	if len(res.Errors) > 0 {
+		t.Fatalf("RedactSessions errors = %v", res.Errors)
 	}
-	if second.FilesChanged != 0 {
-		t.Fatalf("healthy already-redacted store rewritten: %+v", second)
+	if res.FilesChanged != 0 {
+		t.Fatalf("healthy already-redacted store rewritten: %+v", res)
 	}
 	after, err := os.ReadFile(sessionPath)
 	if err != nil {
@@ -189,117 +186,5 @@ func TestRedactSessionsSkipsLeasedSession(t *testing.T) {
 	}
 	if !strings.Contains(string(data), secret) {
 		t.Fatalf("leased session should not be rewritten:\n%s", data)
-	}
-}
-
-// TestRedactSessionsRemovesDamagedSalvageSidecar pins the salvage-sidecar
-// privacy gap (#6613 review): the .events.jsonl.damaged file preserves raw
-// bytes tail repair truncated away, which can include secrets. The bytes are
-// undecodable by definition, so no format-aware masking can prove them clean —
-// the scrub must delete the file so no secret survives.
-func TestRedactSessionsRemovesDamagedSalvageSidecar(t *testing.T) {
-	dir := t.TempDir()
-	const secret = "sk-real-secret-value-123456"
-	sessionPath := filepath.Join(dir, "abc.jsonl")
-	if err := os.WriteFile(sessionPath, []byte(`{"role":"user","content":"clean"}`+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	damagedPath := store.SessionEventLogDamaged(sessionPath)
-	salvage := `{"damaged_tail":true,"preserved_at":"2026-01-01T00:00:00Z","log_offset":10,"bytes":80}` + "\n" +
-		`{"schema_version":1,"type":"append","message_index":99,"messages":[{"role":"tool","content":"DEEPSEEK_API_KEY=` + secret + `"}]` + "\n"
-	if err := os.WriteFile(damagedPath, []byte(salvage), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Dry run reports the file without touching it.
-	res := RedactSessions(RedactSessionsOptions{Dirs: []string{dir}, DryRun: true})
-	if len(res.Errors) > 0 {
-		t.Fatalf("dry-run errors = %v", res.Errors)
-	}
-	if res.FilesChanged == 0 {
-		t.Fatal("dry run did not report the damaged salvage sidecar")
-	}
-	if _, err := os.Stat(damagedPath); err != nil {
-		t.Fatalf("dry run must not delete the sidecar: %v", err)
-	}
-
-	// The real run deletes it: no secret can survive in bytes we cannot parse.
-	res = RedactSessions(RedactSessionsOptions{Dirs: []string{dir}})
-	if len(res.Errors) > 0 {
-		t.Fatalf("RedactSessions errors = %v", res.Errors)
-	}
-	if _, err := os.Stat(damagedPath); !os.IsNotExist(err) {
-		data, _ := os.ReadFile(damagedPath)
-		t.Fatalf("damaged salvage sidecar survived redaction (stat err=%v):\n%s", err, data)
-	}
-}
-
-// TestRedactSessionsSkipsLeasedDamagedSalvage: like every other artifact, the
-// salvage sidecar of a session another process is actively running must not
-// be touched.
-func TestRedactSessionsSkipsLeasedDamagedSalvage(t *testing.T) {
-	dir := t.TempDir()
-	sessionPath := filepath.Join(dir, "abc.jsonl")
-	if err := os.WriteFile(sessionPath, []byte(`{"role":"user","content":"clean"}`+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	damagedPath := store.SessionEventLogDamaged(sessionPath)
-	if err := os.WriteFile(damagedPath, []byte("torn bytes"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	lease, err := agent.TryAcquireSessionLease(sessionPath)
-	if err != nil {
-		t.Fatalf("TryAcquireSessionLease: %v", err)
-	}
-	defer lease.Release()
-
-	res := RedactSessions(RedactSessionsOptions{Dirs: []string{dir}})
-	if res.FilesSkipped < 1 {
-		t.Fatalf("FilesSkipped = %d, want >= 1", res.FilesSkipped)
-	}
-	if _, err := os.Stat(damagedPath); err != nil {
-		t.Fatalf("leased session's salvage sidecar must survive: %v", err)
-	}
-}
-
-// TestRedactSessionsScrubsStaleEventLogRecords pins the stale-record gap: a
-// later replace event supersedes — but does not erase — earlier records, so a
-// raw key can survive in an old event while the replayed view is already
-// clean. Cleanup must compact the log anyway, and the replayed transcript
-// (the clean current view) must be what survives.
-func TestRedactSessionsScrubsStaleEventLogRecords(t *testing.T) {
-	dir := t.TempDir()
-	const secret = "sk-real-secret-value-123456"
-	sessionPath := filepath.Join(dir, "abc.jsonl")
-	events := `{"schema_version":1,"type":"replace","messages":[{"role":"tool","content":"DEEPSEEK_API_KEY=` + secret + `"}]}` + "\n" +
-		`{"schema_version":1,"type":"replace","messages":[{"role":"user","content":"clean"}]}` + "\n"
-	if err := os.WriteFile(sessionPath, []byte(`{"role":"user","content":"clean"}`+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	evPath := store.SessionEventLog(sessionPath)
-	if err := os.WriteFile(evPath, []byte(events), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	res := RedactSessions(RedactSessionsOptions{Dirs: []string{dir}})
-	if len(res.Errors) > 0 {
-		t.Fatalf("RedactSessions errors = %v", res.Errors)
-	}
-	if res.FilesChanged != 2 {
-		t.Fatalf("FilesChanged = %d, want 2 (anchor + event log)", res.FilesChanged)
-	}
-	data, err := os.ReadFile(evPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), secret) {
-		t.Fatalf("stale event log record still leaks secret:\n%s", data)
-	}
-	loaded, err := agent.LoadSession(sessionPath)
-	if err != nil {
-		t.Fatalf("session no longer loads after compaction: %v", err)
-	}
-	if len(loaded.Messages) != 1 || loaded.Messages[0].Content != "clean" {
-		t.Fatalf("compaction lost the current replayed view: %+v", loaded.Messages)
 	}
 }

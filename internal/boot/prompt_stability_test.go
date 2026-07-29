@@ -20,7 +20,7 @@ func TestBuildComposesByteStableSystemPrompt(t *testing.T) {
 	dir := robustTempDir(t)
 	t.Chdir(dir)
 
-	writeFile(t, dir, "reasonix.toml", `
+	writeFile(t, dir, "voltui.toml", `
 default_model = "test-model"
 
 [agent]

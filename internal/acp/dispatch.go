@@ -10,8 +10,6 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"voltui/internal/agent"
-	"voltui/internal/control"
 	"voltui/internal/event"
 	"voltui/internal/permission"
 	"voltui/internal/provider"
@@ -120,9 +118,9 @@ func (s *updateSink) Emit(e event.Event) {
 		s.send(messageChunk{SessionUpdate: "agent_message_chunk", Content: textBlock(e.Text)})
 
 	case event.ToolDispatch:
-		// Skip the early (Partial) dispatch and later same-ID preview refresh: ACP
-		// expects one pending tool_call and has no file-diff update payload.
-		if e.Tool.Partial || e.Tool.Refreshed {
+		// Skip the early (Partial) dispatch: it carries no args, and the full one
+		// that follows is the single pending tool_call the protocol expects.
+		if e.Tool.Partial {
 			return
 		}
 		// todo_write is the agent's task list; mirror it as an ACP plan update so
@@ -204,12 +202,8 @@ func (s *updateSink) replay(msgs []provider.Message) {
 	for _, m := range msgs {
 		switch m.Role {
 		case provider.RoleUser:
-			text := m.Content
-			if steer, ok := agent.SteerText(text); ok {
-				text = steer
-			}
-			if text != "" {
-				s.send(messageChunk{SessionUpdate: "user_message_chunk", Content: textBlock(text)})
+			if m.Content != "" {
+				s.send(messageChunk{SessionUpdate: "user_message_chunk", Content: textBlock(m.Content)})
 			}
 		case provider.RoleAssistant:
 			if m.ReasoningContent != "" {
@@ -259,7 +253,7 @@ func (s *updateSink) requestPermission(ctx context.Context, a event.Approval) {
 	if a.Subject != "" {
 		title = a.Tool + " " + a.Subject
 	}
-	options := approvalOptions(a.Tool, a.Subject, a.Fresh)
+	options := approvalOptions(a.Tool, a.Subject)
 	params := PermissionRequestParams{
 		SessionID: s.sessionID,
 		ToolCall: PermissionToolCall{
@@ -359,27 +353,11 @@ func (s *updateSink) requestAskQuestion(ctx context.Context, askID string, q eve
 }
 
 func approvalSessionOptionName(tool, subject string) string {
-	if tool == control.SandboxEscapeApprovalTool {
-		return "Use real environment for this session"
-	}
 	sessionRule := permission.SessionGrantRuleForScope(tool, subject)
 	return "Allow " + sessionRule + " for this session"
 }
 
-func approvalOptions(tool, subject string, fresh bool) []PermissionOption {
-	if fresh || control.RequiresFreshHumanApprovalTool(tool) {
-		if tool == control.SandboxEscapeApprovalTool {
-			return []PermissionOption{
-				{OptionID: string(OptAllowOnce), Name: "Allow", Kind: OptAllowOnce},
-				{OptionID: string(OptAllowAlways), Name: approvalSessionOptionName(tool, subject), Kind: OptAllowAlways},
-				{OptionID: string(OptRejectOnce), Name: "Reject", Kind: OptRejectOnce},
-			}
-		}
-		return []PermissionOption{
-			{OptionID: string(OptAllowOnce), Name: "Allow", Kind: OptAllowOnce},
-			{OptionID: string(OptRejectOnce), Name: "Reject", Kind: OptRejectOnce},
-		}
-	}
+func approvalOptions(tool, subject string) []PermissionOption {
 	allowSessionName := approvalSessionOptionName(tool, subject)
 	options := []PermissionOption{
 		{OptionID: string(OptAllowOnce), Name: "Allow", Kind: OptAllowOnce},
@@ -427,8 +405,6 @@ func toolKindFor(name string) string {
 	case "edit_file", "move_file", "multiedit", "write_file":
 		return "edit"
 	case "bash":
-		return "execute"
-	case control.SandboxEscapeApprovalTool:
 		return "execute"
 	}
 	n := strings.ToLower(name)

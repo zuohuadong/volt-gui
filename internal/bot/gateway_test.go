@@ -34,19 +34,6 @@ type fakeAdapter struct {
 	startErr error
 }
 
-type resultAdapter struct {
-	*fakeAdapter
-	result SendResult
-	err    error
-}
-
-func (a *resultAdapter) Send(_ context.Context, msg OutboundMessage) (SendResult, error) {
-	a.mu.Lock()
-	a.sent = append(a.sent, msg)
-	a.mu.Unlock()
-	return a.result, a.err
-}
-
 func newFakeAdapter(platform Platform, name string) *fakeAdapter {
 	return &fakeAdapter{
 		platform: platform,
@@ -189,36 +176,6 @@ func (c *queueTestController) wasCanceled() bool {
 	return c.canceled
 }
 
-type rotatingBotController struct {
-	botController
-	path     string
-	newPath  string
-	newCalls int
-	closed   bool
-}
-
-func (c *rotatingBotController) Running() bool { return false }
-func (c *rotatingBotController) NewSession() error {
-	c.newCalls++
-	c.path = c.newPath
-	return nil
-}
-func (c *rotatingBotController) SessionPath() string { return c.path }
-func (c *rotatingBotController) Close()              { c.closed = true }
-
-type runtimeStatusBotController struct {
-	botController
-	status        control.RuntimeStatus
-	workspaceRoot string
-	sessionPath   string
-	closed        bool
-}
-
-func (c *runtimeStatusBotController) RuntimeStatus() control.RuntimeStatus { return c.status }
-func (c *runtimeStatusBotController) WorkspaceRoot() string                { return c.workspaceRoot }
-func (c *runtimeStatusBotController) SessionPath() string                  { return c.sessionPath }
-func (c *runtimeStatusBotController) Close()                               { c.closed = true }
-
 type blockingApprovalController struct {
 	botController
 	emit     func(event.Event)
@@ -226,6 +183,85 @@ type blockingApprovalController struct {
 	approved chan struct{}
 	done     chan struct{}
 	once     sync.Once
+}
+
+type remoteTaskTestController struct {
+	botController
+	mu   sync.Mutex
+	runs int
+	done chan struct{}
+	root string
+}
+
+type remoteTaskBlockingController struct {
+	botController
+	root      string
+	started   chan struct{}
+	cancelled chan struct{}
+	release   chan struct{}
+	done      chan struct{}
+}
+
+type remoteTaskSequenceController struct {
+	botController
+	root           string
+	mu             sync.Mutex
+	runs           int
+	firstStarted   chan struct{}
+	firstCancelled chan struct{}
+	releaseFirst   chan struct{}
+	laterDone      chan struct{}
+}
+
+func (c *remoteTaskSequenceController) RunTurn(ctx context.Context, _ string) error {
+	c.mu.Lock()
+	c.runs++
+	run := c.runs
+	c.mu.Unlock()
+	if run == 1 {
+		close(c.firstStarted)
+		<-ctx.Done()
+		close(c.firstCancelled)
+		<-c.releaseFirst
+		return ctx.Err()
+	}
+	c.laterDone <- struct{}{}
+	return nil
+}
+
+func (c *remoteTaskSequenceController) WorkspaceRoot() string { return c.root }
+func (c *remoteTaskSequenceController) SessionPath() string   { return "" }
+
+func (c *remoteTaskBlockingController) RunTurn(ctx context.Context, _ string) error {
+	close(c.started)
+	<-ctx.Done()
+	close(c.cancelled)
+	<-c.release
+	close(c.done)
+	return ctx.Err()
+}
+
+func (c *remoteTaskBlockingController) WorkspaceRoot() string { return c.root }
+func (c *remoteTaskBlockingController) SessionPath() string   { return "" }
+
+func (c *remoteTaskTestController) RunTurn(context.Context, string) error {
+	c.mu.Lock()
+	c.runs++
+	c.mu.Unlock()
+	select {
+	case c.done <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+func (c *remoteTaskTestController) WorkspaceRoot() string { return c.root }
+func (c *remoteTaskTestController) SessionPath() string   { return "" }
+
+func (c *remoteTaskTestController) runCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.runs
 }
 
 func (c *blockingApprovalController) RunTurn(ctx context.Context, input string) error {
@@ -242,39 +278,6 @@ func (c *blockingApprovalController) RunTurn(ctx context.Context, input string) 
 
 func (c *blockingApprovalController) Approve(id string, allow, session, persist bool) {
 	c.once.Do(func() { close(c.approved) })
-}
-
-type blockingAskController struct {
-	botController
-	emit     func(event.Event)
-	emitted  chan struct{}
-	answered chan []event.AskAnswer
-	done     chan struct{}
-	once     sync.Once
-}
-
-func (c *blockingAskController) RunTurn(ctx context.Context, input string) error {
-	c.emit(event.Event{Kind: event.AskRequest, Ask: event.Ask{ID: "ask-1", Questions: []event.AskQuestion{{
-		ID:     "q1",
-		Header: "Planner",
-		Prompt: "Which plan?",
-		Options: []event.AskOption{
-			{Label: "Small patch"},
-			{Label: "Refactor"},
-		},
-	}}}})
-	close(c.emitted)
-	select {
-	case <-c.answered:
-		close(c.done)
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (c *blockingAskController) AnswerQuestion(id string, answers []event.AskAnswer) {
-	c.once.Do(func() { c.answered <- answers })
 }
 
 func TestFakeAdapterInterface(t *testing.T) {
@@ -311,6 +314,476 @@ func TestFakeAdapterInterface(t *testing.T) {
 	if err := fa.Stop(); err != nil {
 		t.Fatal("stop:", err)
 	}
+}
+
+func TestGatewayRemoteTaskLifecycleAndMessageIdempotency(t *testing.T) {
+	store, err := NewRemoteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{
+		RemoteStore: store,
+		Allowlist: AllowlistConfig{
+			Enabled: true,
+			Users:   map[Platform][]string{PlatformFeishu: {"operator-1"}},
+		},
+		ConnectionChannels: map[string]ChannelConfig{
+			"feishu-lark": {WorkspaceRoot: "/workspace"},
+		},
+		ConnectionAccess: map[string]AccessConfig{
+			"feishu-lark": {
+				Enabled:           true,
+				Users:             []string{"operator-1"},
+				WorkspaceRoots:    []string{"/workspace"},
+				ProjectIDs:        []string{"project-1"},
+				AgentProfileIDs:   []string{"reviewer"},
+				PermissionCeiling: RemotePermissionAsk,
+			},
+		},
+		ResolveRemoteRuntime: func(_ context.Context, _ RemoteBinding, proposed RemoteRuntime, _ InboundMessage) (RemoteRuntime, error) {
+			proposed.WorkspaceRoot = "/workspace"
+			proposed.ProjectID = "project-1"
+			proposed.AgentProfileID = "reviewer"
+			proposed.PermissionMode = RemotePermissionAsk
+			return proposed, nil
+		},
+	}, nil, logger)
+	adapter := newFakeAdapter(PlatformFeishu, "fake-lark")
+	msg := InboundMessage{
+		Platform: PlatformFeishu, ConnectionID: "feishu-lark", Domain: "lark", ChatType: ChatDM,
+		ChatID: "chat-1", UserID: "sender-1", OperatorID: "operator-1", MessageID: "message-1", Text: "prepare status",
+	}
+	key := BuildSessionKey(msg.Session())
+	ctrl := &remoteTaskTestController{done: make(chan struct{}, 2), root: "/workspace"}
+	gw.controllers[key] = &sessionState{
+		ctrl: ctrl, sink: &sessionEventSink{}, platform: msg.Platform, connectionID: msg.ConnectionID,
+		workspaceRoot: "/workspace", toolApprovalMode: "ask", pendingAsks: map[string][]event.AskQuestion{}, pendingApprovals: map[string]event.Approval{},
+		projectID: "project-1", agentProfileID: "reviewer",
+	}
+
+	gw.handleMessage(context.Background(), AdapterBinding{ID: "feishu-lark", Domain: "lark", Platform: PlatformFeishu, Adapter: adapter}, msg)
+	select {
+	case <-ctrl.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("remote task turn did not finish")
+	}
+	tasks := store.ListTasks()
+	if len(tasks) != 1 || tasks[0].Status != RemoteTaskSucceeded {
+		t.Fatalf("tasks = %+v, want one succeeded task", tasks)
+	}
+	receipt, err := store.Receipt(tasks[0].ID)
+	if err != nil || receipt.Changes.Status != "pending" || receipt.Verification.Status != "pending" || receipt.Artifacts.Status != "pending" {
+		t.Fatalf("receipt = %+v, %v", receipt, err)
+	}
+	gw.handleMessage(context.Background(), AdapterBinding{ID: "feishu-lark", Domain: "lark", Platform: PlatformFeishu, Adapter: adapter}, msg)
+	time.Sleep(50 * time.Millisecond)
+	if ctrl.runCount() != 1 || len(store.ListTasks()) != 1 {
+		t.Fatalf("duplicate message ran again: runs=%d tasks=%+v", ctrl.runCount(), store.ListTasks())
+	}
+	state := gw.controllers[key]
+	if state.remoteTaskID != tasks[0].ID || state.remoteActorID != "operator-1" || state.remoteBindingID == "" {
+		t.Fatalf("session remote ownership = task:%q actor:%q binding:%q", state.remoteTaskID, state.remoteActorID, state.remoteBindingID)
+	}
+}
+
+func TestGatewayRemoteTaskStopIsOwnerOnlyAndWaitsForTurnExit(t *testing.T) {
+	store, err := NewRemoteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{
+		RemoteStore:        store,
+		ConnectionChannels: map[string]ChannelConfig{"feishu-lark": {WorkspaceRoot: "/workspace"}},
+		ConnectionAccess: map[string]AccessConfig{"feishu-lark": {
+			Enabled: true, Users: []string{"owner", "intruder"}, WorkspaceRoots: []string{"/workspace"}, ProjectIDs: []string{"project-1"}, PermissionCeiling: RemotePermissionAsk,
+		}},
+		ResolveRemoteRuntime: func(_ context.Context, _ RemoteBinding, proposed RemoteRuntime, _ InboundMessage) (RemoteRuntime, error) {
+			proposed.WorkspaceRoot = "/workspace"
+			proposed.ProjectID = "project-1"
+			proposed.PermissionMode = RemotePermissionAsk
+			return proposed, nil
+		},
+	}, nil, logger)
+	adapter := newFakeAdapter(PlatformFeishu, "fake-lark")
+	msg := InboundMessage{Platform: PlatformFeishu, ConnectionID: "feishu-lark", Domain: "lark", ChatType: ChatGroup, ChatID: "group-1", UserID: "owner", MessageID: "message-owner", Text: "long task"}
+	key := BuildSessionKey(msg.Session())
+	ctrl := &remoteTaskBlockingController{root: "/workspace", started: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{}), done: make(chan struct{})}
+	gw.controllers[key] = &sessionState{ctrl: ctrl, sink: &sessionEventSink{}, platform: msg.Platform, connectionID: msg.ConnectionID, workspaceRoot: "/workspace", toolApprovalMode: "ask", projectID: "project-1", pendingAsks: map[string][]event.AskQuestion{}, pendingApprovals: map[string]event.Approval{}}
+
+	gw.handleMessage(context.Background(), AdapterBinding{ID: "feishu-lark", Domain: "lark", Platform: PlatformFeishu, Adapter: adapter}, msg)
+	select {
+	case <-ctrl.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("remote task did not start")
+	}
+	intruder := msg
+	intruder.UserID = "intruder"
+	intruder.MessageID = "stop-intruder"
+	intruder.Text = "/stop"
+	gw.handleMessage(context.Background(), AdapterBinding{ID: "feishu-lark", Domain: "lark", Platform: PlatformFeishu, Adapter: adapter}, intruder)
+	if task := store.ListTasks()[0]; task.Status != RemoteTaskRunning {
+		t.Fatalf("intruder changed task status to %s", task.Status)
+	}
+
+	stop := msg
+	stop.MessageID = "stop-owner"
+	stop.Text = "/stop"
+	gw.handleMessage(context.Background(), AdapterBinding{ID: "feishu-lark", Domain: "lark", Platform: PlatformFeishu, Adapter: adapter}, stop)
+	select {
+	case <-ctrl.cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("owner stop did not cancel controller")
+	}
+	if task := store.ListTasks()[0]; task.Status != RemoteTaskCancelRequested {
+		t.Fatalf("task status = %s, want cancel_requested before turn exit", task.Status)
+	}
+	if !gw.sessions.IsActive(key) {
+		t.Fatal("session lock was force-released before the turn exited")
+	}
+	close(ctrl.release)
+	select {
+	case <-ctrl.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled turn did not exit")
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if task := store.ListTasks()[0]; task.Status == RemoteTaskCancelled {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("task did not settle to cancelled: %+v", store.ListTasks())
+}
+
+func TestGatewayRemoteBindingRevokeCancelsRunningTaskAndBlocksNewTask(t *testing.T) {
+	store, err := NewRemoteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := NewGateway(GatewayConfig{
+		RemoteStore:        store,
+		ConnectionChannels: map[string]ChannelConfig{"feishu-lark": {WorkspaceRoot: "/workspace"}},
+		ConnectionAccess: map[string]AccessConfig{"feishu-lark": {
+			Enabled: true, Users: []string{"owner"}, WorkspaceRoots: []string{"/workspace"}, ProjectIDs: []string{"project-1"}, PermissionCeiling: RemotePermissionAsk,
+		}},
+		ResolveRemoteRuntime: func(_ context.Context, _ RemoteBinding, proposed RemoteRuntime, _ InboundMessage) (RemoteRuntime, error) {
+			proposed.WorkspaceRoot, proposed.ProjectID, proposed.PermissionMode = "/workspace", "project-1", RemotePermissionAsk
+			return proposed, nil
+		},
+	}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	adapter := newFakeAdapter(PlatformFeishu, "fake-lark")
+	msg := InboundMessage{Platform: PlatformFeishu, ConnectionID: "feishu-lark", Domain: "lark", ChatType: ChatDM, ChatID: "chat-revoke", UserID: "owner", MessageID: "running-task", Text: "long task"}
+	key := BuildSessionKey(msg.Session())
+	ctrl := &remoteTaskBlockingController{root: "/workspace", started: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{}), done: make(chan struct{})}
+	gw.controllers[key] = &sessionState{ctrl: ctrl, sink: &sessionEventSink{}, platform: msg.Platform, connectionID: msg.ConnectionID, workspaceRoot: "/workspace", toolApprovalMode: "ask", projectID: "project-1", pendingAsks: map[string][]event.AskQuestion{}, pendingApprovals: map[string]event.Approval{}}
+	binding := AdapterBinding{ID: msg.ConnectionID, Domain: msg.Domain, Platform: msg.Platform, Adapter: adapter}
+	gw.handleMessage(context.Background(), binding, msg)
+	select {
+	case <-ctrl.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("remote task did not start")
+	}
+	task, ok := store.TaskForMessage(RemoteEndpointFromMessage(msg), msg.MessageID)
+	if !ok {
+		t.Fatal("running remote task not found")
+	}
+	if _, err := gw.RevokeRemoteBinding(task.BindingID); err != nil {
+		t.Fatalf("RevokeRemoteBinding: %v", err)
+	}
+	select {
+	case <-ctrl.cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("binding revoke did not cancel controller")
+	}
+	if current, _ := store.Task(task.ID); current.Status != RemoteTaskCancelRequested {
+		t.Fatalf("task status = %s, want cancel_requested before turn exit", current.Status)
+	}
+	close(ctrl.release)
+	select {
+	case <-ctrl.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("revoked turn did not exit")
+	}
+	waitRemoteTaskStatus(t, store, task.ID, RemoteTaskRevoked)
+
+	next := msg
+	next.MessageID = "after-revoke"
+	next.Text = "must be rejected"
+	gw.handleMessage(context.Background(), binding, next)
+	time.Sleep(50 * time.Millisecond)
+	if _, found := store.TaskForMessage(RemoteEndpointFromMessage(next), next.MessageID); found {
+		t.Fatalf("revoked binding admitted a new task: %+v", store.ListTasks())
+	}
+}
+
+func TestGatewayRemoteTaskBootstrapRequiresExistingAdmission(t *testing.T) {
+	store, err := NewRemoteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := NewGateway(GatewayConfig{
+		RemoteStore:        store,
+		Allowlist:          AllowlistConfig{Enabled: true, Users: map[Platform][]string{PlatformFeishu: {"allowed"}}},
+		ConnectionChannels: map[string]ChannelConfig{"feishu-lark": {WorkspaceRoot: "/workspace"}},
+	}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	adapter := newFakeAdapter(PlatformFeishu, "fake-lark")
+	msg := InboundMessage{Platform: PlatformFeishu, ConnectionID: "feishu-lark", Domain: "lark", ChatType: ChatDM, ChatID: "chat-auth", UserID: "unknown", MessageID: "unauthorized", Text: "run in /fake project=admin profile=root"}
+	gw.handleMessage(context.Background(), AdapterBinding{ID: msg.ConnectionID, Domain: msg.Domain, Platform: msg.Platform, Adapter: adapter}, msg)
+	if len(store.ListBindings()) != 0 || len(store.ListTasks()) != 0 {
+		t.Fatalf("unauthorized prompt bootstrapped remote state: bindings=%+v tasks=%+v", store.ListBindings(), store.ListTasks())
+	}
+}
+
+func TestGatewayRemoteTaskLegacyWorkspaceUsesInboxReceipt(t *testing.T) {
+	store, err := NewRemoteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := NewGateway(GatewayConfig{
+		RemoteStore:        store,
+		ConnectionChannels: map[string]ChannelConfig{"feishu-lark": {WorkspaceRoot: "/workspace"}},
+		ConnectionAccess:   map[string]AccessConfig{"feishu-lark": {Enabled: true, Users: []string{"owner"}, WorkspaceRoots: []string{"/workspace"}, PermissionCeiling: RemotePermissionAsk}},
+	}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	adapter := newFakeAdapter(PlatformFeishu, "fake-lark")
+	msg := InboundMessage{Platform: PlatformFeishu, ConnectionID: "feishu-lark", Domain: "lark", ChatType: ChatDM, ChatID: "chat-legacy", UserID: "owner", MessageID: "legacy-task", Text: "legacy workspace task"}
+	ctrl := &remoteTaskTestController{done: make(chan struct{}, 1), root: "/workspace"}
+	gw.controllers[BuildSessionKey(msg.Session())] = &sessionState{ctrl: ctrl, sink: &sessionEventSink{}, platform: msg.Platform, connectionID: msg.ConnectionID, workspaceRoot: "/workspace", toolApprovalMode: "ask", projectID: "inbox", pendingAsks: map[string][]event.AskQuestion{}, pendingApprovals: map[string]event.Approval{}}
+	gw.handleMessage(context.Background(), AdapterBinding{ID: msg.ConnectionID, Domain: msg.Domain, Platform: msg.Platform, Adapter: adapter}, msg)
+	select {
+	case <-ctrl.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("legacy remote task did not finish")
+	}
+	task, ok := store.TaskForMessage(RemoteEndpointFromMessage(msg), msg.MessageID)
+	if !ok || task.Spec.ProjectID != "inbox" || task.Spec.AgentProfileID != "" || !task.Spec.Legacy {
+		t.Fatalf("legacy task = %+v, %v", task, ok)
+	}
+	receipt, err := store.Receipt(task.ID)
+	if err != nil || !receipt.Legacy {
+		t.Fatalf("legacy receipt = %+v, %v", receipt, err)
+	}
+}
+
+func TestGatewayRemoteTaskInterruptCreatesGovernedQueuedTask(t *testing.T) {
+	gw, store, adapter, ctrl, first := newRemoteQueueTestGateway(t, QueueModeInterrupt, 4, QueueDropOld)
+	key := BuildSessionKey(first.Session())
+	gw.handleMessage(context.Background(), AdapterBinding{ID: first.ConnectionID, Domain: first.Domain, Platform: first.Platform, Adapter: adapter}, first)
+	<-ctrl.firstStarted
+	second := first
+	second.MessageID = "interrupt-second"
+	second.Text = "replacement"
+	gw.handleMessage(context.Background(), AdapterBinding{ID: second.ConnectionID, Domain: second.Domain, Platform: second.Platform, Adapter: adapter}, second)
+	firstTask, _ := store.TaskForMessage(RemoteEndpointFromMessage(first), first.MessageID)
+	secondTask, _ := store.TaskForMessage(RemoteEndpointFromMessage(second), second.MessageID)
+	if firstTask.Status != RemoteTaskCancelRequested || secondTask.Status != RemoteTaskQueued || gw.sessions.PendingCount(key) != 1 {
+		t.Fatalf("interrupt tasks = first:%+v second:%+v pending:%d", firstTask, secondTask, gw.sessions.PendingCount(key))
+	}
+	<-ctrl.firstCancelled
+	close(ctrl.releaseFirst)
+	select {
+	case <-ctrl.laterDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("governed replacement task did not execute")
+	}
+	waitRemoteTaskStatus(t, store, firstTask.ID, RemoteTaskCancelled)
+	waitRemoteTaskStatus(t, store, secondTask.ID, RemoteTaskSucceeded)
+}
+
+func TestGatewayRemoteTaskSharedThreadRejectsForeignSteerAndInterrupt(t *testing.T) {
+	store, err := NewRemoteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := NewGateway(GatewayConfig{
+		RemoteStore: store, QueueMode: QueueModeSteer, QueueCap: 4,
+		ConnectionChannels: map[string]ChannelConfig{"feishu-lark": {WorkspaceRoot: "/workspace"}},
+		ConnectionAccess:   map[string]AccessConfig{"feishu-lark": {Enabled: true, Users: []string{"owner", "intruder"}, WorkspaceRoots: []string{"/workspace"}, ProjectIDs: []string{"project-1"}, PermissionCeiling: RemotePermissionAsk}},
+		ResolveRemoteRuntime: func(_ context.Context, _ RemoteBinding, proposed RemoteRuntime, _ InboundMessage) (RemoteRuntime, error) {
+			proposed.WorkspaceRoot, proposed.ProjectID, proposed.PermissionMode = "/workspace", "project-1", RemotePermissionAsk
+			return proposed, nil
+		},
+	}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	adapter := newFakeAdapter(PlatformFeishu, "fake-lark")
+	owner := InboundMessage{Platform: PlatformFeishu, ConnectionID: "feishu-lark", Domain: "lark", ChatType: ChatThread, ChatID: "chat-1", ThreadID: "thread-1", UserID: "owner", MessageID: "owner-task", Text: "first"}
+	key := BuildSessionKey(owner.Session())
+	ctrl := &remoteTaskBlockingController{root: "/workspace", started: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{}), done: make(chan struct{})}
+	gw.controllers[key] = &sessionState{ctrl: ctrl, sink: &sessionEventSink{}, platform: owner.Platform, connectionID: owner.ConnectionID, workspaceRoot: "/workspace", toolApprovalMode: "ask", projectID: "project-1", pendingAsks: map[string][]event.AskQuestion{}, pendingApprovals: map[string]event.Approval{}}
+	binding := AdapterBinding{ID: owner.ConnectionID, Domain: owner.Domain, Platform: owner.Platform, Adapter: adapter}
+	gw.handleMessage(context.Background(), binding, owner)
+	<-ctrl.started
+
+	foreignSteer := owner
+	foreignSteer.UserID = "intruder"
+	foreignSteer.MessageID = "foreign-steer"
+	foreignSteer.Text = "steer someone else's task"
+	gw.handleMessage(context.Background(), binding, foreignSteer)
+	if len(store.ListTasks()) != 1 {
+		t.Fatalf("foreign steer created a task: %+v", store.ListTasks())
+	}
+	select {
+	case <-ctrl.cancelled:
+		t.Fatal("foreign steer cancelled the owner task")
+	default:
+	}
+
+	gw.sessions.SetQueueMode(key, QueueModeInterrupt)
+	foreignInterrupt := foreignSteer
+	foreignInterrupt.MessageID = "foreign-interrupt"
+	foreignInterrupt.Text = "interrupt someone else's task"
+	gw.handleMessage(context.Background(), binding, foreignInterrupt)
+	interruptTask, ok := store.TaskForMessage(RemoteEndpointFromMessage(foreignInterrupt), foreignInterrupt.MessageID)
+	if !ok || interruptTask.Status != RemoteTaskDisconnected {
+		t.Fatalf("foreign interrupt task = %+v, %v, want disconnected", interruptTask, ok)
+	}
+	select {
+	case <-ctrl.cancelled:
+		t.Fatal("foreign interrupt cancelled the owner task")
+	default:
+	}
+	audit, err := store.ListAudit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundSteerDeny := false
+	for _, entry := range audit {
+		if entry.Action == "task.steer" && entry.Decision == "deny" && entry.ActorID == "intruder" {
+			foundSteerDeny = true
+		}
+	}
+	if !foundSteerDeny {
+		t.Fatalf("audit missing foreign steer denial: %+v", audit)
+	}
+	gw.cancelActiveSession(key)
+	<-ctrl.cancelled
+	close(ctrl.release)
+	<-ctrl.done
+	ownerTask, ok := store.TaskForMessage(RemoteEndpointFromMessage(owner), owner.MessageID)
+	if !ok {
+		t.Fatal("owner task missing after cancellation")
+	}
+	// cancelActiveSession is teardown-only here and intentionally bypasses the
+	// governed cancel-request transition, so the interrupted turn settles failed.
+	waitRemoteTaskStatus(t, store, ownerTask.ID, RemoteTaskFailed)
+}
+
+func TestGatewayRemoteTaskQueueDropFinalizesDroppedTask(t *testing.T) {
+	gw, store, adapter, ctrl, first := newRemoteQueueTestGateway(t, QueueModeFollowup, 1, QueueDropOld)
+	binding := AdapterBinding{ID: first.ConnectionID, Domain: first.Domain, Platform: first.Platform, Adapter: adapter}
+	gw.handleMessage(context.Background(), binding, first)
+	<-ctrl.firstStarted
+	queued := first
+	queued.MessageID = "queued-old"
+	queued.Text = "old pending"
+	gw.handleMessage(context.Background(), binding, queued)
+	replacement := first
+	replacement.MessageID = "queued-new"
+	replacement.Text = "new pending"
+	gw.handleMessage(context.Background(), binding, replacement)
+	oldTask, _ := store.TaskForMessage(RemoteEndpointFromMessage(queued), queued.MessageID)
+	newTask, _ := store.TaskForMessage(RemoteEndpointFromMessage(replacement), replacement.MessageID)
+	if oldTask.Status != RemoteTaskDisconnected || newTask.Status != RemoteTaskQueued {
+		t.Fatalf("queue drop tasks = old:%+v new:%+v", oldTask, newTask)
+	}
+	gw.cancelActiveSession(BuildSessionKey(first.Session()))
+	<-ctrl.firstCancelled
+	close(ctrl.releaseFirst)
+	<-ctrl.laterDone
+	waitRemoteTaskStatus(t, store, newTask.ID, RemoteTaskSucceeded)
+}
+
+func TestGatewayRemoteTaskQueueDropNewFinalizesRejectedTask(t *testing.T) {
+	gw, store, adapter, ctrl, first := newRemoteQueueTestGateway(t, QueueModeFollowup, 1, QueueDropNew)
+	binding := AdapterBinding{ID: first.ConnectionID, Domain: first.Domain, Platform: first.Platform, Adapter: adapter}
+	gw.handleMessage(context.Background(), binding, first)
+	<-ctrl.firstStarted
+	queued := first
+	queued.MessageID = "queued-kept"
+	queued.Text = "kept pending"
+	gw.handleMessage(context.Background(), binding, queued)
+	rejected := first
+	rejected.MessageID = "queued-rejected"
+	rejected.Text = "rejected pending"
+	gw.handleMessage(context.Background(), binding, rejected)
+	keptTask, _ := store.TaskForMessage(RemoteEndpointFromMessage(queued), queued.MessageID)
+	rejectedTask, _ := store.TaskForMessage(RemoteEndpointFromMessage(rejected), rejected.MessageID)
+	if keptTask.Status != RemoteTaskQueued || rejectedTask.Status != RemoteTaskDisconnected {
+		t.Fatalf("queue drop-new tasks = kept:%+v rejected:%+v", keptTask, rejectedTask)
+	}
+	gw.cancelActiveSession(BuildSessionKey(first.Session()))
+	<-ctrl.firstCancelled
+	close(ctrl.releaseFirst)
+	<-ctrl.laterDone
+	waitRemoteTaskStatus(t, store, keptTask.ID, RemoteTaskSucceeded)
+}
+
+func TestGatewayRemoteTaskCollectRunsEveryMessageAsFollowup(t *testing.T) {
+	gw, store, adapter, ctrl, first := newRemoteQueueTestGateway(t, QueueModeCollect, 4, QueueDropOld)
+	binding := AdapterBinding{ID: first.ConnectionID, Domain: first.Domain, Platform: first.Platform, Adapter: adapter}
+	gw.handleMessage(context.Background(), binding, first)
+	<-ctrl.firstStarted
+	second := first
+	second.MessageID = "collect-2"
+	second.Text = "second"
+	third := first
+	third.MessageID = "collect-3"
+	third.Text = "third"
+	gw.handleMessage(context.Background(), binding, second)
+	gw.handleMessage(context.Background(), binding, third)
+	if pending := gw.sessions.PendingCount(BuildSessionKey(first.Session())); pending != 2 {
+		t.Fatalf("pending = %d, want one governed queue item per MessageID", pending)
+	}
+	gw.cancelActiveSession(BuildSessionKey(first.Session()))
+	<-ctrl.firstCancelled
+	close(ctrl.releaseFirst)
+	for i := 0; i < 2; i++ {
+		select {
+		case <-ctrl.laterDone:
+		case <-time.After(2 * time.Second):
+			t.Fatal("collect followup task did not execute")
+		}
+	}
+	secondTask, _ := store.TaskForMessage(RemoteEndpointFromMessage(second), second.MessageID)
+	thirdTask, _ := store.TaskForMessage(RemoteEndpointFromMessage(third), third.MessageID)
+	waitRemoteTaskStatus(t, store, secondTask.ID, RemoteTaskSucceeded)
+	waitRemoteTaskStatus(t, store, thirdTask.ID, RemoteTaskSucceeded)
+}
+
+func newRemoteQueueTestGateway(t *testing.T, mode string, cap int, drop string) (*BotGateway, *RemoteStore, *fakeAdapter, *remoteTaskSequenceController, InboundMessage) {
+	t.Helper()
+	store, err := NewRemoteStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := NewGateway(GatewayConfig{
+		RemoteStore: store, QueueMode: mode, QueueCap: cap, QueueDrop: drop,
+		ConnectionChannels: map[string]ChannelConfig{"feishu-lark": {WorkspaceRoot: "/workspace"}},
+		ConnectionAccess:   map[string]AccessConfig{"feishu-lark": {Enabled: true, Users: []string{"owner"}, WorkspaceRoots: []string{"/workspace"}, ProjectIDs: []string{"project-1"}, PermissionCeiling: RemotePermissionAsk}},
+		ResolveRemoteRuntime: func(_ context.Context, _ RemoteBinding, proposed RemoteRuntime, _ InboundMessage) (RemoteRuntime, error) {
+			proposed.WorkspaceRoot, proposed.ProjectID, proposed.PermissionMode = "/workspace", "project-1", RemotePermissionAsk
+			return proposed, nil
+		},
+	}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	adapter := newFakeAdapter(PlatformFeishu, "fake-lark")
+	msg := InboundMessage{Platform: PlatformFeishu, ConnectionID: "feishu-lark", Domain: "lark", ChatType: ChatDM, ChatID: "chat-queue", UserID: "owner", MessageID: "active-first", Text: "first"}
+	ctrl := &remoteTaskSequenceController{root: "/workspace", firstStarted: make(chan struct{}), firstCancelled: make(chan struct{}), releaseFirst: make(chan struct{}), laterDone: make(chan struct{}, 4)}
+	gw.controllers[BuildSessionKey(msg.Session())] = &sessionState{ctrl: ctrl, sink: &sessionEventSink{}, platform: msg.Platform, connectionID: msg.ConnectionID, workspaceRoot: "/workspace", toolApprovalMode: "ask", projectID: "project-1", pendingAsks: map[string][]event.AskQuestion{}, pendingApprovals: map[string]event.Approval{}}
+	return gw, store, adapter, ctrl, msg
+}
+
+func waitRemoteTaskStatus(t *testing.T, store *RemoteStore, taskID string, want RemoteTaskStatus) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if task, err := store.Task(taskID); err == nil && task.Status == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	task, _ := store.Task(taskID)
+	t.Fatalf("task %s status = %s, want %s", taskID, task.Status, want)
 }
 
 func TestGatewayConstructAndStop(t *testing.T) {
@@ -351,7 +824,6 @@ func TestGatewayStartsHealthyAdaptersWhenOneFails(t *testing.T) {
 	if err := gw.Start(context.Background()); err != nil {
 		t.Fatalf("start should keep healthy adapters running: %v", err)
 	}
-	defer gw.Stop()
 	if got := gw.AdapterCount(); got != 1 {
 		t.Fatalf("adapter count = %d, want 1", got)
 	}
@@ -463,35 +935,6 @@ func TestGatewayAllowlistCheck(t *testing.T) {
 	}
 }
 
-func TestGatewayRejectsBeforeInboundEnrichment(t *testing.T) {
-	adapter := newFakeAdapter(PlatformFeishu, "feishu")
-	gw := NewGateway(GatewayConfig{Allowlist: AllowlistConfig{
-		Enabled: true,
-		Users:   map[Platform][]string{PlatformFeishu: {"allowed-user"}},
-	}}, map[Platform]Adapter{PlatformFeishu: adapter}, discardLogger())
-
-	mediaLoads := 0
-	nameLoads := 0
-	gw.handleMessage(context.Background(), AdapterBinding{ID: "feishu", Platform: PlatformFeishu, Adapter: adapter}, InboundMessage{
-		Platform: PlatformFeishu,
-		ChatType: ChatDM,
-		ChatID:   "chat",
-		UserID:   "blocked-user",
-		Media: []InboundMedia{{Load: func(context.Context) ([]byte, string, error) {
-			mediaLoads++
-			return []byte("payload"), "payload.txt", nil
-		}}},
-		ResolveUserName: func(context.Context) string {
-			nameLoads++
-			return "Blocked User"
-		},
-	})
-
-	if mediaLoads != 0 || nameLoads != 0 {
-		t.Fatalf("pre-admission enrichment calls = media:%d name:%d, want zero", mediaLoads, nameLoads)
-	}
-}
-
 func TestGatewayRoleListsGrantAllowlistAdmission(t *testing.T) {
 	cfg := GatewayConfig{
 		Allowlist: AllowlistConfig{
@@ -538,6 +981,91 @@ func TestGatewayApproverRoleDoesNotGrantAdminCommands(t *testing.T) {
 	}
 	if gw.checkCommandRole(PlatformFeishu, msg, "admin") {
 		t.Error("approver should not be allowed to run admin commands")
+	}
+}
+
+func TestGatewayRoleChecksFailClosedWhenRoleListsAreEmpty(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	msg := InboundMessage{
+		Platform:     PlatformFeishu,
+		ConnectionID: "feishu-primary",
+		ChatType:     ChatDM,
+		ChatID:       "chat",
+		UserID:       "ordinary_user",
+	}
+
+	t.Run("global allowlist", func(t *testing.T) {
+		gw := NewGateway(GatewayConfig{
+			Allowlist: AllowlistConfig{
+				Enabled: true,
+				Users: map[Platform][]string{
+					PlatformFeishu: {"ordinary_user"},
+				},
+			},
+		}, nil, logger)
+		if gw.checkCommandRole(PlatformFeishu, msg, "admin") {
+			t.Fatal("ordinary allowlisted user must not inherit admin when admin and approver lists are empty")
+		}
+		if gw.checkCommandRole(PlatformFeishu, msg, "approver") {
+			t.Fatal("ordinary allowlisted user must not inherit approver when admin and approver lists are empty")
+		}
+	})
+
+	t.Run("connection access", func(t *testing.T) {
+		gw := NewGateway(GatewayConfig{
+			ConnectionAccess: map[string]AccessConfig{
+				"feishu-primary": {
+					Enabled: true,
+					Users:   []string{"ordinary_user"},
+				},
+			},
+			Allowlist: AllowlistConfig{AllowAll: true},
+		}, nil, logger)
+		if gw.checkCommandRole(PlatformFeishu, msg, "admin") {
+			t.Fatal("ordinary connection user must not inherit admin when role lists are empty")
+		}
+		if gw.checkCommandRole(PlatformFeishu, msg, "approver") {
+			t.Fatal("ordinary connection user must not inherit approver when role lists are empty")
+		}
+	})
+}
+
+func TestGatewayOrdinaryAllowlistUserCannotRunPrivilegedCommands(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	commands := []string{
+		"/yolo on",
+		"/projects",
+		"/use project default",
+		"/attach session existing",
+		"/search all secret",
+		"/approve approval-1",
+	}
+	for _, command := range commands {
+		t.Run(command, func(t *testing.T) {
+			gw := NewGateway(GatewayConfig{
+				Allowlist: AllowlistConfig{
+					Enabled: true,
+					Users: map[Platform][]string{
+						PlatformWeixin: {"ordinary_user"},
+					},
+				},
+			}, nil, logger)
+			adapter := newFakeAdapter(PlatformWeixin, "fake-weixin")
+			msg := InboundMessage{
+				Platform: PlatformWeixin,
+				ChatType: ChatDM,
+				ChatID:   "chat",
+				UserID:   "ordinary_user",
+				Text:     command,
+			}
+
+			gw.handleSlashCommand(context.Background(), adapter, BuildSessionKey(msg.Session()), msg)
+
+			sent := adapter.sentMessages()
+			if len(sent) != 1 || !strings.Contains(sent[0].Text, "没有执行此 bot 命令的权限") {
+				t.Fatalf("sent = %#v, want permission denial", sent)
+			}
+		})
 	}
 }
 
@@ -669,28 +1197,6 @@ func TestGatewayNormalizesNumericApprovalShortcutsOnlyWhenPending(t *testing.T) 
 	}
 }
 
-func TestGatewayNormalizesTaskGrantRecoveryShortcuts(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	gw := NewGateway(GatewayConfig{}, nil, logger)
-	key := "recovery-key"
-	gw.controllers[key] = &sessionState{
-		pendingApprovals: map[string]event.Approval{
-			"r1": {ID: "r1", Kind: "recovery", Recovery: &event.RecoveryApproval{CanGrantTask: true}},
-		},
-		lastApprovalID: "r1",
-	}
-	for input, want := range map[string]string{
-		"1": "/recovery-continue r1",
-		"2": "/recovery-continue-task r1",
-		"3": "/recovery-revise r1",
-	} {
-		got, ok := gw.normalizeApprovalShortcut(key, input)
-		if !ok || got != want {
-			t.Fatalf("normalize %q = %q,%v; want %q,true", input, got, ok, want)
-		}
-	}
-}
-
 func TestGatewayNormalizesAskShortcutForPendingAsk(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	gw := NewGateway(GatewayConfig{}, nil, logger)
@@ -801,9 +1307,12 @@ func TestGatewayNumericApprovalShortcutActiveWithoutPendingSendsGuidance(t *test
 
 func TestGatewayApproveWithoutSessionSendsGuidance(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	gw := NewGateway(GatewayConfig{}, nil, logger)
+	gw := NewGateway(GatewayConfig{Allowlist: AllowlistConfig{
+		AllowAll:  true,
+		Approvers: map[Platform][]string{PlatformWeixin: {"user"}},
+	}}, nil, logger)
 	adapter := newFakeAdapter(PlatformWeixin, "fake-weixin")
-	msg := InboundMessage{ChatType: ChatDM, ChatID: "chat", UserID: "user", Text: "/approve 1"}
+	msg := InboundMessage{Platform: PlatformWeixin, ChatType: ChatDM, ChatID: "chat", UserID: "user", Text: "/approve 1"}
 
 	gw.handleSlashCommand(context.Background(), adapter, "missing-session", msg)
 
@@ -840,11 +1349,7 @@ func TestGatewayNewSessionRemembersRotatedSessionPath(t *testing.T) {
 	oldPath := agent.NewSessionPath(sessionDir, "old-model")
 	exec := agent.New(gatewayFakeProvider{}, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
 	ctrl := control.New(control.Options{Executor: exec, SessionDir: sessionDir, SessionPath: oldPath, Label: "fake-model"})
-	leases := control.NewSessionLeaseKeeper()
-	if err := leases.Rebind(oldPath); err != nil {
-		t.Fatalf("bind old session lease: %v", err)
-	}
-	gw.controllers[key] = &sessionState{ctrl: ctrl, leases: leases, sessionPath: oldPath}
+	gw.controllers[key] = &sessionState{ctrl: ctrl}
 
 	gw.handleSlashCommand(context.Background(), adapter, key, msg)
 
@@ -857,97 +1362,6 @@ func TestGatewayNewSessionRemembersRotatedSessionPath(t *testing.T) {
 	if ctrl.SessionPath() == oldPath {
 		t.Fatalf("controller session path was not rotated")
 	}
-	if got := leases.HeldPath(); got != agent.CanonicalSessionPath(ctrl.SessionPath()) {
-		t.Fatalf("held lease = %q, want rotated path %q", got, agent.CanonicalSessionPath(ctrl.SessionPath()))
-	}
-	oldLease, err := agent.TryAcquireSessionLease(oldPath)
-	if err != nil {
-		t.Fatalf("old session lease was not released: %v", err)
-	}
-	oldLease.Release()
-	gw.closeSessions()
-}
-
-func TestGatewayNewSessionLeaseFailureRetiresSession(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	readyCalls := 0
-	gw := NewGateway(GatewayConfig{
-		OnSessionReady: func(InboundMessage, string) error {
-			readyCalls++
-			return nil
-		},
-	}, nil, logger)
-	adapter := newFakeAdapter(PlatformWeixin, "fake-weixin")
-	msg := InboundMessage{
-		Platform:     PlatformWeixin,
-		ConnectionID: "weixin-weixin",
-		Domain:       "weixin",
-		ChatType:     ChatDM,
-		ChatID:       "chat",
-		UserID:       "user",
-		Text:         "/new",
-	}
-	key := BuildSessionKey(msg.Session())
-	sessionDir := t.TempDir()
-	oldPath := filepath.Join(sessionDir, "old.jsonl")
-	newPath := filepath.Join(sessionDir, "new.jsonl")
-	ctrl := &rotatingBotController{path: oldPath, newPath: newPath}
-	leases := control.NewSessionLeaseKeeper()
-	if err := leases.Rebind(oldPath); err != nil {
-		t.Fatalf("bind old session lease: %v", err)
-	}
-	blocker, err := agent.TryAcquireSessionLease(newPath)
-	if err != nil {
-		t.Fatalf("hold rotated session lease: %v", err)
-	}
-	defer blocker.Release()
-	gw.controllers[key] = &sessionState{ctrl: ctrl, leases: leases, sessionPath: oldPath}
-
-	gw.handleSlashCommand(context.Background(), adapter, key, msg)
-
-	gw.mu.Lock()
-	_, exists := gw.controllers[key]
-	gw.mu.Unlock()
-	if exists {
-		t.Fatal("lease-failed session remains registered")
-	}
-	if ctrl.newCalls != 1 || !ctrl.closed {
-		t.Fatalf("controller lifecycle = new calls %d closed %v, want 1/true", ctrl.newCalls, ctrl.closed)
-	}
-	if got := leases.HeldPath(); got != "" {
-		t.Fatalf("old lease remained held after retirement: %q", got)
-	}
-	oldLease, err := agent.TryAcquireSessionLease(oldPath)
-	if err != nil {
-		t.Fatalf("old session lease was not released after retirement: %v", err)
-	}
-	oldLease.Release()
-	if readyCalls != 0 {
-		t.Fatalf("session-ready callback ran %d times after failed creation", readyCalls)
-	}
-	sent := adapter.sentMessages()
-	if len(sent) != 1 || !strings.Contains(sent[0].Text, "新会话创建失败") || strings.Contains(sent[0].Text, "已开始新会话") {
-		t.Fatalf("sent messages = %+v, want a single creation-failed response", sent)
-	}
-}
-
-func TestGatewayCloseSessionStateReleasesSessionLease(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	gw := NewGateway(GatewayConfig{}, nil, logger)
-	path := filepath.Join(t.TempDir(), "session.jsonl")
-	leases := control.NewSessionLeaseKeeper()
-	if err := leases.Rebind(path); err != nil {
-		t.Fatalf("bind session lease: %v", err)
-	}
-	ctrl := control.New(control.Options{})
-
-	gw.closeSessionState(&sessionState{ctrl: ctrl, leases: leases})
-
-	lease, err := agent.TryAcquireSessionLease(path)
-	if err != nil {
-		t.Fatalf("session lease was not released after controller close: %v", err)
-	}
-	lease.Release()
 }
 
 func TestGatewayYoloCommandUpdatesCurrentSessionAndConnectionDefault(t *testing.T) {
@@ -956,6 +1370,10 @@ func TestGatewayYoloCommandUpdatesCurrentSessionAndConnectionDefault(t *testing.
 	var persistedConnection string
 	gw := NewGateway(GatewayConfig{
 		ToolApprovalMode: "ask",
+		Allowlist: AllowlistConfig{
+			AllowAll: true,
+			Admins:   map[Platform][]string{PlatformFeishu: {"user"}},
+		},
 		ConnectionChannels: map[string]ChannelConfig{
 			"feishu-lark": {ToolApprovalMode: "ask"},
 		},
@@ -1074,7 +1492,10 @@ func TestGatewayUpdateConnectionToolApprovalModeInheritsGatewayDefault(t *testin
 
 func TestGatewayApprovalReplyUnblocksWedgedTurn(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	gw := NewGateway(GatewayConfig{Allowlist: AllowlistConfig{AllowAll: true}}, nil, logger)
+	gw := NewGateway(GatewayConfig{Allowlist: AllowlistConfig{
+		AllowAll:  true,
+		Approvers: map[Platform][]string{PlatformFeishu: {"user"}},
+	}}, nil, logger)
 	adapter := newFakeAdapter(PlatformFeishu, "fake-feishu")
 	binding := AdapterBinding{ID: "feishu", Platform: PlatformFeishu, Adapter: adapter}
 	msg := InboundMessage{
@@ -1127,64 +1548,13 @@ func TestGatewayApprovalReplyUnblocksWedgedTurn(t *testing.T) {
 	}
 }
 
-func TestGatewayAskReplyUnblocksWedgedTurn(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	gw := NewGateway(GatewayConfig{Allowlist: AllowlistConfig{AllowAll: true}}, nil, logger)
-	adapter := newFakeAdapter(PlatformFeishu, "fake-feishu")
-	binding := AdapterBinding{ID: "feishu", Platform: PlatformFeishu, Adapter: adapter}
-	msg := InboundMessage{
-		Platform:     PlatformFeishu,
-		ConnectionID: "feishu",
-		ChatType:     ChatDM,
-		ChatID:       "chat",
-		UserID:       "user",
-		Text:         "choose a plan",
-	}
-	key := BuildSessionKey(msg.Session())
-	sink := &sessionEventSink{}
-	ctrl := &blockingAskController{
-		emit:     sink.Emit,
-		emitted:  make(chan struct{}),
-		answered: make(chan []event.AskAnswer, 1),
-		done:     make(chan struct{}),
-	}
-	gw.controllers[key] = &sessionState{
-		ctrl:             ctrl,
-		sink:             sink,
-		pendingApprovals: make(map[string]event.Approval),
-		pendingAsks:      make(map[string][]event.AskQuestion),
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go gw.dispatchLoop(ctx, binding)
-
-	adapter.msgCh <- msg
-	select {
-	case <-ctrl.emitted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("ask request was never emitted; turn did not start")
-	}
-
-	adapter.msgCh <- InboundMessage{
-		Platform:     PlatformFeishu,
-		ConnectionID: "feishu",
-		ChatType:     ChatDM,
-		ChatID:       "chat",
-		UserID:       "user",
-		Text:         "1",
-	}
-
-	select {
-	case <-ctrl.done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("deadlock: ask reply was not delivered while the turn blocked on user choice")
-	}
-}
-
 func TestGatewayModeCommandSupportsAskAutoAndStatus(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	gw := NewGateway(GatewayConfig{
+		Allowlist: AllowlistConfig{
+			AllowAll: true,
+			Admins:   map[Platform][]string{PlatformWeixin: {"user"}},
+		},
 		ConnectionChannels: map[string]ChannelConfig{
 			"weixin-weixin": {ToolApprovalMode: "ask"},
 		},
@@ -1256,6 +1626,10 @@ func TestGatewayProjectCommandsListAndUseProjectOverride(t *testing.T) {
 	}
 	gw := NewGateway(GatewayConfig{
 		WorkspaceRoot: alpha,
+		Allowlist: AllowlistConfig{
+			AllowAll: true,
+			Admins:   map[Platform][]string{PlatformWeixin: {"user"}},
+		},
 		ConnectionChannels: map[string]ChannelConfig{
 			"weixin-main": {WorkspaceRoot: beta},
 		},
@@ -1309,7 +1683,13 @@ func TestGatewaySessionsSearchAndAttachSessionOverride(t *testing.T) {
 	if err := agent.UpdateSessionMeta(sessionPath, "model-a", "needle attach conversation", 1, true); err != nil {
 		t.Fatalf("UpdateSessionMeta: %v", err)
 	}
-	gw := NewGateway(GatewayConfig{WorkspaceRoot: projectRoot}, nil, logger)
+	gw := NewGateway(GatewayConfig{
+		WorkspaceRoot: projectRoot,
+		Allowlist: AllowlistConfig{
+			AllowAll: true,
+			Admins:   map[Platform][]string{PlatformFeishu: {"user"}},
+		},
+	}, nil, logger)
 	adapter := newFakeAdapter(PlatformFeishu, "fake-feishu")
 	msg := InboundMessage{
 		Platform:     PlatformFeishu,
@@ -1335,68 +1715,6 @@ func TestGatewaySessionsSearchAndAttachSessionOverride(t *testing.T) {
 	}
 	if canonicalBotPath(profile.workspaceRoot) != canonicalBotPath(projectRoot) {
 		t.Fatalf("attached workspace root = %q, want %q", profile.workspaceRoot, projectRoot)
-	}
-}
-
-func TestGatewayRuntimeOverridePreservesControllersWithActiveWork(t *testing.T) {
-	tests := []struct {
-		name         string
-		status       control.RuntimeStatus
-		admittedTurn bool
-	}{
-		{name: "foreground turn", status: control.RuntimeStatus{Running: true}},
-		{name: "pending prompt", status: control.RuntimeStatus{PendingPrompt: true}},
-		{name: "background job", status: control.RuntimeStatus{BackgroundJobs: 1}},
-		{name: "admitted turn", admittedTurn: true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-			gw := NewGateway(GatewayConfig{}, nil, logger)
-			msg := InboundMessage{Platform: PlatformFeishu, ChatType: ChatDM, ChatID: "chat", UserID: "user"}
-			key := BuildSessionKey(msg.Session())
-			ctrl := &runtimeStatusBotController{status: tc.status, workspaceRoot: "/old"}
-			state := &sessionState{ctrl: ctrl, workspaceRoot: "/old"}
-			gw.controllers[key] = state
-			gw.sessionOverrides[key] = sessionRuntimeOverride{channel: ChannelConfig{WorkspaceRoot: "/old"}, label: "project:old"}
-			if tc.admittedTurn {
-				if result := gw.sessions.TryAcquireWithQueue(key, msg, QueueOptions{}); !result.Acquired {
-					t.Fatalf("admit turn: %+v", result)
-				}
-			}
-
-			text := gw.handleUseProjectCommand(key, "/use project default")
-			if !strings.Contains(text, "请先完成或停止") {
-				t.Fatalf("busy response = %q", text)
-			}
-			if ctrl.closed || gw.controllers[key] != state {
-				t.Fatalf("active controller was replaced or closed: closed=%v installed=%v", ctrl.closed, gw.controllers[key] == state)
-			}
-			if override, ok := gw.sessionOverrides[key]; !ok || override.label != "project:old" {
-				t.Fatalf("active override changed: %+v, present=%v", override, ok)
-			}
-		})
-	}
-}
-
-func TestGatewayDefersProfileMismatchWhileBackgroundWorkIsActive(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	newRoot := t.TempDir()
-	gw := NewGateway(GatewayConfig{WorkspaceRoot: newRoot}, nil, logger)
-	msg := InboundMessage{Platform: PlatformFeishu, ChatType: ChatDM, ChatID: "chat", UserID: "user"}
-	key := BuildSessionKey(msg.Session())
-	ctrl := &runtimeStatusBotController{
-		status: control.RuntimeStatus{BackgroundJobs: 1}, workspaceRoot: t.TempDir(),
-	}
-	state := &sessionState{ctrl: ctrl, workspaceRoot: ctrl.workspaceRoot}
-	gw.controllers[key] = state
-
-	got := gw.getOrCreateSession(context.Background(), key, msg)
-	if got != state || gw.controllers[key] != state || ctrl.closed {
-		t.Fatalf("profile mismatch canceled active work: gotOld=%v installed=%v closed=%v", got == state, gw.controllers[key] == state, ctrl.closed)
-	}
-	if state.workspaceRoot == newRoot {
-		t.Fatalf("deferred runtime change mutated the live profile to %q", state.workspaceRoot)
 	}
 }
 
@@ -1534,6 +1852,9 @@ func TestGatewayDefaultQueueSteersMediaOnlyActiveTurn(t *testing.T) {
 		_, _ = w.Write([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
 	}))
 	defer imageServer.Close()
+	originalMediaClient := botMediaHTTPClient
+	botMediaHTTPClient = imageServer.Client()
+	t.Cleanup(func() { botMediaHTTPClient = originalMediaClient })
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	gw := NewGateway(GatewayConfig{
@@ -1661,7 +1982,7 @@ func TestGatewayUnknownDMGetsPairingCode(t *testing.T) {
 	gw.handleMessage(context.Background(), AdapterBinding{ID: "feishu-feishu", Platform: PlatformFeishu, Adapter: adapter}, msg)
 
 	sent := adapter.sentMessages()
-	if len(sent) != 1 || !strings.Contains(sent[0].Text, "配对码") || !strings.Contains(sent[0].Text, "reasonix bot pairing approve") {
+	if len(sent) != 1 || !strings.Contains(sent[0].Text, "配对码") || !strings.Contains(sent[0].Text, "voltui bot pairing approve") {
 		t.Fatalf("sent = %#v, want pairing instructions", sent)
 	}
 	reqs, err := ListPairingRequests()
@@ -1857,48 +2178,8 @@ func TestGatewayControlServerStatusAndSend(t *testing.T) {
 	}
 	metricsBody, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(metricsBody), "reasonix_bot_adapter_sends_total") {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(metricsBody), "voltui_bot_adapter_sends_total") {
 		t.Fatalf("GET /metrics status=%d body=%q, want adapter metrics", resp.StatusCode, string(metricsBody))
-	}
-}
-
-func TestControlSendReportsAndTracksPartialDelivery(t *testing.T) {
-	adapter := &resultAdapter{
-		fakeAdapter: newFakeAdapter(PlatformFeishu, "partial-feishu"),
-		result: SendResult{
-			MessageID:  "media-2",
-			MessageIDs: []string{"text-1", "media-1", "media-2"},
-		},
-		err: errors.New("media-3 failed"),
-	}
-	gw := NewGatewayWithAdapterBindings(GatewayConfig{
-		IgnoreSelfMessages: true,
-	}, []AdapterBinding{{ID: "feishu-lark", Platform: PlatformFeishu, Domain: "lark", Adapter: adapter}}, discardLogger())
-	req := httptest.NewRequest(http.MethodPost, "/send", strings.NewReader(`{"connection_id":"feishu-lark","domain":"lark","chat_id":"chat","text":"hello"}`))
-	recorder := httptest.NewRecorder()
-
-	gw.handleControlSend(recorder, req)
-
-	if recorder.Code != http.StatusMultiStatus {
-		t.Fatalf("POST /send status = %d, want %d", recorder.Code, http.StatusMultiStatus)
-	}
-	var response controlSendResponse
-	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
-		t.Fatalf("decode partial response: %v", err)
-	}
-	if !response.Partial || response.Error != "media-3 failed" || len(response.MessageIDs) != 3 {
-		t.Fatalf("partial response = %+v", response)
-	}
-	for _, messageID := range response.MessageIDs {
-		if !gw.isSelfMessage(InboundMessage{
-			Platform:     PlatformFeishu,
-			ConnectionID: "feishu-lark",
-			Domain:       "lark",
-			ChatID:       "chat",
-			MessageID:    messageID,
-		}) {
-			t.Fatalf("delivered message %q was not registered for echo suppression", messageID)
-		}
 	}
 }
 

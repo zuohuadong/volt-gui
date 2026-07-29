@@ -370,8 +370,7 @@ func (p *skillPicker) filteredSkills() []skill.Skill {
 	q := strings.ToLower(p.query)
 	var out []skill.Skill
 	for _, s := range p.skills {
-		if strings.Contains(strings.ToLower(s.SlashName()), q) ||
-			strings.Contains(strings.ToLower(s.Plugin), q) ||
+		if strings.Contains(strings.ToLower(s.Name), q) ||
 			strings.Contains(strings.ToLower(s.Description), q) {
 			out = append(out, s)
 		}

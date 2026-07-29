@@ -9,10 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"voltui/internal/config"
-	fileencoding "voltui/internal/fileutil/encoding"
 	"voltui/internal/frontmatter"
 )
 
@@ -73,7 +70,7 @@ type ArchivedMemory struct {
 }
 
 // StoreFor resolves the auto-memory directory for a project working dir under
-// VoltUI home, e.g. ~/.voltui/projects/-Users-me-proj/memory.
+// Reasonix home, e.g. ~/.voltui/projects/-Users-me-proj/memory.
 // A "" userDir (config dir unresolvable) yields a zero Store, which all methods
 // treat as a disabled no-op.
 func StoreFor(userDir, cwd string) Store {
@@ -119,7 +116,7 @@ func (s Store) Index() string {
 		if dir == "" {
 			continue
 		}
-		b, err := fileencoding.ReadFileUTF8(filepath.Join(dir, indexFile))
+		b, err := os.ReadFile(filepath.Join(dir, indexFile))
 		if err != nil {
 			continue
 		}
@@ -378,34 +375,19 @@ func repairOwnerWrite(root *os.Root, path string, dir bool) {
 	_ = root.Chmod(path, info.Mode().Perm()|need)
 }
 
-// memoryFrontmatter is the YAML shape render emits, mirroring the auto-memory
-// shape (name / description / metadata.type) so the files are interchangeable
-// with that ecosystem and re-readable by loadMemory. Marshaled by yaml.v3 so a
-// title or description containing ": ", '#', or quotes is escaped instead of
-// corrupting the block — frontmatter.Split returns an EMPTY map for
-// unparseable YAML, which would silently drop the memory's name/title/type on
-// the next load. Plain values render byte-identically to the previous
-// hand-built format.
-type memoryFrontmatter struct {
-	Name     string `yaml:"name"`
-	Title    string `yaml:"title,omitempty"`
-	Desc     string `yaml:"description"`
-	Metadata struct {
-		Type string `yaml:"type"`
-	} `yaml:"metadata"`
-}
-
-// render serializes a memory to frontmatter + body.
+// render serializes a memory to frontmatter + body. The frontmatter mirrors the
+// auto-memory shape (name / description / metadata.type) so the files are
+// interchangeable with that ecosystem and re-readable by loadMemory.
 func render(m Memory, name string) string {
-	fm := memoryFrontmatter{Name: name, Title: oneLine(m.Title), Desc: oneLine(m.Description)}
-	fm.Metadata.Type = string(NormalizeType(string(m.Type)))
 	var b strings.Builder
 	b.WriteString("---\n")
-	enc := yaml.NewEncoder(&b)
-	enc.SetIndent(2)
-	// Encoding a flat struct of strings cannot fail.
-	_ = enc.Encode(fm)
-	_ = enc.Close()
+	b.WriteString("name: " + name + "\n")
+	if t := oneLine(m.Title); t != "" {
+		b.WriteString("title: " + t + "\n")
+	}
+	b.WriteString("description: " + oneLine(m.Description) + "\n")
+	b.WriteString("metadata:\n")
+	b.WriteString("  type: " + string(NormalizeType(string(m.Type))) + "\n")
 	b.WriteString("---\n\n")
 	b.WriteString(strings.TrimSpace(m.Body))
 	b.WriteString("\n")
@@ -420,7 +402,7 @@ var indexLineRe = regexp.MustCompile(`(?m)^\s*-\s\[.+?\]\(([^)]+)\.md\)\s*—\s.
 // indexLinesExceptIn returns the managed MEMORY.md lines keyed by filename stem
 // in the given directory, dropping the entry for name (a missing index → empty map).
 func indexLinesExceptIn(dir, name string) map[string]string {
-	existing, _ := fileencoding.ReadFileUTF8(filepath.Join(dir, indexFile))
+	existing, _ := os.ReadFile(filepath.Join(dir, indexFile))
 	keep := map[string]string{}
 	for _, line := range strings.Split(string(existing), "\n") {
 		if mt := indexLineRe.FindStringSubmatch(line); mt != nil && mt[1] != name {
@@ -431,7 +413,7 @@ func indexLinesExceptIn(dir, name string) map[string]string {
 }
 
 func indexContainsIn(dir, name string) bool {
-	existing, err := fileencoding.ReadFileUTF8(filepath.Join(dir, indexFile))
+	existing, err := os.ReadFile(filepath.Join(dir, indexFile))
 	if err != nil {
 		return false
 	}
@@ -448,7 +430,7 @@ func indexContainsIn(dir, name string) bool {
 // new managed entries are appended in sorted order.
 func flushIndexIn(dir string, lines map[string]string) error {
 	path := filepath.Join(dir, indexFile)
-	existing, _ := fileencoding.ReadFileUTF8(path)
+	existing, _ := os.ReadFile(path)
 	processed := map[string]bool{}
 	var preserved strings.Builder
 	preservedEmpty := true
@@ -602,7 +584,7 @@ func archiveTimeFromName(name string) time.Time {
 // frontmatter render writes; a file without frontmatter still loads with its
 // body and a name derived from the filename.
 func loadMemory(path string) (Memory, bool) {
-	b, err := fileencoding.ReadFileUTF8(path)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return Memory{}, false
 	}

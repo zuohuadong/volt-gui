@@ -6,17 +6,16 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	stdhtml "html"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
-	"unicode"
 
-	nethtml "golang.org/x/net/html"
 	"golang.org/x/net/proxy"
 
 	"voltui/internal/netclient"
@@ -26,7 +25,21 @@ import (
 func init() { tool.RegisterBuiltin(webFetch{}) }
 
 type webFetch struct {
-	proxySpec netclient.ProxySpec
+	proxySpec       netclient.ProxySpec
+	trustedIntranet TrustedIntranetPolicy
+	lookupIP        func(context.Context, string) ([]net.IPAddr, error)
+	dialContext     func(context.Context, string, string) (net.Conn, error)
+}
+
+type TrustedIntranetPolicy struct {
+	Enabled bool
+	Sites   []TrustedIntranetSite
+}
+
+type TrustedIntranetSite struct {
+	Host  string
+	CIDRs []string
+	Ports []int
 }
 
 const (
@@ -52,12 +65,6 @@ func (webFetch) Schema() json.RawMessage {
 
 func (webFetch) ReadOnly() bool { return true }
 
-// SnipHint front-loads fetched page content like a file read: keep a generous
-// head and a short tail.
-func (webFetch) SnipHint() tool.SnipHint {
-	return tool.SnipHint{Head: 120, Tail: 12, HeadChars: 12000, TailChars: 2000}
-}
-
 // ssrfGuardedTransport refuses to connect to private, link-local, or unspecified
 // addresses — the SSRF surface a prompt-injected fetch would aim at (cloud
 // metadata at 169.254.169.254, RFC1918 internal services). Loopback is allowed:
@@ -70,22 +77,10 @@ func ssrfGuardedTransport(proxyURL string) *http.Transport {
 	// directDialContext handles SSRF-protected direct connection (no proxy).
 	// It resolves DNS locally, checks resolved IPs against the SSRF blocklist,
 	// then dials the vetted IP directly to prevent DNS rebinding.
-	directDialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			return nil, err
-		}
-		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-		if err != nil {
-			return nil, err
-		}
-		for _, ip := range ips {
-			if blockedFetchIP(ip.IP) {
-				return nil, fmt.Errorf("refusing to fetch internal address %s (resolves to %s)", host, ip.IP)
-			}
-		}
-		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
-	}
+	directDialContext := (netclient.GuardedDialer{
+		Timeout:       webFetchTimeout,
+		AllowLoopback: true,
+	}).DialContext
 
 	tr := &http.Transport{
 		DialContext: directDialContext,
@@ -189,44 +184,201 @@ func ssrfGuardedTransport(proxyURL string) *http.Transport {
 }
 
 type webFetchRoundTripper struct {
-	proxyURLFor func(*http.Request) (string, error)
+	wf     webFetch
+	grants *webFetchCallGrants
 }
 
 func (rt webFetchRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	proxyURL, err := rt.proxyURLFor(req)
+	proxyURL, err := rt.wf.proxyURLFor(req)
 	if err != nil {
 		return nil, fmt.Errorf("resolve proxy: %w", err)
+	}
+	ips, err := rt.wf.resolveTarget(req.Context(), req.URL.Hostname())
+	if err != nil {
+		// A configured proxy may be the only resolver for public internet names.
+		// Preserve that path; private IP literals and locally-resolved private
+		// names still go through the approval checks below.
+		if proxyURL != "" && net.ParseIP(req.URL.Hostname()) == nil {
+			return ssrfGuardedTransport(proxyURL).RoundTrip(req)
+		}
+		return nil, err
+	}
+	port, err := webFetchURLPort(req.URL)
+	if err != nil {
+		return nil, err
+	}
+	for _, resolved := range ips {
+		if hardBlockedFetchIP(resolved.IP) {
+			return nil, fmt.Errorf("refusing to fetch internal address %s (resolves to %s)", req.URL.Hostname(), resolved.IP)
+		}
+	}
+
+	privateIPs := make([]net.IPAddr, 0, len(ips))
+	for _, resolved := range ips {
+		ip := resolved.IP
+		if !authorizablePrivateFetchIP(ip) {
+			continue
+		}
+		privateIPs = append(privateIPs, resolved)
+		if err := rt.authorizePrivateTarget(req, ip, port); err != nil {
+			return nil, err
+		}
+	}
+	if len(privateIPs) > 0 {
+		return rt.wf.pinnedDirectTransport(privateIPs).RoundTrip(req)
 	}
 	return ssrfGuardedTransport(proxyURL).RoundTrip(req)
 }
 
-func ssrfGuardedClient(proxyURLFor func(*http.Request) (string, error)) *http.Client {
+func (rt webFetchRoundTripper) authorizePrivateTarget(req *http.Request, ip net.IP, port int) error {
+	host := normalizeTrustedIntranetHost(req.URL.Hostname())
+	grantKey := trustedIntranetGrantKey(host, ip.String(), port)
+	if rt.wf.trustedIntranet.Allows(host, ip, port) || rt.grants.allowed(grantKey) {
+		return nil
+	}
+	approvalReq := tool.TrustedIntranetRequest{URL: req.URL.String(), Host: host, IP: ip.String(), Port: port}
+	approver, ok := tool.TrustedIntranetApproverFrom(req.Context())
+	if !ok {
+		return fmt.Errorf("refusing to fetch internal address %s (resolves to %s): trusted intranet access requires user approval", host, ip)
+	}
+	if approver.TrustedIntranetSessionAllowed(req.Context(), approvalReq) {
+		rt.grants.grant(grantKey)
+		return nil
+	}
+	allow, reason, err := approver.ApproveTrustedIntranet(req.Context(), approvalReq)
+	if err != nil {
+		return fmt.Errorf("trusted intranet approval for %s: %w", host, err)
+	}
+	if !allow {
+		if strings.TrimSpace(reason) == "" {
+			reason = "user declined trusted intranet access"
+		}
+		return fmt.Errorf("trusted intranet access to %s declined: %s", host, reason)
+	}
+	rt.grants.grant(grantKey)
+	return nil
+}
+
+func ssrfGuardedClient(wf webFetch) *http.Client {
 	return &http.Client{
 		Timeout:   webFetchTimeout,
-		Transport: webFetchRoundTripper{proxyURLFor: proxyURLFor},
+		Transport: webFetchRoundTripper{wf: wf, grants: &webFetchCallGrants{allowedKeys: map[string]bool{}}},
 	}
 }
 
-// cgnatRange is RFC 6598 shared address space (100.64.0.0/10). Go's IsPrivate
-// doesn't cover it, yet some clouds host instance metadata there (Alibaba Cloud
-// at 100.100.100.200), so it's an SSRF target web_fetch must refuse too.
-var cgnatRange = mustCIDR("100.64.0.0/10")
+type webFetchCallGrants struct {
+	mu          sync.Mutex
+	allowedKeys map[string]bool
+}
 
-func mustCIDR(s string) *net.IPNet {
-	_, n, err := net.ParseCIDR(s)
-	if err != nil {
-		panic(err)
+func (g *webFetchCallGrants) allowed(key string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.allowedKeys[key]
+}
+
+func (g *webFetchCallGrants) grant(key string) {
+	g.mu.Lock()
+	g.allowedKeys[key] = true
+	g.mu.Unlock()
+}
+
+func trustedIntranetGrantKey(host, ip string, port int) string {
+	return fmt.Sprintf("%s|%s|%d", normalizeTrustedIntranetHost(host), ip, port)
+}
+
+func normalizeTrustedIntranetHost(host string) string {
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(strings.Trim(host, "[]")), "."))
+}
+
+func (p TrustedIntranetPolicy) Allows(host string, ip net.IP, port int) bool {
+	if !p.Enabled || !authorizablePrivateFetchIP(ip) {
+		return false
 	}
-	return n
+	host = normalizeTrustedIntranetHost(host)
+	for _, site := range p.Sites {
+		if normalizeTrustedIntranetHost(site.Host) != host || !intListContains(site.Ports, port) {
+			continue
+		}
+		for _, raw := range site.CIDRs {
+			_, network, err := net.ParseCIDR(strings.TrimSpace(raw))
+			if err == nil && network.Contains(ip) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func intListContains(values []int, want int) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func webFetchURLPort(u *url.URL) (int, error) {
+	if raw := u.Port(); raw != "" {
+		port, err := strconv.Atoi(raw)
+		if err != nil || port < 1 || port > 65535 {
+			return 0, fmt.Errorf("invalid URL port %q", raw)
+		}
+		return port, nil
+	}
+	if u.Scheme == "https" {
+		return 443, nil
+	}
+	return 80, nil
+}
+
+func (wf webFetch) resolveTarget(ctx context.Context, host string) ([]net.IPAddr, error) {
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		return []net.IPAddr{{IP: ip}}, nil
+	}
+	lookup := wf.lookupIP
+	if lookup == nil {
+		lookup = net.DefaultResolver.LookupIPAddr
+	}
+	ips, err := lookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("host %s resolved to no addresses", host)
+	}
+	return ips, nil
+}
+
+func (wf webFetch) pinnedDirectTransport(ips []net.IPAddr) *http.Transport {
+	dial := wf.dialContext
+	if dial == nil {
+		dial = (&net.Dialer{Timeout: webFetchTimeout}).DialContext
+	}
+	return &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		_, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		if len(ips) == 0 {
+			return nil, fmt.Errorf("no vetted address available")
+		}
+		return dial(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+	}}
 }
 
 // blockedFetchIP reports whether ip is an address web_fetch must not reach.
 func blockedFetchIP(ip net.IP) bool {
-	return ip.IsPrivate() || // RFC1918 + IPv6 unique-local (fc00::/7)
-		ip.IsLinkLocalUnicast() || // 169.254.0.0/16 (incl. cloud metadata) + fe80::/10
-		ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() || // 0.0.0.0 / ::
-		cgnatRange.Contains(ip) // 100.64.0.0/10 (incl. Alibaba Cloud metadata)
+	return netclient.IsBlockedAddress(ip, true)
+}
+
+func authorizablePrivateFetchIP(ip net.IP) bool {
+	return netclient.IsPrivateAddress(ip)
+}
+
+func hardBlockedFetchIP(ip net.IP) bool {
+	return netclient.IsHardBlockedAddress(ip, true)
 }
 
 func (wf webFetch) proxyURLFor(req *http.Request) (string, error) {
@@ -267,10 +419,10 @@ func (wf webFetch) Execute(ctx context.Context, args json.RawMessage) (string, e
 	}
 	// A plain UA + Accept tip the server toward returning text/HTML rather
 	// than minified asset bundles or binary content.
-	req.Header.Set("User-Agent", "reasonix-web-fetch/1.0")
+	req.Header.Set("User-Agent", "voltui-web-fetch/1.0")
 	req.Header.Set("Accept", "text/html,text/plain,text/markdown,application/json,*/*;q=0.5")
 
-	resp, err := ssrfGuardedClient(wf.proxyURLFor).Do(req)
+	resp, err := ssrfGuardedClient(wf).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: %w", p.URL, err)
 	}
@@ -306,275 +458,38 @@ func looksLikeHTML(s string) bool {
 }
 
 var (
-	multiBlank = regexp.MustCompile(`\n[\t ]*\n([\t ]*\n)+`)
-	trailingWS = regexp.MustCompile(`[\t ]+\n`)
+	scriptStyle = regexp.MustCompile(`(?is)<(script|style)[^>]*>.*?</(?:script|style)>`)
+	htmlComment = regexp.MustCompile(`(?s)<!--.*?-->`)
+	anyTag      = regexp.MustCompile(`(?s)<[^>]+>`)
+	multiBlank  = regexp.MustCompile(`\n[\t ]*\n([\t ]*\n)+`)
+	trailingWS  = regexp.MustCompile(`[\t ]+\n`)
 )
 
-// htmlToText tokenizes HTML, drops script/style content, unescapes entities, and
-// inserts lightweight block boundaries. It is intentionally lossy: we want to
-// give the model readable text rather than preserve structure for re-rendering.
+// htmlToText strips <script>/<style> blocks, HTML comments, and every other
+// tag, then unescapes the common entities and collapses runs of blank lines.
+// It is intentionally lossy — we want to give the model readable text rather
+// than preserve structure for re-rendering.
 func htmlToText(s string) string {
-	w := &htmlTextWriter{}
-	tokenizer := nethtml.NewTokenizer(strings.NewReader(s))
-	skipDepth := 0
-	preDepth := 0
-	for {
-		tt := tokenizer.Next()
-		switch tt {
-		case nethtml.ErrorToken:
-			return normalizeHTMLText(w.String())
-		case nethtml.TextToken:
-			if skipDepth == 0 {
-				w.Text(string(tokenizer.Text()), preDepth > 0)
-			}
-		case nethtml.StartTagToken:
-			name, hasAttr := tokenizer.TagName()
-			tag := strings.ToLower(string(name))
-			if tag == "script" || tag == "style" {
-				skipDepth++
-				continue
-			}
-			if skipDepth > 0 {
-				continue
-			}
-			if tag == "a" {
-				w.StartLink(htmlAttr(tokenizer, hasAttr, "href"))
-				continue
-			}
-			w.StartTag(tag)
-			if tag == "pre" {
-				preDepth++
-			}
-		case nethtml.SelfClosingTagToken:
-			name, _ := tokenizer.TagName()
-			tag := strings.ToLower(string(name))
-			w.SelfClosingTag(tag)
-		case nethtml.EndTagToken:
-			name, _ := tokenizer.TagName()
-			tag := strings.ToLower(string(name))
-			if skipDepth > 0 {
-				if tag == "script" || tag == "style" {
-					skipDepth--
-				}
-				continue
-			}
-			if tag == "pre" && preDepth > 0 {
-				preDepth--
-			}
-			w.EndTag(tag)
-		}
-	}
-}
+	s = scriptStyle.ReplaceAllString(s, "")
+	s = htmlComment.ReplaceAllString(s, "")
+	s = anyTag.ReplaceAllString(s, "")
 
-type htmlTextWriter struct {
-	b     strings.Builder
-	links []string
-}
+	// Unescape the entities the model is most likely to encounter. Avoids
+	// pulling in html.UnescapeString just to handle five characters.
+	repl := strings.NewReplacer(
+		"&amp;", "&",
+		"&lt;", "<",
+		"&gt;", ">",
+		"&quot;", `"`,
+		"&#39;", "'",
+		"&apos;", "'",
+		"&nbsp;", " ",
+	)
+	s = repl.Replace(s)
 
-func (w *htmlTextWriter) String() string {
-	return w.b.String()
-}
-
-func (w *htmlTextWriter) StartTag(tag string) {
-	switch tag {
-	case "title":
-		w.ensureBlankLine()
-		w.b.WriteString("# ")
-	case "h1":
-		w.ensureBlankLine()
-		w.b.WriteString("# ")
-	case "h2":
-		w.ensureBlankLine()
-		w.b.WriteString("## ")
-	case "h3":
-		w.ensureBlankLine()
-		w.b.WriteString("### ")
-	case "h4", "h5", "h6":
-		w.ensureBlankLine()
-		w.b.WriteString("#### ")
-	case "li":
-		w.ensureNewline()
-		w.b.WriteString("- ")
-	case "pre":
-		w.ensureBlankLine()
-		w.b.WriteString("```\n")
-	case "blockquote":
-		w.ensureBlankLine()
-		w.b.WriteString("> ")
-	case "tr":
-		w.ensureNewline()
-	case "td", "th":
-		w.ensureCellBoundary()
-	default:
-		if htmlBreakTag(tag) || htmlBlockTag(tag) {
-			w.ensureNewline()
-		}
-	}
-}
-
-func (w *htmlTextWriter) SelfClosingTag(tag string) {
-	if htmlBreakTag(tag) || htmlBlockTag(tag) {
-		w.ensureNewline()
-	}
-}
-
-func (w *htmlTextWriter) EndTag(tag string) {
-	switch tag {
-	case "a":
-		w.EndLink()
-	case "title", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote":
-		w.ensureBlankLine()
-	case "pre":
-		w.ensureNewline()
-		w.b.WriteString("```\n")
-		w.ensureBlankLine()
-	case "li", "p", "tr":
-		w.ensureNewline()
-	case "td", "th":
-		return
-	default:
-		if htmlBlockTag(tag) {
-			w.ensureNewline()
-		}
-	}
-}
-
-func (w *htmlTextWriter) StartLink(href string) {
-	w.links = append(w.links, strings.TrimSpace(href))
-}
-
-func (w *htmlTextWriter) EndLink() {
-	if len(w.links) == 0 {
-		return
-	}
-	href := w.links[len(w.links)-1]
-	w.links = w.links[:len(w.links)-1]
-	if href != "" {
-		w.b.WriteString(" (")
-		w.b.WriteString(href)
-		w.b.WriteByte(')')
-	}
-}
-
-func (w *htmlTextWriter) Text(text string, pre bool) {
-	text = stdhtml.UnescapeString(text)
-	text = strings.ReplaceAll(text, "\u00a0", " ")
-	if !pre {
-		text = collapseHTMLInlineText(text)
-	}
-	if strings.TrimSpace(text) == "" {
-		if !w.lastIsSpace() {
-			w.b.WriteByte(' ')
-		}
-		return
-	}
-	if !pre && w.b.Len() > 0 && !w.lastIsSpace() && !startsWithSpaceOrPunct(text) {
-		w.b.WriteByte(' ')
-	}
-	w.b.WriteString(text)
-}
-
-func (w *htmlTextWriter) ensureNewline() {
-	if w.b.Len() == 0 || w.lastByte() == '\n' {
-		return
-	}
-	w.b.WriteByte('\n')
-}
-
-func (w *htmlTextWriter) ensureBlankLine() {
-	if w.b.Len() == 0 {
-		return
-	}
-	if strings.HasSuffix(w.b.String(), "\n\n") {
-		return
-	}
-	w.ensureNewline()
-	w.b.WriteByte('\n')
-}
-
-func (w *htmlTextWriter) ensureCellBoundary() {
-	if w.b.Len() == 0 || w.lastByte() == '\n' {
-		return
-	}
-	if !strings.HasSuffix(w.b.String(), " | ") {
-		w.b.WriteString(" | ")
-	}
-}
-
-func (w *htmlTextWriter) lastByte() byte {
-	if w.b.Len() == 0 {
-		return 0
-	}
-	s := w.b.String()
-	return s[len(s)-1]
-}
-
-func (w *htmlTextWriter) lastIsSpace() bool {
-	if w.b.Len() == 0 {
-		return false
-	}
-	return unicode.IsSpace(rune(w.lastByte()))
-}
-
-func normalizeHTMLText(s string) string {
-	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = trailingWS.ReplaceAllString(s, "\n")
 	s = multiBlank.ReplaceAllString(s, "\n\n")
-	return strings.TrimSpace(s)
-}
-
-func collapseHTMLInlineText(s string) string {
-	if s == "" {
-		return ""
-	}
-	leading := unicode.IsSpace([]rune(s)[0])
-	trailing := unicode.IsSpace([]rune(s)[len([]rune(s))-1])
-	fields := strings.Fields(s)
-	if len(fields) == 0 {
-		return " "
-	}
-	out := strings.Join(fields, " ")
-	if leading {
-		out = " " + out
-	}
-	if trailing {
-		out += " "
-	}
-	return out
-}
-
-func startsWithSpaceOrPunct(s string) bool {
-	for _, r := range s {
-		return unicode.IsSpace(r) || strings.ContainsRune(".,;:!?)]}", r)
-	}
-	return false
-}
-
-func htmlAttr(tokenizer *nethtml.Tokenizer, hasAttr bool, name string) string {
-	for hasAttr {
-		key, val, more := tokenizer.TagAttr()
-		if strings.EqualFold(string(key), name) {
-			return stdhtml.UnescapeString(string(val))
-		}
-		hasAttr = more
-	}
-	return ""
-}
-
-func htmlBreakTag(tag string) bool {
-	return tag == "br" || tag == "hr"
-}
-
-func htmlBlockTag(tag string) bool {
-	switch tag {
-	case "address", "article", "aside", "blockquote", "body", "caption", "dd", "details",
-		"dialog", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form",
-		"h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "html", "li", "main", "nav",
-		"ol", "p", "pre", "section", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul":
-		return true
-	default:
-		return false
-	}
+	return s
 }
 
 func contentTypeShort(ct string) string {

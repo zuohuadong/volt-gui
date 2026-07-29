@@ -33,12 +33,12 @@ func TestBashPowerShellRunsNativeCommand(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("powershell e2e is windows-only")
 	}
-	out, err := runPS(t, "Write-Output reasonix-ok")
+	out, err := runPS(t, "Write-Output voltui-ok")
 	if err != nil {
 		t.Fatalf("powershell command failed: %v (out=%q)", err, out)
 	}
-	if !strings.Contains(out, "reasonix-ok") {
-		t.Fatalf("output = %q, want it to contain reasonix-ok", out)
+	if !strings.Contains(out, "voltui-ok") {
+		t.Fatalf("output = %q, want it to contain voltui-ok", out)
 	}
 }
 
@@ -109,6 +109,16 @@ func TestBashDescriptionReflectsShell(t *testing.T) {
 	}
 	if !strings.Contains(psDesc, "'&&' and '||' are NOT parsed") {
 		t.Errorf("powershell description should warn about unsupported chaining: %q", psDesc)
+	}
+	for _, want := range []string{"multiline Python", "write_file", "python path\\to\\verify.py", "do not compress"} {
+		if !strings.Contains(psDesc, want) {
+			t.Errorf("powershell description should provide executable multiline verification guidance %q: %q", want, psDesc)
+		}
+	}
+	for _, want := range []string{"do not use wc", "(Get-Content <path> -Raw).Length", "Get-Command git -ErrorAction SilentlyContinue", "do not use ls -la", "if git is unavailable"} {
+		if !strings.Contains(psDesc, want) {
+			t.Errorf("powershell description should provide a native character-count alternative %q: %q", want, psDesc)
+		}
 	}
 	pwsh := bash{shell: sandbox.Shell{Kind: sandbox.ShellPowerShell, Path: "pwsh"}}
 	pwshDesc := pwsh.Description()

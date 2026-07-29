@@ -8,8 +8,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/joho/godotenv"
-
 	"voltui/internal/fileutil"
 	fileencoding "voltui/internal/fileutil/encoding"
 )
@@ -19,8 +17,8 @@ const (
 	CredentialsStoreKeyring = "keyring"
 	CredentialsStoreFile    = "file"
 
-	credentialsKeyringService = "reasonix"
-	credentialClearedPrefix   = "# reasonix-cleared "
+	credentialsKeyringService = "voltui"
+	credentialClearedPrefix   = "# voltui-cleared "
 )
 
 const (
@@ -29,6 +27,7 @@ const (
 	CredentialSourceCredentials = "credentials"
 	CredentialSourceHomeEnv     = "home_env"
 	CredentialSourceLegacy      = "legacy_credentials"
+	CredentialSourceBundled     = "bundled"
 )
 
 type CredentialSource struct {
@@ -57,6 +56,7 @@ var credentialSourceTracker = struct {
 
 var storedCredentialValueLookup = storedCredentialValue
 var legacyKeyringCredentialValueLookup = legacyKeyringCredentialValue
+var bundledCredentialValueLookup = bundledCredentialValue
 
 // CredentialResolver resolves credentials repeatedly for one caller-owned view
 // build. It keeps expensive global credential-store lookups bounded to one per
@@ -66,6 +66,7 @@ type CredentialResolver struct {
 
 	mu               sync.Mutex
 	globalFirstCache map[string]CredentialResolution
+	viewCache        map[string]CredentialResolution
 }
 
 // NewCredentialResolverForRoot returns a resolver scoped to a workspace root.
@@ -73,7 +74,7 @@ func NewCredentialResolverForRoot(root string) *CredentialResolver {
 	return &CredentialResolver{root: resolveRoot(root)}
 }
 
-// ResolveGlobalFirst resolves key from VoltUI's global .env only. Repeated
+// ResolveGlobalFirst resolves key from VoltUI's global credentials only. Repeated
 // calls for the same key reuse the first result so UI views with multiple
 // provider entries sharing api_key_env stay consistent.
 func (r *CredentialResolver) ResolveGlobalFirst(key string) CredentialResolution {
@@ -98,6 +99,32 @@ func (r *CredentialResolver) ResolveGlobalFirst(key string) CredentialResolution
 	return res
 }
 
+// ResolveGlobalFirstWithFiles resolves like ResolveGlobalFirst, then falls back
+// to read-only workspace/home .env inspection without mutating process env. This
+// is for UI status views that need to explain whether the active workspace has a
+// key available while keeping saved VoltUI credentials authoritative.
+func (r *CredentialResolver) ResolveGlobalFirstWithFiles(key string) CredentialResolution {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return CredentialResolution{Name: key}
+	}
+	if r == nil {
+		return resolveCredentialForRootGlobalFirstWithFiles(".", key)
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.viewCache == nil {
+		r.viewCache = map[string]CredentialResolution{}
+	}
+	if cached, ok := r.viewCache[key]; ok {
+		return cloneCredentialResolution(cached)
+	}
+	res := resolveCredentialForRootGlobalFirstWithFiles(r.root, key)
+	r.viewCache[key] = cloneCredentialResolution(res)
+	return res
+}
+
 func cloneCredentialResolution(res CredentialResolution) CredentialResolution {
 	if len(res.Shadowed) > 0 {
 		res.Shadowed = append([]CredentialSource(nil), res.Shadowed...)
@@ -117,6 +144,9 @@ func normalizeCredentialsStore(mode string) string {
 }
 
 func credentialsStoreMode() string {
+	if mode := strings.TrimSpace(os.Getenv("VOLTUI_CREDENTIALS_STORE")); mode != "" {
+		return normalizeCredentialsStore(mode)
+	}
 	if mode := strings.TrimSpace(os.Getenv("REASONIX_CREDENTIALS_STORE")); mode != "" {
 		return normalizeCredentialsStore(mode)
 	}
@@ -133,19 +163,10 @@ func credentialEnvNamesForRoot(root string) []string {
 	root = resolveRoot(root)
 	cfg := Default()
 
-	projectTOML := "reasonix.toml"
-	if root != "." {
-		projectTOML = filepath.Join(root, "reasonix.toml")
+	tomlSources := configLoadSources(root)
+	for _, path := range tomlSources {
+		_ = mergeFile(cfg, path)
 	}
-	if uc := userConfigLoadPath(); uc != "" {
-		_ = mergeFile(cfg, uc)
-	}
-	_ = mergeFile(cfg, projectTOML)
-	var tomlSources []string
-	if uc := userConfigLoadPath(); uc != "" {
-		tomlSources = append(tomlSources, uc)
-	}
-	tomlSources = append(tomlSources, projectTOML)
 	if providers, _, _, ok, err := mergeTOMLProviders(tomlSources); err == nil && ok {
 		cfg.Providers = providers
 	}
@@ -174,37 +195,8 @@ func credentialEnvNamesFromConfig(cfg *Config) []string {
 		add(conn.Credential.AppSecretEnv)
 		add(conn.Credential.TokenEnv)
 	}
-	for _, h := range cfg.Remote.Hosts {
-		add(h.PassphraseEnv)
-		add(h.PasswordEnv)
-	}
 	sort.Strings(out)
 	return out
-}
-
-// CredentialEnvNames returns every environment-variable name whose value can
-// be loaded from VoltUI's global credential store. This includes configured
-// provider/bot keys and stored keys that are no longer referenced by the
-// current config: loadCredentialStoreForRoot loads the whole credential file,
-// so stale entries must remain outside child-process environments too.
-func (c *Config) CredentialEnvNames() []string {
-	names := credentialEnvNamesFromConfig(c)
-	seen := make(map[string]bool, len(names))
-	for _, name := range names {
-		seen[name] = true
-	}
-	if file, ok := readDotEnvFile(UserCredentialsPath()); ok {
-		for name := range file.Values {
-			name = strings.TrimSpace(name)
-			if !isCredentialKey(name) || seen[name] {
-				continue
-			}
-			seen[name] = true
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	return names
 }
 
 func resolveProviderCredentialsForRoot(root string, cfg *Config) {
@@ -252,6 +244,9 @@ func loadCredentialStoreForRoot(root string) {
 	if p := UserCredentialsPath(); p != "" {
 		loadDotEnvFileAs(p, CredentialSource{Kind: CredentialSourceCredentials, Path: p, Label: "VoltUI credentials (.env)"})
 	}
+	for _, p := range legacyCredentialsPaths() {
+		loadDotEnvFileAs(p, CredentialSource{Kind: CredentialSourceLegacy, Path: p, Label: "legacy VoltUI credentials"})
+	}
 }
 
 // StoreCredentialLines stores KEY=value assignments in VoltUI's global .env
@@ -279,7 +274,7 @@ func SetCredential(key, value string) (string, error) {
 	return StoreCredentialLines([]string{key + "=" + value})
 }
 
-// IsValidCredentialKey reports whether key can be stored in VoltUI's dotenv
+// IsValidCredentialKey reports whether key can be stored in Reasonix's dotenv
 // credential file and exposed as an environment variable.
 func IsValidCredentialKey(key string) bool {
 	return isCredentialKey(strings.TrimSpace(key))
@@ -337,20 +332,17 @@ func CredentialsTargetDescription() string {
 func parseCredentialLines(lines []string) map[string]string {
 	out := map[string]string{}
 	for _, raw := range lines {
-		if strings.ContainsAny(raw, "\r\n") {
+		line := strings.TrimPrefix(strings.TrimSpace(raw), "export ")
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		values, err := godotenv.Unmarshal(raw)
-		if err != nil {
+		key, value, ok := strings.Cut(line, "=")
+		key = strings.TrimSpace(key)
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if !ok || !isCredentialKey(key) || strings.ContainsAny(value, "\r\n") {
 			continue
 		}
-		for key, value := range values {
-			key = strings.TrimSpace(key)
-			if !isCredentialKey(key) || strings.ContainsAny(value, "\r\n") {
-				continue
-			}
-			out[key] = value
-		}
+		out[key] = value
 	}
 	return out
 }
@@ -416,6 +408,8 @@ func credentialSourceLabel(source CredentialSource) string {
 		return "home .env"
 	case CredentialSourceLegacy:
 		return "legacy VoltUI credentials"
+	case CredentialSourceBundled:
+		return "bundled OEM key"
 	case CredentialSourceEnvironment:
 		return "environment variable"
 	default:
@@ -470,6 +464,53 @@ func resolveCredentialForRootGlobalFirst(root, key string) CredentialResolution 
 		res.Shadowed = shadowedCredentialSources(root, key, value, res.Source)
 		return res
 	}
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		res.Set = true
+		res.Value = value
+		if source, ok := trackedCredential(key, value); ok {
+			res.Source = source
+		} else if source, ok := inferCredentialSource(root, key, value); ok {
+			res.Source = source
+		} else {
+			res.Source = CredentialSource{Kind: CredentialSourceEnvironment}
+		}
+		res.Source.Label = credentialSourceLabel(res.Source)
+		res.Shadowed = shadowedCredentialSources(root, key, value, res.Source)
+		return res
+	}
+	if value, source, ok := bundledCredentialValueLookup(key); ok {
+		res.Set = true
+		res.Value = value
+		res.Source = source
+		res.Source.Label = credentialSourceLabel(res.Source)
+		return res
+	}
+	return res
+}
+
+func resolveCredentialForRootGlobalFirstWithFiles(root, key string) CredentialResolution {
+	root = resolveRoot(root)
+	res := resolveCredentialForRootGlobalFirst(root, key)
+	if res.Set {
+		return res
+	}
+	for _, candidate := range credentialSourceCandidates(root) {
+		if candidate.Kind == CredentialSourceCredentials {
+			continue
+		}
+		value, ok := envFileValue(candidate.Path, key)
+		if !ok || strings.TrimSpace(value) == "" {
+			continue
+		}
+		candidate.Label = credentialSourceLabel(candidate)
+		return CredentialResolution{
+			Name:     key,
+			Set:      true,
+			Value:    value,
+			Source:   candidate,
+			Shadowed: shadowedCredentialSources(root, key, value, candidate),
+		}
+	}
 	return res
 }
 
@@ -480,6 +521,23 @@ func storedCredentialValue(key string) (string, CredentialSource, bool) {
 		}
 	}
 	return "", CredentialSource{}, false
+}
+
+// bundledCredentialValue reads a provider key from the OEM-shipped bundled.env
+// placed next to the executable at install time. It is the lowest-priority
+// credential source: the VoltUI credentials file and the process environment
+// always win, so a bundled OEM key only applies when the user has not
+// configured one.
+func bundledCredentialValue(key string) (string, CredentialSource, bool) {
+	p := bundledEnvPath()
+	if p == "" {
+		return "", CredentialSource{}, false
+	}
+	value, ok := envFileValue(p, key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return "", CredentialSource{}, false
+	}
+	return value, CredentialSource{Kind: CredentialSourceBundled, Path: p}, true
 }
 
 func inferCredentialSource(root, key, value string) (CredentialSource, bool) {
@@ -560,7 +618,7 @@ func storeCredentialsInFile(path string, assignments map[string]string) error {
 			continue
 		}
 		if value, hit := assignments[key]; hit {
-			lines[i] = formatCredentialLine(key, value)
+			lines[i] = key + "=" + value
 			replaced[key] = true
 		}
 	}
@@ -571,28 +629,10 @@ func storeCredentialsInFile(path string, assignments map[string]string) error {
 	sort.Strings(keys)
 	for _, key := range keys {
 		if !replaced[key] {
-			lines = append(lines, formatCredentialLine(key, assignments[key]))
+			lines = append(lines, key+"="+assignments[key])
 		}
 	}
 	return writeCredentialFileLines(path, lines)
-}
-
-func formatCredentialLine(key, value string) string {
-	if isBareDotEnvValue(value) {
-		return key + "=" + value
-	}
-	line, err := godotenv.Marshal(map[string]string{key: value})
-	if err != nil {
-		return key + "=" + value
-	}
-	return line
-}
-
-func isBareDotEnvValue(value string) bool {
-	if value == "" {
-		return true
-	}
-	return !strings.ContainsAny(value, " \t\r\n#'\"\\")
 }
 
 func removeCredentialFromFile(path, key string) error {

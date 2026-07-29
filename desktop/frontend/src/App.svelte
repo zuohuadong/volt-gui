@@ -9287,7 +9287,14 @@ function openGovernanceCenter() {
                 {/if}
 
                 <details class="result-scenarios" aria-label="任务结果模板">
-                  <summary><CirclePlus size={14} /> 从模板开始</summary>
+                  <summary>
+                    <div>
+                      <span>快速开始</span>
+                      <strong>从模板开始</strong>
+                      <p>每个模板都内置了对应场景的执行规则与交付格式。</p>
+                    </div>
+                    <CirclePlus size={14} />
+                  </summary>
                   <div>
                     {#each WORK_OUTCOME_TEMPLATES as template (template.id)}
                       <button type="button" onclick={() => startOutcomeTask(template.id)}>
@@ -24264,19 +24271,19 @@ function openGovernanceCenter() {
     background: var(--card, #ffffff);
   }
 
-  .result-scenarios > header {
+  .result-scenarios > summary {
     display: flex;
     align-items: end;
     justify-content: space-between;
     gap: 16px;
   }
 
-  .result-scenarios > header div {
+  .result-scenarios > summary div {
     display: grid;
     gap: 3px;
   }
 
-  .result-scenarios > header span {
+  .result-scenarios > summary span {
     color: var(--muted-foreground, #687169);
     font-size: 11px;
     font-weight: 700;
@@ -24284,12 +24291,12 @@ function openGovernanceCenter() {
     text-transform: uppercase;
   }
 
-  .result-scenarios > header strong {
+  .result-scenarios > summary strong {
     color: var(--foreground, #1f2421);
     font-size: 15px;
   }
 
-  .result-scenarios > header p {
+  .result-scenarios > summary p {
     margin: 0;
     color: var(--muted-foreground, #687169);
     font-size: 11px;
@@ -24375,21 +24382,21 @@ function openGovernanceCenter() {
     display: block;
     min-width: 0;
     overflow: hidden;
-    border: 1px solid #dce1db;
-    border-radius: 12px;
-    background: #ffffff;
+    border: 1px solid var(--border, #e3e3e0);
+    border-radius: 16px;
+    background: var(--card, #ffffff);
   }
 
   .home-primary-flow__copy {
     display: grid;
     align-content: center;
     min-width: 0;
-    padding: 34px;
+    padding: 40px 38px;
   }
 
   .home-primary-flow__copy > span,
   .home-work-panel > header span,
-  .result-home-page .result-scenarios > header span {
+  .result-home-page .result-scenarios > summary span {
     color: #687169;
     font-size: 10px;
     font-weight: 750;
@@ -24441,8 +24448,8 @@ function openGovernanceCenter() {
   }
 
   .result-home-page .home-primary-flow__copy button:first-child {
-    border-color: #222222;
-    background: #222222;
+    border-color: #20211f;
+    background: #20211f;
     color: #ffffff;
   }
 
@@ -24455,7 +24462,7 @@ function openGovernanceCenter() {
 
   .result-home-page .home-primary-flow__copy button:first-child:hover {
     color: #ffffff;
-    background: #111111;
+    background: #111210;
   }
 
   .home-primary-flow__copy button:focus-visible,
@@ -24563,8 +24570,8 @@ function openGovernanceCenter() {
   .home-work-panel {
     min-width: 0;
     overflow: hidden;
-    border: 1px solid #dce1db;
-    border-radius: 12px;
+    border: 1px solid var(--border, #e3e3e0);
+    border-radius: 14px;
     background: #ffffff;
   }
 
@@ -24682,51 +24689,66 @@ function openGovernanceCenter() {
   .result-home-page .result-scenarios {
     display: block;
     padding: 0;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
+    border: 1px solid var(--border, #e3e3e0);
+    border-radius: 16px;
+    background: #ffffff;
     color: #1f2421;
   }
 
   .result-home-page .result-scenarios > summary {
-    display: inline-flex;
+    display: flex;
     align-items: center;
-    gap: 6px;
+    justify-content: space-between;
+    gap: 12px;
     min-height: 34px;
-    color: #687169;
-    font-size: 11px;
+    padding: 16px 18px;
     cursor: pointer;
     list-style: none;
   }
-  .result-home-page .result-scenarios > summary::-webkit-details-marker { display: none; }
 
-  .result-home-page .result-scenarios > header strong {
+  .result-home-page .result-scenarios > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .result-home-page .result-scenarios > summary > :global(svg) {
+    flex: 0 0 auto;
+    color: #687169;
+  }
+
+  .result-home-page .result-scenarios > summary > div {
+    display: grid;
+    gap: 3px;
+  }
+
+  .result-home-page .result-scenarios > summary strong {
     color: #1f2421;
     font-size: 13px;
   }
 
-  .result-home-page .result-scenarios > header p {
+  .result-home-page .result-scenarios > summary p {
+    margin: 0;
     color: #7b837c;
     font-size: 10px;
   }
 
   .result-home-page .result-scenarios > div {
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 7px;
-    margin-top: 8px;
+    gap: 8px;
+    padding: 0 18px 18px;
   }
 
   .result-home-page .result-scenarios button {
-    min-height: 92px;
-    padding: 11px;
-    border-color: #e1e5df;
-    background: #f8faf8;
+    min-height: 104px;
+    padding: 12px;
+    border-color: var(--border, #e3e3e0);
+    border-radius: 12px;
+    background: var(--surface-muted, #f1f1ef);
     color: #1f2421;
   }
 
   .result-home-page .result-scenarios button:hover {
-    border-color: #c7c7c7;
-    background: #f3f3f3;
+    border-color: var(--border-strong, #cbc6c6);
+    background: #ffffff;
   }
 
   .result-home-page .result-scenarios button strong {
@@ -24757,25 +24779,30 @@ function openGovernanceCenter() {
     justify-content: space-between;
     gap: 16px;
     width: 100%;
-    padding: 10px 12px;
-    border: 1px solid #e2e2e2;
-    border-radius: 12px;
-    color: #666666;
-    background: #fafafa;
+    padding: 13px 14px 13px 16px;
+    border: 1px solid var(--border, #e3e3e0);
+    border-radius: 14px;
+    color: #5b6472;
+    background: var(--surface-muted, #f1f1ef);
   }
-  .setup-inline-status strong { display: block; color: #2b2b2b; font-size: 12px; }
+  .setup-inline-status strong { display: block; color: #1f2937; font-size: 12px; }
   .setup-inline-status p { margin: 3px 0 0; font-size: 11px; }
   .setup-inline-status .new-task-empty-actions { flex: 0 0 auto; margin: 0; }
   .setup-inline-status button {
     min-height: 30px;
     padding: 0 10px;
     border: 1px solid #d4d4d4;
-    border-radius: 7px;
+    border-radius: 8px;
     color: #2b2b2b;
     background: #ffffff;
     font-size: 11px;
+    transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
   }
-  .setup-inline-status button:first-child { border-color: #222222; color: #ffffff; background: #222222; }
+  .setup-inline-status button:first-child {
+    border-color: #20211f;
+    color: #ffffff;
+    background: #20211f;
+  }
 
   .new-task-page > .detail-empty {
     width: min(100%, 920px);
@@ -25068,7 +25095,7 @@ function openGovernanceCenter() {
 
   .agent-assistant-page {
     --agent-assistant-content-width: 920px;
-    background: #ffffff;
+    background: var(--background, #f6f6f5);
   }
 
   .agent-assistant-shell {
@@ -25462,6 +25489,22 @@ function openGovernanceCenter() {
       z-index: 48;
     }
 
+    .agent-assistant-shell {
+      grid-template-rows: auto auto auto;
+      align-content: start;
+      height: auto;
+      min-height: 100dvh;
+      padding-top: 64px;
+    }
+
+    .agent-assistant-shell--setup {
+      grid-template-rows: auto auto;
+    }
+
+    .agent-assistant-center {
+      align-self: start;
+    }
+
     .task-center-shell > .home-mobile-nav {
       display: inline-flex;
     }
@@ -25532,7 +25575,7 @@ function openGovernanceCenter() {
       min-height: 40px;
     }
 
-    .result-scenarios > header {
+    .result-scenarios > summary {
       align-items: flex-start;
       flex-direction: column;
     }

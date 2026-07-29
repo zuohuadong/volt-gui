@@ -3,8 +3,10 @@ package main
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"voltui/internal/repair"
@@ -65,5 +67,41 @@ func TestWindowsDetachedLauncherNames(t *testing.T) {
 	}
 	if isWindowsDetachedLauncher("voltui-desktop.exe") {
 		t.Fatal("desktop executable must not be treated as a detached launcher")
+	}
+}
+
+func TestOpenDesktopLaunchLogUsesUserStateDirectory(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("REASONIX_HOME", stateDir)
+	logFile, logPath, err := openDesktopLaunchLog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := logFile.WriteString("startup failure\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := logFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(stateDir, "logs", "desktop-launch.log"); logPath != want {
+		t.Fatalf("log path = %q, want %q", logPath, want)
+	}
+	contents, err := os.ReadFile(logPath)
+	if err != nil || !strings.Contains(string(contents), "startup failure") {
+		t.Fatalf("log contents = %q, err = %v", contents, err)
+	}
+}
+
+func TestStartDetachedDesktopLogsStartFailure(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("REASONIX_HOME", stateDir)
+	missingDesktop := filepath.Join(t.TempDir(), "missing-desktop")
+	if code := startDetachedDesktop(exec.Command(missingDesktop), missingDesktop); code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	logPath := filepath.Join(stateDir, "logs", "desktop-launch.log")
+	contents, err := os.ReadFile(logPath)
+	if err != nil || !strings.Contains(string(contents), "launch failed:") {
+		t.Fatalf("log contents = %q, err = %v", contents, err)
 	}
 }

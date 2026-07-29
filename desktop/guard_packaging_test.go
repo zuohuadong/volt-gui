@@ -75,7 +75,7 @@ func TestDesktopPackagesPreserveNativePlatformLaunchers(t *testing.T) {
 	build := string(buildData)
 	for _, want := range []string{
 		`CLINAME="reasonix"`,
-		`WINDOWS_CLINAME="reasonix-cli"`,
+		`WINDOWS_CLINAME="voltui-cli"`,
 		`./cmd/reasonix`,
 		`cp "$guard_out" "$app/Contents/MacOS/$GUARDNAME"`,
 		`cp "$cli_out" "$app/Contents/MacOS/$CLINAME"`,
@@ -83,15 +83,15 @@ func TestDesktopPackagesPreserveNativePlatformLaunchers(t *testing.T) {
 		`Print :CFBundleIconFile`,
 		`Contents/Resources/$bundle_icon`,
 		`-H windowsgui`,
-		`stamp_windows_executable "$guard_out" "Reasonix Guard"`,
-		`stamp_windows_executable "$launcher_out" "Reasonix Launcher"`,
-		`stamp_windows_executable "build/windows/installer/$UPDATE_HELPER" "Reasonix Update Helper"`,
+		`stamp_windows_executable "$guard_out" "VoltUI Guard"`,
+		`stamp_windows_executable "$launcher_out" "VoltUI Launcher"`,
+		`stamp_windows_executable "build/windows/installer/$UPDATE_HELPER" "VoltUI Update Helper"`,
 		`payload_dir="$ROOT/desktop/build/windows/signing-payload"`,
 		`cp "build/bin/$BINNAME.exe" "$payload_dir/$BINNAME.exe"`,
 		`cp "$launcher_out" "$payload_dir/$LAUNCHERNAME.exe"`,
 		`cp "$guard_out" "$payload_dir/$GUARDNAME.exe"`,
 		`cp "build/windows/installer/$WINDOWS_CLINAME.exe" "$payload_dir/$WINDOWS_CLINAME.exe"`,
-		`cp "build/windows/installer/reasonix-uninstall.exe" "$payload_dir/reasonix-uninstall.exe"`,
+		`cp "build/windows/installer/voltui-uninstall.exe" "$payload_dir/voltui-uninstall.exe"`,
 		`"$ROOT/scripts/package-windows-desktop.sh" "$arch" "$payload_dir"`,
 		`"$BINNAME" "$GUARDNAME" "$CLINAME"`,
 	} {
@@ -102,7 +102,7 @@ func TestDesktopPackagesPreserveNativePlatformLaunchers(t *testing.T) {
 	if strings.Contains(build, `Set :CFBundleExecutable $GUARDNAME`) {
 		t.Fatal("macOS package must not replace the native Wails bundle executable with Guard")
 	}
-	launcherStamp := strings.Index(build, `stamp_windows_executable "$launcher_out" "Reasonix Launcher"`)
+	launcherStamp := strings.Index(build, `stamp_windows_executable "$launcher_out" "VoltUI Launcher"`)
 	payloadCopy := strings.Index(build, `cp "$launcher_out" "$payload_dir/$LAUNCHERNAME.exe"`)
 	if launcherStamp < 0 || payloadCopy < 0 || launcherStamp > payloadCopy {
 		t.Fatalf("Windows payload must copy the already-stamped launcher (stamp=%d copy=%d)", launcherStamp, payloadCopy)

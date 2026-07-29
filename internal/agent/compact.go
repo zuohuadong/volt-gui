@@ -158,9 +158,6 @@ func foldEconomics(region []provider.Message) bool {
 func estimateMessagesTokens(msgs []provider.Message) int {
 	total := 0
 	for _, m := range msgs {
-		if m.LocalOnly {
-			continue
-		}
 		total += 4 // chat-message framing overhead
 		total += estimateTextTokens(m.Content)
 		total += estimateTextTokens(m.ReasoningContent)
@@ -212,17 +209,6 @@ func (a *Agent) compact(ctx context.Context, trigger, instructions string, force
 	}
 	if !ok {
 		return nil // recent tail already covers everything worth keeping
-	}
-	// A controller in-flight marker records the pre-turn message count, but a
-	// compaction rewrites message indexes. Keep the entire active turn outside
-	// the fold so completed tool call/result pairs remain available for a later
-	// cancellation or crash recovery instead of surviving only as prose in a
-	// summary.
-	if active := a.activeTurnStart(msgs); active >= head && active < start {
-		start = active
-		if start <= head {
-			return nil
-		}
 	}
 	region := msgs[head:start]
 
@@ -288,7 +274,8 @@ func (a *Agent) compact(ctx context.Context, trigger, instructions string, force
 			summaryTagClose,
 	})
 	compacted = append(compacted, msgs[start:]...)
-	a.session.Rewrite(compacted)
+	a.session.Replace(compacted)
+	a.session.IncrementRewrite()
 
 	a.sink.Emit(event.Event{Kind: event.CompactionDone, Compaction: event.Compaction{
 		Trigger: trigger, Messages: len(fold), Summary: summary, Archive: archived,
@@ -313,10 +300,7 @@ func (a *Agent) SummarizeFrom(ctx context.Context, fromIdx int) error {
 	if fromIdx < 0 || fromIdx >= len(msgs) {
 		return nil
 	}
-	region, localOnly := splitLocalOnlyMessages(msgs[fromIdx:])
-	if len(region) == 0 {
-		return nil
-	}
+	region := msgs[fromIdx:]
 	if a.archiveDir != "" {
 		_, _ = archiveMessages(a.archiveDir, region) // best-effort traceability
 	}
@@ -324,14 +308,14 @@ func (a *Agent) SummarizeFrom(ctx context.Context, fromIdx int) error {
 	if err != nil {
 		return err
 	}
-	next := make([]provider.Message, 0, fromIdx+1+len(localOnly))
+	next := make([]provider.Message, 0, fromIdx+1)
 	next = append(next, msgs[:fromIdx]...)
 	next = append(next, provider.Message{
 		Role:    provider.RoleUser,
 		Content: "Summary of the later conversation (compacted from here on):\n" + summary,
 	})
-	next = append(next, localOnly...)
-	a.session.Rewrite(next)
+	a.session.Replace(next)
+	a.session.IncrementRewrite()
 	a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 		Text: fmt.Sprintf("summarized %d later messages → summary", len(region))})
 	return nil
@@ -349,10 +333,7 @@ func (a *Agent) SummarizeUpTo(ctx context.Context, toIdx int) error {
 	if toIdx <= head || toIdx > len(msgs) {
 		return nil
 	}
-	region, localOnly := splitLocalOnlyMessages(msgs[head:toIdx])
-	if len(region) == 0 {
-		return nil
-	}
+	region := msgs[head:toIdx]
 	if a.archiveDir != "" {
 		_, _ = archiveMessages(a.archiveDir, region)
 	}
@@ -360,15 +341,15 @@ func (a *Agent) SummarizeUpTo(ctx context.Context, toIdx int) error {
 	if err != nil {
 		return err
 	}
-	next := make([]provider.Message, 0, head+1+len(localOnly)+len(msgs)-toIdx)
+	next := make([]provider.Message, 0, head+1+len(msgs)-toIdx)
 	next = append(next, msgs[:head]...)
 	next = append(next, provider.Message{
 		Role:    provider.RoleUser,
 		Content: "Summary of earlier conversation (compacted up to here):\n" + summary,
 	})
-	next = append(next, localOnly...)
 	next = append(next, msgs[toIdx:]...)
-	a.session.Rewrite(next)
+	a.session.Replace(next)
+	a.session.IncrementRewrite()
 	a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 		Text: fmt.Sprintf("summarized %d earlier messages → summary", len(region))})
 	return nil
@@ -379,34 +360,6 @@ func (a *Agent) SummarizeUpTo(ctx context.Context, toIdx int) error {
 // (e.g. the guardian) whose turn rollback must not treat a digest as a
 // disposable user message.
 func IsCompactionSummary(m provider.Message) bool { return isCompactionSummary(m) }
-
-func (a *Agent) activeTurnStart(msgs []provider.Message) int {
-	createdAt := a.activeTurnCreatedAt.Load()
-	if createdAt == 0 {
-		return -1
-	}
-	for i, m := range msgs {
-		if m.Role == provider.RoleUser && m.CreatedAt == createdAt {
-			return i
-		}
-	}
-	return -1
-}
-
-// splitLocalOnlyMessages removes display-only interrupted output from the
-// summarizer/archive input while returning it in transcript order for durable
-// reattachment. Explicit range summaries are user-requested rewrites, but they
-// must not erase visible output or expose private partial reasoning to a model.
-func splitLocalOnlyMessages(msgs []provider.Message) (model, localOnly []provider.Message) {
-	for _, m := range msgs {
-		if m.LocalOnly {
-			localOnly = append(localOnly, m)
-			continue
-		}
-		model = append(model, m)
-	}
-	return model, localOnly
-}
 
 // isCompactionSummary reports whether m is a rolling summary from a prior fold.
 func isCompactionSummary(m provider.Message) bool {
@@ -455,7 +408,7 @@ func (a *Agent) pinnableUserTurn(m provider.Message) bool {
 func (a *Agent) partitionFold(region []provider.Message) (kept, fold []provider.Message) {
 	policyKeep := keepIndexes(region, a.keepPolicy)
 	for i, m := range region {
-		if m.LocalOnly || policyKeep[i] || isCompactionSummary(m) || (m.Role == provider.RoleUser && a.pinnableUserTurn(m)) {
+		if policyKeep[i] || isCompactionSummary(m) || (m.Role == provider.RoleUser && a.pinnableUserTurn(m)) {
 			kept = append(kept, m)
 		} else {
 			fold = append(fold, m)
@@ -646,9 +599,6 @@ func (a *Agent) tokPerChar() float64 {
 // content plus tool-call names and arguments, but not reasoning (stripped on
 // send).
 func msgChars(m provider.Message) int {
-	if m.LocalOnly {
-		return 0
-	}
 	n := len(m.Content)
 	for _, tc := range m.ToolCalls {
 		n += len(tc.Name) + len(tc.Arguments)
@@ -746,9 +696,6 @@ func mechanicalFoldDigest(n int, archive string) string {
 func renderTranscript(msgs []provider.Message) string {
 	var b strings.Builder
 	for _, m := range msgs {
-		if m.LocalOnly {
-			continue
-		}
 		switch m.Role {
 		case provider.RoleUser:
 			fmt.Fprintf(&b, "[user]\n%s\n\n", m.Content)

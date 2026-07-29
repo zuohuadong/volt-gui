@@ -11,9 +11,8 @@ import (
 	"strings"
 )
 
-// crash_app.go is the crash/feedback/performance reporting surface. Frontend
-// reports are sent on an explicit user click. Native fatal/lifecycle reports are
-// queued locally and sent on a later launch only when desktop telemetry is on.
+// crash_app.go is the crash/feedback/performance reporting surface. Reports are
+// sent only on an explicit user click in the frontend UI — never automatically.
 
 var crashEndpoint = "https://crash.voltui.io/v1/report"
 

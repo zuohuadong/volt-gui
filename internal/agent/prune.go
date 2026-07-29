@@ -110,7 +110,8 @@ func (a *Agent) maintainStaleToolResults(mode toolResultMaintenanceMode) (PruneS
 	if st.Results == 0 {
 		return st, nil
 	}
-	a.session.Rewrite(next)
+	a.session.Replace(next)
+	a.session.IncrementRewrite()
 	return st, nil
 }
 

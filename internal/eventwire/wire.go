@@ -345,19 +345,6 @@ func ToWireCacheDiagnostics(d *event.CacheDiagnostics) *CacheDiagnostics {
 	}
 }
 
-// KindNames returns every stable frontend event kind in event.Kind order. It is
-// the protocol-neutral source used by consumers such as the Remote schema
-// generator; callers receive a copy and may sort it without mutating eventwire.
-func KindNames() []string {
-	names := make([]string, 0, int(event.KindCount))
-	for kind := event.Kind(0); kind < event.KindCount; kind++ {
-		if name, ok := kindNames[kind]; ok {
-			names = append(names, name)
-		}
-	}
-	return names
-}
-
 var kindNames = map[event.Kind]string{
 	event.TurnStarted:        "turn_started",
 	event.Reasoning:          "reasoning",

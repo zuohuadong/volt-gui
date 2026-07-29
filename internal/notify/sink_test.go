@@ -1,3 +1,5 @@
+//go:build bot
+
 package notify
 
 import (

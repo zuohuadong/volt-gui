@@ -3,7 +3,6 @@ package event
 import (
 	"sync"
 
-	"voltui/internal/evidence"
 	"voltui/internal/nilutil"
 )
 
@@ -30,12 +29,4 @@ func (s *syncSink) Emit(e Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.inner.Emit(e)
-}
-
-func (s *syncSink) RecordReadinessAudit(a evidence.ReadinessAudit) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if rs, ok := s.inner.(ReadinessAuditSink); ok {
-		rs.RecordReadinessAudit(a)
-	}
 }

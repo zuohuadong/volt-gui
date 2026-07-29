@@ -22,6 +22,62 @@ func TestSaveImageDataURL(t *testing.T) {
 	}
 }
 
+func TestAttachmentAPIsUseExplicitRootWithoutChangingProcessCWD(t *testing.T) {
+	launchRoot := t.TempDir()
+	workspaceRoot := t.TempDir()
+	t.Chdir(launchRoot)
+
+	fileData := base64.StdEncoding.EncodeToString([]byte("xlsx payload"))
+	fileRef, err := SaveAttachmentDataURLInRoot(workspaceRoot, "report.xlsx", "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,"+fileData)
+	if err != nil {
+		t.Fatalf("SaveAttachmentDataURLInRoot: %v", err)
+	}
+	imageRef, err := SaveImageDataURLInRoot(workspaceRoot, "data:image/png;base64,"+tinyPNG)
+	if err != nil {
+		t.Fatalf("SaveImageDataURLInRoot: %v", err)
+	}
+	if _, err := ImageDataURLInRoot(workspaceRoot, imageRef); err != nil {
+		t.Fatalf("ImageDataURLInRoot: %v", err)
+	}
+
+	if cwd, err := os.Getwd(); err != nil {
+		t.Fatal(err)
+	} else if cwd != launchRoot {
+		t.Fatalf("process cwd = %q, want unchanged %q", cwd, launchRoot)
+	}
+	for _, ref := range []string{fileRef, imageRef} {
+		if _, err := os.Stat(filepath.Join(workspaceRoot, filepath.FromSlash(ref))); err != nil {
+			t.Fatalf("workspace attachment %q missing: %v", ref, err)
+		}
+		if _, err := os.Stat(filepath.Join(launchRoot, filepath.FromSlash(ref))); !os.IsNotExist(err) {
+			t.Fatalf("attachment %q leaked into launch cwd, stat err=%v", ref, err)
+		}
+	}
+}
+
+func TestSaveAttachmentFileInRootUsesExplicitDestination(t *testing.T) {
+	launchRoot := t.TempDir()
+	workspaceRoot := t.TempDir()
+	t.Chdir(launchRoot)
+
+	source := filepath.Join(t.TempDir(), "report.xlsx")
+	if err := os.WriteFile(source, []byte("xlsx payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := SaveAttachmentFileInRoot(workspaceRoot, source)
+	if err != nil {
+		t.Fatalf("SaveAttachmentFileInRoot: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(workspaceRoot, filepath.FromSlash(ref))); err != nil || string(got) != "xlsx payload" {
+		t.Fatalf("stored bytes = %q (err %v), want original", got, err)
+	}
+	if cwd, err := os.Getwd(); err != nil {
+		t.Fatal(err)
+	} else if cwd != launchRoot {
+		t.Fatalf("process cwd = %q, want unchanged %q", cwd, launchRoot)
+	}
+}
+
 func TestSaveImageDataURLRejectsSpoofedMime(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if _, err := SaveImageDataURL("data:image/png;base64,aGk="); err == nil {
@@ -119,6 +175,87 @@ func TestSaveAttachmentFile(t *testing.T) {
 	}
 }
 
+func TestSaveAttachmentFileWithExpectedInfoRejectsReplacedSource(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+
+	source := filepath.Join(t.TempDir(), "selected.pdf")
+	if err := os.WriteFile(source, []byte("%PDF-1.7 original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := os.Lstat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := source + ".replacement"
+	if err := os.WriteFile(replacement, []byte("%PDF-1.7 replacement"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, source); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := SaveAttachmentFileWithExpectedInfo(source, expected); err == nil {
+		t.Fatal("replacement after selection should be rejected")
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".voltui", "attachments")); !os.IsNotExist(err) {
+		t.Fatalf("rejected source should not create an attachment, stat err=%v", err)
+	}
+}
+
+func TestSaveAttachmentFileAcceptsThirtySevenMiBPDF(t *testing.T) {
+	t.Chdir(t.TempDir())
+	const size = 37*1024*1024 + 200*1024
+	pdf := make([]byte, size)
+	copy(pdf, "%PDF-1.7\n")
+	if err := os.WriteFile("report.pdf", pdf, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := SaveAttachmentFile("report.pdf")
+	if err != nil {
+		t.Fatalf("SaveAttachmentFile: %v", err)
+	}
+	if !strings.HasPrefix(got, ".voltui/attachments/") || !strings.HasSuffix(got, ".pdf") {
+		t.Fatalf("path = %q, want attachment pdf path", got)
+	}
+	info, err := os.Stat(got)
+	if err != nil {
+		t.Fatalf("stat stored PDF: %v", err)
+	}
+	if info.Size() != size {
+		t.Fatalf("stored PDF size = %d, want %d", info.Size(), size)
+	}
+}
+
+func TestSaveAttachmentFileRejectsMoreThanSixtyFourMiB(t *testing.T) {
+	t.Chdir(t.TempDir())
+	f, err := os.Create("too-large.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxFileAttachmentBytes + 1); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := SaveAttachmentFile("too-large.pdf"); err == nil || !strings.Contains(err.Error(), "64 MiB") {
+		t.Fatalf("SaveAttachmentFile oversized error = %v, want 64 MiB limit", err)
+	}
+}
+
+func TestSaveAttachmentFileDoesNotExposeSourcePath(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "missing.pdf")
+	if _, err := SaveAttachmentFile(source); err == nil {
+		t.Fatal("missing attachment source should fail")
+	} else if strings.Contains(err.Error(), source) {
+		t.Fatalf("attachment error leaked source path: %v", err)
+	}
+}
+
 func TestSaveAttachmentFileRejectsEmptyAndDir(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if err := os.WriteFile("empty.txt", nil, 0o644); err != nil {
@@ -196,7 +333,7 @@ func TestImageDataURLRejectsSymlinkFile(t *testing.T) {
 	if err := os.WriteFile("secret.png", []byte("secret"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(".reasonix", "attachments", "link.png")
+	link := filepath.Join(".voltui", "attachments", "link.png")
 	if err := os.Symlink(filepath.Join("..", "..", "secret.png"), link); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
@@ -207,13 +344,13 @@ func TestImageDataURLRejectsSymlinkFile(t *testing.T) {
 
 func TestImageDataURLRejectsSymlinkAttachmentDir(t *testing.T) {
 	t.Chdir(t.TempDir())
-	if err := os.Mkdir(".reasonix", 0o755); err != nil {
+	if err := os.Mkdir(".voltui", 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir("elsewhere", 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("../elsewhere", filepath.Join(".reasonix", "attachments")); err != nil {
+	if err := os.Symlink("../elsewhere", filepath.Join(".voltui", "attachments")); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
 	if _, err := ImageDataURL(".voltui/attachments/x.png"); err == nil {
@@ -232,7 +369,7 @@ func TestImageDataURLRejectsSymlinkSubdirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join("outside", "x.png"), mustBase64(t, tinyPNG), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(".reasonix", "attachments", "link")
+	link := filepath.Join(".voltui", "attachments", "link")
 	if err := os.Symlink(filepath.Join("..", "..", "outside"), link); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}

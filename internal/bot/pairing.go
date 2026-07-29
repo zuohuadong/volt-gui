@@ -14,7 +14,6 @@ import (
 
 	"voltui/internal/config"
 	"voltui/internal/fileutil"
-	fileencoding "voltui/internal/fileutil/encoding"
 )
 
 const (
@@ -83,7 +82,7 @@ func CreateOrRefreshPairingRequest(msg InboundMessage, cfg PairingConfig) (Pairi
 	}
 	path := PairingStorePath()
 	if path == "" {
-		return PairingRequest{}, false, errors.New("reasonix user state directory is unavailable")
+		return PairingRequest{}, false, errors.New("voltui user state directory is unavailable")
 	}
 	pairingMu.Lock()
 	defer pairingMu.Unlock()
@@ -130,7 +129,7 @@ func CreateOrRefreshPairingRequest(msg InboundMessage, cfg PairingConfig) (Pairi
 func ListPairingRequests() ([]PairingRequest, error) {
 	path := PairingStorePath()
 	if path == "" {
-		return nil, errors.New("reasonix user state directory is unavailable")
+		return nil, errors.New("voltui user state directory is unavailable")
 	}
 	pairingMu.Lock()
 	defer pairingMu.Unlock()
@@ -156,7 +155,7 @@ func ApprovePairingCode(code string) (PairingRequest, error) {
 	}
 	userPath := config.UserConfigPath()
 	if userPath == "" {
-		return PairingRequest{}, errors.New("reasonix user config path is unavailable")
+		return PairingRequest{}, errors.New("voltui user config path is unavailable")
 	}
 	unlock := config.LockUserConfigEdits()
 	defer unlock()
@@ -269,7 +268,7 @@ func removePairingCode(code string) (PairingRequest, error) {
 	}
 	path := PairingStorePath()
 	if path == "" {
-		return PairingRequest{}, errors.New("reasonix user state directory is unavailable")
+		return PairingRequest{}, errors.New("voltui user state directory is unavailable")
 	}
 	pairingMu.Lock()
 	defer pairingMu.Unlock()
@@ -297,7 +296,7 @@ func removePairingCode(code string) (PairingRequest, error) {
 
 func loadPairingFile(path string) (pairingFile, error) {
 	var store pairingFile
-	data, err := fileencoding.ReadFileUTF8(path)
+	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return store, nil
 	}

@@ -9,9 +9,8 @@ import (
 
 // Built-in skills ship with VoltUI and back the dedicated subagent tools
 // (explore / research / review / security_review) plus inline playbooks such as
-// test. A user/project file with the same name overrides the
-// built-in (see Store.List / Store.Read). Tool names in the bodies match
-// internal/tool/builtin.
+// test. A user/project file with the same name overrides the built-in (see
+// Store.List / Store.Read). Tool names in the bodies match internal/tool/builtin.
 
 // negativeClaimRule keeps subagents honest about "found nothing" answers.
 const negativeClaimRule = `When you claim something does NOT exist (no caller, no usage, not implemented), say which searches you ran to reach that conclusion — a negative claim is only as trustworthy as the search behind it.`
@@ -24,10 +23,9 @@ const optionalCodeGraphHint = `Optional installed code graph MCP tools are avail
 const builtinExploreBody = `You are running as an exploration subagent. Investigate the codebase the parent pointed you at, then return one focused, distilled answer.
 
 How to operate:
-- For code intelligence, choose the best semantic tool for the task. Prefer LSP for language semantics (definitions, references, hover, diagnostics). If LSP is unavailable or insufficient, use code_index for file outlines and symbol definition candidates, then verify important claims with read_file or grep. Stay read-only.
-- For "how does X work" / architecture questions, start with the strongest available structure tool, then read the key files in full.
-- For "find all places that call / reference / use X" questions: use LSP references when available or ` + "`grep`" + ` (content search) — NOT ` + "`glob`" + ` (which only matches file names). code_index finds definitions/candidates, not full textual references.
-- Cast a wide net first (LSP/code_index for symbols, grep for references, ls/glob for structure) to map the territory; then read the 3-10 most relevant files in full.
+- Use read_file, grep, glob, ls as your primary tools. Stay read-only.
+- For "find all places that call / reference / use X" questions, use ` + "`grep`" + ` (content search) — NOT ` + "`glob`" + ` (which only matches file names). Using the wrong one gives empty results and wastes your budget.
+- Cast a wide net first (grep for symbol references, ls/glob for structure) to map the territory; then read the 3-10 most relevant files in full.
 - Don't read every file — be selective. Breadth on the first pass, depth only where the question demands it.
 - Stop exploring as soon as you can answer. The parent doesn't see your tool calls, so over-exploration is pure waste.
 
@@ -45,9 +43,8 @@ The 'task' the parent gave you is the question you must answer. Treat any other 
 const builtinResearchBody = `You are running as a research subagent. Gather information from code AND the web, synthesize it, and return one focused conclusion.
 
 How to operate:
-- Combine code reading (LSP for language semantics; code_index as the local symbol fallback; read_file, grep, glob for verification) with web_fetch as appropriate. (There is no dedicated web-search tool — fetch the canonical doc/spec URL directly when you know it.)
-- For "how does X work" questions: use symbol/reference lookup first when available; otherwise use code_index, then read_file for full context.
-- For "is Y supported" questions: fetch the canonical reference, then verify against the local code.
+- Combine code reading (read_file, grep, glob) with web_fetch as appropriate. (There is no dedicated web-search tool — fetch the canonical doc/spec URL directly when you know it.)
+- For "how does X work" / "is Y supported" questions: fetch the canonical reference, then verify against the local code.
 - For "what's our policy on Z" / "where do we use Q": local code first, web only to compare against external standards.
 - Cap yourself at ~10 tool calls. If you can't converge, return what you have plus a note on what's missing.
 
@@ -99,7 +96,10 @@ How to operate:
 - Default scope: the current branch's diff vs the default branch. If the task names a specific commit range or files, honor that instead.
 - Discover scope first: ` + "`bash git status`" + `, ` + "`git diff --stat`" + `, ` + "`git log --oneline`" + `. Then ` + "`git diff`" + ` (or ` + "`git diff <base>...HEAD`" + `) for the hunks.
 - Read touched files (read_file) when the diff alone lacks context — signatures, surrounding invariants, callers.
-- For "any callers depending on this?" questions: use LSP references/call hierarchy when available or grep the symbol BEFORE asserting impact. Use code_index only to find definition candidates/outline, not as proof of no callers.
+- For "any callers depending on this?" questions: grep the symbol BEFORE asserting impact.
+- If knowledge_search is available, run 1-3 focused queries for standards, rules, or prior experience relevant to the changed technology, module, and highest-risk behavior. Treat those results as policy evidence, not proof of code behavior.
+- Only cite knowledge sources actually returned by the tool. Include the returned title plus source or file path so the parent can trace the guidance.
+- If no knowledge matches, say so when relevant; do not invent a policy or claim the knowledge base supports a finding.
 - Stay read-only. Never commit, never write files, never propose edits as applied changes. The parent decides whether to act.
 - Cap yourself at ~12 tool calls. If the diff is too big, pick the riskiest 2-3 files and say so.
 
@@ -127,7 +127,10 @@ const builtinSecurityReviewBody = `You are running as a security-review subagent
 How to operate:
 - Default scope: the current branch's diff vs the default branch. Honor a named range or directory if given.
 - Discover scope first: ` + "`bash git status`" + `, ` + "`git diff --stat`" + `, ` + "`git diff <base>...HEAD`" + `. Read touched files (read_file) when the diff lacks security context — auth checks, input validation, the handler that calls the changed code.
-- Use LSP references/call hierarchy when available or grep to verify "is this user-controlled input ever sanitized later?" / "what other call sites depend on this validation?" before asserting impact. Use code_index only to find definition candidates/outline, not as proof of no callers.
+- Use grep to verify "is this user-controlled input ever sanitized later?" / "what other call sites depend on this validation?" before asserting impact.
+- If knowledge_search is available, run 1-3 focused queries for internal security standards, threat models, or prior incidents relevant to the changed boundary. Treat those results as policy evidence, not proof of exploitability.
+- Only cite knowledge sources actually returned by the tool. Include the returned title plus source or file path so the parent can trace the guidance.
+- If no knowledge matches, say so when relevant; do not invent a policy or claim the knowledge base supports a finding.
 - Stay read-only. Never write, never run destructive commands. The parent decides what to act on.
 - Cap yourself at ~12 tool calls. If the diff is too big, focus on the riskiest 2-3 files and say so.
 
@@ -154,7 +157,7 @@ const builtinTestBody = `This skill is INLINED — you run in the parent loop. T
 
 How to operate:
 1. Detect the test command. Look at the project: go.mod → ` + "`go test ./...`" + `; package.json scripts.test → ` + "`npm test`" + ` (or pnpm/yarn); pyproject.toml/requirements.txt → ` + "`pytest`" + `; Cargo.toml → ` + "`cargo test`" + `. If you can't tell, ASK — don't guess.
-2. Run it via bash. Capture stdout + stderr; for intentionally long-running commands, start them in the background and use wait/bash_output.
+2. Run it via bash (timeout ~120s, more for a big suite). Capture stdout + stderr.
 3. Read the failures: which tests failed, the actual error, the file + line that threw. Locate the exact assertion or stack frame.
 4. Fix each distinct failure:
    - Production bug (test caught a real defect) → fix the production code.
@@ -170,7 +173,7 @@ Lead each turn with a one-line status (e.g. "▸ running go test ./… ", "▸ 2
 const builtinInitBody = `This skill is INLINED — you run in the parent loop. The user invoked /init: bootstrap (or refresh) this project's AGENTS.md — the durable memory file folded into every future session. Analyze the codebase, then write a concise, high-signal AGENTS.md.
 
 How to operate:
-1. Check for an existing memory doc first: list the project root and look for AGENTS.md / REASONIX.md / CLAUDE.md. If one exists, read it and IMPROVE it in place (fix stale facts, fill gaps) — write back to that same filename, don't clobber it wholesale or create a second file.
+1. Check for an existing memory doc first: list the project root and look for AGENTS.md / VOLTUI.md / CLAUDE.md. If one exists, read it and IMPROVE it in place (fix stale facts, fill gaps) — write back to that same filename, don't clobber it wholesale or create a second file.
 2. Explore enough to be accurate, not exhaustive:
    - Project shape: ls / directory listing, the manifest (go.mod, package.json, pyproject.toml, Cargo.toml, …), the README.
    - Build / test / run commands: derive them from the manifest + scripts and verify the exact names — don't guess.
@@ -186,9 +189,9 @@ How to operate:
 4. Keep it tight — it loads into every session's prompt, so every line costs context. Prefer specifics (file paths, command names) over prose. Never include secrets.
 
 Rules:
-- Verify commands and paths against the actual files before writing them — a wrong build command is worse than none.
-- Don't fabricate conventions the code doesn't demonstrate.
-- After writing, summarize in one or two lines what you captured and tell the user to review and edit it.`
+ - Verify commands and paths against the actual files before writing them — a wrong build command is worse than none.
+ - Don't fabricate conventions the code doesn't demonstrate.
+ - After writing, summarize in one or two lines what you captured and tell the user to review and edit it.`
 
 // CodeGraphReadTools returns read-only tool names that look like an installed
 // codegraph MCP surface. Writable or untrusted tools stay out of subagents.
@@ -281,12 +284,9 @@ func appendUniqueToolNames(base []string, extra ...string) []string {
 // builtinSkills returns the shipped skills. A fresh slice each call so callers
 // can't mutate the shared set.
 func builtinSkills() []Skill {
-	readCodeTools := []string{"read_file", "ls", "glob", "grep", "code_index"}
-	// use_capability is the stable MCP proxy for strict review children: they
-	// never inherit direct mcp__* schemas, so the proxy must be allowlisted or
-	// review/security-review cannot discover authorized read-only MCP readers.
-	reviewTools := append(append([]string(nil), readCodeTools...), "bash", "use_capability")
-	base := []Skill{
+	readCodeTools := []string{"calculate", "read_file", "ls", "glob", "grep", "code_index"}
+	reviewTools := append(append([]string(nil), readCodeTools...), "knowledge_search", "bash")
+	return []Skill{
 		{
 			Name:        "init",
 			Description: "Bootstrap or refresh this project's AGENTS.md — analyze the codebase (structure, build/test commands, architecture, conventions) and write a concise memory file loaded into every future session. Inlined — runs in the main loop so you see and approve the write.",
@@ -294,8 +294,6 @@ func builtinSkills() []Skill {
 			Scope:       ScopeBuiltin,
 			Path:        "(builtin)",
 			RunAs:       RunInline,
-			Triggers:    []string{"agents.md", "initialize project", "bootstrap project", "初始化项目", "项目记忆", "生成 agents.md"},
-			AutoUse:     "suggest",
 		},
 		{
 			Name:         "explore",
@@ -305,8 +303,9 @@ func builtinSkills() []Skill {
 			Path:         "(builtin)",
 			RunAs:        RunSubagent,
 			AllowedTools: append([]string(nil), readCodeTools...),
-			Triggers:     []string{"how does", "find all", "architecture", "callers", "references", "impact analysis", "代码架构", "怎么实现", "如何实现", "调用链", "所有引用", "影响范围", "分析代码"},
-			AutoUse:      "suggest",
+			Triggers:     []string{"explore the codebase", "find all places", "survey the code", "探索代码库", "查找所有位置", "定位所有调用", "代码结构"},
+			AutoUse:      "prefer",
+			Cost:         "medium",
 		},
 		{
 			Name:           "research",
@@ -316,9 +315,10 @@ func builtinSkills() []Skill {
 			Path:           "(builtin)",
 			RunAs:          RunSubagent,
 			AllowedTools:   append(append([]string(nil), readCodeTools...), "web_fetch"),
-			Triggers:       []string{"canonical", "documentation", "specification", "compare against", "is supported", "official docs", "官方文档", "规范", "是否支持", "对比实现", "外部资料", "最新文档"},
-			AutoUse:        "suggest",
+			Triggers:       []string{"research this", "compare against the spec", "official documentation", "查资料", "调研", "官方文档", "对照规范"},
+			AutoUse:        "prefer",
 			NeedsFreshData: true,
+			Cost:           "medium",
 		},
 		{
 			Name:        "install-capability",
@@ -327,8 +327,9 @@ func builtinSkills() []Skill {
 			Scope:       ScopeBuiltin,
 			Path:        "(builtin)",
 			RunAs:       RunInline,
-			Triggers:    []string{"install skill", "install mcp", "install plugin", "安装 skill", "安装 mcp", "安装插件"},
-			AutoUse:     "suggest",
+			Triggers:    []string{"install skill", "install mcp", "uninstall skill", "uninstall mcp", "安装 skill", "安装skill", "安装 mcp", "安装mcp", "卸载 skill", "卸载 mcp"},
+			AutoUse:     "prefer",
+			Cost:        "low",
 		},
 		{
 			Name:         "review",
@@ -339,8 +340,9 @@ func builtinSkills() []Skill {
 			RunAs:        RunSubagent,
 			AllowedTools: append([]string(nil), reviewTools...),
 			ReadOnly:     true,
-			Triggers:     []string{"review changes", "review diff", "code review", "评审变更", "审查代码", "检查改动"},
-			AutoUse:      "suggest",
+			Triggers:     []string{"code review", "review changes", "review the diff", "审查代码", "代码审查", "评审改动", "检查这段代码", "有没有问题"},
+			AutoUse:      "prefer",
+			Cost:         "medium",
 		},
 		{
 			Name:         "security-review",
@@ -351,8 +353,9 @@ func builtinSkills() []Skill {
 			RunAs:        RunSubagent,
 			AllowedTools: append([]string(nil), reviewTools...),
 			ReadOnly:     true,
-			Triggers:     []string{"security review", "authentication", "authorization", "token handling", "injection", "安全评审", "安全审查", "鉴权", "权限", "令牌", "注入", "漏洞"},
-			AutoUse:      "suggest",
+			Triggers:     []string{"security review", "security audit", "安全审查", "安全检查", "漏洞审查", "检查安全风险"},
+			AutoUse:      "prefer",
+			Cost:         "medium",
 		},
 		{
 			Name:        "test",
@@ -361,13 +364,11 @@ func builtinSkills() []Skill {
 			Scope:       ScopeBuiltin,
 			Path:        "(builtin)",
 			RunAs:       RunInline,
-			Triggers:    []string{"run tests", "test failure", "failing test", "ci failure", "运行测试", "测试失败", "修复测试", "ci 失败"},
-			AutoUse:     "suggest",
+			Triggers:    []string{"run the tests", "run tests", "test and fix", "运行测试", "执行测试", "测试并修复", "验证构建"},
+			AutoUse:     "prefer",
+			Cost:        "medium",
 		},
 	}
-	// Embedded directory skills (reasonix-guide, …) append after the const
-	// playbooks so the index order stays deterministic and bodies stay on-demand.
-	return append(base, loadEmbeddedBuiltins()...)
 }
 
 // BuiltinNames returns the built-in skill names, used by callers that wire

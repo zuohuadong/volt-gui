@@ -11,7 +11,7 @@ import (
 	"voltui/internal/sandbox"
 )
 
-// stateRootFor builds a fake VoltUI state root with the two guarded session
+// stateRootFor builds a fake Reasonix state root with the two guarded session
 // trees populated, returning the root and one file path in each tree.
 func stateRootFor(t *testing.T) (root, cliSession, projectSession string) {
 	t.Helper()
@@ -41,7 +41,7 @@ func TestSessionDataGuardDeniesSessionStores(t *testing.T) {
 	} {
 		if err := g.Check(target); err == nil {
 			t.Errorf("Check(%q) = nil, want session-data denial", target)
-		} else if !strings.Contains(err.Error(), "VoltUI's own session/state data") {
+		} else if !strings.Contains(err.Error(), "Reasonix's own session/state data") {
 			t.Errorf("Check(%q) error %q does not name session/state data", target, err)
 		}
 	}
@@ -141,15 +141,17 @@ func TestSessionDataGuardDeniesSecurityBoundaryFiles(t *testing.T) {
 	g := NewSessionDataGuard(root, nil)
 
 	// settings.json holds the global hooks (arbitrary shell commands run on
-	// every future session), so it remains a security boundary.
-	target := filepath.Join(root, "settings.json")
-	if err := g.Check(target); err == nil {
-		t.Errorf("Check(%q) = nil, want security-boundary denial", target)
-	} else if !strings.Contains(err.Error(), "security boundary") {
-		t.Errorf("Check(%q) error %q should name the security boundary", target, err)
-	}
-	if err := g.Check(filepath.Join(root, "trust.json")); err != nil {
-		t.Errorf("obsolete trust.json should not remain a security boundary: %v", err)
+	// every future session); trust.json decides whose project hooks run at
+	// all. Both are a security boundary, not a runtime ledger.
+	for _, target := range []string{
+		filepath.Join(root, "settings.json"),
+		filepath.Join(root, "trust.json"),
+	} {
+		if err := g.Check(target); err == nil {
+			t.Errorf("Check(%q) = nil, want security-boundary denial", target)
+		} else if !strings.Contains(err.Error(), "security boundary") {
+			t.Errorf("Check(%q) error %q should name the security boundary", target, err)
+		}
 	}
 	// The same names nested below the state root are ordinary files (a project
 	// checkout under a home workspace may legitimately contain them).
@@ -270,7 +272,7 @@ func TestSessionDataGuardCommandHintEnvVarForm(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	state := filepath.Join(home, ".reasonix")
+	state := filepath.Join(home, ".voltui")
 	if err := os.MkdirAll(filepath.Join(state, "sessions"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +327,7 @@ func TestBashAppendsSessionDataHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bash: %v", err)
 	}
-	if !strings.Contains(out, "WARNING: this command referenced VoltUI's own session/state data") {
+	if !strings.Contains(out, "WARNING: this command referenced Reasonix's own session/state data") {
 		t.Fatalf("bash output missing session-data warning:\n%s", out)
 	}
 	// An ordinary command stays clean.

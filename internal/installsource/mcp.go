@@ -3,32 +3,22 @@ package installsource
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"voltui/internal/config"
-	fileencoding "voltui/internal/fileutil/encoding"
 )
 
 // mcpEntryAction assembles the DTO for a single MCP server install. The
 // caller decides whether apply=true actually runs cfg.UpsertPlugin +
 // SaveTo + connectMCP.
 func (t *installSourceTool) mcpEntryAction(req request, e config.PluginEntry, source string) action {
-	scope := t.installScope(req, "mcp", source)
-	// install_source is an explicit user action. Preserve that provenance for
-	// the live connector so a newly installed server is usable immediately,
-	// while still identifying project-scoped persistence accurately enough for
-	// the host to record the exact durable launch grant used on the next boot.
-	if scope == "project" {
-		e.Source = config.MCPSourceProjectConfig
-	} else {
-		e.Source = config.MCPSourceUserConfig
-	}
 	var normalizedCommand bool
 	e, normalizedCommand = config.NormalizePluginCommandLine(e)
 	// Tier comes from the call (req.Tier) or the entry; either way we
-	// validate. An unrecognised tier is silently downgraded to "background" by
+	// validate. An unrecognised tier is silently downgraded to "lazy" by
 	// normalizeTier — we capture the original value to surface a warning.
 	desired := firstNonEmpty(req.Tier, e.Tier)
 	norm, ok := normalizeTier(desired)
@@ -38,8 +28,8 @@ func (t *installSourceTool) mcpEntryAction(req request, e config.PluginEntry, so
 		Action:     "install_mcp_server",
 		Name:       e.Name,
 		Source:     source,
-		ConfigPath: t.configPath(scope),
-		Scope:      scope,
+		ConfigPath: t.configPath(req.Scope),
+		Scope:      req.Scope,
 		Transport:  pluginTransport(e),
 		URL:        e.URL,
 		Command:    e.Command,
@@ -49,7 +39,7 @@ func (t *installSourceTool) mcpEntryAction(req request, e config.PluginEntry, so
 		entry:      e,
 	}
 	if !ok && strings.TrimSpace(desired) != "" {
-		a.RiskReasons = append(a.RiskReasons, fmt.Sprintf("tier %q is unknown; treating as background", desired))
+		a.RiskReasons = append(a.RiskReasons, fmt.Sprintf("tier %q is unknown; treating as lazy", desired))
 	}
 	if normalizedCommand {
 		a.RiskReasons = append(a.RiskReasons, "split a pasted MCP command line into command and args")
@@ -157,7 +147,7 @@ func (t *installSourceTool) packageMCPAction(req request) action {
 // convenience wrapper used by planLocal; the parser itself is exported as
 // parseMCPJSON for tests.
 func readMCPJSON(path string) ([]config.PluginEntry, []string, error) {
-	b, err := fileencoding.ReadFileUTF8(path)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -174,16 +164,14 @@ func readMCPJSON(path string) ([]config.PluginEntry, []string, error) {
 func parseMCPJSON(b []byte) ([]config.PluginEntry, []string, error) {
 	var raw struct {
 		MCPServers map[string]struct {
-			Type               string            `json:"type"`
-			Command            string            `json:"command"`
-			Args               []string          `json:"args"`
-			Env                map[string]string `json:"env"`
-			URL                string            `json:"url"`
-			Headers            map[string]string `json:"headers"`
-			AutoStart          *bool             `json:"auto_start"`
-			CallTimeoutSeconds int               `json:"call_timeout_seconds"`
-			ToolTimeoutSeconds map[string]int    `json:"tool_timeout_seconds"`
-			Tier               string            `json:"tier"`
+			Type      string            `json:"type"`
+			Command   string            `json:"command"`
+			Args      []string          `json:"args"`
+			Env       map[string]string `json:"env"`
+			URL       string            `json:"url"`
+			Headers   map[string]string `json:"headers"`
+			AutoStart *bool             `json:"auto_start"`
+			Tier      string            `json:"tier"`
 		} `json:"mcpServers"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
@@ -217,20 +205,18 @@ func parseMCPJSON(b []byte) ([]config.PluginEntry, []string, error) {
 		}
 		tier, ok := normalizeTier(s.Tier)
 		if !ok && strings.TrimSpace(s.Tier) != "" {
-			warnings = append(warnings, fmt.Sprintf("%s: tier %q is unknown; treating as background", name, s.Tier))
+			warnings = append(warnings, fmt.Sprintf("%s: tier %q is unknown; treating as lazy", name, s.Tier))
 		}
 		e := config.PluginEntry{
-			Name:               name,
-			Type:               typ,
-			Command:            strings.TrimSpace(s.Command),
-			Args:               append([]string(nil), s.Args...),
-			Env:                cleanMap(s.Env),
-			URL:                strings.TrimSpace(s.URL),
-			Headers:            cleanMap(s.Headers),
-			AutoStart:          s.AutoStart,
-			CallTimeoutSeconds: s.CallTimeoutSeconds,
-			ToolTimeoutSeconds: s.ToolTimeoutSeconds,
-			Tier:               tier,
+			Name:      name,
+			Type:      typ,
+			Command:   strings.TrimSpace(s.Command),
+			Args:      append([]string(nil), s.Args...),
+			Env:       cleanMap(s.Env),
+			URL:       strings.TrimSpace(s.URL),
+			Headers:   cleanMap(s.Headers),
+			AutoStart: s.AutoStart,
+			Tier:      tier,
 		}
 		// An empty Type is the canonical "stdio" form; keep it that way so
 		// the rest of the config layer (UpsertPlugin / ShouldAutoStart)

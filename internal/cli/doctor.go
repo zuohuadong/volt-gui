@@ -8,24 +8,14 @@ import (
 	"strings"
 
 	"voltui/internal/doctor"
-	"voltui/internal/repair"
 )
 
 func doctorCommand(args []string, version string) int {
-	if len(args) > 0 && args[0] == "quality" {
-		return doctorQualityCommand(args[1:], version)
-	}
 	if len(args) > 0 && args[0] == "session" {
 		return doctorSessionCommand(args[1:], version)
 	}
 	if len(args) > 0 && args[0] == "redact-sessions" {
 		return doctorRedactSessionsCommand(args[1:])
-	}
-	if len(args) > 0 && args[0] == "capabilities" {
-		return doctorCapabilitiesCommand(args[1:])
-	}
-	if len(args) > 0 && args[0] == "repair" {
-		return doctorRepairCommand(args[1:])
 	}
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "print diagnostics as JSON")
@@ -44,102 +34,6 @@ func doctorCommand(args []string, version string) int {
 		return 0
 	}
 	fmt.Print(doctor.RenderText(report))
-	return 0
-}
-
-func doctorRepairCommand(args []string) int {
-	fs := flag.NewFlagSet("doctor repair", flag.ContinueOnError)
-	root := fs.String("root", ".", "project root to inspect")
-	apply := fs.Bool("apply", false, "quarantine invalid config and restore the last-known-good global snapshot")
-	includeProject := fs.Bool("project", false, "allow --apply to quarantine an invalid project reasonix.toml")
-	jsonOut := fs.Bool("json", false, "print result as JSON")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: reasonix doctor repair [--root PATH] [--apply] [--project] [--json]")
-		return 2
-	}
-	report, err := repair.InspectAndRepairConfig(repair.ConfigOptions{
-		Root:           *root,
-		Apply:          *apply,
-		IncludeProject: *includeProject,
-	})
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
-	}
-	if *jsonOut {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(report); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-	} else {
-		fmt.Println("VoltUI repair report")
-		for _, check := range report.Checks {
-			status := "ok"
-			if !check.Exists {
-				status = "missing (defaults apply)"
-			} else if !check.Valid {
-				status = "invalid: " + check.Error
-			}
-			fmt.Printf("  %-8s %s\n             %s\n", check.Scope, status, check.Path)
-		}
-		for _, action := range report.Applied {
-			fmt.Println("  applied:", action)
-		}
-		if !*apply {
-			fmt.Println("  dry run; pass --apply to repair the global config")
-		}
-	}
-	for _, check := range report.Checks {
-		if check.Exists && !check.Valid {
-			return 1
-		}
-	}
-	return 0
-}
-
-func doctorQualityCommand(args []string, version string) int {
-	ref := ""
-	jsonOut := false
-	for _, arg := range args {
-		switch arg {
-		case "-h", "--help":
-			fmt.Fprintln(os.Stdout, "usage: reasonix doctor quality <branch-id-or-path> [--json]")
-			fmt.Fprintln(os.Stdout, "Prints a public-safe, content-free coding-quality summary for one session.")
-			return 0
-		case "--json":
-			jsonOut = true
-		default:
-			if strings.HasPrefix(arg, "-") || ref != "" {
-				fmt.Fprintln(os.Stderr, "usage: reasonix doctor quality <branch-id-or-path> [--json]")
-				return 2
-			}
-			ref = arg
-		}
-	}
-	if ref == "" {
-		fmt.Fprintln(os.Stderr, "usage: reasonix doctor quality <branch-id-or-path> [--json]")
-		return 2
-	}
-	report, err := doctor.CollectQuality(doctor.QualityOptions{Version: version, SessionRef: ref})
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
-	}
-	if jsonOut {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(report); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-		return 0
-	}
-	fmt.Print(doctor.RenderQualityText(report))
 	return 0
 }
 
@@ -171,7 +65,7 @@ func doctorRedactSessionsCommand(args []string) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: reasonix doctor redact-sessions [--dry-run] [--json] [--dir PATH]")
+		fmt.Fprintln(os.Stderr, "usage: voltui doctor redact-sessions [--dry-run] [--json] [--dir PATH]")
 		return 2
 	}
 	res := doctor.RedactSessions(doctor.RedactSessionsOptions{
@@ -212,16 +106,13 @@ func doctorSessionCommand(args []string, version string) int {
 		arg := args[i]
 		switch arg {
 		case "-h", "--help":
-			fmt.Fprintln(os.Stdout, "usage: reasonix doctor session <branch-id-or-path> [--zip] [--out PATH]")
+			fmt.Fprintln(os.Stdout, "usage: voltui doctor session <branch-id-or-path> [--zip] [--out PATH]")
 			fmt.Fprintln(os.Stdout, "")
 			fmt.Fprintln(os.Stdout, "Bundles the session transcript, persistence sidecars, conflict diagnostics,")
-			fmt.Fprintln(os.Stdout, "and the recovery parent chain into a zip for support. Unlike `reasonix doctor`,")
+			fmt.Fprintln(os.Stdout, "and the recovery parent chain into a zip for support. Unlike `voltui doctor`,")
 			fmt.Fprintln(os.Stdout, "bundled transcripts are NOT redacted; share only with a trusted support channel.")
 			return 0
 		case "--zip":
-			// The subcommand currently writes a zip by default. Keep --zip as an
-			// explicit, script-friendly marker so support replies can say exactly
-			// what to run.
 		case "--out":
 			i++
 			if i >= len(args) {
@@ -243,14 +134,14 @@ func doctorSessionCommand(args []string, version string) int {
 				return 2
 			}
 			if ref != "" {
-				fmt.Fprintln(os.Stderr, "usage: reasonix doctor session <branch-id-or-path> [--zip] [--out PATH]")
+				fmt.Fprintln(os.Stderr, "usage: voltui doctor session <branch-id-or-path> [--zip] [--out PATH]")
 				return 2
 			}
 			ref = arg
 		}
 	}
 	if ref == "" {
-		fmt.Fprintln(os.Stderr, "usage: reasonix doctor session <branch-id-or-path> [--zip] [--out PATH]")
+		fmt.Fprintln(os.Stderr, "usage: voltui doctor session <branch-id-or-path> [--zip] [--out PATH]")
 		return 2
 	}
 	result, err := doctor.WriteSessionBundle(doctor.SessionBundleOptions{

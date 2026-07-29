@@ -7,25 +7,22 @@ import (
 )
 
 // Event is the JSON-friendly form shared by event frontends.
-// externalizable:"true" marks large string payloads the Remote protocol may
-// offload via content refs without changing provider-visible semantics.
 type Event struct {
 	Kind            string           `json:"kind"`
-	Text            string           `json:"text,omitempty" externalizable:"true"`
-	Detail          string           `json:"detail,omitempty" externalizable:"true"`
-	Code            string           `json:"code,omitempty"`
-	Reasoning       string           `json:"reasoning,omitempty" externalizable:"true"`
+	Text            string           `json:"text,omitempty"`
+	Detail          string           `json:"detail,omitempty"`
+	Reasoning       string           `json:"reasoning,omitempty"`
 	MemoryCitations []MemoryCitation `json:"memoryCitations,omitempty"`
+	MemoryCompiler  *MemoryCompiler  `json:"memoryCompiler,omitempty"`
 	Level           string           `json:"level,omitempty"`
 	Tool            *Tool            `json:"tool,omitempty"`
 	Usage           *Usage           `json:"usage,omitempty"`
 	Approval        *Approval        `json:"approval,omitempty"`
 	Ask             *Ask             `json:"ask,omitempty"`
+	BrowserPrompt   *BrowserPrompt   `json:"browserPrompt,omitempty"`
 	Compaction      *Compaction      `json:"compaction,omitempty"`
 	Guardian        *Guardian        `json:"guardian,omitempty"`
-	Err             string           `json:"err,omitempty" externalizable:"true"`
-	Outcome         string           `json:"outcome,omitempty"`
-	Readiness       *FinalReadiness  `json:"readiness,omitempty"`
+	Err             string           `json:"err,omitempty"`
 	RetryAttempt    int              `json:"retryAttempt,omitempty"`
 	RetryMax        int              `json:"retryMax,omitempty"`
 }
@@ -38,7 +35,6 @@ func ToWire(e event.Event) Event {
 	}
 	switch e.Kind {
 	case event.Notice:
-		w.Code = e.Code
 		if e.Level == event.LevelWarn {
 			w.Level = "warn"
 		} else {
@@ -47,11 +43,9 @@ func ToWire(e event.Event) Event {
 	case event.ToolDispatch, event.ToolResult, event.ToolProgress:
 		wt := &Tool{
 			ID: e.Tool.ID, Name: e.Tool.Name, Args: e.Tool.Args,
-			ResolvedName: e.Tool.ResolvedName, CapabilityID: e.Tool.CapabilityID,
 			Output: e.Tool.Output, Err: e.Tool.Err,
 			ReadOnly: e.Tool.ReadOnly, Truncated: e.Tool.Truncated,
 			DurationMs: e.Tool.DurationMs, Partial: e.Tool.Partial,
-			ArgChars: e.Tool.ArgChars, Refreshed: e.Tool.Refreshed,
 			ParentID: e.Tool.ParentID,
 			Diff:     e.Tool.Diff, Added: e.Tool.Added, Removed: e.Tool.Removed,
 		}
@@ -78,31 +72,37 @@ func ToWire(e event.Event) Event {
 				w.Usage.CostUSD = cost
 			}
 		}
-	case event.ApprovalRequest:
-		w.Approval = &Approval{
-			ID: e.Approval.ID, Tool: e.Approval.Tool, Subject: e.Approval.Subject,
-			Reason: e.Approval.Reason, Fresh: e.Approval.Fresh, Kind: e.Approval.Kind,
-		}
-		if e.Approval.Recovery != nil {
-			r := e.Approval.Recovery
-			w.Approval.Recovery = &RecoveryApproval{
-				SourceAgent:     r.SourceAgent,
-				FailedTool:      r.FailedTool,
-				FailedSummary:   r.FailedSummary,
-				Diagnosis:       r.Diagnosis,
-				NextTool:        r.NextTool,
-				NextAction:      r.NextAction,
-				ChangeKind:      r.ChangeKind,
-				ChangeRationale: r.ChangeRationale,
-				ReviewRationale: r.ReviewRationale,
-				PlanBefore:      r.PlanBefore,
-				PlanAfter:       r.PlanAfter,
-				CanGrantTask:    r.CanGrantTask,
-				TaskGrantScope:  r.TaskGrantScope,
+	case event.MemoryCompilerStatsEvent:
+		if m := e.MemoryCompiler; m != nil {
+			w.MemoryCompiler = &MemoryCompiler{
+				Injected:         m.Injected,
+				UsefulIR:         m.UsefulIR,
+				CompiledTokens:   m.CompiledTokens,
+				IROverheadTokens: m.IROverheadTokens,
+				MemoryReferences: m.MemoryReferences,
+				Constraints:      m.Constraints,
+				RiskNotes:        m.RiskNotes,
+				ExecutionSteps:   m.ExecutionSteps,
+				TotalNodes:       m.TotalNodes,
+				HighSignalNodes:  m.HighSignalNodes,
+				ToolResultNodes:  m.ToolResultNodes,
+				DecisionNodes:    m.DecisionNodes,
+				StrategyCount:    m.StrategyCount,
+				LearningCount:    m.LearningCount,
 			}
+		}
+	case event.ApprovalRequest:
+		w.Approval = &Approval{ID: e.Approval.ID, Tool: e.Approval.Tool, Subject: e.Approval.Subject, Reason: e.Approval.Reason}
+		if e.Approval.Guardian != nil {
+			w.Approval.Guardian = ToWireGuardian(*e.Approval.Guardian)
 		}
 	case event.AskRequest:
 		w.Ask = ToWireAsk(e.Ask)
+	case event.BrowserCredentialRequest, event.BrowserVerificationRequest:
+		w.BrowserPrompt = &BrowserPrompt{
+			ID: e.BrowserPrompt.ID, Origin: e.BrowserPrompt.Origin, URL: e.BrowserPrompt.URL,
+			HasSaved: e.BrowserPrompt.HasSaved, UsernameHint: e.BrowserPrompt.UsernameHint, Reason: e.BrowserPrompt.Reason,
+		}
 	case event.CompactionStarted, event.CompactionDone:
 		w.Compaction = &Compaction{
 			Trigger: e.Compaction.Trigger, Messages: e.Compaction.Messages,
@@ -111,10 +111,6 @@ func ToWire(e event.Event) Event {
 	case event.GuardianAssessment:
 		w.Guardian = ToWireGuardian(e.Guardian)
 	case event.TurnDone:
-		w.Outcome = e.Outcome
-		if e.Readiness != nil {
-			w.Readiness = &FinalReadiness{Attempts: e.Readiness.Attempts, Missing: append([]string(nil), e.Readiness.Missing...)}
-		}
 		if e.Err != nil {
 			w.Err = e.Err.Error()
 		}
@@ -125,11 +121,6 @@ func ToWire(e event.Event) Event {
 	return w
 }
 
-type FinalReadiness struct {
-	Attempts int      `json:"attempts,omitempty"`
-	Missing  []string `json:"missing,omitempty"`
-}
-
 // MemoryCitation is the JSON form of provider.MemoryCitation.
 type MemoryCitation struct {
 	ID        string `json:"id,omitempty"`
@@ -138,6 +129,35 @@ type MemoryCitation struct {
 	LineEnd   int    `json:"lineEnd,omitempty"`
 	Note      string `json:"note,omitempty"`
 	Kind      string `json:"kind,omitempty"`
+}
+
+// BrowserPrompt is intentionally metadata-only. Passwords never enter the
+// shared event contract.
+type BrowserPrompt struct {
+	ID           string `json:"id"`
+	Origin       string `json:"origin"`
+	URL          string `json:"url,omitempty"`
+	HasSaved     bool   `json:"hasSaved,omitempty"`
+	UsernameHint string `json:"usernameHint,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+}
+
+// MemoryCompiler is the JSON form of content-free Memory v5 usage metrics.
+type MemoryCompiler struct {
+	Injected         bool `json:"injected"`
+	UsefulIR         bool `json:"usefulIR"`
+	CompiledTokens   int  `json:"compiledTokens"`
+	IROverheadTokens int  `json:"irOverheadTokens"`
+	MemoryReferences int  `json:"memoryReferences"`
+	Constraints      int  `json:"constraints"`
+	RiskNotes        int  `json:"riskNotes"`
+	ExecutionSteps   int  `json:"executionSteps"`
+	TotalNodes       int  `json:"totalNodes"`
+	HighSignalNodes  int  `json:"highSignalNodes"`
+	ToolResultNodes  int  `json:"toolResultNodes"`
+	DecisionNodes    int  `json:"decisionNodes"`
+	StrategyCount    int  `json:"strategyCount"`
+	LearningCount    int  `json:"learningCount"`
 }
 
 // ToWireMemoryCitations converts local memory references into frontend JSON.
@@ -163,21 +183,21 @@ func ToWireMemoryCitations(in []provider.MemoryCitation) []MemoryCitation {
 type Compaction struct {
 	Trigger  string `json:"trigger,omitempty"`
 	Messages int    `json:"messages,omitempty"`
-	Summary  string `json:"summary,omitempty" externalizable:"true"`
-	Archive  string `json:"archive,omitempty" externalizable:"true"`
+	Summary  string `json:"summary,omitempty"`
+	Archive  string `json:"archive,omitempty"`
 }
 
 // AskOption is one JSON-formatted choice in a structured ask request.
 type AskOption struct {
 	Label       string `json:"label"`
-	Description string `json:"description,omitempty" externalizable:"true"`
+	Description string `json:"description,omitempty"`
 }
 
 // AskQuestion is one JSON-formatted structured ask question.
 type AskQuestion struct {
 	ID      string      `json:"id"`
 	Header  string      `json:"header,omitempty"`
-	Prompt  string      `json:"prompt" externalizable:"true"`
+	Prompt  string      `json:"prompt"`
 	Options []AskOption `json:"options"`
 	Multi   bool        `json:"multi,omitempty"`
 }
@@ -196,24 +216,20 @@ type Profile struct {
 
 // Tool is the JSON form of an event.Tool.
 type Tool struct {
-	ID           string   `json:"id,omitempty"`
-	Name         string   `json:"name"`
-	Args         string   `json:"args,omitempty" externalizable:"true"`
-	ResolvedName string   `json:"resolvedName,omitempty"`
-	CapabilityID string   `json:"capabilityId,omitempty"`
-	Output       string   `json:"output,omitempty" externalizable:"true"`
-	Err          string   `json:"err,omitempty" externalizable:"true"`
-	ReadOnly     bool     `json:"readOnly"`
-	Truncated    bool     `json:"truncated,omitempty"`
-	DurationMs   int64    `json:"durationMs,omitempty"`
-	Partial      bool     `json:"partial,omitempty"`
-	ArgChars     int      `json:"argChars,omitempty"`
-	Refreshed    bool     `json:"refreshed,omitempty"`
-	ParentID     string   `json:"parentId,omitempty"`
-	Diff         string   `json:"diff,omitempty" externalizable:"true"`
-	Added        int      `json:"added,omitempty"`
-	Removed      int      `json:"removed,omitempty"`
-	Profile      *Profile `json:"profile,omitempty"`
+	ID         string   `json:"id,omitempty"`
+	Name       string   `json:"name"`
+	Args       string   `json:"args,omitempty"`
+	Output     string   `json:"output,omitempty"`
+	Err        string   `json:"err,omitempty"`
+	ReadOnly   bool     `json:"readOnly"`
+	Truncated  bool     `json:"truncated,omitempty"`
+	DurationMs int64    `json:"durationMs,omitempty"`
+	Partial    bool     `json:"partial,omitempty"`
+	ParentID   string   `json:"parentId,omitempty"`
+	Diff       string   `json:"diff,omitempty"`
+	Added      int      `json:"added,omitempty"`
+	Removed    int      `json:"removed,omitempty"`
+	Profile    *Profile `json:"profile,omitempty"`
 }
 
 // Usage is the JSON form of provider usage telemetry.
@@ -250,30 +266,11 @@ type CacheDiagnostics struct {
 
 // Approval is the JSON form of an event.Approval.
 type Approval struct {
-	ID       string            `json:"id"`
-	Tool     string            `json:"tool"`
-	Subject  string            `json:"subject" externalizable:"true"`
-	Reason   string            `json:"reason,omitempty" externalizable:"true"`
-	Fresh    bool              `json:"fresh,omitempty"`
-	Kind     string            `json:"kind,omitempty"` // tool | plan | recovery
-	Recovery *RecoveryApproval `json:"recovery,omitempty"`
-}
-
-// RecoveryApproval is the JSON form of an event.RecoveryApproval.
-type RecoveryApproval struct {
-	SourceAgent     string `json:"source_agent,omitempty"`
-	FailedTool      string `json:"failed_tool,omitempty"`
-	FailedSummary   string `json:"failed_summary,omitempty"`
-	Diagnosis       string `json:"diagnosis,omitempty"`
-	NextTool        string `json:"next_tool,omitempty"`
-	NextAction      string `json:"next_action,omitempty"`
-	ChangeKind      string `json:"change_kind,omitempty"`
-	ChangeRationale string `json:"change_rationale,omitempty"`
-	ReviewRationale string `json:"review_rationale,omitempty"`
-	PlanBefore      string `json:"plan_before,omitempty"`
-	PlanAfter       string `json:"plan_after,omitempty"`
-	CanGrantTask    bool   `json:"can_grant_task,omitempty"`
-	TaskGrantScope  string `json:"task_grant_scope,omitempty"`
+	ID       string    `json:"id"`
+	Tool     string    `json:"tool"`
+	Subject  string    `json:"subject"`
+	Reason   string    `json:"reason,omitempty"`
+	Guardian *Guardian `json:"guardian,omitempty"`
 }
 
 // Guardian is the JSON form of an event.GuardianResult.
@@ -284,7 +281,7 @@ type Guardian struct {
 	Outcome           string `json:"outcome"`
 	RiskLevel         string `json:"risk_level,omitempty"`
 	UserAuthorization string `json:"user_authorization,omitempty"`
-	Rationale         string `json:"rationale,omitempty" externalizable:"true"`
+	Rationale         string `json:"rationale,omitempty"`
 	DurationMs        int64  `json:"duration_ms,omitempty"`
 	Usage             *Usage `json:"usage,omitempty"`
 }
@@ -346,23 +343,26 @@ func ToWireCacheDiagnostics(d *event.CacheDiagnostics) *CacheDiagnostics {
 }
 
 var kindNames = map[event.Kind]string{
-	event.TurnStarted:        "turn_started",
-	event.Reasoning:          "reasoning",
-	event.Text:               "text",
-	event.Message:            "message",
-	event.ToolDispatch:       "tool_dispatch",
-	event.ToolResult:         "tool_result",
-	event.Usage:              "usage",
-	event.Notice:             "notice",
-	event.Phase:              "phase",
-	event.ApprovalRequest:    "approval_request",
-	event.AskRequest:         "ask_request",
-	event.TurnDone:           "turn_done",
-	event.CompactionStarted:  "compaction_started",
-	event.CompactionDone:     "compaction_done",
-	event.ToolProgress:       "tool_progress",
-	event.MCPSurfaceReady:    "mcp_surface_ready",
-	event.Retrying:           "retrying",
-	event.Steer:              "steer",
-	event.GuardianAssessment: "guardian_assessment",
+	event.TurnStarted:                "turn_started",
+	event.Reasoning:                  "reasoning",
+	event.Text:                       "text",
+	event.Message:                    "message",
+	event.ToolDispatch:               "tool_dispatch",
+	event.ToolResult:                 "tool_result",
+	event.Usage:                      "usage",
+	event.Notice:                     "notice",
+	event.Phase:                      "phase",
+	event.ApprovalRequest:            "approval_request",
+	event.AskRequest:                 "ask_request",
+	event.TurnDone:                   "turn_done",
+	event.CompactionStarted:          "compaction_started",
+	event.CompactionDone:             "compaction_done",
+	event.ToolProgress:               "tool_progress",
+	event.MCPSurfaceReady:            "mcp_surface_ready",
+	event.Retrying:                   "retrying",
+	event.Steer:                      "steer",
+	event.MemoryCompilerStatsEvent:   "memory_compiler_stats",
+	event.GuardianAssessment:         "guardian_assessment",
+	event.BrowserCredentialRequest:   "browser_credential_request",
+	event.BrowserVerificationRequest: "browser_verification_request",
 }

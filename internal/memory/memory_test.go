@@ -28,7 +28,7 @@ func TestComposeEmptyIsIdentity(t *testing.T) {
 // so the base stays a valid cache prefix even as memory changes between sessions.
 func TestComposeAppendsAfterBase(t *testing.T) {
 	base := "BASE PROMPT"
-	set := &Set{Docs: []Source{{Path: "/p/REASONIX.md", Scope: ScopeProject, Body: "Use tabs."}}}
+	set := &Set{Docs: []Source{{Path: "/p/VOLTUI.md", Scope: ScopeProject, Body: "Use tabs."}}}
 	got := Compose(base, set)
 	if !strings.HasPrefix(got, base) {
 		t.Fatalf("base is not the prefix of the composed prompt:\n%q", got)
@@ -49,9 +49,9 @@ func TestDiscoverPrecedenceOrder(t *testing.T) {
 	// Make proj a git root so discovery stops there.
 	mustMkdir(t, filepath.Join(proj, ".git"))
 
-	mustWrite(t, filepath.Join(user, "REASONIX.md"), "USER LEVEL")
-	mustWrite(t, filepath.Join(proj, "REASONIX.md"), "PROJECT LEVEL")
-	mustWrite(t, filepath.Join(proj, "REASONIX.local.md"), "LOCAL LEVEL")
+	mustWrite(t, filepath.Join(user, "VOLTUI.md"), "USER LEVEL")
+	mustWrite(t, filepath.Join(proj, "VOLTUI.md"), "PROJECT LEVEL")
+	mustWrite(t, filepath.Join(proj, "VOLTUI.local.md"), "LOCAL LEVEL")
 
 	set := Load(Options{CWD: proj, UserDir: user})
 	if len(set.Docs) != 3 {
@@ -85,12 +85,36 @@ func TestDiscoverDecodesGB18030PrimaryDoc(t *testing.T) {
 	}
 }
 
+func TestDiscoverLoadsReasonixUserMemory(t *testing.T) {
+	root := t.TempDir()
+	user := filepath.Join(root, "voltui")
+	legacyUser := filepath.Join(root, "reasonix")
+	proj := filepath.Join(root, "proj")
+	mustMkdir(t, user)
+	mustMkdir(t, legacyUser)
+	mustMkdir(t, proj)
+	mustMkdir(t, filepath.Join(proj, ".git"))
+
+	mustWrite(t, filepath.Join(legacyUser, "REASONIX.md"), "REASONIX USER")
+	mustWrite(t, filepath.Join(user, "VOLTUI.md"), "VOLTUI USER")
+
+	set := Load(Options{CWD: proj, UserDir: user})
+	if len(set.Docs) != 2 {
+		t.Fatalf("want 2 user docs, got %d: %+v", len(set.Docs), set.Docs)
+	}
+	block := set.Block()
+	ir, iv := strings.Index(block, "REASONIX USER"), strings.Index(block, "VOLTUI USER")
+	if !(ir >= 0 && ir < iv) {
+		t.Fatalf("voltui user memory should load before current user memory: voltui=%d voltui=%d\n%s", ir, iv, block)
+	}
+}
+
 // TestImportResolution checks "@path" inlining, including a relative import.
 func TestImportResolution(t *testing.T) {
 	proj := t.TempDir()
 	mustMkdir(t, filepath.Join(proj, ".git"))
 	mustWrite(t, filepath.Join(proj, "shared.md"), "SHARED CONTENT")
-	mustWrite(t, filepath.Join(proj, "REASONIX.md"), "Top line\n@shared.md\nBottom line")
+	mustWrite(t, filepath.Join(proj, "VOLTUI.md"), "Top line\n@shared.md\nBottom line")
 
 	set := Load(Options{CWD: proj})
 	if len(set.Docs) != 1 {
@@ -105,45 +129,17 @@ func TestImportResolution(t *testing.T) {
 	}
 }
 
-func TestImportResolutionRejectsEscapes(t *testing.T) {
+func TestImportResolutionDecodesGB18030Doc(t *testing.T) {
 	proj := t.TempDir()
 	mustMkdir(t, filepath.Join(proj, ".git"))
-	outside := t.TempDir()
-	mustWrite(t, filepath.Join(outside, "secret.md"), "SECRET")
-	mustWrite(t, filepath.Join(proj, "REASONIX.md"), "Top\n@/abs/path.md\n@~/secret.md\n@../secret.md\nBottom")
+	if err := os.WriteFile(filepath.Join(proj, "shared.md"), fileencoding.Encode("共享约定", fileencoding.GB18030), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(proj, "AGENTS.md"), "@shared.md")
 
 	set := Load(Options{CWD: proj})
-	if len(set.Docs) != 1 {
-		t.Fatalf("want 1 doc, got %d", len(set.Docs))
-	}
-	body := set.Docs[0].Body
-	if strings.Contains(body, "SECRET") {
-		t.Fatalf("unsafe import was inlined: %q", body)
-	}
-	for _, directive := range []string{"@/abs/path.md", "@~/secret.md", "@../secret.md"} {
-		if !strings.Contains(body, directive) {
-			t.Fatalf("unsafe directive %q should be left visible, body: %q", directive, body)
-		}
-	}
-}
-
-func TestImportResolutionRejectsSymlinkEscape(t *testing.T) {
-	proj := t.TempDir()
-	mustMkdir(t, filepath.Join(proj, ".git"))
-	outside := t.TempDir()
-	mustWrite(t, filepath.Join(outside, "secret.md"), "SECRET")
-	if err := os.Symlink(filepath.Join(outside, "secret.md"), filepath.Join(proj, "linked.md")); err != nil {
-		t.Skipf("symlink unavailable: %v", err)
-	}
-	mustWrite(t, filepath.Join(proj, "REASONIX.md"), "Top\n@linked.md\nBottom")
-
-	set := Load(Options{CWD: proj})
-	if len(set.Docs) != 1 {
-		t.Fatalf("want 1 doc, got %d", len(set.Docs))
-	}
-	body := set.Docs[0].Body
-	if strings.Contains(body, "SECRET") || !strings.Contains(body, "@linked.md") {
-		t.Fatalf("symlink escape should not be inlined, body: %q", body)
+	if len(set.Docs) != 1 || !strings.Contains(set.Docs[0].Body, "共享约定") {
+		t.Fatalf("GB18030 import not inlined: %+v", set.Docs)
 	}
 }
 
@@ -153,7 +149,7 @@ func TestImportCycleDoesNotHang(t *testing.T) {
 	mustMkdir(t, filepath.Join(proj, ".git"))
 	mustWrite(t, filepath.Join(proj, "a.md"), "A\n@b.md")
 	mustWrite(t, filepath.Join(proj, "b.md"), "B\n@a.md")
-	mustWrite(t, filepath.Join(proj, "REASONIX.md"), "@a.md")
+	mustWrite(t, filepath.Join(proj, "VOLTUI.md"), "@a.md")
 
 	set := Load(Options{CWD: proj}) // must return, not loop forever
 	body := set.Docs[0].Body
@@ -204,7 +200,7 @@ func TestImportDiamondAndCycle(t *testing.T) {
 	mustWrite(t, filepath.Join(proj, "shared.md"), "SHARED CONTENT")
 	mustWrite(t, filepath.Join(proj, "a.md"), "A\n@shared.md")
 	mustWrite(t, filepath.Join(proj, "b.md"), "B\n@shared.md")
-	mustWrite(t, filepath.Join(proj, "REASONIX.md"), "@a.md\n@b.md")
+	mustWrite(t, filepath.Join(proj, "VOLTUI.md"), "@a.md\n@b.md")
 
 	set := Load(Options{CWD: proj})
 	if len(set.Docs) != 1 {
@@ -224,7 +220,7 @@ func TestImportDiamondAndCycle(t *testing.T) {
 	mustMkdir(t, filepath.Join(projCycle, ".git"))
 	mustWrite(t, filepath.Join(projCycle, "cycle1.md"), "CYCLE1\n@cycle2.md")
 	mustWrite(t, filepath.Join(projCycle, "cycle2.md"), "CYCLE2\n@cycle1.md")
-	mustWrite(t, filepath.Join(projCycle, "REASONIX.md"), "@cycle1.md")
+	mustWrite(t, filepath.Join(projCycle, "VOLTUI.md"), "@cycle1.md")
 
 	setCycle := Load(Options{CWD: projCycle})
 	if len(setCycle.Docs) != 1 {

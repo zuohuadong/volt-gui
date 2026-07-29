@@ -12,14 +12,6 @@ import (
 	"voltui/internal/skill"
 )
 
-// InvocationRequest is an explicit user-selected Skill or Subagent entity.
-// Offset is used only to preserve the visual order chosen in the composer.
-type InvocationRequest struct {
-	Name   string `json:"name"`
-	Kind   string `json:"kind"`
-	Offset int    `json:"offset"`
-}
-
 // PlanModeMarker is prepended to every user turn while plan mode is on. It rides
 // in the user message (not the system prompt or tools), so the cache-stable
 // prompt prefix is left untouched and the toggle costs nothing in cache hits.
@@ -62,10 +54,23 @@ const (
 // feature, or synthetic user messages injected by the controller).
 func StripComposePrefixes(content string) string {
 	s := agent.StripTransientUserBlocks(content)
+	s = stripXMLBlockPrefix(s, "<"+hookContextTag, "</"+hookContextTag+">")
 	s = stripComposeMarker(s, PlanModeMarker)
 	s = stripComposeMarker(s, legacyPlanModeMarker)
 	s = strings.TrimSpace(s)
 	return s
+}
+
+func stripXMLBlockPrefix(s, open, close string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, open) {
+		return s
+	}
+	end := strings.Index(s, close)
+	if end < 0 {
+		return s
+	}
+	return strings.TrimSpace(s[end+len(close):])
 }
 
 func stripComposeMarker(s, marker string) string {
@@ -120,13 +125,39 @@ func StripReferencedContextPrefix(content string) string {
 // approval, stream recovery, readiness retry, etc.). These should not be shown
 // in the chat UI.
 func IsSyntheticUserMessage(content string) bool {
-	if trimmed := strings.TrimSpace(agent.StripTransientUserBlocks(content)); trimmed == planApprovedMessage {
+	trimmed := strings.TrimSpace(agent.StripTransientUserBlocks(content))
+	if trimmed == planApprovedMessage {
 		return true
 	}
-	// The prefix list lives in internal/agent (agent.SyntheticUserPrefixes) so
-	// preview/title/turn-count derivations there share the exact same filter
-	// (#3653).
-	return agent.IsSyntheticUserText(content)
+	for _, prefix := range syntheticPrefixes {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// syntheticPrefixes must be kept in sync with the synthetic user messages
+// injected by the controller (planApprovedMessage, goal loop turns), agent loop
+// (streamRecoveryMessage, finalReadinessRetryMessage, emptyFinalRetryMessage,
+// executorHandoffRetryMessage in internal/agent/agent.go), and compaction
+// folds (internal/agent/compact.go), which store summaries as user-role
+// messages the chat UI must never render as user bubbles (#3653).
+var syntheticPrefixes = []string{
+	"Plan approved — plan mode is off",
+	"Host final-answer readiness check failed",
+	"You are already in the executor phase",
+	"The previous assistant response was interrupted while a tool call",
+	"The previous assistant response was interrupted during streaming",
+	"The previous assistant response was interrupted before visible",
+	"The previous assistant response finished without any visible answer",
+	"<compaction-summary>",
+	"Summary of the later conversation (compacted from here on):",
+	"Summary of earlier conversation (compacted up to here):",
+	"Continue pursuing the active goal",
+	"The agent signaled goal completion and all tasks are marked done.",
+	"Goal signaled complete but issues remain:",
+	"No tool calls in recent turns.",
 }
 
 // Compose applies the plan-mode marker to a turn's text when plan mode is on,
@@ -340,7 +371,7 @@ Do not stop after describing a plan; execute the next useful step. End every goa
 
 const autoResearchGoalInstructions = `AutoResearch protocol: this goal looks like long-horizon research, debugging, optimization, or implementation work. Treat AutoResearch as a durable strategy for this Goal, not as a background daemon or a global skill.
 - Say briefly in the first visible reply that the goal is being handled with AutoResearch and that host-owned state lives under .voltui/autoresearch/<task-id>/, using the actual task_id from <autoresearch-runtime>.
-- Keep dynamic state out of REASONIX.md, AGENTS.md, project memory, system prompts, and tool schemas. Use project-local .voltui/autoresearch/ state only.
+- Keep dynamic state out of VOLTUI.md, legacy REASONIX.md, AGENTS.md, project memory, system prompts, and tool schemas. Use project-local .voltui/autoresearch/ state only.
 - Use the task_id and open_success_criteria in <autoresearch-runtime> as authoritative. The host creates task ids and owns state/task_spec.json, state/progress.json, state/findings.jsonl, state/directions_tried.json, state/iteration_log.jsonl, and logs/heartbeat.jsonl.
 - Do not hand-edit the host-owned AutoResearch state files. When you have direct evidence for an open criterion, include an <autoresearch-evidence> block in your assistant reply so the host can persist it:
 <autoresearch-evidence>
@@ -359,6 +390,36 @@ func shouldUseAutoResearch(goal string, mode GoalResearchMode) bool {
 		return false
 	}
 	return isAutoResearchGoal(goal)
+}
+
+func shouldAutoStartResearchGoal(input string) bool {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" || strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "!") {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, ".voltui/autoresearch/") {
+		return true
+	}
+	for _, phrase := range autoResearchAutoStartPhrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	categories := autoResearchPhaseCount(lower)
+	switch {
+	case strings.Contains(lower, "彻底") && categories >= 3:
+		return true
+	case strings.Contains(lower, "完整") && categories >= 3:
+		return true
+	case strings.Contains(lower, "长期") && categories >= 2 && containsAnyGoalKeyword(lower, []string{"实验", "验证", "修复", "排查", "优化"}):
+		return true
+	case strings.Contains(lower, "thoroughly") && categories >= 3:
+		return true
+	case strings.Contains(lower, "complete") && categories >= 3:
+		return true
+	}
+	return false
 }
 
 func isAutoResearchGoal(goal string) bool {
@@ -386,6 +447,32 @@ func autoResearchPhaseCount(lower string) int {
 		}
 	}
 	return categories
+}
+
+var autoResearchAutoStartPhrases = []string{
+	"直到根因",
+	"根因明确",
+	"多轮排查",
+	"不要原地打转",
+	"别原地打转",
+	"完整做成方案",
+	"完整方案并验证",
+	"跑实验",
+	"反复验证",
+	"系统性研究",
+	"持续研究",
+	"持续排查",
+	"持续推进",
+	"长期跑",
+	"until the root cause",
+	"root cause is clear",
+	"debug until",
+	"do not spin",
+	"don't spin",
+	"keep researching",
+	"long-horizon",
+	"long horizon",
+	"long-running",
 }
 
 var autoResearchStrongKeywords = []string{
@@ -548,33 +635,22 @@ func (c *Controller) CustomCommand(input string) (sent string, found bool) {
 	return "", false
 }
 
-// resolveSkillInvocation resolves a "/<name> args…" line to its live Skill and
-// task text. Submit uses RunAs to choose inline main-loop execution or isolated
-// subagent execution; RunSkill remains the compatibility renderer used by
-// management/existence checks and callers that explicitly need the body.
-func (c *Controller) resolveSkillInvocation(input string) (skill.Skill, string, bool) {
+// RunSkill resolves a "/<name> args…" line against the loaded skills, returning
+// the skill's rendered body to send as a turn (found=false when no skill
+// matches). Invoking a skill by slash always inlines its body — the model reads
+// and follows the playbook in the main loop; a subagent skill's isolation is
+// only engaged when the model calls it via run_skill / the dedicated tool. The
+// caller applies Compose for plan-mode/memory framing.
+func (c *Controller) RunSkill(input string) (sent string, found bool) {
 	fields := strings.Fields(input)
 	if len(fields) == 0 {
-		return skill.Skill{}, "", false
-	}
-	name := strings.TrimPrefix(fields[0], "/")
-	sk, ok := c.skills.bySlashName(name)
-	if !ok {
-		return skill.Skill{}, "", false
-	}
-	return sk, strings.Join(fields[1:], " "), true
-}
-
-// RunSkill resolves a "/<name> args…" line against the loaded skills and
-// renders its body. Controller.Submit does not use this renderer for
-// runAs=subagent skills: direct slash invocation executes those through the
-// isolated SkillRunner instead.
-func (c *Controller) RunSkill(input string) (sent string, found bool) {
-	sk, task, ok := c.resolveSkillInvocation(input)
-	if !ok {
 		return "", false
 	}
-	return c.skills.render(sk, task), true
+	name := strings.TrimPrefix(fields[0], "/")
+	if sk, ok := c.skills.byName(name); ok {
+		return skill.Render(sk, strings.Join(fields[1:], " ")), true
+	}
+	return "", false
 }
 
 // MCPPrompt resolves a "/mcp__server__prompt args…" line: it maps the positional

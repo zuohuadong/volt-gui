@@ -3,7 +3,6 @@ package builtin
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -11,14 +10,13 @@ import (
 
 	"voltui/internal/netclient"
 	"voltui/internal/sandbox"
-	"voltui/internal/secrets"
 	"voltui/internal/tool"
 )
 
 // ConfineBash returns the bash built-in bound to an OS-sandbox spec, overriding
 // the unconfined instance registered at init. When the spec enforces, bash runs
 // each command through the sandbox (see package sandbox). guard appends a
-// warning to command output when the command references VoltUI's own session
+// warning to command output when the command references Reasonix's own session
 // stores (see SessionDataGuard).
 func ConfineBash(spec sandbox.Spec, guard SessionDataGuard, timeout ...time.Duration) tool.Tool {
 	shell := spec.Shell
@@ -32,36 +30,14 @@ func ConfineBash(spec sandbox.Spec, guard SessionDataGuard, timeout ...time.Dura
 	return b
 }
 
-// RebindBashWriteRoots returns a copy of bash with its complete write surface
-// narrowed to roots. ok is false when tl is not a confined bash tool, when the
-// sandbox is not enforcing (cannot honour narrower roots), or when roots is empty.
-// Callers that wrap bash (e.g. foreground-only subagent wrappers) must unwrap
-// before calling and re-wrap the result.
-func RebindBashWriteRoots(tl tool.Tool, roots []string) (tool.Tool, bool) {
-	b, ok := tl.(bash)
-	if !ok || !b.sb.Enforce() {
-		return nil, false
-	}
-	rs := realRoots(roots)
-	if len(rs) == 0 {
-		return nil, false
-	}
-	spec := b.sb
-	spec.WriteRoots = rs
-	// Sub-agent claims are strict capability boundaries. Do not add the normal
-	// build-cache and temporary-directory allowances outside the claimed roots.
-	spec.MinimalWrites = true
-	// Do not inherit a wider AppContainer write lane from the parent workspace
-	// confinement — the claim roots are the only allowed write surface.
-	spec.AppContainerWriteRoots = append([]string(nil), rs...)
-	b.sb = spec
-	return b, true
-}
-
-// ConfineWebFetch returns the web_fetch built-in bound to VoltUI proxy
+// ConfineWebFetch returns the web_fetch built-in bound to Reasonix proxy
 // settings while preserving its SSRF-guarded dialer.
-func ConfineWebFetch(proxySpec netclient.ProxySpec) tool.Tool {
-	return webFetch{proxySpec: proxySpec}
+func ConfineWebFetch(proxySpec netclient.ProxySpec, trustedIntranet ...TrustedIntranetPolicy) tool.Tool {
+	policy := TrustedIntranetPolicy{}
+	if len(trustedIntranet) > 0 {
+		policy = trustedIntranet[0]
+	}
+	return webFetch{proxySpec: proxySpec, trustedIntranet: policy}
 }
 
 // ConfineWriters returns the file-writing built-ins (write_file, edit_file,
@@ -70,9 +46,9 @@ func ConfineWebFetch(proxySpec netclient.ProxySpec) tool.Tool {
 // the unconfined instances registered at init time, so writes stay inside the
 // workspace by default. roots may be relative; they are resolved to absolute,
 // symlink-free paths once here. An empty roots slice yields unconfined writers.
-// guard additionally rejects writes into VoltUI's own session stores even
+// guard additionally rejects writes into Reasonix's own session stores even
 // when the roots would allow them (see SessionDataGuard). managed names the
-// VoltUI-owned config files writable outside the roots after a fresh human
+// Reasonix-owned config files writable outside the roots after a fresh human
 // approval (see ManagedConfigPaths).
 func ConfineWriters(roots []string, guard SessionDataGuard, managed ManagedConfigPaths) []tool.Tool {
 	rs := realRoots(roots)
@@ -102,49 +78,22 @@ func ConfineReaders(forbidRoots []string) []tool.Tool {
 	}
 }
 
-// confineRead reports whether target is inside any forbidRoot or, when the
-// user enabled [secrets] protect_sensitive_files, matches VoltUI's built-in
-// sensitive credential path denylist. An empty forbidRoots slice with the
-// denylist off is unconfined (returns false). Callers should return a result
-// that mimics the directory appearing empty, matching the tmpfs semantics the
-// bubblewrap sandbox provides. Deny-side, so the check folds case on
-// case-insensitive platforms (see withinFold): a case-variant of a forbidden
-// path reaches the same bytes there.
+// confineRead reports whether target is inside any forbidRoot. An empty
+// forbidRoots slice is unconfined (returns false). Callers should return a
+// result that mimics the directory appearing empty, matching
+// the tmpfs semantics the bubblewrap sandbox provides. Deny-side, so the
+// check folds case on case-insensitive platforms (see withinFold): a
+// case-variant of a forbidden path reaches the same bytes there.
 func confineRead(forbidRoots []string, target string) bool {
-	protect := secrets.ProtectSensitiveFiles()
-	if len(forbidRoots) == 0 && !protect {
+	if len(forbidRoots) == 0 {
 		return false
 	}
 	abs, err := realPath(target)
 	if err != nil {
 		return false // can't resolve -> let the caller's normal error path handle it
 	}
-	if protect && sensitiveReadPath(abs) {
-		return true
-	}
 	for _, r := range forbidRoots {
 		if withinFold(r, abs) {
-			return true
-		}
-	}
-	return false
-}
-
-func sensitiveReadPath(abs string) bool {
-	clean := filepath.Clean(abs)
-	name := strings.ToLower(filepath.Base(clean))
-	switch name {
-	case ".env", ".git-credentials", ".netrc":
-		return true
-	}
-	for _, ext := range []string{".pem", ".key", ".p12", ".pfx"} {
-		if strings.HasSuffix(name, ext) {
-			return true
-		}
-	}
-	home, err := os.UserHomeDir()
-	if err == nil && home != "" {
-		if withinFold(filepath.Join(home, ".ssh"), clean) {
 			return true
 		}
 	}
@@ -181,16 +130,16 @@ func confine(roots []string, target string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("path %q is outside the writable roots (writes are confined to %s); "+
-		"write inside the workspace or a configured allow_write root, or widen [sandbox] workspace_root / allow_write in reasonix.toml",
-		target, strings.Join(roots, ", "))
+	return tool.NewPolicyBlock(fmt.Errorf("path %q is outside the writable roots (writes are confined to %s); "+
+		"write inside the workspace or a configured allow_write root, or widen [sandbox] workspace_root / allow_write in voltui.toml",
+		target, strings.Join(roots, ", ")))
 }
 
 // confineWrite is the write-tool boundary check: workspace confinement first,
 // then the session-data guard, so a write can be inside the roots (e.g. a
 // home-directory workspace covering the state root) and still be refused when
-// it targets VoltUI's own session stores. A target outside every root that
-// matches a VoltUI-managed config file (see ManagedConfigPaths) may proceed
+// it targets Reasonix's own session stores. A target outside every root that
+// matches a Reasonix-managed config file (see ManagedConfigPaths) may proceed
 // after a fresh per-write human approval carried on ctx; without an approver it
 // fails closed with the original confinement error semantics.
 func confineWrite(ctx context.Context, roots []string, guard SessionDataGuard, managed ManagedConfigPaths, target string) error {

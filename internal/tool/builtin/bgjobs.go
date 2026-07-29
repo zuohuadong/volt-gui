@@ -58,6 +58,7 @@ func (bashOutput) Execute(ctx context.Context, args json.RawMessage) (string, er
 		return "", fmt.Errorf("background jobs are not available in this context")
 	}
 	text, status, found := jm.OutputForSession(jobs.SessionFromContext(ctx), p.JobID)
+	text = decodeShellOutput(text)
 	if !found {
 		return "", fmt.Errorf("no background job %q", p.JobID)
 	}
@@ -184,10 +185,11 @@ func (waitJob) Execute(ctx context.Context, args json.RawMessage) (string, error
 }
 
 func collectBackgroundEvidence(ctx context.Context, jm *jobs.Manager, jobID string) {
-	// A Plan turn should not consume a finished background writer's mutation
-	// receipts before the workflow reaches execution. Writers may still run after
-	// Permissions approval; leave their evidence on the job so the first
-	// post-approval collection can merge and audit it.
+	// Plan mode researches with writers blocked: merging a finished background
+	// writer's mutation receipts into a planning turn would arm delivery
+	// sign-off demands (complete_step, verification, review) that the turn
+	// cannot satisfy. Skip without consuming — the job keeps its evidence, and
+	// the first collection from a normal turn merges it.
 	if planmode.Active(ctx) {
 		return
 	}

@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,7 @@ type Workspace struct {
 	BashTimeout     time.Duration
 	Search          SearchSpec
 	ProxySpec       netclient.ProxySpec
+	TrustedIntranet TrustedIntranetPolicy
 	ReadPaths       *PathResolver
 	SessionGuard    SessionDataGuard
 	// ManagedConfig names the VoltUI-owned config files the file-writers may
@@ -61,20 +63,22 @@ func (w Workspace) Tools(enabled ...string) []tool.Tool {
 	forbidRoots := realRoots(w.ForbidReadRoots)
 
 	overrides := map[string]tool.Tool{
-		"read_file":     readFile{workDir: w.Dir, paths: w.ReadPaths, forbidRoots: forbidRoots, overlay: w.FileOverlay},
-		"write_file":    writeFile{workDir: w.Dir, roots: roots, guard: w.SessionGuard, managed: w.ManagedConfig, overlay: w.FileOverlay},
-		"edit_file":     editFile{workDir: w.Dir, roots: roots, guard: w.SessionGuard, managed: w.ManagedConfig},
-		"multi_edit":    multiEdit{workDir: w.Dir, roots: roots, guard: w.SessionGuard, managed: w.ManagedConfig},
-		"move_file":     moveFile{workDir: w.Dir, roots: roots, guard: w.SessionGuard, managed: w.ManagedConfig},
-		"notebook_edit": notebookEdit{workDir: w.Dir, roots: roots, guard: w.SessionGuard, managed: w.ManagedConfig},
-		"delete_range":  deleteRange{workDir: w.Dir, roots: roots, guard: w.SessionGuard, managed: w.ManagedConfig},
-		"delete_symbol": deleteSymbol{workDir: w.Dir, roots: roots, guard: w.SessionGuard, managed: w.ManagedConfig},
-		"code_index":    codeIndex{workDir: w.Dir, forbidRoots: forbidRoots},
-		"bash":          bash{workDir: w.Dir, sb: w.Bash, timeout: w.BashTimeout, guard: w.SessionGuard, terminal: w.Terminal},
-		"ls":            listDir{workDir: w.Dir, paths: w.ReadPaths, forbidRoots: forbidRoots},
-		"glob":          globTool{workDir: w.Dir, paths: w.ReadPaths, forbidRoots: forbidRoots},
-		"grep":          grepTool{workDir: w.Dir, paths: w.ReadPaths, rg: w.Search.RgPath, forbidRoots: forbidRoots, sb: w.Bash},
-		"web_fetch":     webFetch{proxySpec: w.ProxySpec},
+		"read_file":          readFile{workDir: w.Dir, paths: w.ReadPaths, forbidRoots: forbidRoots, overlay: w.FileOverlay},
+		"write_file":         writeFile{workDir: w.Dir, roots: roots, guard: w.SessionGuard, managed: w.ManagedConfig, overlay: w.FileOverlay},
+		"edit_file":          editFile{workDir: w.Dir, roots: roots, guard: w.SessionGuard, managed: w.ManagedConfig},
+		"multi_edit":         multiEdit{workDir: w.Dir, roots: roots, guard: w.SessionGuard, managed: w.ManagedConfig},
+		"move_file":          moveFile{workDir: w.Dir, roots: roots, guard: w.SessionGuard, managed: w.ManagedConfig},
+		"notebook_edit":      notebookEdit{workDir: w.Dir, roots: roots, guard: w.SessionGuard, managed: w.ManagedConfig},
+		"delete_range":       deleteRange{workDir: w.Dir, roots: roots, guard: w.SessionGuard, managed: w.ManagedConfig},
+		"delete_symbol":      deleteSymbol{workDir: w.Dir, roots: roots, guard: w.SessionGuard, managed: w.ManagedConfig},
+		"code_index":         codeIndex{workDir: w.Dir, forbidRoots: forbidRoots},
+		"bash":               bash{workDir: w.Dir, sb: w.Bash, timeout: w.BashTimeout, guard: w.SessionGuard, terminal: w.Terminal},
+		"ls":                 listDir{workDir: w.Dir, paths: w.ReadPaths, forbidRoots: forbidRoots},
+		"glob":               globTool{workDir: w.Dir, paths: w.ReadPaths, forbidRoots: forbidRoots},
+		"grep":               grepTool{workDir: w.Dir, paths: w.ReadPaths, rg: w.Search.RgPath, forbidRoots: forbidRoots, sb: w.Bash},
+		"web_fetch":          webFetch{proxySpec: w.ProxySpec, trustedIntranet: w.TrustedIntranet},
+		"browser_control":    browserControl{workDir: w.Dir, roots: roots},
+		"desktop_screenshot": desktopScreenshot{workDir: w.Dir, roots: roots},
 	}
 	all := tool.Builtins()
 	if len(enabled) == 0 {
@@ -109,8 +113,19 @@ func (w Workspace) Tools(enabled ...string) []tool.Tool {
 // enforces the workspace boundary). An empty p resolves to workDir itself, so a
 // defaulted "." (ls/grep) targets the workspace root.
 func resolveIn(workDir, p string) string {
+	return resolveInForOS(workDir, p, runtime.GOOS == "windows")
+}
+
+// resolveInForOS keeps the platform-sensitive virtual workspace mapping
+// testable without requiring a Windows test host.
+func resolveInForOS(workDir, p string, isWindows bool) string {
 	if workDir == "" {
 		return p
+	}
+	if isWindows {
+		if relative, ok := windowsVirtualWorkspaceRelativePath(p); ok {
+			p = relative
+		}
 	}
 	if p == "" || p == "." {
 		return workDir
@@ -119,6 +134,22 @@ func resolveIn(workDir, p string) string {
 		return p
 	}
 	return filepath.Join(workDir, p)
+}
+
+// windowsVirtualWorkspaceRelativePath maps the documented Linux-shaped
+// workspace token emitted by some agents to a path inside the active Windows
+// workspace. It only accepts descendants of that exact token; traversal stays
+// rejected so it cannot broaden the workspace boundary.
+func windowsVirtualWorkspaceRelativePath(path string) (string, bool) {
+	const virtualRoot = "/opt/workspace"
+	path = strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
+	if path == virtualRoot || path == virtualRoot+"/" {
+		return ".", true
+	}
+	if !strings.HasPrefix(path, virtualRoot+"/") {
+		return "", false
+	}
+	return cleanReadSubpath(strings.TrimPrefix(path, virtualRoot+"/"))
 }
 
 // PathResolver maps session-authorized token paths to local read-only roots.

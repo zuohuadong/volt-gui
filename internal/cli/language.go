@@ -65,7 +65,6 @@ func (m *chatTUI) runLanguageSubcommand(input string) {
 	}
 
 	resolved := i18n.DetectLanguage(lang)
-	m.refreshInputPlaceholder()
 	if m.ctrl != nil {
 		m.ctrl.SetResponseLanguage(lang)
 	}

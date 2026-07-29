@@ -45,13 +45,13 @@ func pluginCommand(args []string) int {
 
 func pluginUsage() {
 	fmt.Fprintln(os.Stderr, `usage:
-  reasonix plugin install <source> [--yes] [--dry-run] [--link] [--replace]
-  reasonix plugin list
-  reasonix plugin show <name>
-  reasonix plugin enable <name>
-  reasonix plugin disable <name>
-  reasonix plugin remove <name>
-  reasonix plugin doctor <name>`)
+  voltui plugin install <source> [--yes] [--dry-run] [--link] [--replace]
+  voltui plugin list
+  voltui plugin show <name>
+  voltui plugin enable <name>
+  voltui plugin disable <name>
+  voltui plugin remove <name>
+  voltui plugin doctor <name>`)
 }
 
 func pluginInstallCommand(args []string) int {
@@ -185,7 +185,7 @@ func runInstallSourceJSON(body map[string]any) int {
 }
 
 func pluginListCommand() int {
-	st, err := pluginpkg.LoadState(config.VoltUIHomeDir())
+	st, err := pluginpkg.LoadState(config.ReasonixHomeDir())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -222,50 +222,38 @@ func pluginShowCommand(args []string) int {
 		fmt.Fprintf(os.Stderr, "plugin %q is not installed\n", args[0])
 		return 1
 	}
-	root := pluginpkg.ResolveRoot(config.VoltUIHomeDir(), p.Root)
+	root := pluginpkg.ResolveRoot(config.ReasonixHomeDir(), p.Root)
 	pkg, warnings, err := pluginpkg.ParseDir(root)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	skills, commands, hooks, mcp := pkg.CapabilityCounts()
-	fmt.Printf("name: %s\nversion: %s\nenabled: %t\nkind: %s\nroot: %s\nsource: %s\nskills: %d\ncommands: %d\nhooks: %d\nmcpServers: %d\n",
-		p.Name, p.Version, p.Enabled, p.ManifestKind, root, p.Source, skills, commands, hooks, mcp)
-	printPluginInventory(p.Name, pkg.Inventory())
+	skills, hooks, mcp := pkg.CapabilityCounts()
+	fmt.Printf("name: %s\nversion: %s\nenabled: %t\nkind: %s\nroot: %s\nsource: %s\nskills: %d\nhooks: %d\nmcpServers: %d\n",
+		p.Name, p.Version, p.Enabled, p.ManifestKind, root, p.Source, skills, hooks, mcp)
+	printPluginInventory(pkg.Inventory())
 	for _, warning := range warnings {
 		fmt.Println("warning:", warning)
 	}
 	return 0
 }
 
-func printPluginInventory(pluginName string, inv pluginpkg.Inventory) {
+func printPluginInventory(inv pluginpkg.Inventory) {
 	if len(inv.Skills) > 0 {
 		fmt.Println("usage:")
-		fmt.Println("  skills are available in interactive sessions; run /skills to browse them, or invoke a skill directly with /<plugin>:<name>.")
+		fmt.Println("  skills are available in interactive sessions; run /skills to browse them, or invoke a skill directly with /<name>.")
 		fmt.Println("skills:")
 		for _, sk := range inv.Skills {
 			desc := sk.Description
 			if desc == "" {
 				desc = "(no description)"
 			}
-			invocation := "/" + pluginName + ":" + sk.Name
+			invocation := sk.Invocation
+			if invocation == "" {
+				invocation = "/" + sk.Name
+			}
 			if sk.RunAs != "" {
 				fmt.Printf("  %s\t%s\t%s\n", invocation, sk.RunAs, desc)
-			} else {
-				fmt.Printf("  %s\t%s\n", invocation, desc)
-			}
-		}
-	}
-	if len(inv.Commands) > 0 {
-		fmt.Println("commands:")
-		for _, cmd := range inv.Commands {
-			desc := cmd.Description
-			if desc == "" {
-				desc = "(no description)"
-			}
-			invocation := "/" + pluginName + ":" + cmd.Name
-			if cmd.ArgHint != "" {
-				fmt.Printf("  %s %s\t%s\n", invocation, cmd.ArgHint, desc)
 			} else {
 				fmt.Printf("  %s\t%s\n", invocation, desc)
 			}
@@ -315,7 +303,7 @@ func pluginDoctorCommand(args []string) int {
 		fmt.Fprintf(os.Stderr, "plugin %q is not installed\n", args[0])
 		return 1
 	}
-	root := pluginpkg.ResolveRoot(config.VoltUIHomeDir(), p.Root)
+	root := pluginpkg.ResolveRoot(config.ReasonixHomeDir(), p.Root)
 	pkg, warnings, err := pluginpkg.ParseDir(root)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "invalid:", err)
@@ -324,12 +312,6 @@ func pluginDoctorCommand(args []string) int {
 	for _, skillRoot := range pkg.SkillRoots() {
 		if st, err := os.Stat(skillRoot); err != nil || !st.IsDir() {
 			fmt.Fprintf(os.Stderr, "missing skill root: %s\n", skillRoot)
-			return 1
-		}
-	}
-	for _, commandRoot := range pkg.CommandRoots() {
-		if st, err := os.Stat(commandRoot); err != nil || !st.IsDir() {
-			fmt.Fprintf(os.Stderr, "missing command root: %s\n", commandRoot)
 			return 1
 		}
 	}
@@ -345,7 +327,7 @@ func pluginSetEnabledCommand(args []string, enabled bool) int {
 		fmt.Fprintln(os.Stderr, "plugin enable/disable requires a plugin name")
 		return 2
 	}
-	if err := pluginpkg.SetEnabled(config.VoltUIHomeDir(), args[0], enabled); err != nil {
+	if err := pluginpkg.SetEnabled(config.ReasonixHomeDir(), args[0], enabled); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -354,7 +336,7 @@ func pluginSetEnabledCommand(args []string, enabled bool) int {
 }
 
 func findInstalledPlugin(name string) (pluginpkg.InstalledPlugin, bool, error) {
-	st, err := pluginpkg.LoadState(config.VoltUIHomeDir())
+	st, err := pluginpkg.LoadState(config.ReasonixHomeDir())
 	if err != nil {
 		return pluginpkg.InstalledPlugin{}, false, err
 	}

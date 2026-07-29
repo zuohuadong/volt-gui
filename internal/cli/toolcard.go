@@ -30,49 +30,56 @@ func connectorBlock(lines []string) string {
 
 // toolVerb maps a tool's snake_case id to the verb shown in its card.
 var toolVerb = map[string]string{
-	"bash":           "Bash",
-	"bash_output":    "Output",
-	"kill_shell":     "Kill",
-	"wait":           "Wait",
-	"read_file":      "Read",
-	"write_file":     "Write",
-	"edit_file":      "Update",
-	"multi_edit":     "Update",
-	"move_file":      "Move",
-	"delete_range":   "Update",
-	"delete_symbol":  "Update",
-	"notebook_edit":  "Update",
-	"glob":           "Glob",
-	"grep":           "Search",
-	"ls":             "List",
-	"web_fetch":      "Fetch",
-	"web_search":     "Search",
-	"complete_step":  "Step",
-	"task":           "Task",
-	"use_capability": "MCP",
+	"bash":               "Bash",
+	"bash_output":        "Output",
+	"kill_shell":         "Kill",
+	"wait":               "Wait",
+	"read_file":          "Read",
+	"write_file":         "Write",
+	"edit_file":          "Update",
+	"multi_edit":         "Update",
+	"move_file":          "Move",
+	"delete_range":       "Update",
+	"delete_symbol":      "Update",
+	"notebook_edit":      "Update",
+	"glob":               "Glob",
+	"grep":               "Search",
+	"ls":                 "List",
+	"browser_control":    "Browser",
+	"desktop_screenshot": "Screenshot",
+	"desktop_mouse":      "Mouse",
+	"desktop_keyboard":   "Keyboard",
+	"web_fetch":          "Fetch",
+	"web_search":         "Search",
+	"complete_step":      "Step",
+	"task":               "Task",
 }
 
 // toolArgKey is the JSON field shown in parentheses for each tool (wait is
 // special-cased — it carries a job_ids array, not a scalar).
 var toolArgKey = map[string]string{
-	"bash":          "command",
-	"bash_output":   "job_id",
-	"kill_shell":    "job_id",
-	"read_file":     "path",
-	"write_file":    "path",
-	"edit_file":     "path",
-	"multi_edit":    "path",
-	"move_file":     "source_path",
-	"delete_range":  "path",
-	"delete_symbol": "name",
-	"notebook_edit": "path",
-	"glob":          "pattern",
-	"grep":          "pattern",
-	"ls":            "path",
-	"web_fetch":     "url",
-	"web_search":    "query",
-	"complete_step": "summary",
-	"task":          "description",
+	"bash":               "command",
+	"bash_output":        "job_id",
+	"kill_shell":         "job_id",
+	"read_file":          "path",
+	"write_file":         "path",
+	"edit_file":          "path",
+	"multi_edit":         "path",
+	"move_file":          "source_path",
+	"delete_range":       "path",
+	"delete_symbol":      "name",
+	"notebook_edit":      "path",
+	"glob":               "pattern",
+	"grep":               "pattern",
+	"ls":                 "path",
+	"browser_control":    "url",
+	"desktop_screenshot": "path",
+	"desktop_mouse":      "action",
+	"desktop_keyboard":   "action",
+	"web_fetch":          "url",
+	"web_search":         "query",
+	"complete_step":      "summary",
+	"task":               "description",
 }
 
 // toolDot returns the "●" status glyph coloured by the tool's category so the eye
@@ -98,8 +105,10 @@ func toolDot(name string) string {
 var toolCategory = map[string]string{
 	"read_file": "read", "ls": "read", "glob": "read", "grep": "read",
 	"web_fetch": "read", "web_search": "read", "bash_output": "read",
-	"write_file": "write", "edit_file": "write", "multi_edit": "write",
+	"browser_control": "exec",
+	"write_file":      "write", "edit_file": "write", "multi_edit": "write",
 	"move_file": "write", "delete_range": "write", "delete_symbol": "write", "notebook_edit": "write",
+	"desktop_screenshot": "write", "desktop_mouse": "exec", "desktop_keyboard": "exec",
 	"bash": "exec",
 	"wait": "proc", "kill_shell": "proc",
 }
@@ -124,15 +133,6 @@ func toolArg(name, args string) string {
 	}
 	if name == "wait" {
 		return argList(m["job_ids"])
-	}
-	if name == "use_capability" {
-		if id, ok := m["capability_id"].(string); ok && strings.TrimSpace(id) != "" {
-			return strings.TrimSpace(id)
-		}
-		if action, ok := m["action"].(string); ok {
-			return strings.TrimSpace(action)
-		}
-		return ""
 	}
 	v, ok := m[toolArgKey[name]]
 	if !ok {

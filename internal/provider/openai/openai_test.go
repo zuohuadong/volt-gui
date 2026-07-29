@@ -90,45 +90,6 @@ func TestStreamInsufficientBalance(t *testing.T) {
 	}
 }
 
-func TestStreamAnnotatesIndexedToolSchemaError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":{"message":"Tool 1 function has invalid 'parameters' schema"}}`))
-	}))
-	defer srv.Close()
-
-	p, err := New(provider.Config{Name: "mimo", BaseURL: srv.URL, Model: "mimo-v2.5-pro", APIKey: "k"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	_, err = p.Stream(context.Background(), provider.Request{
-		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
-		Tools: []provider.ToolSchema{
-			{Name: "read_file", Parameters: json.RawMessage(`{"type":"object"}`)},
-			{Name: "mcp__files__search", Parameters: json.RawMessage(`{"type":"object"}`)},
-		},
-	})
-	var apiErr *provider.APIError
-	if !errors.As(err, &apiErr) || !strings.Contains(apiErr.ToolContext, `MCP server "files"`) {
-		t.Fatalf("Stream error = %v, want MCP tool source context", err)
-	}
-}
-
-func TestBuildRequestScopesLegacyTupleMigrationToMiMo(t *testing.T) {
-	legacy := json.RawMessage(`{"type":"object","properties":{"pair":{"type":"array","items":[{"type":"string"},{"type":"number"}]}}}`)
-	req := provider.Request{Tools: []provider.ToolSchema{{Name: "tuple", Parameters: legacy}}}
-
-	mimo := (&client{mimo: true}).buildRequest(req)
-	if got := string(mimo.Tools[0].Function.Parameters); !strings.Contains(got, `"prefixItems"`) || strings.Contains(got, `"items":[`) {
-		t.Fatalf("MiMo parameters = %s, want Draft 2020-12 tuple keywords", got)
-	}
-
-	other := (&client{}).buildRequest(req)
-	if got := string(other.Tools[0].Function.Parameters); got != string(legacy) {
-		t.Fatalf("non-MiMo parameters changed:\n got: %s\nwant: %s", got, legacy)
-	}
-}
-
 // TestStreamAuthError verifies a 401 surfaces as an actionable *provider.AuthError
 // (naming the provider and its key env var) rather than a raw status body.
 func TestStreamAuthError(t *testing.T) {
@@ -216,6 +177,133 @@ func TestStreamUsesConfiguredChatURL(t *testing.T) {
 	}
 }
 
+func TestResponsesStreamUsesResponsesURLAndMapsTextVisionUsage(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			t.Errorf("path = %s, want /v1/responses", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":2,\"total_tokens\":12,\"input_tokens_details\":{\"cached_tokens\":4},\"output_tokens_details\":{\"reasoning_tokens\":1}}}}\n\n")
+	}))
+	defer srv.Close()
+
+	p, err := New(provider.Config{
+		Name:    "openai",
+		BaseURL: srv.URL + "/v1",
+		Model:   "gpt-5.4",
+		APIKey:  "k",
+		Extra:   map[string]any{"api_surface": "responses", "vision": true},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ch, err := p.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{
+			{Role: provider.RoleSystem, Content: "be concise"},
+			{Role: provider.RoleUser, Content: "inspect", Images: []string{"data:image/png;base64,AAAA"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var got strings.Builder
+	var usage *provider.Usage
+	for chunk := range ch {
+		if chunk.Type == provider.ChunkError {
+			t.Fatalf("stream error: %v", chunk.Err)
+		}
+		if chunk.Type == provider.ChunkText {
+			got.WriteString(chunk.Text)
+		}
+		if chunk.Type == provider.ChunkUsage {
+			usage = chunk.Usage
+		}
+	}
+	if got.String() != "ok" {
+		t.Fatalf("streamed text = %q, want ok", got.String())
+	}
+	if usage == nil || usage.PromptTokens != 10 || usage.CompletionTokens != 2 || usage.CacheHitTokens != 4 || usage.CacheMissTokens != 6 || usage.ReasoningTokens != 1 {
+		t.Fatalf("usage = %+v, want normalized Responses usage", usage)
+	}
+	if body["instructions"] != "be concise" {
+		t.Fatalf("instructions = %v, want system prompt", body["instructions"])
+	}
+	if _, ok := body["messages"]; ok {
+		t.Fatalf("Responses request leaked chat messages field: %#v", body)
+	}
+	if body["store"] != false {
+		t.Fatalf("store = %v, want false by default", body["store"])
+	}
+	input := body["input"].([]any)
+	content := input[0].(map[string]any)["content"].([]any)
+	if content[0].(map[string]any)["type"] != "input_text" || content[1].(map[string]any)["type"] != "input_image" {
+		t.Fatalf("input content = %#v, want text and image parts", content)
+	}
+}
+
+func TestResponsesStreamFunctionCall(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read_file\",\"arguments\":\"\"}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{\\\"path\\\":\"}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.function_call_arguments.done\",\"output_index\":0,\"arguments\":\"{\\\"path\\\":\\\"main.go\\\"}\",\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"main.go\\\"}\"}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":3,\"output_tokens\":1,\"total_tokens\":4}}}\n\n")
+	}))
+	defer srv.Close()
+
+	p, err := New(provider.Config{
+		Name:    "openai",
+		BaseURL: srv.URL,
+		Model:   "gpt-5.4",
+		APIKey:  "k",
+		Extra:   map[string]any{"api_surface": "responses"},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ch, err := p.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "read"}},
+		Tools:    []provider.ToolSchema{{Name: "read_file", Description: "Read a file", Parameters: provider.CanonicalizeSchema(nil)}},
+	})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var started, completed *provider.ToolCall
+	for chunk := range ch {
+		if chunk.Type == provider.ChunkError {
+			t.Fatalf("stream error: %v", chunk.Err)
+		}
+		if chunk.Type == provider.ChunkToolCallStart {
+			started = chunk.ToolCall
+		}
+		if chunk.Type == provider.ChunkToolCall {
+			completed = chunk.ToolCall
+		}
+	}
+	if started == nil || started.ID != "call_1" || started.Name != "read_file" {
+		t.Fatalf("start = %+v, want call_1/read_file", started)
+	}
+	if completed == nil || completed.ID != "call_1" || completed.Name != "read_file" || completed.Arguments != `{"path":"main.go"}` {
+		t.Fatalf("completed = %+v, want complete function call", completed)
+	}
+	tools := body["tools"].([]any)
+	if tools[0].(map[string]any)["type"] != "function" || tools[0].(map[string]any)["name"] != "read_file" {
+		t.Fatalf("tools = %#v, want Responses function tool", tools)
+	}
+}
+
 func TestStreamSendsCustomHeaders(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer real-key" {
@@ -284,9 +372,6 @@ func TestStreamUsesMiMoAPIKeyHeader(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	c := p.(*client)
-	if !c.mimo {
-		t.Fatal("official MiMo endpoint did not enable the Draft 2020-12 schema adapter")
-	}
 	c.chatURL = srv.URL
 
 	ch, err := p.Stream(context.Background(), provider.Request{
@@ -404,31 +489,6 @@ func TestBuildRequestAlwaysSerializesContent(t *testing.T) {
 	}
 	if _, ok := raw[1]["tool_calls"]; !ok {
 		t.Errorf("assistant message lost its tool_calls: %s", b)
-	}
-}
-
-func TestBuildRequestOmitsResolvedToolCallMetadata(t *testing.T) {
-	readOnly := false
-	c := &client{model: "deepseek-v4"}
-	req := c.buildRequest(provider.Request{Messages: []provider.Message{{
-		Role: provider.RoleAssistant,
-		ToolCalls: []provider.ToolCall{{
-			ID: "call_1", Name: "use_capability", Arguments: `{}`,
-			ResolvedName: "mcp__db__write", CapabilityID: "mcp-tool:db/write",
-			ResolvedReadOnly: &readOnly,
-		}},
-	}}})
-	b, err := json.Marshal(req.Messages)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	for _, forbidden := range []string{"resolved_name", "resolvedName", "capability_id", "capabilityId", "resolved_read_only", "resolvedReadOnly", "mcp__db__write"} {
-		if strings.Contains(string(b), forbidden) {
-			t.Fatalf("provider request leaked local tool metadata %q: %s", forbidden, b)
-		}
-	}
-	if !strings.Contains(string(b), `"name":"use_capability"`) {
-		t.Fatalf("provider request lost stable proxy name: %s", b)
 	}
 }
 
@@ -579,13 +639,13 @@ func TestBuildRequestDropsReasoningOnPlainAssistantTurn(t *testing.T) {
 	}
 }
 
-func TestBuildRequestDropsLocalMetadata(t *testing.T) {
+func TestBuildRequestDropsMemoryCitations(t *testing.T) {
 	c := &client{model: "deepseek-chat", deepseek: true}
 	req := c.buildRequest(provider.Request{
 		Messages: []provider.Message{
 			{Role: provider.RoleUser, Content: "continue"},
 			{Role: provider.RoleUser, Content: "edited prompt", Edited: true, Original: "original prompt"},
-			{Role: provider.RoleAssistant, Content: "done", WorkDurationMs: 24_000, MemoryCitations: []provider.MemoryCitation{{
+			{Role: provider.RoleAssistant, Content: "done", MemoryCitations: []provider.MemoryCitation{{
 				ID: "mem-1", Source: "MEMORY.md", LineStart: 116, LineEnd: 123, Note: "workflow",
 			}}},
 		},
@@ -596,9 +656,6 @@ func TestBuildRequestDropsLocalMetadata(t *testing.T) {
 	}
 	if strings.Contains(string(b), "memoryCitations") || strings.Contains(string(b), "MEMORY.md") {
 		t.Fatalf("local memory citations leaked into OpenAI-compatible request: %s", b)
-	}
-	if strings.Contains(string(b), "workDurationMs") || strings.Contains(string(b), "work_duration_ms") {
-		t.Fatalf("local work duration leaked into OpenAI-compatible request: %s", b)
 	}
 	if strings.Contains(string(b), "original prompt") || strings.Contains(string(b), `"edited"`) || strings.Contains(string(b), `"original"`) {
 		t.Fatalf("local edit metadata leaked into OpenAI-compatible request: %s", b)

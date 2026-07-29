@@ -17,17 +17,23 @@ import (
 
 	"mvdan.cc/sh/v3/syntax"
 
+	fileenc "voltui/internal/fileutil/encoding"
 	"voltui/internal/i18n"
 	"voltui/internal/jobs"
 	"voltui/internal/proc"
 	"voltui/internal/sandbox"
-	"voltui/internal/secrets"
 	"voltui/internal/shellparse"
 	"voltui/internal/tool"
 )
 
 const (
 	bashWaitDelay = 5 * time.Second
+	// windowsBackgroundSandboxLockWait is the Windows sandbox root-lock wait
+	// budget for background jobs. A detached job blocks nobody while it queues,
+	// so it keeps the patient wait; a foreground command uses the sandbox's
+	// short default and fails fast with the lock holder named instead of
+	// hanging the whole turn.
+	windowsBackgroundSandboxLockWait = 10 * time.Minute
 )
 
 var errBashTimeout = errors.New("bash foreground timeout")
@@ -37,8 +43,9 @@ func init() { tool.RegisterBuiltin(bash{}) }
 var bashShellPATH = cachedBashShellPATH
 
 var (
-	bashSandboxCommand             = sandbox.Command
-	bashSandboxEscapePromptEnabled = func() bool { return runtime.GOOS == "windows" }
+	bashSandboxCommand               = sandbox.Command
+	bashSandboxEscapePromptEnabled   = func() bool { return runtime.GOOS == "windows" }
+	bashWindowsSandboxRuntimeFailure = isWindowsSandboxRuntimeFailure
 )
 
 // cachedBashShellPATH memoizes the login-shell PATH probe per login shell so a
@@ -75,7 +82,7 @@ func cachedBashShellPATH(ctx context.Context) string {
 // empty uses the process cwd. timeout optionally caps foreground commands;
 // zero or negative means no tool-local cap, while parent context cancellation
 // still kills the process tree. guard appends a warning to the output of
-// commands that reference VoltUI's own session stores (see SessionDataGuard).
+// commands that reference Reasonix's own session stores (see SessionDataGuard).
 type bash struct {
 	sb      sandbox.Spec
 	shell   sandbox.Shell
@@ -110,12 +117,15 @@ func (b bash) Description() string {
 			"NOTE: bash is not available on this host — commands run under %s, so write PowerShell, not bash:\n"+
 			"  - chaining: %s\n"+
 			"  - redirect/vars: $null not /dev/null; $env:VAR not $VAR; '2>$null' drops stderr.\n"+
-			"  - file ops: Get-ChildItem (ls), Get-Content (cat), Remove-Item -Recurse -Force (rm -rf), Copy-Item (cp), Select-String (grep).\n"+
+			"  - file ops: Get-ChildItem (ls), Get-Content (cat), Remove-Item -Recurse -Force (rm -rf), Copy-Item (cp), Select-String (grep); do not use ls -la.\n"+
 			"  - no head/tail/which/touch: use Select-Object -First/-Last N, (Get-Command x).Source, New-Item.\n"+
+			"  - before git or another external program, use Get-Command git -ErrorAction SilentlyContinue; if git is unavailable, skip git commands and use the dedicated file tools or report the missing prerequisite.\n"+
+			"  - text metrics: do not use wc; for a character count use (Get-Content <path> -Raw).Length, or a short Python script.\n"+
+			"  - multiline Python/Node verification: do not compress statements, comments, or newlines into a fragile -c string. Prefer write_file for a short temporary script, then run it directly (for example python path\\to\\verify.py).\n"+
 			"  - multi-line text to a native exe (e.g. git commit -m): use a single-quoted here-string @'...'@ (closing '@ at column 0)."+
-			bashToolSteer, shellName, chaining)
+			bashToolSteer+bundledCoreutilsDescriptionHint(), shellName, chaining)
 	}
-	return "Execute a command in the shell and return combined stdout/stderr." + bashToolSteer
+	return "Execute a command in the shell and return combined stdout/stderr." + bashToolSteer + bundledCoreutilsDescriptionHint()
 }
 
 // bashToolSteer points the model at the cross-platform built-in tools instead of
@@ -169,18 +179,20 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 
 	// A host-owned terminal runs the command where the user watches it live.
 	// Never when the OS sandbox is enforcing (the host cannot honor the local
-	// confinement config), never when [secrets].filter_subprocess_env is on
-	// (the host terminal spawns with its own unfiltered environment, which
-	// would leak the credentials the user asked to strip), and never for
-	// background jobs. ok=false falls back to local execution unchanged.
-	if b.terminal != nil && !p.RunInBackground && !b.sb.Enforce() && !secrets.FilterSubprocessEnv() {
+	// confinement config) and never for background jobs. ok=false falls back to
+	// local execution unchanged.
+	if b.terminal != nil && !p.RunInBackground && !b.sb.Enforce() {
 		if out, ok, err := b.terminal.RunCommand(ctx, p.Command, b.workDir, b.timeout); ok {
-			return appendSessionDataHint(out, b.guard.CommandHint(b.workDir, p.Command)), err
+			return appendSessionDataHint(decodeShellOutput(out), b.guard.CommandHint(b.workDir, p.Command)), err
 		}
 	}
 
 	// Wrap in the OS sandbox when configured; otherwise argv is just the shell.
-	argv, wrapped := bashSandboxCommand(b.sb, sh, p.Command)
+	sbSpec := b.sb
+	if p.RunInBackground {
+		sbSpec.WindowsLockWait = windowsBackgroundSandboxLockWait
+	}
+	argv, wrapped := bashSandboxCommand(sbSpec, sh, p.Command)
 	if b.sb.Enforce() && bashSandboxEscapeSessionAllowed(ctx, p.Command, args) {
 		argv = unconfinedShellArgv(sh, p.Command)
 		wrapped = false
@@ -225,7 +237,31 @@ func (b bash) Execute(ctx context.Context, args json.RawMessage) (string, error)
 	}
 
 	out, err := b.runForeground(ctx, p, sh, argv, wrapped, cmdEnv)
+	if bashWindowsSandboxRuntimeFailure(argv, out, err) {
+		allow, reason, approveErr := approveBashSandboxEscape(ctx, p.Command, args, i18n.M.SandboxEscapeRuntimeReason)
+		if approveErr != nil {
+			return out, approveErr
+		}
+		if !allow {
+			if reason != "" {
+				return out, fmt.Errorf("%s", reason)
+			}
+			return out, err
+		}
+		out, err = b.runForeground(ctx, p, sh, unconfinedShellArgv(sh, p.Command), false, cmdEnv)
+	}
 	return appendSessionDataHint(out, b.guard.CommandHint(b.workDir, p.Command)), err
+}
+
+// decodeShellOutput normalizes raw shell output bytes to UTF-8. Windows
+// codepage 936 (GBK) processes emit GB18030 bytes; reading them as UTF-8
+// yields mojibake and breaks JSON/tool output. Valid UTF-8 passes through
+// unchanged, so UTF-8/macOS/Linux output is unaffected.
+func decodeShellOutput(out string) string {
+	if out == "" {
+		return out
+	}
+	return string(fileenc.DecodeToUTF8([]byte(out)))
 }
 
 // appendSessionDataHint appends the session-data guard warning to command
@@ -279,6 +315,26 @@ func bashSandboxEscapeSessionAllowed(ctx context.Context, command string, args j
 	})
 }
 
+func isWindowsSandboxRuntimeFailure(argv []string, out string, err error) bool {
+	if !bashSandboxEscapePromptEnabled() || err == nil {
+		return false
+	}
+	code, ok := bashExitCode(err)
+	if !ok || code != 126 {
+		return false
+	}
+	marker, ok := sandbox.WindowsSandboxFailureMarkerFromCommand(argv)
+	return ok && strings.Contains(out, marker+" windows sandbox:")
+}
+
+func bashExitCode(err error) (int, bool) {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return 0, false
+	}
+	return exitErr.ExitCode(), true
+}
+
 func (b bash) runForeground(ctx context.Context, p bashParams, sh sandbox.Shell, argv []string, wrapped bool, cmdEnv []string) (string, error) {
 	runCtx := ctx
 	timeout := b.foregroundTimeout()
@@ -308,7 +364,7 @@ func (b bash) runForeground(ctx context.Context, p bashParams, sh sandbox.Shell,
 		reapShellProcess(cmd, tracked)
 	}
 	err = normalizeBashRunError(runCtx, err, p.PreserveBackgroundProcesses)
-	out := buf.String()
+	out := decodeShellOutput(buf.String())
 
 	if errors.Is(context.Cause(runCtx), errBashTimeout) {
 		return out, fmt.Errorf("command timed out (> %s)", timeout)
@@ -470,8 +526,12 @@ func commandPreview(cmd string) string {
 }
 
 func bashCommandEnv(ctx context.Context) []string {
-	env := secrets.ProcessEnv()
+	env := os.Environ()
 	if runtime.GOOS == "windows" {
+		if coreutilsBin := bundledCoreutilsBin(); coreutilsBin != "" {
+			currentPath, _ := envValue(env, "PATH")
+			env = setEnvValue(env, "PATH", mergePathLists(coreutilsBin, currentPath))
+		}
 		return env
 	}
 	currentPath, _ := envValue(env, "PATH")
@@ -481,6 +541,13 @@ func bashCommandEnv(ctx context.Context) []string {
 		}
 	}
 	return env
+}
+
+func bundledCoreutilsDescriptionHint() string {
+	if bundledCoreutilsBin() == "" {
+		return ""
+	}
+	return " VoltUI has an offline Coreutils runtime for its command child processes; PowerShell aliases still win for names such as ls/cat, so use ls.exe or the explicit executable name when native Coreutils behavior is required."
 }
 
 func defaultBashShellPATH(ctx context.Context) string {
@@ -528,9 +595,6 @@ func runShellPATHCommand(parent context.Context, shell string, args []string) []
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, shell, args...)
-	// Explicit env so the login-shell probe honors [secrets]
-	// filter_subprocess_env instead of inheriting the full environment.
-	cmd.Env = secrets.ProcessEnv()
 	proc.PrepareShellPATHProbe(cmd)
 	cmd.Stdin = strings.NewReader("")
 	out, _ := cmd.CombinedOutput()

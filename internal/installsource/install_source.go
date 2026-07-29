@@ -62,17 +62,11 @@ type Options struct {
 type installSourceTool struct {
 	root         string
 	home         string
-	reasonixHome string
+	voltuiHome   string
 	httpClient   *http.Client
 	connectMCP   MCPConnector
 	onDisconnect OnDisconnectFunc
 	approval     ApprovalFunc
-	// preparePlugin overrides plugin source preparation in tests. nil uses
-	// preparePluginSource. Plan and apply both resolve the source through the
-	// same function, and git sources additionally report the resolved commit,
-	// so the capability set the approval covers is by construction the one
-	// that gets installed (apply pins the approved commit on divergence).
-	preparePlugin func(ctx context.Context, source, mode string) (root, commit string, cleanup func(), err error)
 }
 
 // NewTool returns a tool.Tool that callers register with the agent's
@@ -94,13 +88,13 @@ func NewTool(opts Options) tool.Tool {
 			home = h
 		}
 	}
-	reasonixHome := ""
+	voltuiHome := ""
 	if opts.HomeDir != "" {
-		reasonixHome = filepath.Join(home, ".reasonix")
-	} else if dir := config.VoltUIHomeDir(); dir != "" {
-		reasonixHome = dir
+		voltuiHome = filepath.Join(home, ".voltui")
+	} else if dir := config.ReasonixHomeDir(); dir != "" {
+		voltuiHome = dir
 	} else if home != "" {
-		reasonixHome = filepath.Join(home, ".reasonix")
+		voltuiHome = filepath.Join(home, ".voltui")
 	}
 	client := opts.HTTPClient
 	if client == nil {
@@ -113,7 +107,7 @@ func NewTool(opts Options) tool.Tool {
 	return &installSourceTool{
 		root:         root,
 		home:         home,
-		reasonixHome: reasonixHome,
+		voltuiHome:   voltuiHome,
 		httpClient:   client,
 		connectMCP:   opts.ConnectMCP,
 		onDisconnect: opts.OnDisconnect,
@@ -188,14 +182,6 @@ func (t *installSourceTool) Execute(ctx context.Context, raw json.RawMessage) (s
 
 	actions, warnings, err := t.plan(ctx, req)
 	if err != nil {
-		if errors.Is(err, ErrNoCompatibleCapabilities) {
-			return marshalJSON(response{
-				OK: false, Status: "blocked", Op: req.Op, Applied: false,
-				Source: req.Source, Kind: "plugin", Scope: req.Scope, Mode: req.Mode,
-				Warnings: warnings, Error: err.Error(),
-				Next: "Choose a plugin that exports a supported skill, command, agent, hook, or MCP server.",
-			}), nil
-		}
 		return "", err
 	}
 	// Marketplace planning may keep one temporary clone alive so apply can
@@ -449,19 +435,19 @@ func (t *installSourceTool) uninstallActionsForScope(name, scope string) []actio
 		}
 	}
 	if scope == "global" || scope == "" {
-		if st, err := pluginpkg.LoadState(t.reasonixHome); err == nil {
+		if st, err := pluginpkg.LoadState(t.voltuiHome); err == nil {
 			for _, p := range st.Plugins {
 				if p.Name != name {
 					continue
 				}
-				root := pluginpkg.ResolveRoot(t.reasonixHome, p.Root)
+				root := pluginpkg.ResolveRoot(t.voltuiHome, p.Root)
 				actions = append(actions, action{
 					Kind:         "plugin",
 					Action:       "remove_plugin_package",
 					Name:         p.Name,
 					Target:       root,
 					Scope:        "global",
-					ConfigPath:   pluginpkg.StatePath(t.reasonixHome),
+					ConfigPath:   pluginpkg.StatePath(t.voltuiHome),
 					ManifestKind: p.ManifestKind,
 					Version:      p.Version,
 					RiskLevel:    RiskMedium,
@@ -486,12 +472,12 @@ func (t *installSourceTool) resolveSkillPath(name, scope string) (string, bool) 
 	}
 	var root string
 	if scope == "global" {
-		if t.reasonixHome == "" {
+		if t.voltuiHome == "" {
 			return "", false
 		}
-		root = filepath.Join(t.reasonixHome, skill.SkillsDirname)
+		root = filepath.Join(t.voltuiHome, skill.SkillsDirname)
 	} else {
-		root = filepath.Join(t.root, ".reasonix", skill.SkillsDirname)
+		root = filepath.Join(t.root, ".voltui", skill.SkillsDirname)
 	}
 	flat := filepath.Join(root, name+".md")
 	if _, err := lstat(flat); err == nil {
@@ -550,7 +536,7 @@ func (t *installSourceTool) configPath(scope string) string {
 			return p
 		}
 	}
-	return filepath.Join(t.root, "reasonix.toml")
+	return filepath.Join(t.root, "voltui.toml")
 }
 
 func (t *installSourceTool) normalizeScope(scope string) (string, bool) {

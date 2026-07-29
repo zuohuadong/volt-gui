@@ -15,14 +15,13 @@ func writeProjectDefaultTestConfig(t *testing.T, dir, name, body string) string 
 	return path
 }
 
-// #4218: pre-v1.11 persistence paths full-rendered ./reasonix.toml and pinned
-// the built-in default_model ("deepseek-flash") into it. Once the user's
-// [[providers]] replaced the built-in presets, that stale name resolved to
-// nothing and every launch from that folder failed. The load must fall back to
-// the user/global default_model instead.
+// Older persistence paths wrote a full ./voltui.toml and pinned the built-in
+// default_model into project folders. Once the user's [[providers]] replaced
+// the built-in presets, the stale project value stopped resolving. Loading must
+// keep the user-global default in memory and report the ignored project value.
 func TestLoadForRoot_UnresolvableProjectDefaultModelFallsBackToUserDefault(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("VOLTUI_HOME", home)
 	writeProjectDefaultTestConfig(t, home, "config.toml", `default_model = "deepseek-pro"
 
 [[providers]]
@@ -34,7 +33,7 @@ api_key_env = "DEEPSEEK_API_KEY"
 `)
 
 	project := t.TempDir()
-	writeProjectDefaultTestConfig(t, project, "reasonix.toml", `default_model = "deepseek-flash"
+	projectConfig := writeProjectDefaultTestConfig(t, project, "voltui.toml", `default_model = "deepseek-flash"
 
 [permissions]
 allow = ["Bash(go test*)"]
@@ -53,13 +52,23 @@ allow = ["Bash(go test*)"]
 	if _, ok := cfg.ResolveModel(cfg.DefaultModel); !ok {
 		t.Fatalf("ResolveModel(%q) failed after fallback", cfg.DefaultModel)
 	}
+	data, err := os.ReadFile(projectConfig)
+	if err != nil {
+		t.Fatalf("ReadFile project config: %v", err)
+	}
+	if string(data) != `default_model = "deepseek-flash"
+
+[permissions]
+allow = ["Bash(go test*)"]
+` {
+		t.Fatalf("LoadForRoot rewrote project config: %q", data)
+	}
 }
 
-// A project default_model that does resolve is a legitimate override and must
-// keep winning over the user config.
+// A project default_model that resolves remains the higher-priority value.
 func TestLoadForRoot_ResolvableProjectDefaultModelStillWins(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("VOLTUI_HOME", home)
 	writeProjectDefaultTestConfig(t, home, "config.toml", `default_model = "deepseek-pro"
 
 [[providers]]
@@ -77,7 +86,7 @@ model       = "local-model"
 `)
 
 	project := t.TempDir()
-	writeProjectDefaultTestConfig(t, project, "reasonix.toml", `default_model = "local"
+	writeProjectDefaultTestConfig(t, project, "voltui.toml", `default_model = "local"
 `)
 
 	cfg, err := LoadForRoot(project)
@@ -92,11 +101,11 @@ model       = "local-model"
 	}
 }
 
-// When neither the project override nor the user default resolves, keep the
-// project value so the existing boot error names what the user actually wrote.
+// If the user-global default also fails to resolve, retain the project value so
+// the existing boot error names the value the user actually wrote.
 func TestLoadForRoot_ProjectDefaultModelKeptWhenUserDefaultUnresolvable(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("VOLTUI_HOME", home)
 	writeProjectDefaultTestConfig(t, home, "config.toml", `default_model = "gone-too"
 
 [[providers]]
@@ -108,7 +117,7 @@ api_key_env = "DEEPSEEK_API_KEY"
 `)
 
 	project := t.TempDir()
-	writeProjectDefaultTestConfig(t, project, "reasonix.toml", `default_model = "gone"
+	writeProjectDefaultTestConfig(t, project, "voltui.toml", `default_model = "gone"
 `)
 
 	cfg, err := LoadForRoot(project)
@@ -123,23 +132,21 @@ api_key_env = "DEEPSEEK_API_KEY"
 	}
 }
 
-// When the project file is the user's only config, a broken default_model must
-// keep failing loudly at boot instead of silently substituting the built-in
-// default (see boot.TestBuildUnknownModelErrorIsActionable): no fallback fires
-// because no user config explicitly defines default_model.
+// With no explicit user default, a broken project default must keep failing
+// loudly instead of silently substituting the built-in value.
 func TestLoadForRoot_NoUserConfigKeepsBrokenProjectDefaultModel(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("VOLTUI_HOME", home)
 
 	project := t.TempDir()
-	writeProjectDefaultTestConfig(t, project, "reasonix.toml", `default_model = "legacy-missing"
+	writeProjectDefaultTestConfig(t, project, "voltui.toml", `default_model = "legacy-missing"
 
 [[providers]]
 name        = "deepseek-flash"
 kind        = "openai"
 base_url    = "https://example.invalid"
 model       = "deepseek-v4-flash"
-api_key_env = "REASONIX_TEST_KEY_UNSET"
+api_key_env = "VOLTUI_TEST_KEY_UNSET"
 `)
 
 	cfg, err := LoadForRoot(project)
@@ -154,11 +161,42 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 }
 
-// No project override: the user default is untouched and nothing is reported
-// as ignored, even when the user default itself is stale.
+// A user config that merely defines providers is not enough to activate the
+// fallback: default_model must be explicitly set by the user. Otherwise a
+// stale project value remains visible in the actionable boot error.
+func TestLoadForRoot_UserConfigWithoutDefaultKeepsBrokenProjectDefaultModel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("VOLTUI_HOME", home)
+	writeProjectDefaultTestConfig(t, home, "config.toml", `
+[[providers]]
+name        = "deepseek-pro"
+kind        = "openai"
+base_url    = "https://api.deepseek.com"
+model       = "deepseek-v4-pro"
+api_key_env = "DEEPSEEK_API_KEY"
+`)
+
+	project := t.TempDir()
+	writeProjectDefaultTestConfig(t, project, "voltui.toml", `default_model = "legacy-missing"
+`)
+
+	cfg, err := LoadForRoot(project)
+	if err != nil {
+		t.Fatalf("LoadForRoot: %v", err)
+	}
+	if cfg.DefaultModel != "legacy-missing" {
+		t.Fatalf("DefaultModel = %q, want broken project value %q kept", cfg.DefaultModel, "legacy-missing")
+	}
+	if got := cfg.IgnoredProjectDefaultModel(); got != "" {
+		t.Fatalf("IgnoredProjectDefaultModel() = %q, want empty", got)
+	}
+}
+
+// A user default is only a fallback when the project overrode it. A missing
+// project default_model must leave the user value untouched.
 func TestLoadForRoot_NoProjectOverrideLeavesUserDefaultAlone(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("VOLTUI_HOME", home)
 	writeProjectDefaultTestConfig(t, home, "config.toml", `default_model = "deepseek-pro"
 
 [[providers]]
@@ -170,7 +208,6 @@ api_key_env = "DEEPSEEK_API_KEY"
 `)
 
 	project := t.TempDir()
-
 	cfg, err := LoadForRoot(project)
 	if err != nil {
 		t.Fatalf("LoadForRoot: %v", err)

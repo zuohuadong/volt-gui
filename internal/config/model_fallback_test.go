@@ -11,8 +11,8 @@ func testModelFallbackConfig(t *testing.T) *Config {
 	c := Default()
 	c.DefaultModel = "prov-a"
 	c.Providers = []ProviderEntry{
-		{Name: "prov-a", Kind: "openai", BaseURL: "https://a.example.com", Model: "model-a1", Models: []string{"model-a1", "model-a2"}, APIKeyEnv: "REASONIX_TEST_KEY", resolvedAPIKey: "sk-test"},
-		{Name: "prov-b", Kind: "openai", BaseURL: "https://b.example.com", Model: "model-b1", Models: []string{"model-b1", "model-b2"}, APIKeyEnv: "REASONIX_TEST_KEY", resolvedAPIKey: "sk-test"},
+		{Name: "prov-a", Kind: "openai", BaseURL: "https://a.example.com", Model: "model-a1", Models: []string{"model-a1", "model-a2"}, APIKeyEnv: "VOLTUI_TEST_KEY", resolvedAPIKey: "sk-test"},
+		{Name: "prov-b", Kind: "openai", BaseURL: "https://b.example.com", Model: "model-b1", Models: []string{"model-b1", "model-b2"}, APIKeyEnv: "VOLTUI_TEST_KEY", resolvedAPIKey: "sk-test"},
 		{Name: "prov-nokey", Kind: "openai", BaseURL: "https://nk.example.com", Model: "model-nk", APIKeyEnv: "REASONIX_TEST_EMPTY"},
 	}
 	return c
@@ -64,6 +64,64 @@ func TestResolveModelWithFallbackSkipsKeylessProvider(t *testing.T) {
 	}
 	if got != "prov-b/model-b1" {
 		t.Errorf("fallback = %q, want prov-b/model-b1 (prov-a is keyless and must be skipped)", got)
+	}
+}
+
+func TestResolveBareModelUsesUniqueProviderPriority(t *testing.T) {
+	c := testModelFallbackConfig(t)
+	c.Providers = append(c.Providers, ProviderEntry{
+		Name:           "prov-c",
+		Kind:           "openai",
+		BaseURL:        "https://c.example.com",
+		Model:          "model-a1",
+		Models:         []string{"model-a1"},
+		APIKeyEnv:      "VOLTUI_TEST_KEY",
+		resolvedAPIKey: "sk-test",
+	})
+
+	if _, ok := c.ResolveModel("model-a1"); ok {
+		t.Fatal("bare duplicate model without a unique priority should be ambiguous")
+	}
+	err := c.ResolveModelError("model-a1")
+	for _, want := range []string{"ambiguous model", "prov-a/model-a1", "prov-c/model-a1", "provider/model", "priority"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %v, want mention %q", err, want)
+		}
+	}
+	if got, fallback, ok := c.ResolveModelWithFallback("model-a1"); got != "" || fallback || ok {
+		t.Fatalf("ambiguous explicit ref = (%q, %v, %v), want no fallback", got, fallback, ok)
+	}
+
+	c.Providers[len(c.Providers)-1].Priority = 20
+	got, ok := c.ResolveModel("model-a1")
+	if !ok {
+		t.Fatal("bare duplicate model with unique priority should resolve")
+	}
+	if got.Name != "prov-c" || got.Model != "model-a1" {
+		t.Fatalf("resolved = %s/%s, want prov-c/model-a1", got.Name, got.Model)
+	}
+
+	c.Providers[0].Priority = 20
+	if _, ok := c.ResolveModel("model-a1"); ok {
+		t.Fatal("bare duplicate model with tied top priority should be ambiguous")
+	}
+}
+
+func TestResolveModelWithFallbackDoesNotHideAmbiguousDefault(t *testing.T) {
+	c := testModelFallbackConfig(t)
+	c.DefaultModel = "model-a1"
+	c.Providers = append(c.Providers, ProviderEntry{
+		Name:           "prov-c",
+		Kind:           "openai",
+		BaseURL:        "https://c.example.com",
+		Model:          "model-a1",
+		Models:         []string{"model-a1"},
+		APIKeyEnv:      "VOLTUI_TEST_KEY",
+		resolvedAPIKey: "sk-test",
+	})
+
+	if got, fallback, ok := c.ResolveModelWithFallback(""); got != "" || fallback || ok {
+		t.Fatalf("ambiguous default_model fallback = (%q, %v, %v), want no fallback", got, fallback, ok)
 	}
 }
 

@@ -41,19 +41,21 @@ func TestExplainError(t *testing.T) {
 		t.Errorf("401 should name the key source: %q", sourced.Error())
 	}
 
-	authBody := explainError(&provider.AuthError{Provider: "relay", KeyEnv: "RELAY_API_KEY", Status: 401, HasKey: true, Body: `{"error":{"message":"令牌已过期","type":"new_api_error"}}`})
+	authBody := explainError(&provider.AuthError{Provider: "relay", KeyEnv: "RELAY_API_KEY", Status: 401, HasKey: true, Body: `{"error":{"message":"令牌已过期"}}`})
 	for _, want := range []string{i18n.M.ProviderErrAuthRejected, "RELAY_API_KEY", "令牌已过期"} {
 		if !strings.Contains(authBody.Error(), want) {
 			t.Errorf("401 with a body = %q, want it to contain %q", authBody.Error(), want)
 		}
 	}
 
-	authEcho := explainError(&provider.AuthError{Provider: "deepseek", KeyEnv: "DEEPSEEK_API_KEY", Status: 401, HasKey: true, Body: `{"error":{"message":"Authentication Fails, Your api key: ****ae54 is invalid"}}`})
-	if !strings.Contains(authEcho.Error(), "Authentication Fails") {
-		t.Errorf("401 should keep the readable reason, got %q", authEcho.Error())
+	authEcho := explainError(&provider.AuthError{Provider: "deepseek", KeyEnv: "DEEPSEEK_API_KEY", Status: 401, HasKey: true, Body: `{"error":{"message":"Authentication failed: api key: sk-proj-abcdefghijklmnop is invalid; prior tail ****ae54"}}`})
+	for _, leaked := range []string{"sk-proj-abcdefghijklmnop", "ae54"} {
+		if strings.Contains(authEcho.Error(), leaked) {
+			t.Errorf("401 must not surface credential material %q: %q", leaked, authEcho.Error())
+		}
 	}
-	if strings.Contains(authEcho.Error(), "ae54") {
-		t.Errorf("401 must not surface the masked key tail, got %q", authEcho.Error())
+	if !strings.Contains(authEcho.Error(), "Authentication failed") {
+		t.Errorf("401 should retain the readable failure reason, got %q", authEcho.Error())
 	}
 
 	for _, status := range []int{400, 422, 429, 500, 503} {
@@ -68,52 +70,9 @@ func TestExplainError(t *testing.T) {
 		t.Errorf("400 should append the provider reason from a JSON body, got %q", jsonBody.Error())
 	}
 
-	toolSchema := explainError(&provider.APIError{
-		Provider:    "mimo",
-		Status:      400,
-		Body:        `{"error":{"message":"Tool 197 function has invalid 'parameters' schema"}}`,
-		ToolContext: `Provider tool 197 maps to VoltUI tool "mcp__files__search" (MCP server "files", tool "search").`,
-	})
-	for _, want := range []string{"invalid 'parameters' schema", `MCP server "files"`} {
-		if !strings.Contains(toolSchema.Error(), want) {
-			t.Errorf("400 tool schema error = %q, want %q", toolSchema.Error(), want)
-		}
-	}
-
 	rawBody := explainError(&provider.APIError{Provider: "deepseek", Status: 422, Body: "some unparseable detail"})
 	if !strings.Contains(rawBody.Error(), "some unparseable detail") {
 		t.Errorf("422 should fall back to the raw body, got %q", rawBody.Error())
-	}
-
-	miniMaxInput := explainError(&provider.APIError{
-		Provider: "custom-m3",
-		Status:   422,
-		Body:     `{"error":{"message":"input new_sensitive (1026)","code":"1026"}}`,
-		TraceID:  "minimax-trace-123",
-	})
-	for _, want := range []string{i18n.M.ProviderErrInputSensitive, "input new_sensitive", "Trace ID: minimax-trace-123"} {
-		if !strings.Contains(miniMaxInput.Error(), want) {
-			t.Errorf("MiniMax 1026 = %q, want %q", miniMaxInput.Error(), want)
-		}
-	}
-	if strings.Contains(miniMaxInput.Error(), i18n.M.ProviderErrUnprocessable) {
-		t.Errorf("MiniMax 1026 must not use the generic 422 message: %q", miniMaxInput.Error())
-	}
-
-	miniMaxOutput := explainError(&provider.APIError{
-		Provider: "minimax-cn-api",
-		Status:   422,
-		Body:     `{"base_resp":{"status_code":1027,"status_msg":"output new_sensitive"}}`,
-	})
-	for _, want := range []string{i18n.M.ProviderErrOutputSensitive, "output new_sensitive"} {
-		if !strings.Contains(miniMaxOutput.Error(), want) {
-			t.Errorf("MiniMax 1027 = %q, want %q", miniMaxOutput.Error(), want)
-		}
-	}
-
-	unrelated1026 := explainError(&provider.APIError{Provider: "other", Status: 422, Body: `{"code":1026,"message":"other meaning"}`})
-	if !strings.Contains(unrelated1026.Error(), i18n.M.ProviderErrUnprocessable) {
-		t.Errorf("another provider's numeric code 1026 must remain generic: %q", unrelated1026.Error())
 	}
 
 	rate := explainError(&provider.APIError{Provider: "deepseek", Status: 429, Body: `{"error":{"message":"slow down"}}`})
@@ -121,9 +80,6 @@ func TestExplainError(t *testing.T) {
 		t.Errorf("429 should append the provider reason, got %q", rate.Error())
 	}
 
-	// Relay gateways (one-api/new-api style) wrap the real failure — dead
-	// upstream channel, unsupported tools, exhausted quota — in a 5xx JSON
-	// body; the category line alone made those undiagnosable.
 	relay := explainError(&provider.APIError{Provider: "relay", Status: 500, Body: `{"error":{"message":"no available channel for model claude-fable-5 in group default","type":"new_api_error"}}`})
 	if !strings.Contains(relay.Error(), i18n.M.ProviderErrServer) || !strings.Contains(relay.Error(), "no available channel") {
 		t.Errorf("500 should append the provider reason from a JSON body, got %q", relay.Error())
@@ -162,8 +118,8 @@ func TestRedactAuthReason(t *testing.T) {
 		{"full key echoed by a relay", "Invalid key sk-proj-abc123def456ghi789 provided", "Invalid key **** provided"},
 		{"digit-free sk key via secrets.Redact", "api key: sk-proj-abcdefghijklmnop is invalid", "api key: **** is invalid"},
 		{"digit-free value after credential word", "api key: relaykey_abcdefghijklmn rejected", "api key: **** rejected"},
+		{"bare mixed-case token", "rejected AbCdEfGhIjKlMnOpQr", "rejected ****"},
 		{"bearer value collapses fully", "Bearer abc.def-ghijklmnopqrs rejected", "Bearer **** rejected"},
-		{"mixed-case token without context", "rejected AbCdEfGhIjKlMnOpQr", "rejected ****"},
 		{"digit-free identifier survives", "code: invalid_authentication_token", "code: invalid_authentication_token"},
 		{"all-caps code survives", "code INVALID_AUTHENTICATION_TOKEN", "code INVALID_AUTHENTICATION_TOKEN"},
 		{"short tokens survive", "token expired at gateway", "token expired at gateway"},

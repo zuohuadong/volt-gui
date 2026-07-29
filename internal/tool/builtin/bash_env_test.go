@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"voltui/internal/sandbox"
-	"voltui/internal/secrets"
 )
 
 func TestBashMergesLoginShellPath(t *testing.T) {
@@ -23,7 +22,7 @@ func TestBashMergesLoginShellPath(t *testing.T) {
 	if err := os.Mkdir(bin, 0o755); err != nil {
 		t.Fatalf("mkdir bin: %v", err)
 	}
-	probe := filepath.Join(bin, "reasonix-path-probe")
+	probe := filepath.Join(bin, "voltui-path-probe")
 	if err := os.WriteFile(probe, []byte("#!/bin/sh\nprintf 'shell-path-ok\\n'\n"), 0o755); err != nil {
 		t.Fatalf("write probe: %v", err)
 	}
@@ -42,7 +41,7 @@ func TestBashMergesLoginShellPath(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
 
 	b := bash{shell: sandbox.Shell{Kind: sandbox.ShellBash, Path: "/bin/sh"}}
-	args, _ := json.Marshal(map[string]string{"command": "reasonix-path-probe"})
+	args, _ := json.Marshal(map[string]string{"command": "voltui-path-probe"})
 
 	out, err := b.Execute(context.Background(), args)
 	if err != nil {
@@ -50,37 +49,6 @@ func TestBashMergesLoginShellPath(t *testing.T) {
 	}
 	if !strings.Contains(out, "shell-path-ok") {
 		t.Fatalf("output = %q, want shell-path-ok", out)
-	}
-}
-
-func TestBashCommandEnvFiltersSensitiveKeysWhenEnabled(t *testing.T) {
-	secrets.SetFilterSubprocessEnv(true)
-	t.Cleanup(func() { secrets.SetFilterSubprocessEnv(false) })
-	t.Setenv("DEEPSEEK_API_KEY", "sk-real-secret-value-123456")
-	t.Setenv("GH_TOKEN", "ghp_abcdefghijklmnopqrstuvwxyz")
-	t.Setenv("REASONIX_TEST_VISIBLE", "ok")
-	// PWD is the POSIX working-directory variable, not a password: the name
-	// filter must never strip it or every subprocess loses its cwd context.
-	t.Setenv("PWD", "/tmp/somewhere")
-
-	env := strings.Join(bashCommandEnv(context.Background()), "\n")
-	if strings.Contains(env, "DEEPSEEK_API_KEY") || strings.Contains(env, "GH_TOKEN") {
-		t.Fatalf("bash env leaked sensitive keys:\n%s", env)
-	}
-	if !strings.Contains(env, "REASONIX_TEST_VISIBLE=ok") {
-		t.Fatalf("bash env dropped non-sensitive key:\n%s", env)
-	}
-	if !strings.Contains(env, "PWD=/tmp/somewhere") {
-		t.Fatalf("bash env dropped PWD:\n%s", env)
-	}
-}
-
-func TestBashCommandEnvKeepsTokensByDefault(t *testing.T) {
-	t.Setenv("GH_TOKEN", "ghp_abcdefghijklmnopqrstuvwxyz")
-
-	env := strings.Join(bashCommandEnv(context.Background()), "\n")
-	if !strings.Contains(env, "GH_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz") {
-		t.Fatalf("bash env must inherit tokens while filter_subprocess_env is off (default):\n%s", env)
 	}
 }
 
@@ -126,19 +94,5 @@ func TestMergePathLists(t *testing.T) {
 				t.Fatalf("mergePathLists(%q, %q) = %q, want %q", c.primary, c.secondary, got, c.want)
 			}
 		})
-	}
-}
-
-func TestRunShellPATHCommandFiltersEnvWhenEnabled(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX shell probe")
-	}
-	secrets.SetFilterSubprocessEnv(true)
-	t.Cleanup(func() { secrets.SetFilterSubprocessEnv(false) })
-	t.Setenv("REASONIX_TEST_SECRET_TOKEN", "ghp_abcdefghijklmnopqrstuvwxyz")
-
-	out := runShellPATHCommand(context.Background(), "/bin/sh", []string{"-c", `printf 'tok=%s' "${REASONIX_TEST_SECRET_TOKEN:-none}"`})
-	if !strings.Contains(string(out), "tok=none") {
-		t.Fatalf("login-shell PATH probe leaked filtered env: %q", out)
 	}
 }

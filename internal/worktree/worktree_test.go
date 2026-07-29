@@ -26,8 +26,8 @@ func initRepo(t *testing.T) string {
 		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
 		cmd.Env = append(os.Environ(),
 			"GIT_CONFIG_NOSYSTEM=1",
-			"GIT_AUTHOR_NAME=VoltUI Test", "GIT_AUTHOR_EMAIL=reasonix@example.invalid",
-			"GIT_COMMITTER_NAME=VoltUI Test", "GIT_COMMITTER_EMAIL=reasonix@example.invalid")
+			"GIT_AUTHOR_NAME=VoltUI Test", "GIT_AUTHOR_EMAIL=voltui@example.invalid",
+			"GIT_COMMITTER_NAME=VoltUI Test", "GIT_COMMITTER_EMAIL=voltui@example.invalid")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -67,7 +67,7 @@ func TestCreateManagedWorktreeFromRepositoryFolder(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(result.WorktreeRoot, "README.md")); err != nil {
 		t.Fatalf("created worktree missing committed file: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(result.WorktreeRoot, ".reasonix-source")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(result.WorktreeRoot, ".voltui-source")); !os.IsNotExist(err) {
 		t.Fatalf("worktree must not contain a VoltUI marker, stat err = %v", err)
 	}
 	branchCmd := exec.Command("git", "-C", result.WorktreeRoot, "branch", "--show-current")
@@ -91,7 +91,7 @@ func TestCreatePreservesSelectedRepositorySubdirectory(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git add: %v %s", err, out)
 	}
-	cmd = exec.Command("git", "-C", repo, "-c", "user.name=VoltUI Test", "-c", "user.email=reasonix@example.invalid", "commit", "-m", "subdir")
+	cmd = exec.Command("git", "-C", repo, "-c", "user.name=VoltUI Test", "-c", "user.email=voltui@example.invalid", "commit", "-m", "subdir")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git commit: %v %s", err, out)
 	}
@@ -283,7 +283,7 @@ func TestCreateSupportsPathsWithSpaces(t *testing.T) {
 	}
 	git := func(args ...string) {
 		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=VoltUI Test", "GIT_AUTHOR_EMAIL=reasonix@example.invalid", "GIT_COMMITTER_NAME=VoltUI Test", "GIT_COMMITTER_EMAIL=reasonix@example.invalid")
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=VoltUI Test", "GIT_AUTHOR_EMAIL=voltui@example.invalid", "GIT_COMMITTER_NAME=VoltUI Test", "GIT_COMMITTER_EMAIL=voltui@example.invalid")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v %s", args, err, out)
 		}

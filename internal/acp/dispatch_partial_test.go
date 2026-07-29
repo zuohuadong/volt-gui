@@ -16,7 +16,6 @@ func TestUpdateSinkSkipsPartialDispatch(t *testing.T) {
 
 	sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{ID: "call-1", Name: "read_file", Partial: true}})
 	sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{ID: "call-1", Name: "read_file", Args: `{"path":"a.go"}`}})
-	sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{ID: "call-1", Name: "read_file", Args: `{"path":"a.go"}`, Refreshed: true}})
 
 	if got := len(fn.notifs); got != 1 {
 		t.Fatalf("want one tool_call notification, got %d", got)

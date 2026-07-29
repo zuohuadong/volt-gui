@@ -24,21 +24,6 @@ func TestBuildRequestEmbedsImageBlockForVisionModel(t *testing.T) {
 	}
 }
 
-func TestBuildRequestSkipsImageBlockWithoutVision(t *testing.T) {
-	c := &client{model: "claude-opus-4-8"} // vision unset
-	req := c.buildRequest(provider.Request{
-		Messages: []provider.Message{
-			{Role: provider.RoleUser, Content: "describe", Images: []string{"data:image/jpeg;base64,ZZZZ"}},
-		},
-	})
-	blocks := req.Messages[0].Content
-	if len(blocks) != 1 || blocks[0].Type != "text" {
-		t.Fatalf("blocks = %+v, want [text] only when vision is off", blocks)
-	}
-}
-
-// toolMessages is a paired history whose tool result carries an image: the
-// shape parseToolResult produces for an MCP screenshot tool.
 func toolMessages(images []string) []provider.Message {
 	return []provider.Message{
 		{Role: provider.RoleUser, Content: "screenshot please"},
@@ -71,7 +56,7 @@ func TestBuildRequestEmbedsToolResultImagesForVisionModel(t *testing.T) {
 }
 
 func TestBuildRequestDropsToolResultImagesWithoutVision(t *testing.T) {
-	c := &client{model: "claude-opus-4-8"} // vision unset
+	c := &client{model: "claude-opus-4-8"}
 	req := c.buildRequest(provider.Request{Messages: toolMessages([]string{"data:image/png;base64,QUFB"})})
 	last := req.Messages[len(req.Messages)-1]
 	if s, ok := last.Content[0].Content.(string); !ok || s != "[image: image/png]" {
@@ -79,16 +64,12 @@ func TestBuildRequestDropsToolResultImagesWithoutVision(t *testing.T) {
 	}
 }
 
-// A text-only tool result must keep serializing exactly as before the image
-// channel existed: plain string content, no array — the prompt-cache prefix of
-// existing sessions depends on those bytes.
+// Text-only tool results preserve their historical string encoding rather than
+// changing prompt-cache bytes merely because the model supports vision.
 func TestBuildRequestToolResultTextOnlyKeepsStringContent(t *testing.T) {
 	c := &client{model: "claude-opus-4-8", vision: true}
 	msgs := toolMessages(nil)
 	msgs[2].Content = "plain output"
-	// Trailing user turn merges after the tool_result in the same user message
-	// and takes the cache breakpoint, so the tool_result block keeps its
-	// pre-image-channel bytes.
 	msgs = append(msgs, provider.Message{Role: provider.RoleUser, Content: "next"})
 	req := c.buildRequest(provider.Request{Messages: msgs})
 	last := req.Messages[len(req.Messages)-1]
@@ -105,5 +86,18 @@ func TestBuildRequestToolResultTextOnlyKeepsStringContent(t *testing.T) {
 	want := `{"type":"tool_result","tool_use_id":"c1","content":"plain output"}`
 	if string(body) != want {
 		t.Fatalf("serialized tool_result = %s, want %s", body, want)
+	}
+}
+
+func TestBuildRequestSkipsImageBlockWithoutVision(t *testing.T) {
+	c := &client{model: "claude-opus-4-8"} // vision unset
+	req := c.buildRequest(provider.Request{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: "describe", Images: []string{"data:image/jpeg;base64,ZZZZ"}},
+		},
+	})
+	blocks := req.Messages[0].Content
+	if len(blocks) != 1 || blocks[0].Type != "text" {
+		t.Fatalf("blocks = %+v, want [text] only when vision is off", blocks)
 	}
 }

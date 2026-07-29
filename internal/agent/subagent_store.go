@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"voltui/internal/fileutil"
-	fileencoding "voltui/internal/fileutil/encoding"
-	"voltui/internal/store"
 	"voltui/internal/tool"
 )
 
@@ -91,7 +89,7 @@ func (r *SubagentRun) Release() {
 }
 
 // EphemeralSubagentRun is a non-persisted run for callers without an owning
-// parent session — e.g. headless `reasonix run`, which never mints a session
+// parent session — e.g. headless `voltui run`, which never mints a session
 // path. Its empty Ref makes the store's MarkRunning/SaveCompleted/SaveFailed
 // methods no-op and keeps FormatSubagentResult from emitting a transcript
 // reference, so the sub-agent behaves exactly as it did before persisted
@@ -152,7 +150,7 @@ func ListSubagentsByParent(sessionDir, parentSession string) ([]SubagentArtifact
 			continue
 		}
 		metaPath := filepath.Join(dir, entry.Name())
-		data, err := fileencoding.ReadFileUTF8(metaPath)
+		data, err := os.ReadFile(metaPath)
 		if err != nil {
 			return nil, err
 		}
@@ -181,15 +179,7 @@ func DeleteSubagentsByParent(sessionDir, parentSession string) error {
 		return err
 	}
 	for _, artifact := range artifacts {
-		paths := []string{artifact.SessionPath, artifact.MetaPath}
-		// Sub-agent saves are single-file today, but sweep transcript sidecars
-		// (event log, event index, …) so no earlier build's artifacts survive
-		// the delete.
-		paths = append(paths, store.SessionSidecarFiles(artifact.SessionPath)...)
-		for _, path := range paths {
-			if path == "" {
-				continue
-			}
+		for _, path := range []string{artifact.SessionPath, artifact.MetaPath} {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return err
 			}
@@ -198,10 +188,9 @@ func DeleteSubagentsByParent(sessionDir, parentSession string) error {
 	return nil
 }
 
-// CleanupStaleRunning marks persisted running sub-agents as interrupted while
-// holding each parent transcript's session lease. A live parent in this or
-// another process therefore keeps its children untouched, while crash leftovers
-// remain repairable before this process accepts new background work.
+// CleanupStaleRunning marks persisted running sub-agents as interrupted. It is
+// intended for startup, before this process accepts new background sub-agent
+// work, so a previous crash cannot leave ghost "running" refs behind.
 func (s *SubagentStore) CleanupStaleRunning() (int, error) {
 	if s == nil {
 		return 0, nil
@@ -213,11 +202,8 @@ func (s *SubagentStore) CleanupStaleRunning() (int, error) {
 		}
 		return 0, err
 	}
-	type staleParent struct {
-		sessionPath string
-		refs        []string
-	}
-	parents := map[string]*staleParent{}
+	now := time.Now().UTC()
+	cleaned := 0
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta.json") {
 			continue
@@ -228,73 +214,19 @@ func (s *SubagentStore) CleanupStaleRunning() (int, error) {
 		}
 		meta, err := s.LoadMeta(ref)
 		if err != nil {
-			return 0, err
+			return cleaned, err
 		}
 		if meta.Status != SubagentRunning {
 			continue
 		}
-		parentSession := strings.TrimSpace(meta.ParentSession)
-		sessionPath, ok := s.parentSessionPath(parentSession)
-		if !ok {
-			// Old or malformed metadata without a provable parent cannot
-			// authorize a destructive lifecycle rewrite.
-			continue
+		meta.Status = SubagentInterrupted
+		meta.UpdatedAt = now
+		if err := s.saveMeta(meta); err != nil {
+			return cleaned, err
 		}
-		parent := parents[parentSession]
-		if parent == nil {
-			parent = &staleParent{sessionPath: sessionPath}
-			parents[parentSession] = parent
-		}
-		parent.refs = append(parent.refs, ref)
-	}
-
-	parentIDs := make([]string, 0, len(parents))
-	for parentID := range parents {
-		parentIDs = append(parentIDs, parentID)
-	}
-	sort.Strings(parentIDs)
-
-	now := time.Now().UTC()
-	cleaned := 0
-	for _, parentID := range parentIDs {
-		parent := parents[parentID]
-		lease, err := TryAcquireSessionLease(parent.sessionPath)
-		if errors.Is(err, ErrSessionLeaseHeld) {
-			continue
-		}
-		if err != nil {
-			return cleaned, fmt.Errorf("acquire parent session lease %q: %w", parentID, err)
-		}
-		for _, ref := range parent.refs {
-			// Re-read after acquiring the parent lease: the former owner may
-			// have completed the child between the initial scan and handoff.
-			meta, err := s.LoadMeta(ref)
-			if err != nil {
-				lease.Release()
-				return cleaned, err
-			}
-			if meta.Status != SubagentRunning || strings.TrimSpace(meta.ParentSession) != parentID {
-				continue
-			}
-			meta.Status = SubagentInterrupted
-			meta.UpdatedAt = now
-			if err := s.saveMeta(meta); err != nil {
-				lease.Release()
-				return cleaned, err
-			}
-			cleaned++
-		}
-		lease.Release()
+		cleaned++
 	}
 	return cleaned, nil
-}
-
-func (s *SubagentStore) parentSessionPath(parentSession string) (string, bool) {
-	parentSession = strings.TrimSpace(parentSession)
-	if parentSession == "" || parentSession == "." || parentSession == ".." || filepath.Base(parentSession) != parentSession {
-		return "", false
-	}
-	return filepath.Join(filepath.Dir(s.dir), parentSession+".jsonl"), true
 }
 
 func (s *SubagentStore) PrepareFresh(spec SubagentSpec) (*SubagentRun, error) {
@@ -572,6 +504,10 @@ func (s *SubagentStore) prepareFork(ref string, spec SubagentSpec) (*SubagentRun
 	return &SubagentRun{Ref: newRef, Session: sess, Meta: newMeta, ForkedFrom: sourceRef, store: s, release: newRelease}, nil
 }
 
+func (s *SubagentStore) PrepareFork(ref string, spec SubagentSpec) (*SubagentRun, error) {
+	return s.prepareFork(ref, spec)
+}
+
 func (s *SubagentStore) MarkRunning(run *SubagentRun) error {
 	if s == nil || run == nil || run.Ref == "" {
 		return nil
@@ -625,7 +561,7 @@ func (s *SubagentStore) LoadMeta(ref string) (SubagentMeta, error) {
 	if !validSubagentRef(ref) {
 		return meta, fmt.Errorf("invalid subagent reference %q", ref)
 	}
-	data, err := fileencoding.ReadFileUTF8(s.metaPath(ref))
+	data, err := os.ReadFile(s.metaPath(ref))
 	if err != nil {
 		return meta, fmt.Errorf("load subagent metadata %q: %w", ref, err)
 	}

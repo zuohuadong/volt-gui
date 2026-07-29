@@ -33,21 +33,15 @@ import (
 func acpCommand(args []string, version string) int {
 	fs := flag.NewFlagSet("acp", flag.ContinueOnError)
 	model := fs.String("model", "", "provider name (default: config default_model)")
-	profileFlag := fs.String("profile", "balanced", "runtime profile: economy | balanced | delivery")
 	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	profile, err := parseRuntimeProfile(*profileFlag)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	factory := &acpFactory{model: *model, profile: profile}
-	info := acp.AgentInfo{Name: "reasonix", Version: version}
+	factory := &acpFactory{model: *model}
+	info := acp.AgentInfo{Name: "voltui", Version: version}
 	if err := acp.Serve(ctx, os.Stdin, os.Stdout, factory, info); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
@@ -60,8 +54,7 @@ func acpCommand(args []string, version string) int {
 // desktop, and serve assembly while still adding the host-supplied MCP servers
 // for this session only.
 type acpFactory struct {
-	model   string
-	profile string
+	model string
 }
 
 func (f *acpFactory) SessionDir() string {
@@ -82,7 +75,6 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 	}
 	return boot.Build(ctx, boot.Options{
 		Model:                    firstNonEmpty(p.Model, f.model),
-		TokenMode:                firstNonEmpty(p.RuntimeProfile, f.profile),
 		RequireKey:               true,
 		Sink:                     p.Sink,
 		EffortOverride:           p.EffortOverride,
@@ -158,7 +150,6 @@ func (f *acpFactory) SessionConfigState(_ context.Context, p acp.SessionConfigSt
 		}
 	}
 
-	runtimeProfile := acpRuntimeProfile(firstNonEmpty(p.RuntimeProfile, f.profile))
 	options := []acp.SessionConfigOption{{
 		ID:           "model",
 		Name:         "Model",
@@ -186,40 +177,16 @@ func (f *acpFactory) SessionConfigState(_ context.Context, p acp.SessionConfigSt
 		cleared := ""
 		effortOverride = &cleared
 	}
-	options = append(options, acp.SessionConfigOption{
-		ID:           "work_mode",
-		Name:         "Work Mode",
-		Category:     "work_mode",
-		Type:         "select",
-		CurrentValue: runtimeProfile,
-		Options: []acp.SessionConfigSelectOption{
-			{Value: "economy", Name: "Economy", Description: "Use a lean initial tool surface to save tokens"},
-			{Value: "balanced", Name: "Balanced", Description: "Use the complete default tool surface"},
-			{Value: "delivery", Name: "Delivery", Description: "Require acceptance criteria, review, and verification evidence"},
-		},
-	})
 
 	return acp.SessionConfigState{
 		Model:          currentModel,
 		EffortOverride: effortOverride,
-		RuntimeProfile: runtimeProfile,
 		Models: &acp.SessionModelState{
 			AvailableModels: modelInfos,
 			CurrentModelID:  currentModel,
 		},
 		ConfigOptions: options,
 	}, nil
-}
-
-func acpRuntimeProfile(value string) string {
-	switch boot.NormalizeTokenMode(value) {
-	case boot.TokenModeEconomy:
-		return "economy"
-	case boot.TokenModeDelivery:
-		return "delivery"
-	default:
-		return "balanced"
-	}
 }
 
 func acpBuiltinTools(cfg *config.Config, cwd string, writeRoots []string) []tool.Tool {

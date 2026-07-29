@@ -5,13 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"voltui/internal/config"
-	fileencoding "voltui/internal/fileutil/encoding"
 )
 
 func writeSkill(t *testing.T, base, rel, content string) string {
@@ -21,18 +19,6 @@ func writeSkill(t *testing.T, base, rel, content string) string {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return full
-}
-
-func writeSkillBytes(t *testing.T, base, rel string, content []byte) string {
-	t.Helper()
-	full := filepath.Join(base, rel)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(full, content, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return full
@@ -60,38 +46,6 @@ func find(skills []Skill, name string) (Skill, bool) {
 	return Skill{}, false
 }
 
-func TestDisableDiscoveryReturnsEmptyStore(t *testing.T) {
-	home := t.TempDir()
-	project := t.TempDir()
-	custom := t.TempDir()
-	writeSkill(t, home, ".voltui/skills/global.md", "---\ndescription: global\n---\nbody")
-	writeSkill(t, project, ".voltui/skills/project.md", "---\ndescription: project\n---\nbody")
-	writeSkill(t, custom, "custom.md", "---\ndescription: custom\n---\nbody")
-
-	store := New(Options{
-		HomeDir:          home,
-		ProjectRoot:      project,
-		CustomPaths:      []string{custom},
-		DisableDiscovery: true,
-	})
-
-	if roots := store.Roots(); len(roots) != 0 {
-		t.Fatalf("disabled store roots = %+v, want none", roots)
-	}
-	if skills := store.List(); len(skills) != 0 {
-		t.Fatalf("disabled store skills = %+v, want none", skills)
-	}
-	if skills := store.SlashList(); len(skills) != 0 {
-		t.Fatalf("disabled store slash skills = %+v, want none", skills)
-	}
-	if inspection := store.Inspect(); len(inspection.Roots) != 0 || len(inspection.Candidates) != 0 {
-		t.Fatalf("disabled store inspection = %+v, want empty", inspection)
-	}
-	if _, ok := store.Read("project"); ok {
-		t.Fatal("disabled store read discovered a skill")
-	}
-}
-
 func TestListPrecedenceProjectOverGlobal(t *testing.T) {
 	home := t.TempDir()
 	proj := t.TempDir()
@@ -111,144 +65,6 @@ func TestListPrecedenceProjectOverGlobal(t *testing.T) {
 	}
 	if _, ok := find(list, "onlyglobal"); !ok {
 		t.Fatal("global-only skill should be discovered")
-	}
-}
-
-func TestPluginClaudeAgentLoadsAsManualSubagent(t *testing.T) {
-	home := t.TempDir()
-	agentRoot := filepath.Join(t.TempDir(), "agents")
-	writeSkill(t, agentRoot, "reviewer.md", "---\ndescription: Review changes\nmodel: sonnet\ntools: [Read, Grep, \"mcp__*__search\"]\n---\nReview carefully.")
-	key := config.CanonicalSkillPath(agentRoot)
-	st := New(Options{HomeDir: home, CustomPaths: []string{agentRoot}, PluginPaths: map[string][]string{key: {"legal"}}, PluginAgentPaths: map[string][]string{key: {"legal"}}, DisableBuiltins: true})
-	sk, ok := st.Read("reviewer")
-	if !ok {
-		t.Fatal("Claude agent was not discoverable")
-	}
-	if sk.RunAs != RunSubagent || sk.Invocation != "manual" || sk.Model != "" {
-		t.Fatalf("agent profile = %+v", sk)
-	}
-	if sk.SlashName() != "legal:agent:reviewer" {
-		t.Fatalf("agent slash name = %q", sk.SlashName())
-	}
-	want := []string{"read_file", "grep", "mcp__*__search"}
-	if !slices.Equal(sk.AllowedTools, want) {
-		t.Fatalf("allowed tools = %v, want %v", sk.AllowedTools, want)
-	}
-}
-
-func TestPluginAgentAndSkillWithSameNameHaveDistinctQualifiedInvocations(t *testing.T) {
-	home := t.TempDir()
-	skillRoot := filepath.Join(t.TempDir(), "skills")
-	agentRoot := filepath.Join(t.TempDir(), "agents")
-	writeSkill(t, skillRoot, "leave-tracker/SKILL.md", "---\ndescription: Track leave\n---\nSkill body")
-	writeSkill(t, agentRoot, "leave-tracker.md", "---\ndescription: Monitor leave\n---\nAgent body")
-	skillKey := config.CanonicalSkillPath(skillRoot)
-	agentKey := config.CanonicalSkillPath(agentRoot)
-	st := New(Options{
-		HomeDir: home, CustomPaths: []string{skillRoot, agentRoot},
-		PluginPaths:      map[string][]string{skillKey: {"employment-legal"}, agentKey: {"employment-legal"}},
-		PluginAgentPaths: map[string][]string{agentKey: {"employment-legal"}}, DisableBuiltins: true,
-	})
-
-	inline, ok := st.ReadSlash("employment-legal:leave-tracker")
-	if !ok || inline.RunAs != RunInline {
-		t.Fatalf("inline skill = %+v, found=%v", inline, ok)
-	}
-	agent, ok := st.ReadSlash("employment-legal:agent:leave-tracker")
-	if !ok || agent.RunAs != RunSubagent || agent.Invocation != "manual" {
-		t.Fatalf("agent profile = %+v, found=%v", agent, ok)
-	}
-}
-
-func TestPluginSkillsUseQualifiedSlashNamesWithoutChangingModelIndex(t *testing.T) {
-	home := t.TempDir()
-	alpha := t.TempDir()
-	beta := t.TempDir()
-	writeSkill(t, alpha, "plan/SKILL.md", "---\ndescription: alpha plan\n---\nALPHA")
-	writeSkill(t, beta, "plan/SKILL.md", "---\ndescription: beta plan\n---\nBETA")
-	writeSkill(t, beta, "review/SKILL.md", "---\ndescription: beta review\n---\nREVIEW")
-
-	st := New(Options{
-		HomeDir:         home,
-		CustomPaths:     []string{alpha, beta},
-		PluginPaths:     map[string][]string{config.CanonicalSkillPath(alpha): {"alpha"}, config.CanonicalSkillPath(beta): {"beta"}},
-		DisableBuiltins: true,
-	})
-
-	modelSkills := st.List()
-	if len(modelSkills) != 2 || modelSkills[0].Name != "plan" || modelSkills[1].Name != "review" {
-		t.Fatalf("model skills = %+v", modelSkills)
-	}
-	if got := IndexBlock(modelSkills); strings.Contains(got, "alpha:plan") || strings.Contains(got, "beta:plan") {
-		t.Fatalf("model index must keep bare run_skill identifiers:\n%s", got)
-	}
-	withoutPluginMetadata := append([]Skill(nil), modelSkills...)
-	for i := range withoutPluginMetadata {
-		withoutPluginMetadata[i].Plugin = ""
-	}
-	if got, want := IndexBlock(modelSkills), IndexBlock(withoutPluginMetadata); got != want {
-		t.Fatalf("plugin ownership changed cache-stable model index:\ngot:\n%s\nwant:\n%s", got, want)
-	}
-
-	slashSkills := st.SlashList()
-	gotNames := make([]string, 0, len(slashSkills))
-	for _, sk := range slashSkills {
-		gotNames = append(gotNames, sk.SlashName())
-	}
-	wantNames := []string{"alpha:plan", "beta:plan", "beta:review"}
-	if !slices.Equal(gotNames, wantNames) {
-		t.Fatalf("slash skills = %v, want %v", gotNames, wantNames)
-	}
-	if _, ok := st.ReadSlash("plan"); ok {
-		t.Fatal("ambiguous short plugin skill must not resolve")
-	}
-	if sk, ok := st.ReadSlash("/beta:plan"); !ok || sk.Body != "BETA" || sk.Name != "plan" {
-		t.Fatalf("qualified beta skill = %+v, %v", sk, ok)
-	}
-	if sk, ok := st.Read("plan"); !ok || sk.Body != "ALPHA" || sk.Name != "plan" {
-		t.Fatalf("run_skill bare winner changed = %+v, %v", sk, ok)
-	}
-}
-
-func TestPluginSkillShortAliasIsHiddenAndProjectSkillKeepsShortName(t *testing.T) {
-	home := t.TempDir()
-	project := t.TempDir()
-	pluginRoot := t.TempDir()
-	writeSkill(t, pluginRoot, "plan/SKILL.md", "---\ndescription: plugin plan\n---\nPLUGIN")
-
-	st := New(Options{
-		HomeDir:         home,
-		ProjectRoot:     project,
-		CustomPaths:     []string{pluginRoot},
-		PluginPaths:     map[string][]string{config.CanonicalSkillPath(pluginRoot): {"superpowers"}},
-		DisableBuiltins: true,
-	})
-	if sk, ok := st.ReadSlash("plan"); !ok || sk.Body != "PLUGIN" {
-		t.Fatalf("unambiguous short compatibility alias = %+v, %v", sk, ok)
-	}
-	if got := st.SlashList(); len(got) != 1 || got[0].SlashName() != "superpowers:plan" {
-		t.Fatalf("visible plugin skills = %+v", got)
-	}
-
-	writeSkill(t, project, ".voltui/skills/plan/SKILL.md", "---\ndescription: project plan\n---\nPROJECT")
-	if sk, ok := st.ReadSlash("plan"); !ok || sk.Body != "PROJECT" || sk.Plugin != "" {
-		t.Fatalf("project short skill = %+v, %v", sk, ok)
-	}
-	if sk, ok := st.ReadSlash("superpowers:plan"); !ok || sk.Body != "PLUGIN" {
-		t.Fatalf("qualified plugin skill beside project winner = %+v, %v", sk, ok)
-	}
-}
-
-func TestListDecodesGB18030SkillFile(t *testing.T) {
-	home := t.TempDir()
-	root := t.TempDir()
-	body := "---\ndescription: 中文技能\n---\n用中文处理任务。"
-	writeSkillBytes(t, root, filepath.Join("cn", SkillFile), fileencoding.Encode(body, fileencoding.GB18030))
-
-	st := New(Options{HomeDir: home, CustomPaths: []string{root}, DisableBuiltins: true})
-	skills := st.List()
-	if len(skills) != 1 || skills[0].Description != "中文技能" || !strings.Contains(skills[0].Body, "用中文处理任务") {
-		t.Fatalf("decoded skills = %+v", skills)
 	}
 }
 
@@ -353,24 +169,24 @@ func TestConventionDirsDiscovered(t *testing.T) {
 	}
 }
 
-func TestVoltUIHomeDirOverridesGlobalVoltUISkills(t *testing.T) {
+func TestReasonixHomeDirOverridesGlobalReasonixSkills(t *testing.T) {
 	home := t.TempDir()
 	reasonixHome := filepath.Join(t.TempDir(), "rx-home")
 	writeSkill(t, home, ".voltui/skills/old.md", "---\ndescription: old\n---\nold")
 	writeSkill(t, home, ".voltui/skills/current.md", "---\ndescription: old current\n---\nold current")
 	currentPath := writeSkill(t, reasonixHome, "skills/current.md", "---\ndescription: current\n---\ncurrent")
 
-	st := New(Options{HomeDir: home, VoltUIHomeDir: reasonixHome, DisableBuiltins: true})
+	st := New(Options{HomeDir: home, ReasonixHomeDir: reasonixHome, DisableBuiltins: true})
 	list := st.List()
 	current, ok := find(list, "current")
 	if !ok {
-		t.Fatal("VoltUI home skill should be discovered")
+		t.Fatal("Reasonix home skill should be discovered")
 	}
 	if current.Path != currentPath {
-		t.Fatalf("current skill path = %q, want VoltUI home path %q", current.Path, currentPath)
+		t.Fatalf("current skill path = %q, want Reasonix home path %q", current.Path, currentPath)
 	}
 	if _, ok := find(list, "old"); !ok {
-		t.Fatal("legacy ~/.reasonix skill should remain discoverable")
+		t.Fatal("legacy ~/.voltui skill should remain discoverable")
 	}
 
 	path, err := st.Create("created", ScopeGlobal)
@@ -700,10 +516,10 @@ func TestBuiltinInitIsInlineSkill(t *testing.T) {
 func TestBuiltinSubagentSkillsDeclareAllowedTools(t *testing.T) {
 	st := New(Options{HomeDir: t.TempDir()})
 	cases := map[string][]string{
-		"explore":         {"read_file", "ls", "glob", "grep", "code_index"},
-		"research":        {"read_file", "ls", "glob", "grep", "code_index", "web_fetch"},
-		"review":          {"read_file", "ls", "glob", "grep", "code_index", "bash", "use_capability"},
-		"security-review": {"read_file", "ls", "glob", "grep", "code_index", "bash", "use_capability"},
+		"explore":         {"calculate", "read_file", "ls", "glob", "grep", "code_index"},
+		"research":        {"calculate", "read_file", "ls", "glob", "grep", "code_index", "web_fetch"},
+		"review":          {"calculate", "read_file", "ls", "glob", "grep", "code_index", "knowledge_search", "bash"},
+		"security-review": {"calculate", "read_file", "ls", "glob", "grep", "code_index", "knowledge_search", "bash"},
 	}
 	for name, want := range cases {
 		sk, ok := st.Read(name)
@@ -838,7 +654,7 @@ func TestSymlinkedDirAndFile(t *testing.T) {
 	writeSkill(t, target, "realdir/SKILL.md", "---\ndescription: linked dir\n---\nb")
 	writeSkill(t, target, "realflat.md", "---\ndescription: linked flat\n---\nb")
 
-	skillsRoot := filepath.Join(home, ".reasonix", "skills")
+	skillsRoot := filepath.Join(home, ".voltui", "skills")
 	if err := os.MkdirAll(skillsRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -952,7 +768,7 @@ func TestReadOnlyIndexBlockPointsAtReadOnlySkill(t *testing.T) {
 
 func TestSkillRoutingMetadataParsesButStaysOutOfIndex(t *testing.T) {
 	home := t.TempDir()
-	writeSkill(t, home, ".voltui/skills/router.md", "---\ndescription: route me\ntriggers: code review, 检查代码\nnegative-triggers: explain only\nauto-use: prefer\nneeds-fresh-data: true\ncost: low\nrequires: mcp-server:github, mcp-tool:github/search_issues\nprofiles: delivery, balanced, economy, invalid\n---\nbody")
+	writeSkill(t, home, ".voltui/skills/router.md", "---\ndescription: route me\ntriggers: code review, 检查代码\nnegative-triggers: explain only\nauto-use: prefer\nneeds-fresh-data: true\ncost: low\n---\nbody")
 	sk, ok := New(Options{HomeDir: home, DisableBuiltins: true}).Read("router")
 	if !ok {
 		t.Fatal("skill not loaded")
@@ -966,79 +782,64 @@ func TestSkillRoutingMetadataParsesButStaysOutOfIndex(t *testing.T) {
 	if sk.AutoUse != "prefer" || !sk.NeedsFreshData || sk.Cost != "low" {
 		t.Fatalf("routing metadata = auto:%q fresh:%v cost:%q", sk.AutoUse, sk.NeedsFreshData, sk.Cost)
 	}
-	if got := strings.Join(sk.Requires, ","); got != "mcp-server:github,mcp-tool:github/search_issues" {
-		t.Fatalf("Requires = %q", got)
-	}
-	if got := strings.Join(sk.Profiles, ","); got != "delivery,balanced,economy" {
-		t.Fatalf("Profiles = %q (invalid values should be dropped)", got)
-	}
-	if got := strings.Join(sk.InvalidProfiles, ","); got != "invalid" {
-		t.Fatalf("InvalidProfiles = %q (rejected values must be preserved for doctor)", got)
-	}
 	index := IndexBlock([]Skill{sk})
-	for _, forbidden := range []string{"code review", "auto-use", "needs-fresh-data", "mcp-server:github", "profiles"} {
+	for _, forbidden := range []string{"code review", "auto-use", "needs-fresh-data"} {
 		if strings.Contains(index, forbidden) {
 			t.Fatalf("routing metadata leaked into index (%q):\n%s", forbidden, index)
 		}
 	}
 }
 
-func TestColorFrontmatterParses(t *testing.T) {
+func TestSkillDiscoveryMetadataNormalizesAndBoundsValues(t *testing.T) {
 	home := t.TempDir()
-	writeSkill(t, home, ".voltui/skills/tagged.md", "---\ndescription: has a color\ncolor: amber\n---\nbody")
-	sk, ok := New(Options{HomeDir: home, DisableBuiltins: true}).Read("tagged")
+	longTag := strings.Repeat("标", maxSkillTagRunes+5)
+	longPrompt := strings.Repeat("问", maxSkillExamplePromptRunes+5)
+	writeSkill(t, home, ".voltui/skills/discovery.md", "---\ndescription: discovery\ntags:\n  -  Research  \n  - research\n  - 中文标签\n  - \""+longTag+"\"\n  - one\n  - two\n  - three\n  - four\n  - five\n  - six\n  - seven\n  - eight\n  - nine\n  - ten\nexample-prompts:\n  - \"Summarize this file, including risks\"\n  - summarize this file, including risks\n  - 检查当前实现\n  - \""+longPrompt+"\"\n---\nbody")
+
+	sk, ok := New(Options{HomeDir: home, DisableBuiltins: true}).Read("discovery")
 	if !ok {
 		t.Fatal("skill not loaded")
 	}
-	if sk.Color != "amber" {
-		t.Fatalf("Color = %q, want amber", sk.Color)
+	if len(sk.Tags) != maxSkillTags {
+		t.Fatalf("Tags count = %d, want %d: %v", len(sk.Tags), maxSkillTags, sk.Tags)
+	}
+	if got := sk.Tags[:3]; strings.Join(got, ",") != "Research,中文标签,"+strings.Repeat("标", maxSkillTagRunes) {
+		t.Fatalf("normalized Tags prefix = %v", got)
+	}
+	if len(sk.ExamplePrompts) != 3 {
+		t.Fatalf("ExamplePrompts = %v, want 3 deduped values", sk.ExamplePrompts)
+	}
+	if sk.ExamplePrompts[0] != "Summarize this file, including risks" {
+		t.Fatalf("YAML list prompt with comma was split: %v", sk.ExamplePrompts)
+	}
+	if got := len([]rune(sk.ExamplePrompts[2])); got != maxSkillExamplePromptRunes {
+		t.Fatalf("long example prompt runes = %d, want %d", got, maxSkillExamplePromptRunes)
 	}
 }
 
-func TestInvocationDefaultsToAutoForExistingSkills(t *testing.T) {
+func TestSkillDiscoveryMetadataSupportsSimpleFrontmatterLists(t *testing.T) {
 	home := t.TempDir()
-	writeSkill(t, home, ".voltui/skills/plain.md", "---\ndescription: no invocation field\n---\nbody")
-	sk, ok := New(Options{HomeDir: home, DisableBuiltins: true}).Read("plain")
+	writeSkill(t, home, ".voltui/skills/simple.md", "---\ndescription: simple\ntags: [writing, review, writing]\nexample-prompts: [\"Draft a summary, including risks\", 'Check the result']\n---\nbody")
+
+	sk, ok := New(Options{HomeDir: home, DisableBuiltins: true}).Read("simple")
 	if !ok {
 		t.Fatal("skill not loaded")
 	}
-	if sk.Invocation != "auto" {
-		t.Fatalf("Invocation = %q, want auto (default)", sk.Invocation)
+	if got := strings.Join(sk.Tags, ","); got != "writing,review" {
+		t.Fatalf("Tags = %q", got)
 	}
-	if sk.Color != "" {
-		t.Fatalf("Color = %q, want empty for a file with no color: key", sk.Color)
+	if got := strings.Join(sk.ExamplePrompts, "|"); got != "Draft a summary, including risks|Check the result" {
+		t.Fatalf("ExamplePrompts = %q", got)
 	}
 }
 
-func TestManualInvocationSkillExcludedFromIndex(t *testing.T) {
+func TestSkillDiscoveryMetadataAloneDoesNotMarkClaudeMarkdownAsSkill(t *testing.T) {
 	home := t.TempDir()
-	writeSkill(t, home, ".voltui/skills/private-agent.md", "---\ndescription: my private subagent\nrunAs: subagent\ninvocation: manual\n---\nbody")
-	writeSkill(t, home, ".voltui/skills/public-agent.md", "---\ndescription: a discoverable subagent\nrunAs: subagent\n---\nbody")
+	writeSkill(t, home, ".claude/skills/notes.md", "---\ntags: [research, notes]\nexample-prompts: [\"Summarize this file, including risks\"]\n---\n# Notes\n\nOrdinary reference material.")
+
 	store := New(Options{HomeDir: home, DisableBuiltins: true})
-	private, ok := store.Read("private-agent")
-	if !ok {
-		t.Fatal("private-agent not loaded")
-	}
-	if private.Invocation != "manual" {
-		t.Fatalf("Invocation = %q, want manual", private.Invocation)
-	}
-	public, ok := store.Read("public-agent")
-	if !ok {
-		t.Fatal("public-agent not loaded")
-	}
-
-	index := IndexBlock([]Skill{private, public})
-	if strings.Contains(index, "private-agent") {
-		t.Fatalf("manual-invocation skill leaked into index:\n%s", index)
-	}
-	if !strings.Contains(index, "public-agent") {
-		t.Fatalf("auto-invocation skill missing from index:\n%s", index)
-	}
-
-	// A read-only index built from only manual-invocation skills must render
-	// as empty, not a header wrapped around nothing.
-	if got := IndexBlock([]Skill{private}); got != "" {
-		t.Fatalf("IndexBlock of only manual-invocation skills = %q, want empty", got)
+	if _, ok := store.Read("notes"); ok {
+		t.Fatal("metadata-only Claude markdown should not be discovered as a skill")
 	}
 }
 
@@ -1069,7 +870,7 @@ func TestCreateRefusesOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if !strings.HasSuffix(path, filepath.Join(".reasonix", "skills", "mine", SkillFile)) {
+	if !strings.HasSuffix(path, filepath.Join(".voltui", "skills", "mine", SkillFile)) {
 		t.Errorf("unexpected path %q", path)
 	}
 	if _, err := st.Create("mine", ScopeGlobal); err == nil {

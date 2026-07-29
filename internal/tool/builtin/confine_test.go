@@ -6,25 +6,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"voltui/internal/config"
 	"voltui/internal/sandbox"
-	"voltui/internal/secrets"
-	"voltui/internal/testenv"
 	"voltui/internal/tool"
 )
-
-func isolateBuiltinTestUserState(t *testing.T) string {
-	t.Helper()
-	cleanup, err := testenv.IsolateUserState()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(cleanup)
-	return os.Getenv("HOME")
-}
 
 func TestWithin(t *testing.T) {
 	root := filepath.FromSlash("/work/proj")
@@ -53,66 +43,6 @@ func TestConfineUnconfinedWhenNoRoots(t *testing.T) {
 	}
 }
 
-func TestRebindBashWriteRootsUsesMinimalWriteSurface(t *testing.T) {
-	root := t.TempDir()
-	claim := filepath.Join(root, "claimed")
-	tool, ok := RebindBashWriteRoots(ConfineBash(sandbox.Spec{
-		Mode:       "enforce",
-		WriteRoots: []string{root},
-	}, SessionDataGuard{}), []string{claim})
-	if !ok {
-		t.Fatal("expected confined bash to be rebound")
-	}
-	rebound, ok := tool.(bash)
-	if !ok {
-		t.Fatalf("rebound tool type = %T, want bash", tool)
-	}
-	if !rebound.sb.MinimalWrites {
-		t.Fatal("rebound bash must disable write allowances outside claim roots")
-	}
-	want := realRoots([]string{claim})
-	if len(rebound.sb.WriteRoots) != 1 || rebound.sb.WriteRoots[0] != want[0] {
-		t.Fatalf("write roots = %v, want %v", rebound.sb.WriteRoots, want)
-	}
-	if len(rebound.sb.AppContainerWriteRoots) != 1 || rebound.sb.AppContainerWriteRoots[0] != want[0] {
-		t.Fatalf("app-container write roots = %v, want %v", rebound.sb.AppContainerWriteRoots, want)
-	}
-}
-
-func TestReboundBashCannotWriteOutsideClaim(t *testing.T) {
-	if !sandbox.Available() {
-		t.Skip("OS sandbox unavailable")
-	}
-	root := t.TempDir()
-	claim := filepath.Join(root, "claimed")
-	if err := os.MkdirAll(claim, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	rebound, ok := RebindBashWriteRoots(ConfineBash(sandbox.Spec{
-		Mode:       "enforce",
-		WriteRoots: []string{root},
-	}, SessionDataGuard{}), []string{claim})
-	if !ok {
-		t.Fatal("expected confined bash to be rebound")
-	}
-
-	inside := filepath.Join(claim, "inside.txt")
-	args, _ := json.Marshal(map[string]string{"command": fmt.Sprintf("printf inside > %q", inside)})
-	if _, err := rebound.Execute(context.Background(), args); err != nil {
-		t.Fatalf("write inside claim failed: %v", err)
-	}
-	if _, err := os.Stat(inside); err != nil {
-		t.Fatalf("write inside claim did not land: %v", err)
-	}
-
-	outside := filepath.Join(t.TempDir(), "escaped.txt")
-	args, _ = json.Marshal(map[string]string{"command": fmt.Sprintf("printf escaped > %q", outside)})
-	_, _ = rebound.Execute(context.Background(), args)
-	if _, err := os.Stat(outside); !os.IsNotExist(err) {
-		t.Fatalf("rebound bash wrote outside claim, stat err=%v", err)
-	}
-}
-
 func TestConfineInsideAndOutside(t *testing.T) {
 	root := t.TempDir()
 	roots := realRoots([]string{root})
@@ -123,6 +53,8 @@ func TestConfineInsideAndOutside(t *testing.T) {
 	// A sibling of the root and a parent escape must both be refused.
 	if err := confine(roots, filepath.Join(root, "..", "escape.txt")); err == nil {
 		t.Error("parent-escape path accepted, want error")
+	} else if !tool.IsPolicyBlock(err) {
+		t.Fatalf("parent-escape error = %T %v, want policy block", err, err)
 	}
 	if err := confine(roots, filepath.Join(filepath.Dir(root), "neighbour", "x")); err == nil {
 		t.Error("sibling path accepted, want error")
@@ -174,7 +106,11 @@ func TestWriteFileConfinement(t *testing.T) {
 }
 
 func TestWriteFileDefaultRootsDenyUserConfigUnlessAllowed(t *testing.T) {
-	home := isolateBuiltinTestUserState(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData", "Roaming"))
 
 	project := filepath.Join(home, "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
@@ -219,14 +155,18 @@ func (s *stubConfigWriteApprover) ApproveManagedConfigWrite(_ context.Context, r
 }
 
 func TestManagedConfigWriteFailsClosedWithoutApprover(t *testing.T) {
-	home := isolateBuiltinTestUserState(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData", "Roaming"))
 
 	project := filepath.Join(home, "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Default()
-	managed := NewManagedConfigPaths(config.VoltUIManagedConfigPaths())
+	managed := NewManagedConfigPaths(config.ReasonixManagedConfigPaths())
 	w := writeFile{roots: realRoots(cfg.WriteRootsForRoot(project)), managed: managed}
 
 	// Headless runs and sub-agents with no interactive parent carry no approver
@@ -246,14 +186,18 @@ func TestManagedConfigWriteFailsClosedWithoutApprover(t *testing.T) {
 }
 
 func TestManagedConfigWriteGatedOnApprover(t *testing.T) {
-	home := isolateBuiltinTestUserState(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData", "Roaming"))
 
 	project := filepath.Join(home, "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Default()
-	managed := NewManagedConfigPaths(config.VoltUIManagedConfigPaths())
+	managed := NewManagedConfigPaths(config.ReasonixManagedConfigPaths())
 	w := writeFile{roots: realRoots(cfg.WriteRootsForRoot(project)), managed: managed}
 
 	// Approved: current config.toml and the legacy v0.x config.json become
@@ -262,7 +206,7 @@ func TestManagedConfigWriteGatedOnApprover(t *testing.T) {
 	ctx := tool.WithConfigWriteApprover(context.Background(), approve)
 	for _, target := range []string{
 		config.UserConfigPath(),
-		filepath.Join(home, ".reasonix", "config.json"),
+		filepath.Join(home, ".voltui", "config.json"),
 	} {
 		args, _ := json.Marshal(map[string]string{"path": target, "content": "{}\n"})
 		if _, err := w.Execute(ctx, args); err != nil {
@@ -277,7 +221,7 @@ func TestManagedConfigWriteGatedOnApprover(t *testing.T) {
 	}
 
 	// Declined: the approver's reason surfaces to the model and nothing lands.
-	decline := &stubConfigWriteApprover{allow: false, reason: "the user declined this VoltUI config write"}
+	decline := &stubConfigWriteApprover{allow: false, reason: "the user declined this Reasonix config write"}
 	dctx := tool.WithConfigWriteApprover(context.Background(), decline)
 	declinedTarget := config.UserConfigPath()
 	if err := os.Remove(declinedTarget); err != nil && !os.IsNotExist(err) {
@@ -291,14 +235,14 @@ func TestManagedConfigWriteGatedOnApprover(t *testing.T) {
 		t.Fatalf("declined config must not be created, stat err=%v", err)
 	}
 
-	// Even with an always-allowing approver, non-config files in the VoltUI
+	// Even with an always-allowing approver, non-config files in the Reasonix
 	// home and the rest of the OS home stay denied — the escape hatch is
 	// file-level, not directory-level.
 	for _, target := range []string{
 		filepath.Join(home, "notes.txt"),
-		filepath.Join(home, ".reasonix", ".env"),
-		filepath.Join(home, ".reasonix", "settings.json"),
-		filepath.Join(home, ".reasonix", "skills", "evil", "SKILL.md"),
+		filepath.Join(home, ".voltui", ".env"),
+		filepath.Join(home, ".voltui", "settings.json"),
+		filepath.Join(home, ".voltui", "skills", "evil", "SKILL.md"),
 	} {
 		asked := len(approve.asked)
 		args, _ := json.Marshal(map[string]string{"path": target, "content": "nope\n"})
@@ -322,25 +266,40 @@ func TestBashSandboxConfinement(t *testing.T) {
 	if err != nil {
 		t.Skipf("no home dir: %v", err)
 	}
-	work, err := os.MkdirTemp(home, ".reasonix-bashsb-*")
+	work, err := os.MkdirTemp(home, ".voltui-bashsb-*")
 	if err != nil {
 		t.Skipf("cannot create work dir under home: %v", err)
 	}
 	t.Cleanup(func() { os.RemoveAll(work) })
 	t.Chdir(work)
+	var timeout []time.Duration
+	if runtime.GOOS == "windows" {
+		wait := 20 * time.Second
+		t.Setenv("WINDOWS_SANDBOX_WAIT_MS", fmt.Sprint(wait.Milliseconds()))
+		timeout = []time.Duration{wait}
+	}
 	spec := sandbox.Spec{Mode: "enforce", WriteRoots: []string{work}, Network: true}
-	b := ConfineBash(spec, SessionDataGuard{})
+	if runtime.GOOS == "windows" {
+		spec.Shell = sandbox.ResolveShell("powershell", "", nil)
+	}
+	b := ConfineBash(spec, SessionDataGuard{}, timeout...)
 
 	// Writing inside the root works; writing to a sibling under $HOME is denied
 	// by the sandbox the bash tool wrapped the command in.
 	inCommand := "echo hi > " + filepath.Join(work, "in.txt")
+	if runtime.GOOS == "windows" {
+		inCommand = "Set-Content -LiteralPath " + psQuoteForBuiltinTest(filepath.Join(work, "in.txt")) + " -Value hi"
+	}
 	inArgs, _ := json.Marshal(map[string]string{"command": inCommand})
 	if _, err := b.Execute(context.Background(), inArgs); err != nil {
 		t.Fatalf("bash write inside root failed: %v", err)
 	}
-	outPath := filepath.Join(home, ".reasonix-bashsb-escape.txt")
+	outPath := filepath.Join(home, ".voltui-bashsb-escape.txt")
 	t.Cleanup(func() { os.Remove(outPath) })
 	outCommand := "echo nope > " + outPath
+	if runtime.GOOS == "windows" {
+		outCommand = "Set-Content -LiteralPath " + psQuoteForBuiltinTest(outPath) + " -Value nope"
+	}
 	outArgs, _ := json.Marshal(map[string]string{"command": outCommand})
 	if _, err := b.Execute(context.Background(), outArgs); err == nil {
 		t.Error("bash write outside the workspace should be denied by the sandbox")
@@ -350,7 +309,14 @@ func TestBashSandboxConfinement(t *testing.T) {
 	}
 }
 
+func psQuoteForBuiltinTest(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
 func TestBashEnforceRejectsWhenSandboxUnavailable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("native Windows sandbox availability is helper-backed and independent of PATH")
+	}
 	t.Setenv("PATH", t.TempDir())
 
 	exe, err := os.Executable()
@@ -411,24 +377,6 @@ func TestConfineReadInsideAndOutside(t *testing.T) {
 	}
 }
 
-func TestConfineReadExactFileRoot(t *testing.T) {
-	dir := t.TempDir()
-	secret := filepath.Join(dir, "credentials.env")
-	visible := filepath.Join(dir, "project.env")
-	for _, path := range []string{secret, visible} {
-		if err := os.WriteFile(path, []byte("value"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	forbidRoots := realRoots([]string{secret})
-	if !confineRead(forbidRoots, secret) {
-		t.Fatal("exact forbidden file should be unreadable")
-	}
-	if confineRead(forbidRoots, visible) {
-		t.Fatal("sibling file should remain readable")
-	}
-}
-
 func TestConfineReadBlocksReadFile(t *testing.T) {
 	forbidDir := t.TempDir()
 	secretPath := filepath.Join(forbidDir, "secret.txt")
@@ -449,88 +397,6 @@ func TestConfineReadBlocksReadFile(t *testing.T) {
 	rfUnconfined := readFile{}
 	if _, err := rfUnconfined.Execute(context.Background(), args); err != nil {
 		t.Errorf("unconfined read_file should work: %v", err)
-	}
-}
-
-// withProtectSensitiveFiles flips the [secrets] protect_sensitive_files
-// toggle for one test and restores the default-off state afterwards.
-func withProtectSensitiveFiles(t *testing.T, enabled bool) {
-	t.Helper()
-	secrets.SetProtectSensitiveFiles(enabled)
-	t.Cleanup(func() { secrets.SetProtectSensitiveFiles(false) })
-}
-
-func TestSensitiveReadPathsAreBlockedWhenProtected(t *testing.T) {
-	withProtectSensitiveFiles(t, true)
-	dir := t.TempDir()
-	envPath := filepath.Join(dir, ".env")
-	if err := os.WriteFile(envPath, []byte("DEEPSEEK_API_KEY=sk-real-secret-value-123456\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	pemPath := filepath.Join(dir, "client.pem")
-	if err := os.WriteFile(pemPath, []byte("PRIVATE KEY"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, path := range []string{envPath, pemPath} {
-		if !confineRead(nil, path) {
-			t.Fatalf("sensitive path %s should be blocked when protection is on", path)
-		}
-		rf := readFile{}
-		_, err := rf.Execute(context.Background(), argsJSON(t, map[string]any{"path": path}))
-		if err == nil {
-			t.Fatalf("read_file should refuse sensitive path %s", path)
-		}
-	}
-
-	visible := filepath.Join(dir, "notes.txt")
-	if err := os.WriteFile(visible, []byte("ok"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if confineRead(nil, visible) {
-		t.Fatalf("ordinary path %s should not be blocked", visible)
-	}
-}
-
-func TestSensitiveReadPathsAllowedByDefault(t *testing.T) {
-	dir := t.TempDir()
-	envPath := filepath.Join(dir, ".env")
-	if err := os.WriteFile(envPath, []byte("PORT=8080\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if confineRead(nil, envPath) {
-		t.Fatalf(".env should stay readable while protect_sensitive_files is off (default)")
-	}
-	rf := readFile{}
-	out, err := rf.Execute(context.Background(), argsJSON(t, map[string]any{"path": envPath}))
-	if err != nil {
-		t.Fatalf("read_file .env with protection off: %v", err)
-	}
-	if !strings.Contains(out, "PORT=8080") {
-		t.Fatalf("read_file dropped .env content:\n%s", out)
-	}
-}
-
-func TestGlobFiltersSensitiveMatchesWhenProtected(t *testing.T) {
-	withProtectSensitiveFiles(t, true)
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("SECRET_TOKEN=abc\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("ok"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	g := globTool{}
-	out, err := g.Execute(context.Background(), argsJSON(t, map[string]any{"pattern": filepath.Join(dir, "*")}))
-	if err != nil {
-		t.Fatalf("glob: %v", err)
-	}
-	if strings.Contains(out, ".env") {
-		t.Fatalf("glob leaked sensitive match:\n%s", out)
-	}
-	if !strings.Contains(out, "notes.txt") {
-		t.Fatalf("glob dropped ordinary match:\n%s", out)
 	}
 }
 

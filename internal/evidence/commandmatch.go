@@ -1,10 +1,6 @@
 package evidence
 
-import (
-	"strings"
-
-	"voltui/internal/shellparse"
-)
+import "strings"
 
 // CommandMatches reports whether a cited verification command is proven by a
 // command that actually ran. Models paraphrase commands when citing them
@@ -63,9 +59,6 @@ func segmentMatches(cited, ran string) bool {
 var segmentSeparators = []string{"&&", "||", ";", "|", "\n"}
 
 func commandSegments(s string) []string {
-	if segs, _, ok := shellparse.SplitTopLevel(s); ok {
-		return segs
-	}
 	parts := []string{s}
 	for _, sep := range segmentSeparators {
 		var next []string
@@ -86,9 +79,6 @@ func commandSegments(s string) []string {
 }
 
 func segmentTokens(s string) []string {
-	if fields, malformed := shellparse.StaticFields(s); malformed == "" {
-		return fields
-	}
 	fields := strings.Fields(s)
 	tokens := make([]string, 0, len(fields))
 	for _, f := range fields {

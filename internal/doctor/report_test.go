@@ -33,7 +33,7 @@ func TestRedactHome(t *testing.T) {
 }
 
 func TestCollectReportRedactsSecrets(t *testing.T) {
-	t.Setenv("REASONIX_TEST_SECRET", "sk-live-secret")
+	t.Setenv("VOLTUI_TEST_SECRET", "sk-live-secret")
 
 	cfg := config.Default()
 	cfg.DefaultModel = "custom"
@@ -42,7 +42,7 @@ func TestCollectReportRedactsSecrets(t *testing.T) {
 		Kind:      "openai",
 		BaseURL:   "https://api.example.com/v1?token=secret-query",
 		Model:     "model-a",
-		APIKeyEnv: "REASONIX_TEST_SECRET",
+		APIKeyEnv: "VOLTUI_TEST_SECRET",
 	}}
 	cfg.Plugins = []config.PluginEntry{{
 		Name:    "remote",
@@ -80,10 +80,17 @@ func TestCollectReportRedactsSecrets(t *testing.T) {
 }
 
 func TestCollectReportDoesNotRequireAPIKey(t *testing.T) {
-	t.Setenv("REASONIX_HOME", filepath.Join(t.TempDir(), "reasonix"))
-	t.Setenv("DEEPSEEK_API_KEY", "")
+	t.Setenv("VOLTUI_DOCTOR_TEST_MISSING_KEY", "")
 
 	cfg := config.Default()
+	cfg.DefaultModel = "missing-key"
+	cfg.Providers = []config.ProviderEntry{{
+		Name:      "missing-key",
+		Kind:      "openai",
+		BaseURL:   "https://api.example.com/v1",
+		Model:     "model-a",
+		APIKeyEnv: "VOLTUI_DOCTOR_TEST_MISSING_KEY",
+	}}
 	report := Collect(Options{Version: "1.2.3", Config: cfg})
 	text := RenderText(report)
 
@@ -93,10 +100,20 @@ func TestCollectReportDoesNotRequireAPIKey(t *testing.T) {
 	if len(report.Providers) == 0 {
 		t.Fatal("expected built-in providers in report")
 	}
-	if report.Providers[0].KeyPresent {
-		t.Fatal("provider key should be reported missing when env is empty")
+	var missingKey *ProviderReport
+	for i := range report.Providers {
+		if report.Providers[i].Name == "missing-key" {
+			missingKey = &report.Providers[i]
+			break
+		}
 	}
-	if !strings.Contains(text, "reasonix 1.2.3 doctor") {
+	if missingKey == nil {
+		t.Fatalf("missing-key provider missing from report: %+v", report.Providers)
+	}
+	if missingKey.KeyPresent {
+		t.Fatal("missing-key provider key should be reported missing when env is empty")
+	}
+	if !strings.Contains(text, "voltui 1.2.3 doctor") {
 		t.Fatalf("text report missing header:\n%s", text)
 	}
 	if !strings.Contains(text, "missing") {
@@ -105,7 +122,7 @@ func TestCollectReportDoesNotRequireAPIKey(t *testing.T) {
 }
 
 func TestRenderTextSurfacesWarningsUpTop(t *testing.T) {
-	text := RenderText(Report{Warnings: []string{"config reasonix.toml: parse boom"}})
+	text := RenderText(Report{Warnings: []string{"config voltui.toml: parse boom"}})
 	w := strings.Index(text, "parse boom")
 	if w < 0 {
 		t.Fatalf("warning missing from report:\n%s", text)
@@ -135,7 +152,7 @@ func TestRenderTextFlagsUnavailableSandboxAsFailClosed(t *testing.T) {
 // resolves to off (Windows), doctor must say so in both the warnings list and
 // the sandbox bash line instead of silently reporting "off".
 func TestCollectFlagsIgnoredEnforceConfig(t *testing.T) {
-	t.Setenv("REASONIX_HOME", filepath.Join(t.TempDir(), "reasonix"))
+	t.Setenv("REASONIX_HOME", filepath.Join(t.TempDir(), "voltui"))
 
 	cfg := config.Default()
 	cfg.Sandbox.Bash = "enforce"

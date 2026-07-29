@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-
-	fileencoding "voltui/internal/fileutil/encoding"
 )
 
 // titleCache persists generated session titles to <dir>/.session-titles.json,
@@ -34,7 +32,7 @@ func (c *titleCache) load() {
 		return
 	}
 	c.loaded = true
-	if data, err := fileencoding.ReadFileUTF8(filepath.Join(c.dir, ".session-titles.json")); err == nil {
+	if data, err := os.ReadFile(filepath.Join(c.dir, ".session-titles.json")); err == nil {
 		_ = json.Unmarshal(data, &c.entries)
 	}
 }

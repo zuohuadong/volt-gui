@@ -9,7 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"voltui/internal/config"
-	"voltui/internal/control"
+	"voltui/internal/hook"
 	"voltui/internal/skill"
 )
 
@@ -59,7 +59,7 @@ func (m *chatTUI) runSkillSubcommand(input string) {
 func (m *chatTUI) skillList() {
 	skills := m.skills
 	if m.ctrl != nil {
-		skills = managementSlashSkills(m.ctrl)
+		skills = m.ctrl.AllSkills()
 	}
 	if len(skills) == 0 {
 		m.notice("no skills found. Add SKILL.md / <name>.md under .voltui/skills (project) or ~/.voltui/skills (global); .agents/.agent/.claude skills dirs also work. Invoke with /<name> or run_skill.")
@@ -71,10 +71,10 @@ func (m *chatTUI) skillList() {
 func (m *chatTUI) skillShow(name string) {
 	skills := m.skills
 	if m.ctrl != nil {
-		skills = managementSlashSkills(m.ctrl)
+		skills = m.ctrl.AllSkills()
 	}
 	for _, s := range skills {
-		if s.Name == name || s.SlashName() == strings.TrimPrefix(name, "/") {
+		if s.Name == name {
 			disabled := false
 			if m.ctrl != nil {
 				disabled = !m.ctrl.SkillEnabled(s.Name)
@@ -84,17 +84,6 @@ func (m *chatTUI) skillShow(name string) {
 		}
 	}
 	m.notice("unknown skill: " + name)
-}
-
-func managementSlashSkills(ctrl control.SessionAPI) []skill.Skill {
-	if ctrl == nil {
-		return nil
-	}
-	// AllSkills preserves disabled entries; SlashSkills adds every enabled
-	// package-qualified alias when multiple plugins export the same bare name.
-	all := append([]skill.Skill(nil), ctrl.AllSkills()...)
-	all = append(all, ctrl.SlashSkills()...)
-	return skill.VisibleSlashSkills(all)
 }
 
 func (m *chatTUI) disabledSkillNames() map[string]bool {
@@ -124,20 +113,13 @@ func (m *chatTUI) skillSaveEnabledChanges(changes map[string]bool) {
 		m.notice("skill toggle unavailable in this session")
 		return
 	}
-	if m.runtimeSwitchBusy() {
-		m.notice("finish or cancel active work and stop background jobs before changing skills")
-		return
-	}
-	if m.modelSwitchPending {
-		m.notice("wait for the current runtime switch to finish")
+	if m.ctrl.Running() {
+		m.notice("cannot change skills while a turn is running")
 		return
 	}
 	known := map[string]string{}
 	for _, sk := range m.ctrl.AllSkills() {
 		known[config.SkillNameKey(sk.Name)] = sk.Name
-	}
-	for _, sk := range m.ctrl.SlashSkills() {
-		known[sk.SlashName()] = sk.Name
 	}
 	// Lock only the load-modify-save cycle; the session refresh below runs
 	// off-lock. The closure returns a non-empty notice on failure.
@@ -146,11 +128,7 @@ func (m *chatTUI) skillSaveEnabledChanges(changes map[string]bool) {
 		defer unlock()
 		cfg := config.LoadForEdit(config.UserConfigPath())
 		for name, enabled := range changes {
-			key := config.SkillNameKey(name)
-			if key == "" {
-				key = strings.TrimPrefix(strings.TrimSpace(name), "/")
-			}
-			canonical, ok := known[key]
+			canonical, ok := known[config.SkillNameKey(name)]
 			if !ok {
 				return "skill " + enableVerb(enabled) + ": unknown skill: " + name
 			}
@@ -192,12 +170,8 @@ func (m *chatTUI) scheduleSkillSessionRefresh(reason, notice string) bool {
 	if m.ctrl == nil {
 		return false
 	}
-	if m.runtimeSwitchBusy() {
-		m.notice("finish or cancel active work and stop background jobs before refreshing skills")
-		return false
-	}
-	if m.modelSwitchPending {
-		m.notice("wait for the current runtime switch to finish")
+	if m.ctrl.Running() {
+		m.notice("cannot refresh skills while a turn is running")
 		return false
 	}
 	if err := m.ctrl.Snapshot(); err != nil {
@@ -224,12 +198,7 @@ func (m *chatTUI) scheduleSkillSessionRefresh(reason, notice string) bool {
 	ref := m.modelRef
 	m.modelSwitchPending = true
 	m.pendingModelSwitch = func() tea.Msg {
-		c, err := build(controllerBuildSpec{
-			ModelRef:         ref,
-			RuntimeProfile:   m.runtimeProfile,
-			ToolApprovalMode: oldCtrl.ToolApprovalMode(),
-			PlanMode:         oldCtrl.PlanMode(),
-		}, carried, prevPath, oldCtrl)
+		c, err := build(controllerBuildSpec{ModelRef: ref}, carried, prevPath)
 		if err != nil {
 			return modelSwitchMsg{ref: ref, err: err}
 		}
@@ -239,7 +208,7 @@ func (m *chatTUI) scheduleSkillSessionRefresh(reason, notice string) bool {
 			oldCtrl:  oldCtrl,
 			label:    c.Label(),
 			commands: c.Commands(),
-			skills:   c.SlashSkills(),
+			skills:   c.Skills(),
 			host:     c.Host(),
 		}
 	}
@@ -276,17 +245,13 @@ func (m *chatTUI) skillStore() *skill.Store {
 	cwd, _ := os.Getwd()
 	var custom []string
 	var excluded []string
-	var pluginPaths map[string][]string
-	var pluginAgentPaths map[string][]string
 	maxDepth := 3
 	if cfg, err := config.Load(); err == nil {
 		custom = cfg.SkillCustomPaths()
 		excluded = cfg.SkillExcludedPaths()
-		pluginPaths = cfg.PluginPackageSkillOwners()
-		pluginAgentPaths = cfg.PluginPackageAgentOwners()
 		maxDepth = cfg.SkillMaxDepth()
 	}
-	return skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, PluginPaths: pluginPaths, PluginAgentPaths: pluginAgentPaths, ExcludedPaths: excluded, MaxDepth: maxDepth})
+	return skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, ExcludedPaths: excluded, MaxDepth: maxDepth})
 }
 
 func (m *chatTUI) runHooksSubcommand(input string) {
@@ -300,16 +265,20 @@ func (m *chatTUI) runHooksSubcommand(input string) {
 	case "", "list", "ls":
 		m.hooksList(cwd)
 	case "trust":
-		// Backward-compatible response for old clients and saved commands.
-		m.notice("project hooks are enabled automatically; no trust action is required")
+		if err := hook.Trust(cwd, ""); err != nil {
+			m.notice("hooks trust: " + err.Error())
+			return
+		}
+		m.notice("trusted this project's hooks — restart VoltUI to load them")
 	default:
-		m.notice("unknown /hooks subcommand " + args[1] + " — try: /hooks or /hooks list")
+		m.notice("unknown /hooks subcommand " + args[1] + " — try: /hooks, /hooks trust")
 	}
 }
 
 func (m *chatTUI) hooksList(cwd string) {
 	active := m.ctrl.HookRunner().Hooks()
-	m.commitLine(renderHooks(m.width, active))
+	trusted := hook.IsTrusted(cwd, "")
+	m.commitLine(renderHooks(m.width, active, trusted, hook.ProjectDefinesHooks(cwd)))
 }
 
 func containsArg(args []string, flag string) bool {

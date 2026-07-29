@@ -161,17 +161,16 @@ func botStart(args []string, version string) int {
 		<-sigCh
 		fmt.Fprintln(os.Stderr, "\nshutting down...")
 		cancel()
+		gw.Stop()
 	}()
 
-	fmt.Fprintf(os.Stderr, "reasonix bot starting (model: %s, channels: %s)...\n", modelName, *channels)
+	fmt.Fprintf(os.Stderr, "voltui bot starting (model: %s, channels: %s)...\n", modelName, *channels)
 	fmt.Fprintf(os.Stderr, "version: %s\n", version)
 
 	if err := gw.Start(ctx); err != nil {
-		gw.Stop()
 		fmt.Fprintf(os.Stderr, "error: start gateway: %v\n", err)
 		return 1
 	}
-	defer gw.Stop()
 
 	// 等待信号或 context 取消
 	<-ctx.Done()
@@ -334,7 +333,7 @@ func botDoctor(args []string) int {
 		} else if weixin.HasSavedAccount(bc.Weixin.AccountID) {
 			addCheck("bot.weixin.token", "ok", "saved iLink account is available")
 		} else {
-			addCheck("bot.weixin.token", "missing", bc.Weixin.TokenEnv+" is not set; run `reasonix bot weixin-login` to save an iLink account")
+			addCheck("bot.weixin.token", "missing", bc.Weixin.TokenEnv+" is not set; run `voltui bot weixin-login` to save an iLink account")
 		}
 	} else {
 		addCheck("bot.weixin", "disabled", "")
@@ -469,12 +468,12 @@ func botPairing(args []string) int {
 }
 
 func botPairingUsage() {
-	fmt.Print(`reasonix bot pairing — approve pending bot DM pairings
+	fmt.Print(`voltui bot pairing — approve pending bot DM pairings
 
 Usage:
-  reasonix bot pairing list
-  reasonix bot pairing approve CODE
-  reasonix bot pairing reject CODE
+  voltui bot pairing list
+  voltui bot pairing approve CODE
+  voltui bot pairing reject CODE
 `)
 }
 
@@ -549,13 +548,13 @@ func botConfigIsUserOwned(bc config.BotConfig) bool {
 }
 
 func botUsage() {
-	fmt.Print(`reasonix bot — multi-channel IM bot gateway (QQ / Feishu / WeChat)
+	fmt.Print(`voltui bot — multi-channel IM bot gateway (QQ / Feishu / WeChat)
 
 Usage:
-  reasonix bot start   [--channels qq,feishu,lark,weixin] [--dir PATH] [--model NAME]
-  reasonix bot doctor  [--json] [--deep]
-  reasonix bot pairing list|approve|reject
-  reasonix bot weixin-login [--timeout SECONDS]
+  voltui bot start   [--channels qq,feishu,lark,weixin] [--dir PATH] [--model NAME]
+  voltui bot doctor  [--json] [--deep]
+  voltui bot pairing list|approve|reject
+  voltui bot weixin-login [--timeout SECONDS]
 
 Subcommands:
   start         启动 bot 网关
@@ -564,12 +563,12 @@ Subcommands:
   weixin-login  微信 iLink 二维码登录
 
 Examples:
-  reasonix bot start --channels qq,feishu
-  reasonix bot start --dir /path/to/project --model deepseek-pro
-  reasonix bot doctor --json
+  voltui bot start --channels qq,feishu
+  voltui bot start --dir /path/to/project --model deepseek-pro
+  voltui bot doctor --json
 
 Configuration:
-  Edit reasonix.toml:
+  Edit voltui.toml:
     [bot]           enabled / model / max_steps
     [bot]           queue_mode / queue_cap / queue_drop
     [bot.pairing]   enabled / request_ttl_minutes / max_pending_per_platform

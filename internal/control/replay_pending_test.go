@@ -20,14 +20,18 @@ func TestReplayPendingPromptsReEmitsBlockedApproval(t *testing.T) {
 	})})
 
 	done := make(chan struct{})
+	guardian := &event.GuardianResult{ID: "guardian-1", Tool: "bash", Subject: "go test ./...", Outcome: "deny", RiskLevel: "high", UserAuthorization: "low", Rationale: "requires review"}
 	go func() {
 		defer close(done)
-		_, _, _ = gateApprover{c}.Approve(context.Background(), "bash", "go test ./...", nil)
+		_, _, _ = c.requestApprovalWithGuardian(context.Background(), "bash", "go test ./...", nil, "guardian requires confirmation", guardian)
 	}()
 
 	first := <-reqs
 	if first.Tool != "bash" || first.Subject != "go test ./..." {
 		t.Fatalf("first request = %+v, want bash / go test ./...", first)
+	}
+	if first.Guardian == nil || first.Guardian.ID != guardian.ID || first.Guardian.RiskLevel != "high" {
+		t.Fatalf("first guardian = %+v, want %+v", first.Guardian, guardian)
 	}
 
 	c.ReplayPendingPrompts()

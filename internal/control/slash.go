@@ -3,13 +3,14 @@ package control
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
 	"voltui/internal/config"
+	"voltui/internal/hook"
 	"voltui/internal/i18n"
 	"voltui/internal/migration"
-	"voltui/internal/pluginpkg"
 	"voltui/internal/skill"
 )
 
@@ -45,7 +46,7 @@ type ArgData struct {
 // (everything after the command word). It returns the suggestions filtered by
 // the token being typed and the byte offset where that token begins, so a caller
 // replaces just that token. Only structured commands participate (/mcp /model
-// /skills /plugins /hooks /effort /goal /reasoning-language
+// /skills /hooks /effort /auto-plan /goal /reasoning-language /memory-v5
 // /theme /language);
 // others yield nil. Single source of truth for CLI + desktop.
 func SlashArgItems(line string, d ArgData) ([]SlashItem, int) {
@@ -72,10 +73,14 @@ func SlashArgItems(line string, d ArgData) ([]SlashItem, int) {
 		raw = hooksArgItems(prior)
 	case "/effort":
 		raw = effortArgItems(prior, d)
+	case "/auto-plan":
+		raw = autoPlanArgItems(prior)
 	case "/goal":
 		raw = goalArgItems(prior)
 	case "/reasoning-language":
 		raw = reasoningLanguageArgItems(prior)
+	case "/memory-v5":
+		raw = memoryV5ArgItems(prior)
 	case "/theme":
 		raw = themeArgItems(prior)
 	case "/language":
@@ -98,6 +103,16 @@ func goalArgItems(prior []string) []SlashItem {
 	}
 }
 
+func autoPlanArgItems(prior []string) []SlashItem {
+	if len(prior) > 1 {
+		return nil
+	}
+	return []SlashItem{
+		{Label: "off", Insert: "off", Hint: "manual plan mode only"},
+		{Label: "on", Insert: "on", Hint: "auto-enter plan mode for complex tasks"},
+	}
+}
+
 func reasoningLanguageArgItems(prior []string) []SlashItem {
 	if len(prior) > 1 {
 		return nil
@@ -106,6 +121,20 @@ func reasoningLanguageArgItems(prior []string) []SlashItem {
 		{Label: "auto", Insert: "auto", Hint: "follow conversation language"},
 		{Label: "zh", Insert: "zh", Hint: "prefer Chinese visible reasoning"},
 		{Label: "en", Insert: "en", Hint: "prefer English visible reasoning"},
+	}
+}
+
+func memoryV5ArgItems(prior []string) []SlashItem {
+	if len(prior) > 1 {
+		return nil
+	}
+	return []SlashItem{
+		{Label: "status", Insert: "status", Hint: "show current Memory v5 state"},
+		{Label: "off", Insert: "off", Hint: "disable Memory v5 for future turns"},
+		{Label: "observe", Insert: "observe", Hint: "learn without injecting IR"},
+		{Label: "compact", Insert: "compact", Hint: "inject compact execution contracts"},
+		{Label: "on", Insert: "on", Hint: "alias for compact"},
+		{Label: "learnings", Insert: "learnings", Hint: "show recent Memory v5 learnings"},
 	}
 }
 
@@ -339,6 +368,7 @@ func hooksArgItems(prior []string) []SlashItem {
 	if len(prior) <= 1 {
 		return []SlashItem{
 			{Label: "list", Insert: "list", Hint: i18n.M.ArgHooksList},
+			{Label: "trust", Insert: "trust", Hint: i18n.M.ArgHooksTrust},
 		}
 	}
 	return nil
@@ -386,6 +416,8 @@ func (c *Controller) managementNotice(trimmed string) bool {
 		}
 	case "/memory":
 		c.notice(c.memoryListText())
+	case "/memory-v5":
+		c.memoryV5Notice(fields)
 	case "/migrate", "/migration":
 		args := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
 		migration.RunLegacyRescueCommand(args, c.sink)
@@ -406,33 +438,6 @@ func (c *Controller) managementNotice(trimmed string) bool {
 			return true
 		}
 		c.notice(c.skillListText())
-	case "/plugin", "/plugins":
-		sub := ""
-		if len(fields) >= 2 {
-			sub = strings.ToLower(fields[1])
-		}
-		switch sub {
-		case "", "list", "ls":
-			text, err := pluginpkg.InstalledListText(config.VoltUIHomeDir())
-			if err != nil {
-				c.notice("plugins: " + err.Error())
-			} else {
-				c.notice(text)
-			}
-		case "show", "cat":
-			if len(fields) < 3 {
-				c.notice("usage: /plugins show <name>")
-				return true
-			}
-			text, err := pluginpkg.InstalledShowText(config.VoltUIHomeDir(), fields[2])
-			if err != nil {
-				c.notice("plugins: " + err.Error())
-			} else {
-				c.notice(text)
-			}
-		default:
-			c.notice("unknown /plugins subcommand " + fields[1] + " - try: /plugins or /plugins show <name>")
-		}
 	case "/reload-cmd":
 		if c.Running() {
 			c.notice("wait for the current turn to finish, then retry /reload-cmd")
@@ -441,13 +446,7 @@ func (c *Controller) managementNotice(trimmed string) bool {
 		if err := c.ReloadCommands(context.Background()); err != nil {
 			c.notice("reload-cmd: " + err.Error())
 		} else {
-			visible := 0
-			for _, cmd := range c.Commands() {
-				if !cmd.Hidden {
-					visible++
-				}
-			}
-			c.notice("commands reloaded (" + strconv.Itoa(visible) + " available)")
+			c.notice("commands reloaded (" + strconv.Itoa(len(c.Commands())) + " available)")
 		}
 	case "/hooks":
 		sub := ""
@@ -458,10 +457,17 @@ func (c *Controller) managementNotice(trimmed string) bool {
 		case "", "list", "ls":
 			c.notice(c.hookListText())
 		case "trust":
-			// Backward-compatible response for old clients and saved commands.
-			c.notice("project hooks are enabled automatically; no trust action is required")
+			root := c.workspaceRoot
+			if root == "" {
+				root, _ = os.Getwd()
+			}
+			if err := hook.Trust(root, ""); err != nil {
+				c.notice("hooks trust: " + err.Error())
+			} else {
+				c.notice("trusted this project's hooks — restart VoltUI to load them")
+			}
 		default:
-			c.notice("unknown /hooks subcommand " + fields[1] + " — try: /hooks or /hooks list")
+			c.notice("unknown /hooks subcommand " + fields[1] + " — try: /hooks, /hooks trust")
 		}
 	case "/mcp":
 		if len(fields) >= 3 && fields[1] == "connect" {
@@ -478,6 +484,65 @@ func (c *Controller) managementNotice(trimmed string) bool {
 		return false
 	}
 	return true
+}
+
+func (c *Controller) memoryV5Notice(fields []string) {
+	if len(fields) > 2 {
+		c.notice("usage: /memory-v5 off|on|status")
+		return
+	}
+	if len(fields) < 2 || strings.EqualFold(fields[1], "status") {
+		cfg, err := config.Load()
+		if err != nil {
+			c.notice("memory-v5: " + err.Error())
+			return
+		}
+		c.notice(fmt.Sprintf("memory-v5: %s (usage: /memory-v5 off|on|status)", memoryV5Mode(cfg.MemoryCompilerEnabled())))
+		return
+	}
+	if c.Running() {
+		c.notice("finish or cancel the current turn before changing memory-v5")
+		return
+	}
+	enabled, err := parseMemoryV5Mode(fields[1])
+	if err != nil {
+		c.notice("memory-v5: " + err.Error())
+		return
+	}
+	path := config.UserConfigPath()
+	if path == "" {
+		c.notice("memory-v5: cannot resolve config path")
+		return
+	}
+	edit := config.LoadForEdit(path)
+	if err := edit.SetMemoryCompilerEnabled(enabled); err != nil {
+		c.notice("memory-v5: " + err.Error())
+		return
+	}
+	if err := edit.SaveTo(path); err != nil {
+		c.notice("memory-v5: " + err.Error())
+		return
+	}
+	c.SetMemoryCompilerEnabled(enabled)
+	c.notice(fmt.Sprintf("memory-v5 set to %s", memoryV5Mode(enabled)))
+}
+
+func parseMemoryV5Mode(mode string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "on":
+		return true, nil
+	case "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("memory-v5 %q: must be off|on|status", mode)
+	}
+}
+
+func memoryV5Mode(enabled bool) string {
+	if enabled {
+		return "on"
+	}
+	return "off"
 }
 
 func (c *Controller) modelListText() string {

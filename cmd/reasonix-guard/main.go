@@ -296,7 +296,7 @@ func runLaunch(args []string) int {
 		path = siblingDesktopExecutable()
 	}
 	if path == "" {
-		fmt.Fprintln(os.Stderr, "error: cannot locate reasonix-desktop; pass --app PATH")
+		fmt.Fprintln(os.Stderr, "error: cannot locate voltui-desktop; pass --app PATH")
 		return 1
 	}
 	childArgs := append([]string(nil), fs.Args()...)
@@ -330,8 +330,16 @@ func packagedDetachedLauncher() bool {
 	if err != nil {
 		return false
 	}
-	name := strings.ToLower(filepath.Base(exe))
-	return name == "reasonix-launcher.exe" || name == "reasonix.exe"
+	return isWindowsDetachedLauncher(filepath.Base(exe))
+}
+
+func isWindowsDetachedLauncher(name string) bool {
+	switch strings.ToLower(name) {
+	case "voltui-launcher.exe", "reasonix-launcher.exe", "reasonix.exe":
+		return true
+	default:
+		return false
+	}
 }
 
 func runRecover(args []string) int {
@@ -369,20 +377,28 @@ func siblingDesktopExecutable() string {
 	if err != nil {
 		return ""
 	}
-	name := "reasonix-desktop"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	candidates := []string{filepath.Join(filepath.Dir(exe), name)}
-	if runtime.GOOS == "darwin" {
-		candidates = append(candidates, filepath.Clean(filepath.Join(filepath.Dir(exe), "..", "MacOS", name)))
-	}
-	for _, path := range candidates {
+	for _, path := range desktopExecutableCandidates(exe, runtime.GOOS) {
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}
 	}
 	return ""
+}
+
+func desktopExecutableCandidates(launcherPath, goos string) []string {
+	suffix := ""
+	if goos == "windows" {
+		suffix = ".exe"
+	}
+	dir := filepath.Dir(launcherPath)
+	paths := make([]string, 0, 4)
+	for _, name := range []string{"voltui-desktop" + suffix, "reasonix-desktop" + suffix} {
+		paths = append(paths, filepath.Join(dir, name))
+		if goos == "darwin" {
+			paths = append(paths, filepath.Clean(filepath.Join(dir, "..", "MacOS", name)))
+		}
+	}
+	return paths
 }
 
 func isMacBundleLauncher() bool {

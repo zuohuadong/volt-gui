@@ -2,9 +2,21 @@ package main
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestAppStartupArmsWindowsWebView2Fallback(t *testing.T) {
+	source, err := os.ReadFile("app.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(source), "a.startWindowsWebView2StartupFallback(ctx)") {
+		t.Fatal("App.startup does not arm the Windows WebView2 visibility fallback")
+	}
+}
 
 func TestWindowsWebView2StartupFallbackScope(t *testing.T) {
 	tests := []struct {

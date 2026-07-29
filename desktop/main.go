@@ -9,10 +9,12 @@ package main
 import (
 	"context"
 	"embed"
+	"fmt"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
+	"time"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -24,6 +26,7 @@ import (
 	// Blank imports wire compile-time built-ins into their registries, exactly as
 	// cmd/reasonix does — boot.Build resolves providers/tools from these registries.
 	"voltui/internal/config"
+	"voltui/internal/nativeui"
 	_ "voltui/internal/provider/anthropic"
 	_ "voltui/internal/provider/openai"
 	"voltui/internal/repair"
@@ -240,8 +243,36 @@ func main() {
 		if trackerOwned {
 			_ = tracker.MarkFailed(err)
 		}
-		println("Error:", err.Error())
+		reportDesktopStartupError(err)
+		os.Exit(1)
 	}
+}
+
+func reportDesktopStartupError(startupErr error) {
+	logPath := writeDesktopStartupError(startupErr)
+	message := fmt.Sprintf("VoltUI 桌面端无法启动。\n\n%v", startupErr)
+	if logPath != "" {
+		message += "\n\n启动日志：" + logPath
+	}
+	fmt.Fprintln(os.Stderr, "Error:", startupErr)
+	nativeui.ShowError("VoltUI 启动失败", message)
+}
+
+func writeDesktopStartupError(startupErr error) string {
+	stateDir := config.MemoryUserDir()
+	if stateDir == "" {
+		return ""
+	}
+	logDir := filepath.Join(stateDir, "logs")
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return ""
+	}
+	logPath := filepath.Join(logDir, "desktop-startup.log")
+	message := fmt.Sprintf("%s desktop startup failed: %v\n", time.Now().UTC().Format(time.RFC3339), startupErr)
+	if err := os.WriteFile(logPath, []byte(message), 0o600); err != nil {
+		return ""
+	}
+	return logPath
 }
 
 type desktopLaunchOptions struct {

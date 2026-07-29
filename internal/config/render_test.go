@@ -16,15 +16,8 @@ func isolateUserConfigHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	for _, key := range []string{"REASONIX_HOME", "REASONIX_STATE_HOME", "REASONIX_CACHE_HOME"} {
-		t.Setenv(key, "")
-		if err := os.Unsetenv(key); err != nil {
-			t.Fatalf("unset %s: %v", key, err)
-		}
-	}
 	t.Setenv("REASONIX_CREDENTIALS_STORE", "file")
 	t.Setenv("USERPROFILE", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("AppData", filepath.Join(home, "AppData", "Roaming"))
 	return home
 }
@@ -40,11 +33,11 @@ func setRuntimeGOOS(t *testing.T, goos string) {
 	t.Cleanup(func() { runtimeGOOS = old })
 }
 
-func expectedDefaultVoltUIHome(home string) string {
+func expectedDefaultReasonixHome(home string) string {
 	if runtime.GOOS == "windows" {
-		return filepath.Join(home, "AppData", "Roaming", "reasonix")
+		return filepath.Join(home, "AppData", "Roaming", "voltui")
 	}
-	return filepath.Join(home, ".reasonix")
+	return filepath.Join(home, ".voltui")
 }
 
 func TestUserConfigDisplayPathCollapsesHome(t *testing.T) {
@@ -61,25 +54,25 @@ func TestUserConfigDisplayPathCollapsesHome(t *testing.T) {
 	}
 }
 
-func TestUserConfigPathUsesVoltUIHome(t *testing.T) {
+func TestUserConfigPathUsesReasonixHome(t *testing.T) {
 	home := isolateUserConfigHome(t)
-	want := filepath.Join(expectedDefaultVoltUIHome(home), "config.toml")
+	want := filepath.Join(expectedDefaultReasonixHome(home), "config.toml")
 	if got := UserConfigPath(); filepath.Clean(got) != filepath.Clean(want) {
 		t.Fatalf("UserConfigPath() = %q, want %q", got, want)
 	}
 }
 
-func TestVoltUIManagedConfigPathsAreConfigFilesOnly(t *testing.T) {
+func TestReasonixManagedConfigPathsAreConfigFilesOnly(t *testing.T) {
 	home := isolateUserConfigHome(t)
 	setRuntimeGOOS(t, "windows")
 	oldConfigDir := osUserConfigDir
 	osUserConfigDir = func() string { return filepath.Join(home, "AppData", "Roaming") }
 	t.Cleanup(func() { osUserConfigDir = oldConfigDir })
 
-	paths := VoltUIManagedConfigPaths()
+	paths := ReasonixManagedConfigPaths()
 	for _, want := range []string{
-		filepath.Join(home, "AppData", "Roaming", "reasonix", "config.toml"),
-		filepath.Join(home, ".reasonix", "config.json"),
+		filepath.Join(home, "AppData", "Roaming", "voltui", "config.toml"),
+		filepath.Join(home, ".voltui", "config.json"),
 	} {
 		found := false
 		for _, got := range paths {
@@ -93,7 +86,7 @@ func TestVoltUIManagedConfigPathsAreConfigFilesOnly(t *testing.T) {
 		}
 	}
 	// The escape hatch is file-level by contract: no directories, and none of
-	// the sensitive VoltUI-home siblings (credentials, hooks, skills,
+	// the sensitive Reasonix-home siblings (credentials, hooks, skills,
 	// sessions) may ride along.
 	for _, got := range paths {
 		if base := filepath.Base(got); base != "config.toml" && base != "config.json" {
@@ -101,11 +94,11 @@ func TestVoltUIManagedConfigPathsAreConfigFilesOnly(t *testing.T) {
 		}
 		for _, forbidden := range []string{
 			home,
-			VoltUIHomeDir(),
+			ReasonixHomeDir(),
 			UserCredentialsPath(),
-			filepath.Join(VoltUIHomeDir(), "settings.json"),
-			filepath.Join(VoltUIHomeDir(), "skills"),
-			filepath.Join(VoltUIHomeDir(), "sessions"),
+			filepath.Join(ReasonixHomeDir(), "settings.json"),
+			filepath.Join(ReasonixHomeDir(), "skills"),
+			filepath.Join(ReasonixHomeDir(), "sessions"),
 		} {
 			if samePath(got, forbidden) {
 				t.Fatalf("managed config paths must not include %q: %v", forbidden, paths)
@@ -114,7 +107,7 @@ func TestVoltUIManagedConfigPathsAreConfigFilesOnly(t *testing.T) {
 	}
 }
 
-func TestUserConfigPathHonorsVoltUIHome(t *testing.T) {
+func TestUserConfigPathHonorsReasonixHome(t *testing.T) {
 	home := isolateUserConfigHome(t)
 	custom := filepath.Join(home, "custom-home")
 	t.Setenv("REASONIX_HOME", custom)
@@ -143,7 +136,7 @@ func TestLoadForRootUsesWindowsHomeFallbackWhenConfigDirUnavailable(t *testing.T
 
 	t.Setenv("REASONIX_HOME", "")
 
-	configPath := filepath.Join(home, "AppData", "Roaming", "reasonix", "config.toml")
+	configPath := filepath.Join(home, "AppData", "Roaming", "voltui", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -207,19 +200,20 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Desktop.StatusBarItems = []string{"model", "balance", "cache"}
 	orig.Desktop.DefaultToolApprovalMode = "auto"
 	orig.Desktop.CheckUpdates = boolPtr(false)
-	orig.Desktop.UpdateChannel = "preview"
 	orig.Desktop.Telemetry = boolPtr(false)
 	orig.Notifications.Enabled = true
 	orig.Notifications.TurnDone = true
 	orig.Notifications.ApprovalRequest = true
 	orig.Notifications.AskRequest = true
-	orig.Agent.RecoveryModel = "mimo-pro"
-	orig.Agent.RecoveryTemperature = 0.15
+	orig.Agent.MaxSteps = 30
+	orig.Agent.PlannerMaxSteps = 0
+	orig.Agent.AutoPlanClassifier = "deepseek-flash"
 	orig.Agent.ReasoningLanguage = "zh"
 	orig.Agent.ToolResultSnipRatio = 0.65
 	orig.Agent.SubagentModel = "mimo-pro"
 	orig.Agent.SubagentModels = map[string]string{"review": "deepseek-pro"}
 	orig.Agent.MaxSubagentDepth = 3
+	orig.Agent.MaxSubagentConcurrency = 12
 	orig.Agent.Keep = []string{"errors", "user_marked"}
 	orig.Agent.RecentKeep = 4
 	orig.Tools.BashTimeoutSeconds = intPtr(900)
@@ -250,21 +244,13 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Skills.MaxDepth = 2
 	orig.Bot.ToolApprovalMode = "auto"
 	orig.Bot.Control = BotControlConfig{Enabled: true, Addr: "127.0.0.1:39001", TokenEnv: "BOT_CONTROL_TOKEN"}
-	orig.Bot.Feishu.OutboundMediaRoots = []string{"/tmp/reasonix-media", "/srv/shots"}
 	orig.Bot.Routes = []BotRouteConfig{{
 		ConnectionID:     "feishu-lark",
 		ChatType:         "group",
 		ChatID:           "oc_group",
 		Model:            "deepseek-pro",
 		ToolApprovalMode: "ask",
-		WorkspaceRoot:    "/tmp/reasonix-route",
-	}}
-	orig.Bot.DesktopWatchers = []BotDesktopWatcherConfig{{
-		Platform:     "feishu",
-		ConnectionID: "feishu-lark",
-		Domain:       "lark",
-		ChatType:     "dm",
-		ChatID:       "oc_watcher",
+		WorkspaceRoot:    "/tmp/voltui-route",
 	}}
 	orig.Bot.Connections = []BotConnectionConfig{{
 		ID:               "feishu-lark",
@@ -275,13 +261,13 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 		Status:           "connected",
 		Model:            "deepseek-pro",
 		ToolApprovalMode: "yolo",
-		WorkspaceRoot:    "/tmp/reasonix-bot",
+		WorkspaceRoot:    "/tmp/voltui-bot",
 		Credential:       BotConnectionCredential{AppID: "cli_lark", AppSecretEnv: "LARK_BOT_APP_SECRET"},
 		SessionMappings: []BotConnectionSessionMapping{{
 			RemoteID:      "ou_123",
 			SessionID:     "topic:topic_bot",
 			Scope:         "project",
-			WorkspaceRoot: "/tmp/reasonix-bot",
+			WorkspaceRoot: "/tmp/voltui-bot",
 			UpdatedAt:     "2026-06-11T00:00:00Z",
 		}},
 	}}
@@ -299,8 +285,28 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 		},
 	}
 	orig.Plugins = []PluginEntry{
-		{Name: "example", Command: "reasonix-plugin-example"},
-		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, AutoStart: boolPtr(false), Tier: "background"},
+		{Name: "example", Command: "voltui-plugin-example"},
+		{Name: "stripe", Type: "http", URL: "https://mcp.stripe.com", Headers: map[string]string{"Authorization": "Bearer x"}, TrustedReadOnlyTools: []string{"customer_read"}, AutoStart: boolPtr(false), Tier: "background"},
+	}
+	orig.Workbench = WorkbenchConfig{
+		Plugins: []WorkbenchPluginEntry{{
+			ID:           "contract-review",
+			Name:         "Contract Review",
+			Kind:         "native",
+			Entry:        "contract-review",
+			Version:      "v1.2.0",
+			Capabilities: []string{"review", "risk-check"},
+			ProviderIDs:  []string{"legal-mcp"},
+			Config:       map[string]string{"permission": "workspace"},
+			Enabled:      boolPtr(false),
+		}},
+		Providers: []WorkbenchProviderEntry{{
+			ID:           "legal-mcp",
+			Type:         "mcp",
+			Server:       "legal-server",
+			Capabilities: []string{"review"},
+			Env:          map[string]string{"LEGAL_TOKEN": "${LEGAL_TOKEN}"},
+		}},
 	}
 	mm, _ := orig.Provider("mimo-pro")
 	mm.BaseURL = "http://localhost:8000/v1"
@@ -322,8 +328,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.DefaultModel != "mimo-pro" {
 		t.Errorf("default_model = %q, want mimo-pro", got.DefaultModel)
 	}
-	if got.ConfigVersion != 5 {
-		t.Errorf("config_version = %d, want 5", got.ConfigVersion)
+	if got.ConfigVersion != 4 {
+		t.Errorf("config_version = %d, want 4", got.ConfigVersion)
 	}
 	if got.Language != "zh" {
 		t.Errorf("language = %q, want zh", got.Language)
@@ -370,12 +376,6 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Desktop.CheckUpdates == nil || *got.Desktop.CheckUpdates {
 		t.Errorf("desktop.check_updates = %+v, want false", got.Desktop.CheckUpdates)
 	}
-	if got.DesktopUpdateChannel() != "preview" {
-		t.Errorf("desktop.update_channel = %q, want preview", got.DesktopUpdateChannel())
-	}
-	if got.Agent.RecoveryModel != "mimo-pro" || got.Agent.RecoveryTemperature != 0 {
-		t.Errorf("agent recovery settings not preserved: %+v", got.Agent)
-	}
 	if !got.Notifications.Enabled || !got.Notifications.TurnDone || !got.Notifications.ApprovalRequest || !got.Notifications.AskRequest {
 		t.Errorf("notifications not preserved: %+v", got.Notifications)
 	}
@@ -385,7 +385,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Agent.PlannerMaxSteps != orig.Agent.PlannerMaxSteps {
 		t.Errorf("planner_max_steps = %d, want %d", got.Agent.PlannerMaxSteps, orig.Agent.PlannerMaxSteps)
 	}
-	if len(got.Bot.Connections) != 1 || got.Bot.Connections[0].Model != "deepseek-pro" || got.Bot.Connections[0].WorkspaceRoot != "/tmp/reasonix-bot" {
+	if len(got.Bot.Connections) != 1 || got.Bot.Connections[0].Model != "deepseek-pro" || got.Bot.Connections[0].WorkspaceRoot != "/tmp/voltui-bot" {
 		t.Errorf("bot connection not preserved: %+v", got.Bot.Connections)
 	}
 	if got.Bot.ToolApprovalMode != "auto" || got.Bot.Connections[0].ToolApprovalMode != "yolo" {
@@ -394,20 +394,20 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if !got.Bot.Control.Enabled || got.Bot.Control.Addr != "127.0.0.1:39001" || got.Bot.Control.TokenEnv != "BOT_CONTROL_TOKEN" {
 		t.Errorf("bot control not preserved: %+v", got.Bot.Control)
 	}
-	if len(got.Bot.Feishu.OutboundMediaRoots) != 2 || got.Bot.Feishu.OutboundMediaRoots[0] != "/tmp/reasonix-media" {
-		t.Errorf("feishu outbound_media_roots not preserved: %+v", got.Bot.Feishu.OutboundMediaRoots)
-	}
-	if len(got.Bot.Routes) != 1 || got.Bot.Routes[0].WorkspaceRoot != "/tmp/reasonix-route" || got.Bot.Routes[0].ChatID != "oc_group" {
+	if len(got.Bot.Routes) != 1 || got.Bot.Routes[0].WorkspaceRoot != "/tmp/voltui-route" || got.Bot.Routes[0].ChatID != "oc_group" {
 		t.Errorf("bot routes not preserved: %+v", got.Bot.Routes)
 	}
-	if len(got.Bot.DesktopWatchers) != 1 || got.Bot.DesktopWatchers[0].ChatID != "oc_watcher" || got.Bot.DesktopWatchers[0].Platform != "feishu" || got.Bot.DesktopWatchers[0].Domain != "lark" {
-		t.Errorf("bot desktop watchers not preserved: %+v", got.Bot.DesktopWatchers)
-	}
-	if len(got.Bot.Connections[0].SessionMappings) != 1 || got.Bot.Connections[0].SessionMappings[0].Scope != "project" || got.Bot.Connections[0].SessionMappings[0].WorkspaceRoot != "/tmp/reasonix-bot" {
+	if len(got.Bot.Connections[0].SessionMappings) != 1 || got.Bot.Connections[0].SessionMappings[0].Scope != "project" || got.Bot.Connections[0].SessionMappings[0].WorkspaceRoot != "/tmp/voltui-bot" {
 		t.Errorf("bot session mapping scope not preserved: %+v", got.Bot.Connections[0].SessionMappings)
 	}
 	if got.Agent.Temperature != orig.Agent.Temperature {
 		t.Errorf("temperature = %v, want %v", got.Agent.Temperature, orig.Agent.Temperature)
+	}
+	if got.Agent.AutoPlan != "off" {
+		t.Errorf("auto_plan = %q, want off", got.Agent.AutoPlan)
+	}
+	if got.Agent.AutoPlanClassifier != "deepseek-flash" {
+		t.Errorf("auto_plan_classifier = %q, want deepseek-flash", got.Agent.AutoPlanClassifier)
 	}
 	if got.Agent.ReasoningLanguage != "zh" {
 		t.Errorf("reasoning_language = %q, want zh", got.Agent.ReasoningLanguage)
@@ -463,6 +463,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if got.Agent.MaxSubagentDepth != 3 {
 		t.Errorf("max_subagent_depth = %d, want 3", got.Agent.MaxSubagentDepth)
+	}
+	if got.Agent.MaxSubagentConcurrency != 12 {
+		t.Errorf("max_subagent_concurrency = %d, want 12", got.Agent.MaxSubagentConcurrency)
 	}
 	if got.Tools.BashTimeoutSeconds == nil || *got.Tools.BashTimeoutSeconds != 900 {
 		t.Errorf("tools.bash_timeout_seconds = %v, want 900", got.Tools.BashTimeoutSeconds)
@@ -522,8 +525,8 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if stripe.Headers["Authorization"] != "Bearer x" {
 		t.Errorf("plugin headers not preserved: %v", stripe.Headers)
 	}
-	if strings.Contains(rendered, "trusted_read_only_tools") {
-		t.Errorf("removed plugin reader setting survived render: entry=%+v\n%s", stripe, rendered)
+	if len(stripe.TrustedReadOnlyTools) != 1 || stripe.TrustedReadOnlyTools[0] != "customer_read" {
+		t.Errorf("plugin trusted_read_only_tools not preserved: %+v", stripe.TrustedReadOnlyTools)
 	}
 	if stripe.AutoStart == nil || *stripe.AutoStart {
 		t.Errorf("auto_start should render and parse as false, got %+v", stripe.AutoStart)
@@ -534,53 +537,83 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if strings.Contains(rendered, "\ntier") {
 		t.Errorf("rendered config should not contain MCP tier fields:\n%s", rendered)
 	}
+	if len(got.Workbench.Plugins) != 1 {
+		t.Fatalf("workbench plugins count = %d, want 1", len(got.Workbench.Plugins))
+	}
+	workbenchPlugin := got.Workbench.Plugins[0]
+	if workbenchPlugin.ID != "contract-review" || workbenchPlugin.Version != "v1.2.0" {
+		t.Errorf("workbench plugin not preserved: %+v", workbenchPlugin)
+	}
+	if len(workbenchPlugin.Capabilities) != 2 || workbenchPlugin.Capabilities[1] != "risk-check" {
+		t.Errorf("workbench plugin capabilities = %+v", workbenchPlugin.Capabilities)
+	}
+	if len(workbenchPlugin.ProviderIDs) != 1 || workbenchPlugin.ProviderIDs[0] != "legal-mcp" {
+		t.Errorf("workbench plugin provider_ids = %+v", workbenchPlugin.ProviderIDs)
+	}
+	if workbenchPlugin.Config["permission"] != "workspace" {
+		t.Errorf("workbench plugin config = %+v", workbenchPlugin.Config)
+	}
+	if workbenchPlugin.Enabled == nil || *workbenchPlugin.Enabled {
+		t.Errorf("workbench plugin enabled = %+v, want false", workbenchPlugin.Enabled)
+	}
+	if len(got.Workbench.Providers) != 1 || got.Workbench.Providers[0].Env["LEGAL_TOKEN"] != "${LEGAL_TOKEN}" {
+		t.Errorf("workbench providers not preserved: %+v", got.Workbench.Providers)
+	}
 }
 
-func TestRenderTOMLDocumentsPlanModeReadOnlyCommands(t *testing.T) {
+func TestRenderTOMLDocumentsPlanModeAllowedTools(t *testing.T) {
 	cfg := Default()
+	cfg.Agent.PlanModeAllowedTools = []string{"custom_reader"}
 	cfg.Agent.PlanModeReadOnlyCommands = []string{"gh issue view"}
 
 	rendered := RenderTOML(cfg)
+	if !strings.Contains(rendered, `plan_mode_allowed_tools = ["custom_reader"]`) {
+		t.Fatalf("rendered config should preserve plan_mode_allowed_tools:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "extra read-only declarations") || !strings.Contains(rendered, "cannot unlock known blocked tools or unsafe bash") {
+		t.Fatalf("rendered config should document tightened plan_mode_allowed_tools semantics:\n%s", rendered)
+	}
+
 	var got Config
 	if _, err := toml.Decode(rendered, &got); err != nil {
 		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
 	}
+	if !reflect.DeepEqual(got.Agent.PlanModeAllowedTools, cfg.Agent.PlanModeAllowedTools) {
+		t.Fatalf("PlanModeAllowedTools round trip = %v, want %v", got.Agent.PlanModeAllowedTools, cfg.Agent.PlanModeAllowedTools)
+	}
 	if !strings.Contains(rendered, `plan_mode_read_only_commands = ["gh issue view"]`) {
 		t.Fatalf("rendered config should preserve plan_mode_read_only_commands:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "legacy compatibility only") || !strings.Contains(rendered, "Plan bash uses Permissions") {
-		t.Fatalf("rendered config should document legacy plan_mode_read_only_commands semantics:\n%s", rendered)
+	if !strings.Contains(rendered, "concrete read-only shell prefixes") {
+		t.Fatalf("rendered config should document plan_mode_read_only_commands semantics:\n%s", rendered)
 	}
 	if !reflect.DeepEqual(got.Agent.PlanModeReadOnlyCommands, cfg.Agent.PlanModeReadOnlyCommands) {
 		t.Fatalf("PlanModeReadOnlyCommands round trip = %v, want %v", got.Agent.PlanModeReadOnlyCommands, cfg.Agent.PlanModeReadOnlyCommands)
 	}
 }
 
-func TestRenderTOMLDropsRetiredMCPPolicyFields(t *testing.T) {
-	var cfg Config
-	if _, err := toml.Decode(`[[plugins]]
-name = "github"
-command = "github-mcp"
-trusted_read_only_tools = ["issue_read", "pull_request_read"]
-default_tools_approval_mode = "writes"
-approvals_reviewer = "auto_review"
+func TestRenderTOMLDocumentsPluginTrustedReadOnlyTools(t *testing.T) {
+	cfg := Default()
+	cfg.Plugins = []PluginEntry{{
+		Name:                 "github",
+		Command:              "github-mcp",
+		TrustedReadOnlyTools: []string{"issue_read", "pull_request_read"},
+	}}
 
-[plugins.tools.wipe]
-approval_mode = "prompt"
-`, &cfg); err != nil {
-		t.Fatalf("legacy config should still decode: %v", err)
+	rendered := RenderTOML(cfg)
+	if !strings.Contains(rendered, `trusted_read_only_tools = ["issue_read", "pull_request_read"]`) {
+		t.Fatalf("rendered config should preserve trusted_read_only_tools:\n%s", rendered)
 	}
-
-	rendered := RenderTOML(&cfg)
-	for _, retired := range []string{"trusted_read_only_tools", "default_tools_approval_mode", "approvals_reviewer", "\napproval_mode ="} {
-		if strings.Contains(rendered, retired) {
-			t.Fatalf("rendered config retained retired MCP field %q:\n%s", retired, rendered)
-		}
+	if !strings.Contains(rendered, "optional pre-seeded MCP read-only trust") {
+		t.Fatalf("rendered config should document trusted_read_only_tools semantics:\n%s", rendered)
 	}
 
 	var got Config
 	if _, err := toml.Decode(rendered, &got); err != nil {
 		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
+	}
+	if !reflect.DeepEqual(got.Plugins[0].TrustedReadOnlyTools, cfg.Plugins[0].TrustedReadOnlyTools) {
+		t.Fatalf("TrustedReadOnlyTools round trip = %v, want %v", got.Plugins[0].TrustedReadOnlyTools, cfg.Plugins[0].TrustedReadOnlyTools)
 	}
 }
 
@@ -766,26 +799,18 @@ func TestScopedRenderSeparatesUserAndProjectConfig(t *testing.T) {
 	c.Desktop.StatusBarStyle = "text"
 	c.Desktop.DefaultToolApprovalMode = "auto"
 	c.Desktop.CheckUpdates = boolPtr(false)
-	c.Desktop.UpdateChannel = "preview"
-	c.Agent.RecoveryModel = "deepseek-pro"
-	c.Agent.RecoveryTemperature = 0.2
 
 	user := RenderTOMLForScope(c, RenderScopeUser)
-	for _, want := range []string{"config_version = 5", "[desktop]", `theme = "dark"`, `close_behavior = "background"`, `status_bar_style = "text"`, `default_tool_approval_mode = "auto"`, `check_updates = false`, `update_channel = "preview"`, `recovery_model = "deepseek-pro"`, "[notifications]", "[tools.shell]"} {
+	for _, want := range []string{"config_version = 4", "[desktop]", `theme = "dark"`, `close_behavior = "background"`, `status_bar_style = "text"`, `default_tool_approval_mode = "auto"`, `check_updates = false`, "[notifications]", "[tools.shell]"} {
 		if !strings.Contains(user, want) {
 			t.Fatalf("user render missing %q:\n%s", want, user)
 		}
 	}
 
 	project := RenderTOMLForScope(c, RenderScopeProject)
-	for _, forbidden := range []string{"[desktop]", "[notifications]", "close_behavior =", "default_tool_approval_mode =", "default_auto_recovery_checkpoint =", "check_updates =", "update_channel =", "max_steps", "planner_max_steps"} {
+	for _, forbidden := range []string{"[desktop]", "[notifications]", "close_behavior =", "default_tool_approval_mode =", "check_updates =", "max_steps", "planner_max_steps"} {
 		if strings.Contains(project, forbidden) {
 			t.Fatalf("project render should not contain %q:\n%s", forbidden, project)
-		}
-	}
-	for _, retired := range []string{"default_auto_recovery_checkpoint", "auto_recovery_checkpoint"} {
-		if strings.Contains(user, retired) || strings.Contains(project, retired) {
-			t.Fatalf("retired Auto Guard key %q must not be rendered:\nuser:\n%s\nproject:\n%s", retired, user, project)
 		}
 	}
 	if strings.Contains(project, "\nsystem_prompt = \"\"\"") {
@@ -793,33 +818,6 @@ func TestScopedRenderSeparatesUserAndProjectConfig(t *testing.T) {
 	}
 	if !strings.Contains(project, "# system_prompt =") {
 		t.Fatalf("project render should leave a system prompt hint:\n%s", project)
-	}
-	for _, want := range []string{`recovery_model = "deepseek-pro"`} {
-		if !strings.Contains(project, want) {
-			t.Fatalf("project render missing %q:\n%s", want, project)
-		}
-	}
-	if strings.Contains(user, "auto_plan") || strings.Contains(project, "auto_plan") {
-		t.Fatalf("retired auto-plan keys must not be rendered:\nuser:\n%s\nproject:\n%s", user, project)
-	}
-	if strings.Contains(user, "recovery_temperature") || strings.Contains(project, "recovery_temperature") {
-		t.Fatalf("deprecated recovery_temperature must not be rendered:\nuser:\n%s\nproject:\n%s", user, project)
-	}
-}
-
-func TestProjectDeltaRendersRecoveryReviewerOverride(t *testing.T) {
-	c := Default()
-	c.Agent.RecoveryModel = "deepseek-pro"
-	c.Agent.RecoveryTemperature = 0.2
-
-	delta := RenderTOMLProjectDelta(c)
-	for _, want := range []string{"[agent]", `recovery_model = "deepseek-pro"`} {
-		if !strings.Contains(delta, want) {
-			t.Fatalf("project delta missing %q:\n%s", want, delta)
-		}
-	}
-	if strings.Contains(delta, "recovery_temperature") {
-		t.Fatalf("deprecated recovery_temperature rendered:\n%s", delta)
 	}
 }
 
@@ -966,6 +964,37 @@ func TestRenderTOMLRoundTripsVisionModels(t *testing.T) {
 	}
 }
 
+func TestRenderTOMLRoundTripsResponsesAPISurface(t *testing.T) {
+	orig := Default()
+	orig.Providers = []ProviderEntry{{
+		Name:         "openai-responses",
+		Kind:         "openai",
+		BaseURL:      "https://api.openai.com/v1",
+		ResponsesURL: "https://gateway.example.com/v1/responses",
+		APISurface:   APISurfaceResponses,
+		Models:       []string{"gpt-5.4"},
+		Default:      "gpt-5.4",
+		APIKeyEnv:    "OPENAI_API_KEY",
+	}}
+
+	rendered := RenderTOML(orig)
+	if !strings.Contains(rendered, `api_surface = "responses"`) || !strings.Contains(rendered, `responses_url = "https://gateway.example.com/v1/responses"`) {
+		t.Fatalf("rendered TOML missing Responses fields:\n%s", rendered)
+	}
+
+	var got Config
+	if _, err := toml.Decode(rendered, &got); err != nil {
+		t.Fatalf("rendered TOML does not parse: %v", err)
+	}
+	p, ok := got.Provider("openai-responses")
+	if !ok {
+		t.Fatal("provider missing after round trip")
+	}
+	if p.APISurface != APISurfaceResponses || p.ResponsesURL != "https://gateway.example.com/v1/responses" {
+		t.Fatalf("responses fields after round trip = surface %q url %q", p.APISurface, p.ResponsesURL)
+	}
+}
+
 func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 	orig := Default()
 	orig.Providers = []ProviderEntry{{
@@ -977,7 +1006,7 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 		APIKeyEnv: "GATEWAY_API_KEY",
 		Headers: map[string]string{
 			"HTTP-Referer": "https://app.example",
-			"X-Title":      "VoltUI",
+			"X-Title":      "Reasonix",
 		},
 		ExtraBody: map[string]any{
 			"enable_thinking": true,
@@ -993,13 +1022,12 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 				SupportedEfforts:  []string{"high", "max"},
 				DefaultEffort:     "high",
 				Vision:            boolPtr(false),
-				ContextWindow:     262_144,
 			},
 		},
 	}}
 
 	rendered := RenderTOML(orig)
-	if !strings.Contains(rendered, `headers     = { HTTP-Referer = "https://app.example", X-Title = "VoltUI" }`) {
+	if !strings.Contains(rendered, `headers     = { HTTP-Referer = "https://app.example", X-Title = "Reasonix" }`) {
 		t.Fatalf("rendered TOML missing headers:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, `extra_body`) || !strings.Contains(rendered, `"enable_thinking" = true`) {
@@ -1008,7 +1036,7 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 	if !strings.Contains(rendered, `auth_header = true`) {
 		t.Fatalf("rendered TOML missing auth_header:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, `model_overrides`) || !strings.Contains(rendered, `reasoning_protocol = "deepseek"`) || !strings.Contains(rendered, `context_window = 262144`) {
+	if !strings.Contains(rendered, `model_overrides`) || !strings.Contains(rendered, `reasoning_protocol = "deepseek"`) {
 		t.Fatalf("rendered TOML missing model overrides:\n%s", rendered)
 	}
 
@@ -1020,7 +1048,7 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 	if !ok {
 		t.Fatal("gateway provider missing after round trip")
 	}
-	if p.Headers["HTTP-Referer"] != "https://app.example" || p.Headers["X-Title"] != "VoltUI" {
+	if p.Headers["HTTP-Referer"] != "https://app.example" || p.Headers["X-Title"] != "Reasonix" {
 		t.Fatalf("headers after round trip = %+v", p.Headers)
 	}
 	if p.ExtraBody["enable_thinking"] != true || p.ExtraBody["top_p"] != 0.8 {
@@ -1034,26 +1062,8 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 		t.Fatalf("extra_body metadata after round trip = %+v", p.ExtraBody["metadata"])
 	}
 	ov := p.ModelOverrides["deepseek-v4-flash"]
-	if ov.ReasoningProtocol != ReasoningProtocolDeepSeek || !reflect.DeepEqual(ov.SupportedEfforts, []string{"high", "max"}) || ov.DefaultEffort != "high" || ov.Vision == nil || *ov.Vision || ov.ContextWindow != 262_144 {
+	if ov.ReasoningProtocol != ReasoningProtocolDeepSeek || !reflect.DeepEqual(ov.SupportedEfforts, []string{"high", "max"}) || ov.DefaultEffort != "high" || ov.Vision == nil || *ov.Vision {
 		t.Fatalf("model override after round trip = %+v", ov)
-	}
-
-	// Older releases do not know context_window inside model_overrides, but their
-	// TOML decoder must still accept a config written by this release.
-	type legacyModelOverride struct {
-		ReasoningProtocol string   `toml:"reasoning_protocol"`
-		SupportedEfforts  []string `toml:"supported_efforts"`
-		DefaultEffort     string   `toml:"default_effort"`
-		Vision            *bool    `toml:"vision"`
-	}
-	type legacyProvider struct {
-		ModelOverrides map[string]legacyModelOverride `toml:"model_overrides"`
-	}
-	var legacy struct {
-		Providers []legacyProvider `toml:"providers"`
-	}
-	if _, err := toml.Decode(rendered, &legacy); err != nil {
-		t.Fatalf("legacy config shape cannot read per-model context window: %v", err)
 	}
 }
 
@@ -1073,27 +1083,6 @@ func TestRenderStringMapQuotesNonBareTOMLKeys(t *testing.T) {
 	}
 	if got.M["github:gh-fix-ci"] != "deepseek-pro" || got.M["review"] != "deepseek-flash" {
 		t.Fatalf("decoded map = %+v", got.M)
-	}
-}
-
-func TestDesktopExternalOpenerUserScopeRoundTrip(t *testing.T) {
-	cfg := Default()
-	if err := cfg.SetDesktopExternalOpener("ghostty"); err != nil {
-		t.Fatal(err)
-	}
-	rendered := RenderTOMLForScope(cfg, RenderScopeUser)
-	if !strings.Contains(rendered, `external_opener = "ghostty"`) {
-		t.Fatalf("user config omitted desktop external opener:\n%s", rendered)
-	}
-	if project := RenderTOMLForScope(cfg, RenderScopeProject); strings.Contains(project, "external_opener") {
-		t.Fatalf("project config leaked user-only external opener:\n%s", project)
-	}
-	var decoded Config
-	if _, err := toml.Decode(rendered, &decoded); err != nil {
-		t.Fatalf("decode rendered user config: %v", err)
-	}
-	if got := decoded.DesktopExternalOpener(); got != "ghostty" {
-		t.Fatalf("round-trip external opener = %q, want ghostty", got)
 	}
 }
 
@@ -1127,47 +1116,20 @@ func TestRenderTOMLPreservesDesktopDisplayMode(t *testing.T) {
 	}
 }
 
-func TestRenderTOMLConversationWidthRoundTrip(t *testing.T) {
-	c := Default()
-	if err := c.SetDesktopConversationWidth("full"); err != nil {
-		t.Fatalf("SetDesktopConversationWidth: %v", err)
-	}
-	rendered := RenderTOMLForScope(c, RenderScopeUser)
-	if !strings.Contains(rendered, `conversation_width = "full"`) {
-		t.Fatalf("rendered user config missing conversation_width:\n%s", rendered)
-	}
-	if project := RenderTOMLForScope(c, RenderScopeProject); strings.Contains(project, "conversation_width") {
-		t.Fatalf("project config leaked user-only conversation_width:\n%s", project)
-	}
-
-	var got Config
-	if _, err := toml.Decode(rendered, &got); err != nil {
-		t.Fatalf("rendered TOML does not parse: %v\n---\n%s", err, rendered)
-	}
-	if got.DesktopConversationWidth() != "full" {
-		t.Fatalf("conversation_width after round trip = %q, want full", got.DesktopConversationWidth())
-	}
-
-	if err := c.SetDesktopConversationWidth("standard"); err != nil {
-		t.Fatalf("reset conversation width: %v", err)
-	}
-	if rendered := RenderTOMLForScope(c, RenderScopeUser); strings.Contains(rendered, "conversation_width") {
-		t.Fatalf("default conversation_width should be omitted:\n%s", rendered)
-	}
-
-	c.Desktop.ConversationWidth = " FULL "
-	if rendered := RenderTOMLForScope(c, RenderScopeUser); !strings.Contains(rendered, `conversation_width = "full"`) {
-		t.Fatalf("manually edited full width was not normalized:\n%s", rendered)
-	}
-}
-
-func TestRenderTOMLDefaultStepsOmitted(t *testing.T) {
+func TestRenderTOMLDefaultStepsCommentedOut(t *testing.T) {
 	isolateUserConfigHome(t)
 	out := RenderTOML(Default())
 	agentLines := extractSectionLines(out, "[agent]")
 	for _, line := range agentLines {
-		if strings.Contains(line, "max_steps") || strings.Contains(line, "planner_max_steps") {
-			t.Errorf("default step limits should be hidden from generated config, got: %s", line)
+		if strings.HasPrefix(line, "max_steps ") || strings.HasPrefix(line, "max_steps=") {
+			if !strings.HasPrefix(line, "#") {
+				t.Errorf("default max_steps should be commented out in [agent], got: %s", line)
+			}
+		}
+		if strings.HasPrefix(line, "planner_max_steps ") || strings.HasPrefix(line, "planner_max_steps=") {
+			if !strings.HasPrefix(line, "#") {
+				t.Errorf("default planner_max_steps should be commented out in [agent], got: %s", line)
+			}
 		}
 	}
 }
@@ -1208,45 +1170,67 @@ func extractSectionLines(toml, section string) []string {
 	return lines
 }
 
-func TestRenderTOMLOmitsDeprecatedAgentStepLimits(t *testing.T) {
+func TestRenderTOMLNonDefaultStepsWrittenExplicitly(t *testing.T) {
 	isolateUserConfigHome(t)
 	c := Default()
 	c.Agent.MaxSteps = 5
 	c.Agent.PlannerMaxSteps = 7
 	out := RenderTOML(c)
-	for _, line := range extractSectionLines(out, "[agent]") {
-		if strings.Contains(line, "max_steps") || strings.Contains(line, "planner_max_steps") {
-			t.Fatalf("deprecated step limit should never be rendered, got: %s", line)
+	agentLines := extractSectionLines(out, "[agent]")
+	foundMax, foundPlanner := false, false
+	for _, line := range agentLines {
+		if !strings.HasPrefix(line, "#") && strings.HasPrefix(line, "max_steps ") {
+			foundMax = true
 		}
+		if !strings.HasPrefix(line, "#") && strings.HasPrefix(line, "planner_max_steps ") {
+			foundPlanner = true
+		}
+	}
+	if !foundMax {
+		t.Error("non-default max_steps should be written explicitly in [agent]")
+	}
+	if !foundPlanner {
+		t.Error("non-default planner_max_steps should be written explicitly in [agent]")
 	}
 }
 
-func TestLoadForEditIgnoresAndDropsDeprecatedAgentStepLimitsOnSave(t *testing.T) {
+func TestRenderTOMLDefaultStepsDoNotOverrideGlobalConfig(t *testing.T) {
 	isolateUserConfigHome(t)
-	path := UserConfigPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	globalDir := filepath.Dir(UserConfigPath())
+	if err := os.MkdirAll(globalDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("[agent]\nplanner_max_steps = 9\nmax_steps = 100\ntemperature = 0.4\n"), 0o644); err != nil {
+	globalPath := filepath.Join(globalDir, "config.toml")
+	if err := os.WriteFile(globalPath, []byte("[agent]\nplanner_max_steps = 9\nmax_steps = 100\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	cfg := LoadForEdit(path)
-	if cfg.Agent.MaxSteps != 0 || cfg.Agent.PlannerMaxSteps != 0 {
-		t.Fatalf("deprecated limits should normalize to zero, got max=%d planner=%d", cfg.Agent.MaxSteps, cfg.Agent.PlannerMaxSteps)
-	}
-	if cfg.Agent.Temperature != 0.4 {
-		t.Fatalf("unrelated agent setting changed: temperature=%v", cfg.Agent.Temperature)
-	}
-	if err := cfg.SaveTo(path); err != nil {
+	projectDir := t.TempDir()
+	projectTOML := RenderTOML(Default())
+	projectPath := filepath.Join(projectDir, "voltui.toml")
+	if err := os.WriteFile(projectPath, []byte(projectTOML), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+
+	cfg := Default()
+	if err := mergeFile(cfg, globalPath); err != nil {
+		t.Fatalf("global merge failed: %v", err)
 	}
-	if _, changed := stripLegacyAgentStepLimitLines(string(raw)); changed {
-		t.Fatalf("saved config retained deprecated step limits:\n%s", raw)
+	if cfg.Agent.PlannerMaxSteps != 9 {
+		t.Fatalf("after global: planner_max_steps = %d, want 9", cfg.Agent.PlannerMaxSteps)
+	}
+	if cfg.Agent.MaxSteps != 100 {
+		t.Fatalf("after global: max_steps = %d, want 100", cfg.Agent.MaxSteps)
+	}
+
+	if err := mergeFile(cfg, projectPath); err != nil {
+		t.Fatalf("project merge failed: %v", err)
+	}
+	if cfg.Agent.PlannerMaxSteps != 9 {
+		t.Errorf("after project: planner_max_steps = %d, want 9 (global should not be overridden by commented-out default)", cfg.Agent.PlannerMaxSteps)
+	}
+	if cfg.Agent.MaxSteps != 100 {
+		t.Errorf("after project: max_steps = %d, want 100 (global should not be overridden by commented-out default)", cfg.Agent.MaxSteps)
 	}
 }
 
@@ -1258,7 +1242,7 @@ func TestIsolatedHomeDirEmptyByDefault(t *testing.T) {
 }
 
 func TestIsolatedHomeDirReturnsCleanPath(t *testing.T) {
-	raw := filepath.Join(t.TempDir(), "isolated-reasonix")
+	raw := filepath.Join(t.TempDir(), "isolated-voltui")
 	t.Setenv("REASONIX_HOME", raw)
 	got := IsolatedHomeDir()
 	if filepath.Clean(got) != filepath.Clean(raw) {
@@ -1282,7 +1266,7 @@ func TestLegacyXDGConfigPathsEmptyWhenIsolated(t *testing.T) {
 	}
 }
 
-func TestCacheDirHonorsVoltUIHome(t *testing.T) {
+func TestCacheDirHonorsReasonixHome(t *testing.T) {
 	home := t.TempDir()
 	isolated := filepath.Join(home, "isolated-home")
 	t.Setenv("HOME", home)
@@ -1296,7 +1280,7 @@ func TestCacheDirHonorsVoltUIHome(t *testing.T) {
 	}
 }
 
-func TestCacheDirHonorsVoltUICacheHomeOverVoltUIHome(t *testing.T) {
+func TestCacheDirHonorsReasonixCacheHomeOverReasonixHome(t *testing.T) {
 	home := t.TempDir()
 	cacheHome := filepath.Join(home, "custom-cache")
 	t.Setenv("HOME", home)
@@ -1317,7 +1301,7 @@ func TestUserConfigLoadPathNoLegacyFallbackWhenIsolated(t *testing.T) {
 	t.Setenv("REASONIX_HOME", isolated)
 
 	// Create a legacy config at the OS production path — it must not be loaded.
-	productionHome := expectedDefaultVoltUIHome(home)
+	productionHome := expectedDefaultReasonixHome(home)
 	if err := os.MkdirAll(productionHome, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1358,7 +1342,7 @@ func TestMigrateLegacyIfNeededSkipsWhenIsolated(t *testing.T) {
 	t.Setenv("REASONIX_HOME", isolated)
 
 	// Create a legacy config.json in production home — migration must skip it.
-	legacyDir := filepath.Join(home, ".reasonix")
+	legacyDir := filepath.Join(home, ".voltui")
 	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1372,74 +1356,5 @@ func TestMigrateLegacyIfNeededSkipsWhenIsolated(t *testing.T) {
 	}
 	if res != nil {
 		t.Fatalf("MigrateLegacyIfNeeded() = %+v, want nil when isolated", res)
-	}
-}
-
-// TestProjectConfigCannotOverrideSecrets pins [secrets] as a user-global
-// security control: a cloned repository's reasonix.toml must not be able to
-// opt the user into subprocess env stripping or sensitive-path hiding.
-func TestProjectConfigCannotOverrideSecrets(t *testing.T) {
-	isolateUserConfigHome(t)
-	t.Setenv("REASONIX_HOME", "")
-	globalDir := filepath.Dir(UserConfigPath())
-	if err := os.MkdirAll(globalDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	globalTOML := "[secrets]\nfilter_subprocess_env = false\nprotect_sensitive_files = false\n"
-	if err := os.WriteFile(filepath.Join(globalDir, "config.toml"), []byte(globalTOML), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	project := t.TempDir()
-	projectTOML := "[secrets]\nfilter_subprocess_env = true\nprotect_sensitive_files = true\n"
-	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte(projectTOML), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := LoadForRoot(project)
-	if err != nil {
-		t.Fatalf("LoadForRoot() error = %v", err)
-	}
-	if cfg.Secrets.FilterSubprocessEnv {
-		t.Error("project reasonix.toml enabled filter_subprocess_env; [secrets] must stay user-global")
-	}
-	if cfg.Secrets.ProtectSensitiveFiles {
-		t.Error("project reasonix.toml enabled protect_sensitive_files; [secrets] must stay user-global")
-	}
-}
-
-// TestRenderTOMLPersistsSecretsSection pins config-save round-tripping: the
-// renderer must emit [secrets] for the user scope or every WriteFile would
-// silently drop the user's security toggles.
-func TestRenderTOMLPersistsSecretsSection(t *testing.T) {
-	cfg := Default()
-	cfg.Secrets.FilterSubprocessEnv = true
-	cfg.Secrets.ProtectSensitiveFiles = true
-
-	out := RenderTOMLForScope(cfg, RenderScopeUser)
-	for _, want := range []string{"[secrets]", "filter_subprocess_env = true", "protect_sensitive_files = true"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("user-scope render missing %q:\n%s", want, out)
-		}
-	}
-
-	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	back := Default()
-	if err := mergeFile(back, path); err != nil {
-		t.Fatalf("round-trip decode: %v", err)
-	}
-	if !back.Secrets.FilterSubprocessEnv || !back.Secrets.ProtectSensitiveFiles {
-		t.Fatalf("secrets toggles lost in render round-trip: %+v", back.Secrets)
-	}
-
-	// Project scope must not render the section — LoadForRoot ignores it there.
-	if proj := RenderTOMLForScope(cfg, RenderScopeProject); strings.Contains(proj, "[secrets]") {
-		t.Fatalf("project scope rendered [secrets]:\n%s", proj)
-	}
-	if strings.Contains(out, "redact_tool_output") {
-		t.Fatalf("user-scope render still exposes removed live-redaction setting:\n%s", out)
 	}
 }

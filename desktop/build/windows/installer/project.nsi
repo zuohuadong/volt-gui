@@ -8,8 +8,8 @@ Unicode true
 ## Wails' default template:
 ##
 ##   1. REQUEST_EXECUTION_LEVEL "user" + InstallDir under $LOCALAPPDATA - install
-##      without administrator rights. This lets the auto-updater re-run a freshly
-##      downloaded installer in a visible progress-only mode with no UAC prompt.
+##      without administrator rights. This is what lets the auto-updater re-run a
+##      freshly downloaded installer silently (`/S`) with no UAC prompt.
 ##   2. Uninstall registry under HKCU (not HKLM). Wails' wails.writeUninstaller /
 ##      wails.deleteUninstaller macros hard-code HKLM, which a non-admin install
 ##      cannot write - so we inline HKCU versions below instead.
@@ -18,9 +18,12 @@ Unicode true
 ##      a build that did not write InstallLocation yet, .onInit falls back to the
 ##      old DisplayIcon path before using the default. Without this, every release
 ##      forces the user back to %LOCALAPPDATA%\Programs\VoltUI even if they had
-##      moved the install to a different drive (e.g. D:\Tools\VoltUI); the
-##      auto-updater would overwrite the wrong dir, leaving the old install
-##      orphaned.
+##      moved the install to a different drive (e.g. D:\Tools\VoltUI); the silent
+##      auto-updater would re-run with /S into the wrong dir, leaving the old
+##      install orphaned.
+##   4. Running app processes are closed before install/uninstall so a manual
+##      overwrite can replace the old executable instead of failing on a locked
+##      file. The auto-updater still waits for its exact parent PID first.
 ##
 ## Everything else mirrors Wails' generated default. Defines below override the
 ## ProjectInfo values that wails_tools.nsh would otherwise populate.
@@ -60,62 +63,43 @@ ManifestDPIAware true
 !define MUI_FINISHPAGE_NOAUTOCLOSE # Wait on the INSTFILES page so the user can take a look into the details of the installation steps
 !define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
 
-!define MUI_PAGE_CUSTOMFUNCTION_PRE reasonix.skipSetupPageForUpdate
 !insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
 # !insertmacro MUI_PAGE_LICENSE "resources\eula.txt" # Adds a EULA page to the installer
-!define MUI_PAGE_CUSTOMFUNCTION_PRE reasonix.skipSetupPageForUpdate
 !insertmacro MUI_PAGE_DIRECTORY # In which folder install page.
-!define MUI_PAGE_CUSTOMFUNCTION_SHOW reasonix.showUpdateProgress
 !insertmacro MUI_PAGE_INSTFILES # Installing page.
-!define MUI_PAGE_CUSTOMFUNCTION_PRE reasonix.skipFinishPageForUpdate
 !insertmacro MUI_PAGE_FINISH # Finished installation page.
 
 !insertmacro MUI_UNPAGE_INSTFILES # Uinstalling page
 
-!insertmacro MUI_LANGUAGE "English"
-!insertmacro MUI_LANGUAGE "SimpChinese"
-!insertmacro MUI_LANGUAGE "TradChinese"
+!insertmacro MUI_LANGUAGE "English" # Set the Language of the installer
 
-LangString reasonixUpdateTitle ${LANG_ENGLISH} "Updating VoltUI"
-LangString reasonixUpdateTitle ${LANG_SIMPCHINESE} "正在更新 VoltUI"
-LangString reasonixUpdateTitle ${LANG_TRADCHINESE} "正在更新 VoltUI"
-LangString reasonixUpdateSubtitle ${LANG_ENGLISH} "Installing the verified update. VoltUI will restart automatically."
-LangString reasonixUpdateSubtitle ${LANG_SIMPCHINESE} "正在安装已验证的更新，完成后 VoltUI 将自动重启。"
-LangString reasonixUpdateSubtitle ${LANG_TRADCHINESE} "正在安裝已驗證的更新，完成後 VoltUI 將自動重新啟動。"
-
-## Preserve the first-pass generated uninstaller so the release workflow can
-## Authenticode-sign it together with the other installed payload files.
-## The second pass provides ARG_REASONIX_SIGNED_UNINSTALLER and embeds that
-## signed binary instead of generating another unsigned uninstaller.
-!ifndef ARG_REASONIX_SIGNED_UNINSTALLER
-!uninstfinalize 'cmd.exe /C copy /Y "%1" "voltui-uninstall.exe" >NUL'
-!endif
+## The following two statements can be used to sign the installer and the uninstaller. The path to the binaries are provided in %1
+#!uninstfinalize 'signtool --file "%1"'
 #!finalize 'signtool --file "%1"'
 
 Name "${INFO_PRODUCTNAME}"
-OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
-!define REASONIX_DEFAULT_INSTALLDIR "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
-!define REASONIX_UPDATE_HELPER "voltui-update-helper.exe"
-!define REASONIX_GUARD "voltui-guard.exe"
-!define REASONIX_LAUNCHER "voltui-launcher.exe"
-!define REASONIX_CLI "voltui-cli.exe"
-!define REASONIX_PORTABLE_ENTRY "VoltUI.exe"
-!define REASONIX_UNLOCK_RETRIES 60
-Var VoltUIUpdateMode
+# Keep the generated installer filename ASCII-only for Linux makensis in CNB.
+# User-facing branding stays in INFO_PRODUCTNAME and Windows version metadata.
+OutFile "..\..\bin\voltui-desktop-${ARCH}-installer.exe" # Name of the installer's file.
+!define VOLTUI_DEFAULT_INSTALLDIR "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
+!define VOLTUI_UPDATE_HELPER "voltui-update-helper.exe"
+!define VOLTUI_BUNDLED_ENV "bundled.env"
+!define VOLTUI_COMPUTER_USE_MCP_DIR "computer-use-mcp"
+!define VOLTUI_COMPUTER_USE_RUNTIME_DIR "computer-use-runtime"
+!define VOLTUI_COREUTILS_DIR "coreutils"
+!define VOLTUI_COREUTILS_SYSTEM_INSTALLER "coreutils-system-installer.exe"
+!define VOLTUI_COREUTILS_INSTALL_SHORTCUT "Install Microsoft Coreutils (Administrator).lnk"
+!define VOLTUI_UNLOCK_RETRIES 60
 InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation" # Reuse the previous install path on update; .onInit falls back to the default on first install.
-InstallDir "${REASONIX_DEFAULT_INSTALLDIR}" # Per-user install location (no admin rights required).
+InstallDir "${VOLTUI_DEFAULT_INSTALLDIR}" # Per-user install location (no admin rights required).
 ShowInstDetails show # This will always show the installation details.
 
 ####
 ## Per-user uninstaller registry (HKCU). Replaces wails.writeUninstaller /
 ## wails.deleteUninstaller, which write HKLM and would fail without admin rights.
 ####
-!macro reasonix.writeUninstaller
-    !ifdef ARG_REASONIX_SIGNED_UNINSTALLER
-    File "/oname=uninstall.exe" "${ARG_REASONIX_SIGNED_UNINSTALLER}"
-    !else
+!macro voltui.writeUninstaller
     WriteUninstaller "$INSTDIR\uninstall.exe"
-    !endif
 
     WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "${INFO_COMPANYNAME}"
     WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${INFO_PRODUCTNAME}"
@@ -127,8 +111,8 @@ ShowInstDetails show # This will always show the installation details.
     # via InstallDirRegKey above. Without this, every release would force the
     # user back to %LOCALAPPDATA%\Programs\VoltUI even if they had moved
     # the install to a different drive (e.g. D:\Tools\VoltUI). The auto-
-    # updater trusts this persisted path, so it has to be present before the
-    # visible progress-only re-install.
+    # updater re-runs this installer with /S and trusts the persisted path,
+    # so it has to be present before the silent re-install.
     WriteRegStr HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
 
     ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
@@ -136,27 +120,69 @@ ShowInstDetails show # This will always show the installation details.
     WriteRegDWORD HKCU "${UNINST_KEY}" "EstimatedSize" "$0"
 !macroend
 
-!macro reasonix.deleteUninstaller
+!macro voltui.deleteUninstaller
     Delete "$INSTDIR\uninstall.exe"
     DeleteRegKey HKCU "${UNINST_KEY}"
 !macroend
 
+!macro voltui.closeRunningApp
+    DetailPrint "Closing running ${INFO_PRODUCTNAME} instances..."
+    ; Ask Windows to close every running copy first so the app gets a chance to
+    ; execute its normal Wails shutdown path before files are replaced.
+    nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM "${PRODUCT_EXECUTABLE}" /T'
+    Pop $0
+    StrCmp $0 "0" 0 voltui_close_done
+    Sleep 5000
+    ; Clear any process that ignored the normal close request. The following
+    ; unlock check remains the final guard before wails.files overwrites the exe.
+    nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM "${PRODUCT_EXECUTABLE}" /T'
+    Pop $0
+
+voltui_close_done:
+!macroend
+
+; Keep the standard installer online-capable, but make bootstrapper failures
+; actionable for intranet users. These registry checks mirror Wails' behavior,
+; so a machine prepared with the separate prerequisites ZIP skips the download.
+!macro voltui.webview2runtime
+    SetRegView 64
+    ReadRegStr $0 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+    StrCmp $0 "" 0 voltui_webview_ready
+    ReadRegStr $0 HKCU "Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+    StrCmp $0 "" 0 voltui_webview_ready
+
+    SetDetailsPrint both
+    DetailPrint "Installing: Microsoft Edge WebView2 Runtime (online)"
+    SetDetailsPrint listonly
+    InitPluginsDir
+    CreateDirectory "$pluginsdir\webview2bootstrapper"
+    SetOutPath "$pluginsdir\webview2bootstrapper"
+    File "tmp\MicrosoftEdgeWebview2Setup.exe"
+    ExecWait '"$pluginsdir\webview2bootstrapper\MicrosoftEdgeWebview2Setup.exe" /silent /install' $1
+    StrCmp $1 0 voltui_webview_ready
+    StrCmp $1 3010 voltui_webview_restart
+    StrCmp $1 1641 voltui_webview_restart
+    StrCmp $1 -2147219198 voltui_webview_ready
+
+    IfSilent voltui_webview_silent voltui_webview_interactive
+
+voltui_webview_interactive:
+    MessageBox MB_OK|MB_ICONSTOP "Microsoft Edge WebView2 Runtime could not be installed online (exit code $1). On an offline or restricted network, download the separately versioned Windows prerequisites ZIP from https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases, extract it, run install-prerequisites.cmd, then run this installer again."
+    Abort "WebView2 Runtime installation failed with exit code $1."
+
+voltui_webview_silent:
+    SetErrorLevel $1
+    Abort "WebView2 Runtime installation failed. Install the separately versioned Windows prerequisites package first: https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases"
+
+voltui_webview_restart:
+    SetRebootFlag true
+
+voltui_webview_ready:
+    SetDetailsPrint both
+!macroend
+
 Function .onInit
    !insertmacro wails.checkArchitecture
-
-   ; The helper passes /REASONIXUPDATE=1 and a final /D=<current directory>.
-   ; This mode remains visible but skips every page that could change the
-   ; destination, then closes automatically after the file copy so the helper
-   ; can relaunch VoltUI. A normal manual installer keeps the full wizard.
-   StrCpy $VoltUIUpdateMode "0"
-   ${GetParameters} $R0
-   ClearErrors
-   ${GetOptions} $R0 "/REASONIXUPDATE=" $R1
-   IfErrors reasonix_update_mode_done
-   StrCmp $R1 "1" 0 reasonix_update_mode_done
-   StrCpy $VoltUIUpdateMode "1"
-
-reasonix_update_mode_done:
 
    ; InstallDirRegKey leaves $INSTDIR empty when the InstallLocation value is
    ; missing. Older installers still wrote DisplayIcon, so use its parent folder
@@ -170,76 +196,24 @@ reasonix_update_mode_done:
    StrCmp $INSTDIR "" fallback done
 
 fallback:
-   StrCpy $INSTDIR "${REASONIX_DEFAULT_INSTALLDIR}"
+   StrCpy $INSTDIR "${VOLTUI_DEFAULT_INSTALLDIR}"
 done:
 FunctionEnd
 
-Function reasonix.skipSetupPageForUpdate
-   StrCmp $VoltUIUpdateMode "1" 0 reasonix_show_setup_page
-   Abort
-
-reasonix_show_setup_page:
-FunctionEnd
-
-Function reasonix.showUpdateProgress
-   StrCmp $VoltUIUpdateMode "1" 0 reasonix_update_progress_done
-   !insertmacro MUI_HEADER_TEXT "$(reasonixUpdateTitle)" "$(reasonixUpdateSubtitle)"
-   SetDetailsView hide
-   SetAutoClose true
-   BringToFront
-
-reasonix_update_progress_done:
-FunctionEnd
-
-Function reasonix.skipFinishPageForUpdate
-   StrCmp $VoltUIUpdateMode "1" 0 reasonix_show_finish_page
-   Abort
-
-reasonix_show_finish_page:
-FunctionEnd
-
-Function reasonix.waitForExecutableUnlock
+Function voltui.waitForExecutableUnlock
+   IfFileExists "$INSTDIR\${PRODUCT_EXECUTABLE}" 0 done
    StrCpy $0 0
 
 retry:
-   IfFileExists "$INSTDIR\${PRODUCT_EXECUTABLE}" 0 check_guard
    ClearErrors
    FileOpen $1 "$INSTDIR\${PRODUCT_EXECUTABLE}" a
-   IfErrors locked
-   FileClose $1
-
-check_guard:
-   IfFileExists "$INSTDIR\${REASONIX_GUARD}" 0 check_launcher
-   ClearErrors
-   FileOpen $1 "$INSTDIR\${REASONIX_GUARD}" a
-   IfErrors locked
-   FileClose $1
-
-check_launcher:
-	IfFileExists "$INSTDIR\${REASONIX_LAUNCHER}" 0 check_cli
-	ClearErrors
-	FileOpen $1 "$INSTDIR\${REASONIX_LAUNCHER}" a
-	IfErrors locked
-	FileClose $1
-
-check_cli:
-	IfFileExists "$INSTDIR\${REASONIX_CLI}" 0 check_portable_entry
-	ClearErrors
-	FileOpen $1 "$INSTDIR\${REASONIX_CLI}" a
-	IfErrors locked
-	FileClose $1
-
-check_portable_entry:
-   IfFileExists "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" 0 done
-   ClearErrors
-   FileOpen $1 "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" a
    IfErrors locked
    FileClose $1
    Goto done
 
 locked:
    IntOp $0 $0 + 1
-   IntCmp $0 ${REASONIX_UNLOCK_RETRIES} failed 0 0
+   IntCmp $0 ${VOLTUI_UNLOCK_RETRIES} failed 0 0
    Sleep 1000
    Goto retry
 
@@ -247,14 +221,14 @@ failed:
    IfSilent silent interactive
 
 interactive:
-   MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "VoltUI is still running. Close VoltUI, then click Retry to continue the installation." IDRETRY retry IDCANCEL abort
+   MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${INFO_PRODUCTNAME} is still running. Close ${INFO_PRODUCTNAME}, then click Retry to continue the installation." IDRETRY retry IDCANCEL abort
    Goto retry
 
 silent:
    SetErrorLevel 1618
 
 abort:
-   Abort "VoltUI is still running. Close VoltUI and run the installer again."
+   Abort "${INFO_PRODUCTNAME} is still running. Close ${INFO_PRODUCTNAME} and run the installer again."
 
 done:
 FunctionEnd
@@ -262,71 +236,88 @@ FunctionEnd
 Section
     !insertmacro wails.setShellContext
 
-    !insertmacro wails.webview2runtime
+    !insertmacro voltui.closeRunningApp
 
-    Call reasonix.waitForExecutableUnlock
+    !insertmacro voltui.webview2runtime
+
+    Call voltui.waitForExecutableUnlock
 
     SetOutPath $INSTDIR
 
     !insertmacro wails.files
-    !if /FileExists "${REASONIX_UPDATE_HELPER}"
-    File "/oname=${REASONIX_UPDATE_HELPER}" "${REASONIX_UPDATE_HELPER}"
+    !if /FileExists "${VOLTUI_UPDATE_HELPER}"
+    File "/oname=${VOLTUI_UPDATE_HELPER}" "${VOLTUI_UPDATE_HELPER}"
     !else
-    !warning "${REASONIX_UPDATE_HELPER} was not found; Windows auto-update will fail safely until the helper is installed."
+    !warning "${VOLTUI_UPDATE_HELPER} was not found; Windows auto-update will fall back to installer-side waiting only."
     !endif
-    !if /FileExists "${REASONIX_GUARD}"
-    File "/oname=${REASONIX_GUARD}" "${REASONIX_GUARD}"
+    !if /FileExists "${VOLTUI_BUNDLED_ENV}"
+    File "/oname=${VOLTUI_BUNDLED_ENV}" "${VOLTUI_BUNDLED_ENV}"
     !endif
-    !if /FileExists "${REASONIX_LAUNCHER}"
-    File "/oname=${REASONIX_LAUNCHER}" "${REASONIX_LAUNCHER}"
-    ; Portable archives expose VoltUI.exe as a second copy of the Guard
-    ; launcher. Preserve that layout only when upgrading an existing portable
-    ; directory, and keep the alias in lockstep with the canonical launcher.
-    IfFileExists "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" 0 reasonix_no_portable_entry
-    File "/oname=${REASONIX_PORTABLE_ENTRY}" "${REASONIX_LAUNCHER}"
-reasonix_no_portable_entry:
-    ; Keep the Guard launcher as the target while taking the visible shortcut
-    ; icon from the Wails application. The launcher embeds the same icon too,
-    ; but an explicit icon source prevents stale/generic taskbar pins after an
-    ; in-place upgrade from a launcher build that had no Windows resources.
-    CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}" "launch --detach" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0
-    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}" "launch --detach" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0
+    !if /FileExists "${VOLTUI_COMPUTER_USE_MCP_DIR}\node_modules\@zavora-ai\computer-use-mcp\dist\server.js"
+    SetOutPath "$INSTDIR\${VOLTUI_COMPUTER_USE_MCP_DIR}"
+    File /r "${VOLTUI_COMPUTER_USE_MCP_DIR}\*"
+    SetOutPath $INSTDIR
     !else
+    !warning "${VOLTUI_COMPUTER_USE_MCP_DIR} was not found; bundled computer-use MCP will be unavailable."
+    !endif
+    !if /FileExists "${VOLTUI_COMPUTER_USE_RUNTIME_DIR}\bun-windows-amd64\bin\bun.exe"
+    SetOutPath "$INSTDIR\${VOLTUI_COMPUTER_USE_RUNTIME_DIR}"
+    File /r "${VOLTUI_COMPUTER_USE_RUNTIME_DIR}\*"
+    SetOutPath $INSTDIR
+    !else
+    !warning "${VOLTUI_COMPUTER_USE_RUNTIME_DIR} was not found; bundled computer-use Bun runtime will be unavailable."
+    !endif
+    ; Coreutils is a required offline payload. It stays private to VoltUI unless
+    ; an administrator explicitly runs the bundled upstream installer; do not
+    ; silently alter PATH or trigger UAC during routine VoltUI updates.
+    !if /FileExists "${VOLTUI_COREUTILS_DIR}\voltui-coreutils-path.txt"
+    !if /FileExists "${VOLTUI_COREUTILS_DIR}\${VOLTUI_COREUTILS_SYSTEM_INSTALLER}"
+    RMDir /r "$INSTDIR\${VOLTUI_COREUTILS_DIR}"
+    SetOutPath "$INSTDIR\${VOLTUI_COREUTILS_DIR}"
+    File /r "${VOLTUI_COREUTILS_DIR}\*"
+    SetOutPath $INSTDIR
+    !else
+    !error "Required Coreutils system installer is missing from the Windows build resources."
+    !endif
+    !else
+    !error "Required Coreutils runtime is missing from the Windows build resources."
+    !endif
+
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    CreateShortcut "$SMPROGRAMS\${VOLTUI_COREUTILS_INSTALL_SHORTCUT}" "$INSTDIR\${VOLTUI_COREUTILS_DIR}\${VOLTUI_COREUTILS_SYSTEM_INSTALLER}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
-    !endif
-    !if /FileExists "${REASONIX_CLI}"
-    File "/oname=${REASONIX_CLI}" "${REASONIX_CLI}"
-    !else
-    !warning "${REASONIX_CLI} was not found; remote upload installation will be unavailable."
-    !endif
 
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
 
-    !insertmacro reasonix.writeUninstaller
+    !insertmacro voltui.writeUninstaller
 SectionEnd
 
 Section "uninstall"
     !insertmacro wails.setShellContext
 
+    !insertmacro voltui.closeRunningApp
+
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
     ; Precision uninstall: delete main application files
     Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
-    Delete "$INSTDIR\${REASONIX_UPDATE_HELPER}"
-    Delete "$INSTDIR\${REASONIX_GUARD}"
-    Delete "$INSTDIR\${REASONIX_LAUNCHER}"
-    Delete "$INSTDIR\${REASONIX_CLI}"
-    Delete "$INSTDIR\${REASONIX_PORTABLE_ENTRY}"
+    Delete "$INSTDIR\${VOLTUI_UPDATE_HELPER}"
+    Delete "$INSTDIR\${VOLTUI_BUNDLED_ENV}"
+    RMDir /r "$INSTDIR\${VOLTUI_COMPUTER_USE_MCP_DIR}"
+    RMDir /r "$INSTDIR\${VOLTUI_COMPUTER_USE_RUNTIME_DIR}"
+    ; This only removes VoltUI's private copy. A separately administrator-
+    ; installed Microsoft Coreutils instance is intentionally left untouched.
+    RMDir /r "$INSTDIR\${VOLTUI_COREUTILS_DIR}"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
+    Delete "$SMPROGRAMS\${VOLTUI_COREUTILS_INSTALL_SHORTCUT}"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
 
     !insertmacro wails.unassociateFiles
     !insertmacro wails.unassociateCustomProtocols
 
-    !insertmacro reasonix.deleteUninstaller
+    !insertmacro voltui.deleteUninstaller
 
     ; Only remove the installation directory if it is empty to prevent data loss
     RMDir $INSTDIR

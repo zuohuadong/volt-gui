@@ -63,8 +63,7 @@ func TestWindowsWebview2GPUDisabled(t *testing.T) {
 		want    bool
 	}{
 		{name: "stable default keeps gpu", channel: "stable", want: false},
-		{name: "preview default disables gpu", channel: "preview", want: true},
-		{name: "legacy canary default disables gpu", channel: "canary", want: true},
+		{name: "canary default disables gpu", channel: "canary", want: true},
 		{name: "env enables fallback", channel: "stable", env: "1", want: true},
 		{name: "env disables canary fallback", channel: "canary", env: "0", want: false},
 		{name: "truthy env", channel: "stable", env: "yes", want: true},

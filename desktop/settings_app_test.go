@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,11 +13,19 @@ import (
 
 	"voltui/internal/config"
 	"voltui/internal/control"
-	fileencoding "voltui/internal/fileutil/encoding"
 	"voltui/internal/hook"
 	"voltui/internal/provider"
 	"voltui/internal/sandbox"
 )
+
+type captureTurnRunner struct {
+	inputs []string
+}
+
+func (r *captureTurnRunner) Run(_ context.Context, input string) error {
+	r.inputs = append(r.inputs, input)
+	return nil
+}
 
 func TestWithFreshSystemPromptReplacesExistingSystemMessage(t *testing.T) {
 	msgs := []provider.Message{
@@ -71,29 +80,6 @@ func TestProviderViewFromEntry_FiltersNonChatModels(t *testing.T) {
 	}
 	if !view.VisionModelsSet {
 		t.Fatal("ProviderView.VisionModelsSet = false, want true for configured vision_models")
-	}
-}
-
-func TestProviderModelOverridesPreservePerModelContextWindow(t *testing.T) {
-	overrides := map[string]config.ProviderModelOverride{
-		"short-model": {ContextWindow: 32_768},
-		"long-model":  {ContextWindow: 1_000_000},
-		"removed":     {ContextWindow: 8_192},
-	}
-	models := []string{"short-model", "long-model"}
-
-	view := providerModelOverridesForView(overrides, models)
-	if len(view) != 2 || view[0].Model != "long-model" || view[0].ContextWindow != 1_000_000 || view[1].Model != "short-model" || view[1].ContextWindow != 32_768 {
-		t.Fatalf("provider model override view = %+v", view)
-	}
-
-	view[0].ContextWindow = -1
-	saved := providerModelOverridesForSave(view, models)
-	if _, ok := saved["long-model"]; ok {
-		t.Fatalf("non-positive context-only override should be removed: %+v", saved)
-	}
-	if got := saved["short-model"].ContextWindow; got != 32_768 {
-		t.Fatalf("saved short-model context window = %d, want 32768", got)
 	}
 }
 
@@ -524,14 +510,16 @@ func TestSaveProviderPersistsCustomEndpointURLs(t *testing.T) {
 
 	app := NewApp()
 	if err := app.SaveProvider(ProviderView{
-		Name:      "sub2api",
-		Kind:      "openai",
-		BaseURL:   "https://proxy.example.com/v1",
-		ChatURL:   " https://proxy.example.com/custom/chat/completions ",
-		ModelsURL: " https://proxy.example.com/v1/models ",
-		Models:    []string{"model-a"},
-		Default:   "model-a",
-		APIKeyEnv: "SUB2API_KEY",
+		Name:         "sub2api",
+		Kind:         "openai",
+		BaseURL:      "https://proxy.example.com/v1",
+		ChatURL:      " https://proxy.example.com/custom/chat/completions ",
+		APISurface:   "responses",
+		ResponsesURL: " https://proxy.example.com/custom/responses ",
+		ModelsURL:    " https://proxy.example.com/v1/models ",
+		Models:       []string{"model-a"},
+		Default:      "model-a",
+		APIKeyEnv:    "SUB2API_KEY",
 	}); err != nil {
 		t.Fatalf("SaveProvider: %v", err)
 	}
@@ -547,6 +535,9 @@ func TestSaveProviderPersistsCustomEndpointURLs(t *testing.T) {
 	if got.ModelsURL != "https://proxy.example.com/v1/models" {
 		t.Fatalf("saved models_url = %q", got.ModelsURL)
 	}
+	if got.APISurface != config.APISurfaceResponses || got.ResponsesURL != "https://proxy.example.com/custom/responses" {
+		t.Fatalf("saved responses fields = %q %q", got.APISurface, got.ResponsesURL)
+	}
 
 	view := app.Settings()
 	for _, provider := range view.Providers {
@@ -559,6 +550,9 @@ func TestSaveProviderPersistsCustomEndpointURLs(t *testing.T) {
 		if provider.ModelsURL != "https://proxy.example.com/v1/models" {
 			t.Fatalf("Settings modelsUrl = %q", provider.ModelsURL)
 		}
+		if provider.APISurface != config.APISurfaceResponses || provider.ResponsesURL != "https://proxy.example.com/custom/responses" {
+			t.Fatalf("Settings responses fields = %q %q", provider.APISurface, provider.ResponsesURL)
+		}
 		return
 	}
 	t.Fatalf("Settings providers missing sub2api: %+v", view.Providers)
@@ -568,6 +562,7 @@ func TestSaveProviderPreservesHiddenProviderFields(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	cfg := config.LoadForEdit(config.UserConfigPath())
+	cfg.Desktop.ProviderAccess = []string{"custom"}
 	cfg.Providers = []config.ProviderEntry{{
 		Name:         "custom",
 		Kind:         "openai",
@@ -740,7 +735,7 @@ func TestOfficialDeepSeekTemplateDefaultsToRMBPricing(t *testing.T) {
 	}
 }
 
-func TestSetAgentParamsIgnoresDeprecatedStepLimits(t *testing.T) {
+func TestSetAgentParamsPersistsStepLimitsToUserConfig(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	app := NewApp()
@@ -749,16 +744,16 @@ func TestSetAgentParamsIgnoresDeprecatedStepLimits(t *testing.T) {
 	}
 
 	view := app.Settings()
-	if view.Agent.MaxSteps != 0 || view.Agent.PlannerMaxSteps != 0 {
-		t.Fatalf("Settings().Agent = %+v, want deprecated step limits normalized to zero", view.Agent)
+	if view.Agent.MaxSteps != 37 || view.Agent.PlannerMaxSteps != 9 {
+		t.Fatalf("Settings().Agent = %+v, want maxSteps=37 plannerMaxSteps=9", view.Agent)
 	}
 	if view.Agent.Temperature != 0.35 || view.Agent.SystemPrompt != "custom system" {
 		t.Fatalf("Settings().Agent did not preserve other agent params: %+v", view.Agent)
 	}
 
 	cfg := config.LoadForEdit(config.UserConfigPath())
-	if cfg.Agent.MaxSteps != 0 || cfg.Agent.PlannerMaxSteps != 0 {
-		t.Fatalf("saved config agent steps = max:%d planner:%d, want automatic 0/0", cfg.Agent.MaxSteps, cfg.Agent.PlannerMaxSteps)
+	if cfg.Agent.MaxSteps != 37 || cfg.Agent.PlannerMaxSteps != 9 {
+		t.Fatalf("saved config agent steps = max:%d planner:%d, want 37/9", cfg.Agent.MaxSteps, cfg.Agent.PlannerMaxSteps)
 	}
 	if cfg.Agent.Temperature != 0.35 || cfg.Agent.SystemPrompt != "custom system" {
 		t.Fatalf("saved config did not preserve other agent params: %+v", cfg.Agent)
@@ -787,7 +782,7 @@ func TestSetReasoningLanguagePersistsToUserConfig(t *testing.T) {
 func TestSetDesktopLanguagePersistsResponseLanguageAndUpdatesLiveTabs(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	projectRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(projectRoot, "reasonix.toml"), []byte("language = \"zh\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectRoot, "voltui.toml"), []byte("language = \"zh\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -834,7 +829,7 @@ func TestSetDesktopLanguagePersistsResponseLanguageAndUpdatesLiveTabs(t *testing
 func TestSetReasoningLanguageUpdatesLiveTabControllers(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	projectRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(projectRoot, "reasonix.toml"), []byte("[agent]\nreasoning_language = \"en\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectRoot, "voltui.toml"), []byte("[agent]\nreasoning_language = \"en\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -874,19 +869,136 @@ func TestSetReasoningLanguageUpdatesLiveTabControllers(t *testing.T) {
 	}
 }
 
-func TestSetAutoPlanCompatibilityCannotReenableRetiredFeature(t *testing.T) {
+func TestSetAutoPlanUpdatesLiveTabControllers(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	app := NewApp()
+	userRunner := &captureTurnRunner{}
+	projectRunner := &captureTurnRunner{}
+	userCtrl := control.New(control.Options{AutoPlan: "on", Runner: userRunner})
+	projectCtrl := control.New(control.Options{AutoPlan: "on", Runner: projectRunner})
+	app.tabs = map[string]*WorkspaceTab{
+		"user": {
+			ID:          "user",
+			Scope:       "global",
+			Ctrl:        userCtrl,
+			Ready:       true,
+			disabledMCP: map[string]ServerView{},
+		},
+		"project": {
+			ID:            "project",
+			Scope:         "project",
+			WorkspaceRoot: t.TempDir(),
+			Ctrl:          projectCtrl,
+			Ready:         true,
+			disabledMCP:   map[string]ServerView{},
+		},
+	}
+	app.activeTabID = "user"
+
 	if err := app.SetAutoPlan("off"); err != nil {
-		t.Fatalf("SetAutoPlan(off): %v", err)
+		t.Fatalf("SetAutoPlan: %v", err)
 	}
-	if err := app.SetAutoPlan("on"); err == nil || !strings.Contains(err.Error(), "retired") {
-		t.Fatalf("SetAutoPlan(on) error = %v, want retired error", err)
+
+	input := "实现 GitHub issue #2395：\n- 新增配置项\n- 自动判断复杂任务\n- 补测试和文档"
+	if err := userCtrl.RunTurn(context.Background(), input); err != nil {
+		t.Fatal(err)
 	}
+	if err := projectCtrl.RunTurn(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	if len(userRunner.inputs) != 1 || strings.HasPrefix(userRunner.inputs[0], control.PlanModeMarker) {
+		t.Fatalf("user tab should use updated auto_plan=off, inputs=%q", userRunner.inputs)
+	}
+	if len(projectRunner.inputs) != 1 || strings.HasPrefix(projectRunner.inputs[0], control.PlanModeMarker) {
+		t.Fatalf("project tab without override should use updated auto_plan=off, inputs=%q", projectRunner.inputs)
+	}
+}
+
+func TestSetAutoPlanIgnoresProjectOverrideForLiveTab(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	projectRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectRoot, "voltui.toml"), []byte("[agent]\nauto_plan = \"on\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	userRunner := &captureTurnRunner{}
+	projectRunner := &captureTurnRunner{}
+	userCtrl := control.New(control.Options{AutoPlan: "on", Runner: userRunner})
+	projectCtrl := control.New(control.Options{AutoPlan: "on", Runner: projectRunner})
+	app.tabs = map[string]*WorkspaceTab{
+		"user": {
+			ID:          "user",
+			Scope:       "global",
+			Ctrl:        userCtrl,
+			Ready:       true,
+			disabledMCP: map[string]ServerView{},
+		},
+		"project": {
+			ID:            "project",
+			Scope:         "project",
+			WorkspaceRoot: projectRoot,
+			Ctrl:          projectCtrl,
+			Ready:         true,
+			disabledMCP:   map[string]ServerView{},
+		},
+	}
+	app.activeTabID = "user"
+
+	if err := app.SetAutoPlan("off"); err != nil {
+		t.Fatalf("SetAutoPlan: %v", err)
+	}
+
+	input := "实现 GitHub issue #2395：\n- 新增配置项\n- 自动判断复杂任务\n- 补测试和文档"
+	if err := userCtrl.RunTurn(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	if err := projectCtrl.RunTurn(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	if len(userRunner.inputs) != 1 || strings.HasPrefix(userRunner.inputs[0], control.PlanModeMarker) {
+		t.Fatalf("user tab should use updated auto_plan=off, inputs=%q", userRunner.inputs)
+	}
+	if len(projectRunner.inputs) != 1 || strings.HasPrefix(projectRunner.inputs[0], control.PlanModeMarker) {
+		t.Fatalf("project auto_plan should be ignored, inputs=%q", projectRunner.inputs)
+	}
+}
+
+func TestSetAutoPlanEnablingClassifierRebuildsActiveController(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	cfg.Agent.AutoPlan = "off"
+	cfg.Agent.AutoPlanClassifier = "deepseek-flash"
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	app := NewApp()
+	app.ctx = context.Background()
+	app.readyHook = func() {}
+	old := control.New(control.Options{AutoPlan: "off", Label: "old-controller"})
+	app.setTestCtrl(old, "deepseek-flash/deepseek-v4-flash")
+	defer func() {
+		if c := app.activeCtrl(); c != nil {
+			c.Close()
+		}
+	}()
+
+	if err := app.SetAutoPlan("on"); err != nil {
+		t.Fatalf("SetAutoPlan(on): %v", err)
+	}
+	if c := app.activeCtrl(); c == nil {
+		t.Fatal("SetAutoPlan should leave a rebuilt controller")
+	}
+	if c := app.activeCtrl(); c == old {
+		t.Fatal("SetAutoPlan should rebuild when enabling a configured classifier")
+	}
+
 	got := config.LoadForEdit(config.UserConfigPath())
-	if got.Agent.AutoPlan != "off" || got.Agent.AutoPlanClassifier != "" {
-		t.Fatalf("retired auto-plan state = (%q, %q), want off/empty", got.Agent.AutoPlan, got.Agent.AutoPlanClassifier)
+	if got.Agent.AutoPlan != "on" {
+		t.Fatalf("saved auto_plan = %q, want on", got.Agent.AutoPlan)
 	}
 }
 
@@ -929,75 +1041,12 @@ func TestSetDesktopCheckUpdatesPersistsToUserConfig(t *testing.T) {
 	}
 }
 
-func TestSetDesktopUpdateChannelPersistsToUserConfig(t *testing.T) {
-	isolateDesktopUserDirs(t)
-
-	app := NewApp()
-	if got := app.Settings().UpdateChannel; got != "stable" {
-		t.Fatalf("Settings().UpdateChannel default = %q, want stable", got)
-	}
-	if err := app.SetDesktopUpdateChannel("canary"); err != nil {
-		t.Fatalf("SetDesktopUpdateChannel: %v", err)
-	}
-	view := app.Settings()
-	if view.UpdateChannel != "preview" {
-		t.Fatalf("Settings().UpdateChannel = %q, want preview", view.UpdateChannel)
-	}
-	cfg := config.LoadForEdit(config.UserConfigPath())
-	if cfg.Desktop.UpdateChannel != "preview" {
-		t.Fatalf("desktop.update_channel = %q, want preview", cfg.Desktop.UpdateChannel)
-	}
-	if cfg.DesktopUpdateChannel() != "preview" {
-		t.Fatalf("DesktopUpdateChannel() = %q, want preview", cfg.DesktopUpdateChannel())
-	}
-}
-
-func TestSetDesktopConversationWidthPersistsToUserConfig(t *testing.T) {
-	isolateDesktopUserDirs(t)
-
-	app := NewApp()
-	if got := app.Settings().ConversationWidth; got != "standard" {
-		t.Fatalf("Settings().ConversationWidth default = %q, want standard", got)
-	}
-	if got := app.DesktopStartupSettings().ConversationWidth; got != "standard" {
-		t.Fatalf("DesktopStartupSettings().ConversationWidth default = %q, want standard", got)
-	}
-	if err := app.SetDesktopConversationWidth("full"); err != nil {
-		t.Fatalf("SetDesktopConversationWidth: %v", err)
-	}
-	if got := app.Settings().ConversationWidth; got != "full" {
-		t.Fatalf("Settings().ConversationWidth = %q, want full", got)
-	}
-	if got := app.DesktopStartupSettings().ConversationWidth; got != "full" {
-		t.Fatalf("DesktopStartupSettings().ConversationWidth = %q, want full", got)
-	}
-	cfg := config.LoadForEdit(config.UserConfigPath())
-	if got := cfg.DesktopConversationWidth(); got != "full" {
-		t.Fatalf("persisted conversation width = %q, want full", got)
-	}
-
-	if err := app.SetDesktopConversationWidth("wide"); err == nil {
-		t.Fatal("SetDesktopConversationWidth(wide) unexpectedly succeeded")
-	}
-	if got := config.LoadForEdit(config.UserConfigPath()).DesktopConversationWidth(); got != "full" {
-		t.Fatalf("invalid update changed persisted conversation width to %q", got)
-	}
-
-	raw, err := json.Marshal(app.DesktopStartupSettings())
-	if err != nil {
-		t.Fatalf("marshal DesktopStartupSettings: %v", err)
-	}
-	if !strings.Contains(string(raw), `"conversationWidth":"full"`) {
-		t.Fatalf("startup bridge payload omitted conversationWidth: %s", raw)
-	}
-}
-
 func TestSetDefaultToolApprovalModePersistsToUserConfig(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	app := NewApp()
-	if app.Settings().DefaultToolApprovalMode != control.ToolApprovalAuto {
-		t.Fatalf("Settings().DefaultToolApprovalMode = %q, want auto", app.Settings().DefaultToolApprovalMode)
+	if app.Settings().DefaultToolApprovalMode != control.ToolApprovalAsk {
+		t.Fatalf("Settings().DefaultToolApprovalMode = %q, want ask", app.Settings().DefaultToolApprovalMode)
 	}
 	if err := app.SetDefaultToolApprovalMode(control.ToolApprovalAuto); err != nil {
 		t.Fatalf("SetDefaultToolApprovalMode: %v", err)
@@ -1012,25 +1061,6 @@ func TestSetDefaultToolApprovalModePersistsToUserConfig(t *testing.T) {
 	}
 	if cfg.DesktopDefaultToolApprovalMode() != control.ToolApprovalAuto {
 		t.Fatalf("DesktopDefaultToolApprovalMode() = %q, want auto", cfg.DesktopDefaultToolApprovalMode())
-	}
-}
-
-func TestRetiredAutoRecoveryCheckpointSettingsAreNoOps(t *testing.T) {
-	isolateDesktopUserDirs(t)
-
-	cfgPath := config.UserConfigPath()
-	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
-		t.Fatalf("mkdir config: %v", err)
-	}
-	if err := os.WriteFile(cfgPath, []byte("[agent]\nauto_recovery_checkpoint = \"off\"\n"), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	app := NewApp()
-	if err := app.SetDefaultAutoRecoveryCheckpoint(false); err != nil {
-		t.Fatalf("legacy setter: %v", err)
-	}
-	if !app.RecoveryCheckpointEnabled() || !app.RecoveryCheckpointEnabledTab("legacy") {
-		t.Fatal("retired config or legacy setter disabled built-in Auto Guard")
 	}
 }
 
@@ -1054,6 +1084,51 @@ func TestSetDesktopMetricsDefaultsOnAndPersistsOff(t *testing.T) {
 	}
 	if cfg.DesktopMetrics() {
 		t.Fatal("DesktopMetrics() = true, want false")
+	}
+}
+
+func TestSetMemoryCompilerDefaultsOnAndPersistsOff(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := NewApp()
+	if !app.Settings().MemoryCompiler {
+		t.Fatal("Settings().MemoryCompiler default = false, want true")
+	}
+	if err := app.SetMemoryCompilerEnabled(false); err != nil {
+		t.Fatalf("SetMemoryCompilerEnabled: %v", err)
+	}
+	view := app.Settings()
+	if view.MemoryCompiler {
+		t.Fatal("Settings().MemoryCompiler = true, want false")
+	}
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	if cfg.Agent.MemoryCompiler.Enabled == nil || *cfg.Agent.MemoryCompiler.Enabled {
+		t.Fatalf("agent.memory_compiler.enabled = %+v, want false", cfg.Agent.MemoryCompiler.Enabled)
+	}
+	if cfg.MemoryCompilerEnabled() {
+		t.Fatal("MemoryCompilerEnabled() = true, want false")
+	}
+}
+
+type memoryCompilerTargetFake struct {
+	calls []bool
+}
+
+func (f *memoryCompilerTargetFake) SetMemoryCompilerEnabled(enabled bool) {
+	f.calls = append(f.calls, enabled)
+}
+
+func TestApplyMemoryCompilerToControllersBroadcastsToAllTargets(t *testing.T) {
+	first := &memoryCompilerTargetFake{}
+	second := &memoryCompilerTargetFake{}
+
+	applyMemoryCompilerToControllers(false, []memoryCompilerTarget{first, nil, second})
+
+	if !reflect.DeepEqual(first.calls, []bool{false}) {
+		t.Fatalf("first calls = %v, want [false]", first.calls)
+	}
+	if !reflect.DeepEqual(second.calls, []bool{false}) {
+		t.Fatalf("second calls = %v, want [false]", second.calls)
 	}
 }
 
@@ -1093,46 +1168,6 @@ func TestSaveHooksSettingsPreservesUnknownSettingsKeys(t *testing.T) {
 	}
 }
 
-func TestSaveHooksSettingsDecodesLegacyEncodedGlobalSettings(t *testing.T) {
-	isolateDesktopUserDirs(t)
-	path := hook.GlobalSettingsPath("")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	legacy := `{"label":"中文","hooks":{"Stop":[{"command":"echo 旧"}]}}`
-	if err := os.WriteFile(path, fileencoding.Encode(legacy, fileencoding.GB18030), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	app := NewApp()
-	before := app.HooksSettings("global")
-	if len(before.Hooks) != 1 || before.Hooks[0].Command != "echo 旧" {
-		t.Fatalf("HooksSettings before save = %+v, want decoded legacy hook", before.Hooks)
-	}
-	if err := app.SaveHooksSettings("global", []HookConfigView{{
-		Event:   string(hook.PreToolUse),
-		Command: "echo 新",
-	}}); err != nil {
-		t.Fatalf("SaveHooksSettings: %v", err)
-	}
-
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
-		t.Fatalf("saved settings should be valid UTF-8 JSON: %v", err)
-	}
-	if string(raw["label"]) != `"中文"` {
-		t.Fatalf("label key was not preserved after decoding legacy settings: %s", raw["label"])
-	}
-	view := app.HooksSettings("global")
-	if len(view.Hooks) != 1 || view.Hooks[0].Command != "echo 新" {
-		t.Fatalf("HooksSettings after save = %+v, want new decoded hook", view.Hooks)
-	}
-}
-
 func TestSaveHooksSettingsNormalizesQuotedNodeEvalHookCommand(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	script := "const payload = JSON.parse(require('fs').readFileSync(0, 'utf8')); console.log(payload.toolName)"
@@ -1157,8 +1192,8 @@ func TestSaveHooksSettingsNormalizesQuotedNodeEvalHookCommand(t *testing.T) {
 	}
 }
 
-func TestProjectHooksSettingsUseActiveWorkspaceRootAndLoadByDefault(t *testing.T) {
-	isolateDesktopUserDirs(t)
+func TestProjectHooksSettingsUseActiveWorkspaceRootAndTrust(t *testing.T) {
+	home := isolateDesktopUserDirs(t)
 	project := t.TempDir()
 	app := NewApp()
 	app.tabs = map[string]*WorkspaceTab{
@@ -1173,6 +1208,12 @@ func TestProjectHooksSettingsUseActiveWorkspaceRootAndLoadByDefault(t *testing.T
 	}}); err != nil {
 		t.Fatalf("SaveHooksSettings(project): %v", err)
 	}
+	if err := app.TrustProjectHooks(); err != nil {
+		t.Fatalf("TrustProjectHooks: %v", err)
+	}
+	if !hook.IsTrusted(project, home) {
+		t.Fatal("project hooks were not trusted")
+	}
 	view := app.HooksSettings("project")
 	if view.Scope != "project" || view.ProjectRoot != project || !view.Trusted {
 		t.Fatalf("project hook view metadata = %+v", view)
@@ -1180,23 +1221,30 @@ func TestProjectHooksSettingsUseActiveWorkspaceRootAndLoadByDefault(t *testing.T
 	if len(view.Hooks) != 1 || view.Hooks[0].Event != string(hook.Stop) || view.Hooks[0].Description != "Turn done" {
 		t.Fatalf("project hooks = %+v", view.Hooks)
 	}
-	if _, err := os.Stat(filepath.Join(project, ".reasonix", "settings.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(project, ".voltui", "settings.json")); err != nil {
 		t.Fatalf("project hooks settings file missing: %v", err)
-	}
-	loaded := hook.Load(hook.LoadOptions{ProjectRoot: project})
-	if len(loaded) != 1 || loaded[0].Scope != hook.ScopeProject || loaded[0].Event != hook.Stop {
-		t.Fatalf("project hooks should load by default: %+v", loaded)
 	}
 }
 
-func TestLegacyTrustProjectHooksMethodsAreNoOps(t *testing.T) {
-	isolateDesktopUserDirs(t)
+func TestTrustProjectHooksForRootUsesDisplayedProjectRoot(t *testing.T) {
+	home := isolateDesktopUserDirs(t)
+	projectA := t.TempDir()
+	projectB := t.TempDir()
 	app := NewApp()
-	if err := app.TrustProjectHooks(); err != nil {
-		t.Fatalf("TrustProjectHooks compatibility call: %v", err)
+	app.tabs = map[string]*WorkspaceTab{
+		"a": {ID: "a", Scope: "project", WorkspaceRoot: projectA, Ready: true},
+		"b": {ID: "b", Scope: "project", WorkspaceRoot: projectB, Ready: true},
 	}
-	if err := app.TrustProjectHooksForRoot(t.TempDir()); err != nil {
-		t.Fatalf("TrustProjectHooksForRoot compatibility call: %v", err)
+	app.activeTabID = "b"
+
+	if err := app.TrustProjectHooksForRoot(projectA); err != nil {
+		t.Fatalf("TrustProjectHooksForRoot: %v", err)
+	}
+	if !hook.IsTrusted(projectA, home) {
+		t.Fatal("displayed project root was not trusted")
+	}
+	if hook.IsTrusted(projectB, home) {
+		t.Fatal("active project root was trusted instead of displayed project root")
 	}
 }
 
@@ -1217,10 +1265,10 @@ func TestSaveHooksSettingsForRootUsesDisplayedProjectRoot(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("SaveHooksSettingsForRoot: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(projectA, ".reasonix", "settings.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(projectA, ".voltui", "settings.json")); err != nil {
 		t.Fatalf("displayed project root settings missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(projectB, ".reasonix", "settings.json")); err == nil {
+	if _, err := os.Stat(filepath.Join(projectB, ".voltui", "settings.json")); err == nil {
 		t.Fatal("active project root was written instead of displayed project root")
 	}
 }
@@ -1291,7 +1339,7 @@ func TestLoadDesktopUserConfigViewKeepsLegacyBotConfigMigrationInMemory(t *testi
 		t.Fatal(err)
 	}
 	legacyRoot := t.TempDir()
-	legacyPath := filepath.Join(legacyRoot, "reasonix.toml")
+	legacyPath := filepath.Join(legacyRoot, "voltui.toml")
 	legacyBody := "[bot]\nenabled = true\nmodel = \"local/m1\"\n"
 	if err := os.WriteFile(legacyPath, []byte(legacyBody), 0o644); err != nil {
 		t.Fatal(err)
@@ -1353,71 +1401,5 @@ func TestLoadDesktopUserConfigViewKeepsLegacyBotConfigMigrationInMemory(t *testi
 	}
 	if string(rawLegacy) != legacyBody {
 		t.Fatalf("migration must not rewrite the legacy config, got:\n%s", rawLegacy)
-	}
-}
-
-func TestLoadDesktopUserConfigForRootDoesNotFollowActiveTab(t *testing.T) {
-	isolateDesktopUserDirs(t)
-	userPath := config.UserConfigPath()
-	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(userPath, []byte("default_model = \"local/m1\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	targetRoot := t.TempDir()
-	activeRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(targetRoot, "reasonix.toml"), []byte("[bot]\nenabled = true\nmodel = \"target\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(activeRoot, "reasonix.toml"), []byte("[bot]\nenabled = true\nmodel = \"active\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	app := NewApp()
-	app.tabs = map[string]*WorkspaceTab{
-		"active": {ID: "active", Scope: "project", WorkspaceRoot: activeRoot, Ready: true},
-	}
-	app.activeTabID = "active"
-
-	cfg, _, err := app.loadDesktopUserConfigForViewForRoot(targetRoot)
-	if err != nil {
-		t.Fatalf("loadDesktopUserConfigForViewForRoot: %v", err)
-	}
-	if !cfg.Bot.Enabled || cfg.Bot.Model != "target" {
-		t.Fatalf("root-specific view followed active tab: bot = %+v", cfg.Bot)
-	}
-
-	unlock := config.LockUserConfigEdits()
-	_, _, err = app.loadDesktopUserConfigForEditForRoot(targetRoot)
-	unlock()
-	if err != nil {
-		t.Fatalf("loadDesktopUserConfigForEditForRoot: %v", err)
-	}
-	migrated := config.LoadForEditWithoutCredentials(userPath)
-	if !migrated.Bot.Enabled || migrated.Bot.Model != "target" {
-		t.Fatalf("root-specific edit migrated the active tab instead: bot = %+v", migrated.Bot)
-	}
-}
-
-func TestSetBotSettingsPreservesFeishuOutboundMediaRoots(t *testing.T) {
-	isolateDesktopUserDirs(t)
-	root := t.TempDir()
-	cfg := config.Default()
-	cfg.Bot.Feishu.OutboundMediaRoots = []string{root}
-	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
-		t.Fatalf("save initial config: %v", err)
-	}
-
-	app := NewApp()
-	view := botSettingsView(cfg.Bot)
-	view.QueueCap++
-	if err := app.SetBotSettings(view); err != nil {
-		t.Fatalf("SetBotSettings: %v", err)
-	}
-
-	got := config.LoadForEditWithoutCredentials(config.UserConfigPath())
-	if !reflect.DeepEqual(got.Bot.Feishu.OutboundMediaRoots, []string{root}) {
-		t.Fatalf("outbound media roots = %v, want preserved %q", got.Bot.Feishu.OutboundMediaRoots, root)
 	}
 }

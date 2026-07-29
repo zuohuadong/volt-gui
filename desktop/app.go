@@ -204,14 +204,6 @@ type App struct {
 
 	heartbeat           *HeartbeatEngine // scheduled heartbeat tasks; nil until startup
 	automationScheduler *AutomationScheduler
-
-	startupTracker *repair.StartupTracker
-	previousRun    repair.PreviousRunObservation
-	// startupReady records that the window reached domReady. The shutdown path
-	// treats an exit before this point as an incomplete start: it must neither
-	// reset the crash-loop counter nor bless a probationary update, or a build
-	// that boots but never paints would defeat the Guard rollback safety net.
-	startupReady atomic.Bool
 }
 
 type skillRootsCache struct {
@@ -421,8 +413,6 @@ func (a *App) startup(ctx context.Context) {
 		a.metrics.Store(newMetricsAggregator(config.MemoryUserDir()))
 		a.recordSettingsMetricsSnapshot(cfg)
 	}
-	a.recordPreviousRunDiagnostics()
-	a.observeIncompleteWindowRestore()
 	a.startMainThreadWatchdog()
 
 	a.heartbeat = newHeartbeatEngine(a)
@@ -549,11 +539,14 @@ func (a *App) tabsRestoredSignal() <-chan struct{} {
 }
 
 func (a *App) showMainWindow() {
-	a.showMainWindowFrom("menu")
+	if a.ctx != nil {
+		showFromBackground(a.ctx, a.backgroundMaximised.Swap(false))
+		a.kickDeferredRebuildRetry()
+	}
 }
 
 func (a *App) secondInstanceLaunch() {
-	a.showMainWindowFrom("second_instance")
+	a.showMainWindow()
 }
 
 func (a *App) quitApp() {
@@ -858,47 +851,6 @@ func (a *App) domReady(_ context.Context) {
 	}
 
 	runtime.WindowShow(a.ctx)
-	a.startupReady.Store(true)
-	if a.startupTracker != nil {
-		_ = a.startupTracker.MarkReady()
-		tracker := a.startupTracker
-		ctx := a.ctx
-		a.goSafe("startupHeartbeat", func() {
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					if err := tracker.Heartbeat(); err != nil {
-						slog.Debug("desktop: update startup heartbeat", "err", err)
-					}
-				}
-			}
-		})
-		a.goSafe("confirmStartupHealth", func() {
-			timer := time.NewTimer(repair.StartupHealthDelay)
-			defer timer.Stop()
-			select {
-			case <-timer.C:
-			case <-ctx.Done():
-				return
-			}
-			if err := tracker.MarkHealthy(); err != nil {
-				slog.Warn("desktop: mark startup healthy", "err", err)
-				return
-			}
-			if !config.SafeModeRequested() {
-				if err := repair.MarkUpdateHealthy(version); err != nil {
-					slog.Warn("desktop: commit healthy update", "err", err)
-				}
-				if err := repair.RecordHealthyConfig(version); err != nil {
-					slog.Warn("desktop: record last-known-good config", "err", err)
-				}
-			}
-		})
-	}
 }
 
 // --- bound command surface (frontend → controller) ---

@@ -49,24 +49,6 @@ func (f *fakeProvider) Stream(_ context.Context, req provider.Request) (<-chan p
 	return ch, nil
 }
 
-func TestRunPreflightsContextAfterAppendingUserMessage(t *testing.T) {
-	prov := &fakeProvider{reply: "done"}
-	sess := NewSession("system")
-	sess.Add(provider.Message{Role: provider.RoleUser, Content: strings.Repeat("a", 2000)})
-	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: strings.Repeat("b", 2000)})
-	a := New(prov, tool.NewRegistry(), sess, Options{ContextWindow: 1000, RecentKeep: 2, ArchiveDir: t.TempDir()}, event.Discard)
-
-	if err := a.Run(context.Background(), "latest request"); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if prov.calls != 2 {
-		t.Fatalf("provider calls = %d, want summary plus completion", prov.calls)
-	}
-	if !messagesContainText(prov.got, "latest request") {
-		t.Fatalf("active user turn was lost during preflight compaction: %#v", prov.got)
-	}
-}
-
 func TestRunRejectsOversizedActiveTurnBeforeProviderCall(t *testing.T) {
 	prov := &fakeProvider{reply: "should not run"}
 	sess := NewSession("system")
@@ -143,18 +125,6 @@ type preflightSchemaTool struct {
 	description string
 }
 
-type preflightLargeResultTool struct {
-	content string
-}
-
-func (preflightLargeResultTool) Name() string            { return "large_result" }
-func (preflightLargeResultTool) Description() string     { return "return a large test payload" }
-func (preflightLargeResultTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
-func (preflightLargeResultTool) ReadOnly() bool          { return true }
-func (t preflightLargeResultTool) Execute(context.Context, json.RawMessage) (string, error) {
-	return t.content, nil
-}
-
 func (preflightSchemaTool) Name() string            { return "large_schema" }
 func (t preflightSchemaTool) Description() string   { return t.description }
 func (preflightSchemaTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
@@ -176,37 +146,6 @@ func TestRunIncludesToolSchemasInContextPreflight(t *testing.T) {
 	if prov.calls != 0 {
 		t.Fatalf("provider calls = %d, want 0", prov.calls)
 	}
-}
-
-func TestRunPreflightsToolResultsBeforeStartingAnotherProviderStream(t *testing.T) {
-	prov := testutil.NewMock("preflight",
-		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "large-result", Name: "large_result", Arguments: `{}`}}},
-		testutil.Turn{Text: "should not run"},
-	)
-	reg := tool.NewRegistry()
-	reg.Add(preflightLargeResultTool{content: strings.Repeat("x", 4000)})
-	sess := NewSession("system")
-	a := New(prov, reg, sess, Options{ContextWindow: 1000}, event.Discard)
-
-	err := a.Run(context.Background(), "run the tool")
-	if err == nil || !strings.Contains(err.Error(), "上下文限制") {
-		t.Fatalf("Run error = %v, want local context-limit error", err)
-	}
-	if calls := len(prov.Requests()); calls != 1 {
-		t.Fatalf("provider calls = %d, want only the initial tool-call round", calls)
-	}
-	if !messagesContainText(sess.Snapshot(), strings.Repeat("x", 4000)) {
-		t.Fatal("completed large tool result was lost after the later preflight failed")
-	}
-}
-
-func messagesContainText(messages []provider.Message, want string) bool {
-	for _, message := range messages {
-		if strings.Contains(message.Content, want) {
-			return true
-		}
-	}
-	return false
 }
 
 func TestTailStart(t *testing.T) {

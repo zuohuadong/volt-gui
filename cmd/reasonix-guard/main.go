@@ -13,7 +13,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
+	"voltui/internal/config"
+	"voltui/internal/nativeui"
 	"voltui/internal/repair"
 )
 
@@ -304,14 +307,10 @@ func runLaunch(args []string) int {
 		childArgs = append([]string{"--safe-mode"}, childArgs...)
 	}
 	cmd := exec.Command(path, childArgs...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if *detach {
-		if err := cmd.Start(); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
-		}
-		return 0
+		return startDetachedDesktop(cmd, path)
 	}
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
 			return exit.ExitCode()
@@ -320,6 +319,47 @@ func runLaunch(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func startDetachedDesktop(cmd *exec.Cmd, desktopPath string) int {
+	launchLog, logPath, logErr := openDesktopLaunchLog()
+	if logErr == nil {
+		defer launchLog.Close()
+		fmt.Fprintf(launchLog, "%s launching %s\n", time.Now().UTC().Format(time.RFC3339), desktopPath)
+		cmd.Stdout, cmd.Stderr = launchLog, launchLog
+	}
+	if err := cmd.Start(); err != nil {
+		reportDetachedLaunchError(err, launchLog, logPath)
+		return 1
+	}
+	return 0
+}
+
+func openDesktopLaunchLog() (*os.File, string, error) {
+	stateDir := config.MemoryUserDir()
+	if stateDir == "" {
+		return nil, "", fmt.Errorf("VoltUI state directory is unavailable")
+	}
+	logDir := filepath.Join(stateDir, "logs")
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return nil, "", err
+	}
+	logPath := filepath.Join(logDir, "desktop-launch.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	return logFile, logPath, err
+}
+
+func reportDetachedLaunchError(launchErr error, launchLog *os.File, logPath string) {
+	if launchLog != nil {
+		fmt.Fprintln(launchLog, "launch failed:", launchErr)
+		_ = launchLog.Sync()
+	}
+	message := fmt.Sprintf("VoltUI 无法启动。\n\n%v", launchErr)
+	if logPath != "" {
+		message += "\n\n启动日志：" + logPath
+	}
+	fmt.Fprintln(os.Stderr, "error:", launchErr)
+	nativeui.ShowError("VoltUI 启动失败", message)
 }
 
 func packagedDetachedLauncher() bool {

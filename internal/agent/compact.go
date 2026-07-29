@@ -28,6 +28,9 @@ const (
 	defaultCompactForceRatio   = 0.9   // force compaction at this high-water mark even for low-value folds
 	defaultCompactTarget       = 0.5   // safety cap: the kept tail never exceeds this fraction of the window
 	defaultTailTokens          = 16384 // verbatim recent-tail budget, in tokens
+	defaultImageTokenEstimate  = 1024  // conservative fixed reserve when image dimensions are unavailable
+	minPreflightOutputReserve  = 128   // leave room for a useful answer even on small configured windows
+	maxPreflightOutputReserve  = 4096  // large windows already retain ample headroom through the force ratio
 	minRecentKeep              = 2     // never keep fewer recent messages than this
 	minCompactMessages         = 2     // skip compaction below this many compactable messages
 	fallbackTokPerChar         = 0.25  // ~4 chars/token, used before any usage is available to calibrate
@@ -172,23 +175,87 @@ func estimateMessagesTokens(msgs []provider.Message) int {
 			total += estimateTextTokens(tc.Name)
 			total += estimateTextTokens(tc.Arguments)
 		}
+		total += len(m.Images) * defaultImageTokenEstimate
 	}
 	return total
+}
+
+func (a *Agent) preflightContext(ctx context.Context) error {
+	if a.contextWindow <= 0 {
+		return nil
+	}
+	schemas := []provider.ToolSchema(nil)
+	if a.tools != nil {
+		schemas = a.tools.Schemas()
+	}
+	estimated := estimateProviderPromptTokens(a.session.Messages, schemas)
+	if estimated >= int(float64(a.contextWindow)*a.compactRatio) {
+		a.maybeCompact(ctx, &provider.Usage{PromptTokens: estimated})
+	}
+	if estimateProviderPromptTokens(a.session.Messages, schemas) < a.preflightPromptBudget() {
+		return nil
+	}
+	return fmt.Errorf("当前对话已超出模型上下文限制，请压缩对话或新建会话后重试")
+}
+
+func estimateProviderPromptTokens(msgs []provider.Message, schemas []provider.ToolSchema) int {
+	total := estimateMessagesTokens(msgs)
+	if len(schemas) == 0 {
+		return total
+	}
+	encoded, err := json.Marshal(schemas)
+	if err != nil {
+		return total
+	}
+	return total + estimateTextTokens(string(encoded))
+}
+
+func (a *Agent) preflightPromptBudget() int {
+	budget := a.contextWindow - preflightOutputReserve(a.contextWindow)
+	forceBudget := int(float64(a.contextWindow) * a.compactForceRatio)
+	if forceBudget > 0 && forceBudget < budget {
+		budget = forceBudget
+	}
+	if budget < 1 {
+		return 1
+	}
+	return budget
+}
+
+func preflightOutputReserve(contextWindow int) int {
+	reserve := contextWindow / 20
+	if reserve < minPreflightOutputReserve {
+		reserve = minPreflightOutputReserve
+	}
+	if reserve > maxPreflightOutputReserve {
+		reserve = maxPreflightOutputReserve
+	}
+	if reserve >= contextWindow {
+		reserve = contextWindow / 10
+		if reserve < 1 {
+			reserve = 1
+		}
+	}
+	return reserve
 }
 
 func estimateTextTokens(s string) int {
 	if s == "" {
 		return 0
 	}
-	// A conservative cross-language approximation: English-ish text trends near
-	// four bytes per token, while CJK-heavy text is closer to one rune per token.
-	bytes := len(s)
-	runes := utf8.RuneCountInString(s)
-	byBytes := (bytes + 3) / 4
-	if runes > byBytes {
-		return runes
+	// English-ish text trends near four bytes per token, while CJK-heavy text is
+	// closer to one rune per token. Count the two classes independently so ASCII
+	// is not accidentally treated as one token per character.
+	asciiBytes := 0
+	nonASCII := 0
+	for _, r := range s {
+		if r < utf8.RuneSelf {
+			asciiBytes++
+		} else {
+			nonASCII++
+		}
 	}
-	return byBytes
+	return (asciiBytes+3)/4 + nonASCII
 }
 
 // compact summarizes the older middle of the session and replaces it in place:

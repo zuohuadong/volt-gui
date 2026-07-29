@@ -3538,6 +3538,7 @@ func TestEnsureTabControllerWorkspaceRebuildsStaleWorkspace(t *testing.T) {
 
 func TestEnsureTabControllerWorkspaceWarnsWhenPinnedSessionSwitchesWorkspace(t *testing.T) {
 	f := newStaleWorkspaceBindingFixture(t, "warn_workspace_switch")
+	oldRoot := f.tab.WorkspaceRoot
 	events := make(chan event.Event, 8)
 	f.tab.sink.SetBotSink(event.FuncSink(func(e event.Event) {
 		events <- e
@@ -3554,8 +3555,9 @@ func TestEnsureTabControllerWorkspaceWarnsWhenPinnedSessionSwitchesWorkspace(t *
 		case e := <-events:
 			if e.Kind == event.Notice &&
 				e.Level == event.LevelWarn &&
-				strings.Contains(e.Text, f.projectA) &&
-				strings.Contains(e.Text, "switched tab") {
+				strings.Contains(e.Text, "当前会话属于其他工作区") &&
+				!strings.Contains(e.Text, f.projectA) &&
+				!strings.Contains(e.Text, oldRoot) {
 				return
 			}
 		case <-deadline:

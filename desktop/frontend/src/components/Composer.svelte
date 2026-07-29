@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { AtSign, Check, FileText, FileType, Folder, FolderKanban, Image, ListChecks, Paperclip, Plus, Presentation, Search, Send, ShieldCheck, Square, Table, Target, WandSparkles, X } from "@lucide/svelte";
   import { t } from "../lib/i18n";
-  import { app, onFilesDropped } from "../lib/bridge";
+  import { app, onFilesDropped, openExternal } from "../lib/bridge";
   import { contextRemainingPercent, formatSessionCost } from "../lib/thread-ux";
   import type { QueuedThreadMessage } from "../lib/task-lifecycle";
   import type { ComposerToolApprovalMode } from "../lib/tool-approval-mode";
@@ -642,14 +642,14 @@
       {/if}
       {#if plusMenuOpen}
         <div class="composer-plus-menu" role="menu">
-          <span class="composer-plus-menu__title">Add</span>
+          <span class="composer-plus-menu__title">添加</span>
           <button class="active" type="button" role="menuitem" onclick={() => openFilePicker()}>
             <Paperclip size={16} />
-            <span><strong>Files and folders</strong></span>
+            <span><strong>文件和文件夹</strong></span>
           </button>
           <button type="button" role="menuitem" onclick={() => openFilePicker("image/*")}>
             <Image size={14} />
-            <span><strong>附加 微信</strong></span>
+            <span><strong>图片</strong></span>
           </button>
           <button type="button" role="menuitem" onclick={openGoalEditor}>
             <Target size={15} />
@@ -662,7 +662,7 @@
           <span class="composer-plus-menu__title">插件</span>
           <button type="button" role="menuitem" onclick={() => openFilePicker()}>
             <FileText class="plugin-docs" size={16} />
-            <span><strong>Documents</strong></span>
+            <span><strong>文档</strong></span>
           </button>
           <button type="button" role="menuitem" onclick={() => openFilePicker(".pdf")}>
             <FileType class="plugin-pdf" size={16} />
@@ -670,16 +670,16 @@
           </button>
           <button type="button" role="menuitem" onclick={() => openFilePicker(".xlsx,.xls,.csv,.tsv")}>
             <Table class="plugin-sheet" size={16} />
-            <span><strong>Spreadsheets</strong></span>
+            <span><strong>表格</strong></span>
           </button>
           <button type="button" role="menuitem" onclick={() => openFilePicker(".ppt,.pptx")}>
             <Presentation class="plugin-slides" size={16} />
-            <span><strong>Presentations</strong></span>
+            <span><strong>演示文稿</strong></span>
           </button>
           {#if onOpenResources}
             <button type="button" role="menuitem" onclick={openResources}>
               <WandSparkles class="plugin-template" size={16} />
-              <span><strong>Template Creator</strong></span>
+              <span><strong>模板创建器</strong></span>
             </button>
           {/if}
         </div>
@@ -724,10 +724,10 @@
           <div class="composer-permission-menu" role="menu">
             <div class="composer-permission-menu__head">
               <strong>应如何批准操作？</strong>
-              <span>了解更多</span>
+              <button class="composer-permission-menu__learn-more" type="button" onclick={() => openExternal("https://github.com/zuohuadong/volt-gui/blob/main/docs/TOOL_APPROVAL_MODES.zh-CN.md")}>了解更多</button>
             </div>
             {#each workPermissionOptions as option (option.id)}
-              <button class:active={workPermission === option.id} type="button" role="menuitem" disabled={permissionChanging} onclick={() => setWorkPermission(option.id)}>
+              <button class="composer-permission-menu__option" class:active={workPermission === option.id} type="button" role="menuitem" disabled={permissionChanging} onclick={() => setWorkPermission(option.id)}>
                 <i>{option.mark}</i>
                 <span>
                   <strong>{option.label}</strong>

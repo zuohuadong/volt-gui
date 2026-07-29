@@ -47,7 +47,7 @@ func isTodayAgendaQuery(display string, inputs ...string) bool {
 		return false
 	}
 	for _, input := range append([]string{display}, inputs...) {
-		if hasExplicitWorkspaceIntent(input) || hasAgendaMutationIntent(input) {
+		if hasExplicitWorkspaceIntent(input) || hasAgendaMutationIntent(input) || hasAgendaDocumentIntent(input) {
 			return false
 		}
 	}
@@ -57,6 +57,28 @@ func isTodayAgendaQuery(display string, inputs ...string) bool {
 	for _, marker := range []string{
 		"安排", "日程", "行程", "待办", "任务", "会议", "计划", "有什么", "有啥", "哪些事", "什么事", "做什么", "干什么",
 	} {
+		if strings.Contains(query, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAgendaDocumentIntent(input string) bool {
+	query := strings.TrimSpace(strings.ToLower(input))
+	if !containsAnyAgendaMarker(query, "会议", "文档", "日程", "待办", "安排", "行程", "计划", "任务") {
+		return false
+	}
+	for _, marker := range []string{"纪要", "整理", "总结", "生成", "起草", "撰写", "汇总", "输出"} {
+		if strings.Contains(query, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAnyAgendaMarker(query string, markers ...string) bool {
+	for _, marker := range markers {
 		if strings.Contains(query, marker) {
 			return true
 		}

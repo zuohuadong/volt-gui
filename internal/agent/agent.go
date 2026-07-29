@@ -426,6 +426,13 @@ type Agent struct {
 	compactStuck        bool
 	consecutiveCompacts int
 
+	// activeTurnStartIndex records the session index of the user message that
+	// began the in-flight Run, or -1 outside a turn. Compaction keeps the whole
+	// active turn outside the fold so in-progress tool call/result pairs are not
+	// reduced to summary prose mid-turn. The index is adjusted after every
+	// compaction rewrite.
+	activeTurnStartIndex atomic.Int64
+
 	// stormSig / stormCount track a run of turns that keep failing or getting
 	// blocked the same way so the loop can break a death-spiral. The signature is
 	// each call's (tool, error/blocker) in order, NOT (tool, args): a stuck model
@@ -1065,6 +1072,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		memoryCompiler:              opts.MemoryCompiler,
 		memoryCompilerVerbosity:     normalizeMemoryCompilerVerbosity(opts.MemoryCompilerVerbosity),
 	}
+	a.activeTurnStartIndex.Store(-1)
 	// 初始化分类器
 	if opts.UseMemoryCompilerLLMClassification && prov != nil {
 		// 使用 LLM 分类器（Haiku）
@@ -1158,6 +1166,9 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			}
 		}
 	}
+	turnStartMessages := a.session.Snapshot()
+	a.activeTurnStartIndex.Store(int64(len(turnStartMessages)))
+	defer a.activeTurnStartIndex.Store(-1)
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input, Images: userImages(ctx)})
 
 	finalReadinessBlocks := 0
@@ -1165,6 +1176,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	handoffNudges := 0
 	usedAnyTool := false
 	streamRecoveries := 0
+	providerStreamStarted := false
 	graceRound := false
 	executorHandoff := a.executorHandoffGuard && strings.Contains(input, executorHandoffMarker)
 	for step := 0; a.maxSteps <= 0 || step < a.maxSteps || graceRound; step++ {
@@ -1176,6 +1188,12 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			a.session.Add(provider.Message{Role: provider.RoleUser, Content: a.withTurnPreferences(midTurnSteerMessage(text))})
 			a.sink.Emit(event.Event{Kind: event.Steer, Text: text})
 		}
+		if err := a.preflightContext(); err != nil {
+			if !providerStreamStarted {
+				a.session.Rewrite(turnStartMessages)
+			}
+			return err
+		}
 		schemas := a.tools.Schemas()
 		prefixShape := a.capturePrefixShape(schemas)
 		prevPrefixShape := a.lastPrefixShape
@@ -1183,6 +1201,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			prevPrefixShape = prefixShape
 		}
 
+		providerStreamStarted = true
 		text, reasoning, signature, calls, usage, interrupted, partialToolStarted, err := a.stream(ctx, step+1)
 		if err != nil {
 			if interrupted && streamRecoveries < maxStreamRecoveries {

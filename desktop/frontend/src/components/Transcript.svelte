@@ -4,7 +4,8 @@
   import { BrainCircuit, Check, ChevronDown, HelpCircle, LoaderCircle, ShieldAlert, Terminal, X } from "@lucide/svelte";
   import MarkdownView from "./MarkdownView.svelte";
   import { isToolDetailsOpen, setToolOpenState, type ToolOpenState } from "../lib/tool-open-state";
-  import { stripInternalTranscriptBlocks } from "../lib/transcript-visibility";
+  import { visibleTranscriptText } from "../lib/transcript-visibility";
+  import { formatUserError } from "../lib/user-error";
   import type { QuestionAnswer, TranscriptItem, WireApproval, WireAsk } from "../lib/types";
 
   let {
@@ -225,7 +226,7 @@
       tool: actionName,
       readOnly: item.readOnly,
       summary: item.toolSummary,
-      error: item.error,
+      error: item.error ? formatUserError(item.error) : undefined,
       cancelled,
       durationMs: item.durationMs,
       truncated: item.truncated,
@@ -404,7 +405,7 @@
                 <div class="thinking-step">
                   <span></span>
                   <div>
-                    <MarkdownView text={stripInternalTranscriptBlocks(item.body)} />
+                    <p>内部推理已隐藏；最终回答与可验证工具记录会继续显示。</p>
                   </div>
                 </div>
               </div>
@@ -421,7 +422,7 @@
                 </footer>
               </div>
             {:else}
-              <MarkdownView text={stripInternalTranscriptBlocks(item.body)} />
+              <MarkdownView text={visibleTranscriptText(item.body)} />
               {#if item.pending && item.role === "assistant"}
                 <div class="pending-inline-status" role="status" aria-live="polite">
                   <LoaderCircle size={13} />

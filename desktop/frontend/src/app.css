@@ -1150,6 +1150,7 @@ button {
   gap: 8px;
   min-width: 0;
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .md h1,
@@ -1208,8 +1209,10 @@ button {
 }
 
 .md table {
+  display: block;
   width: 100%;
-  overflow: hidden;
+  max-width: 100%;
+  overflow-x: auto;
   border-collapse: collapse;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1218,8 +1221,10 @@ button {
 
 .md th,
 .md td {
+  min-width: 96px;
   padding: 7px 9px;
   border: 1px solid var(--line);
+  overflow-wrap: anywhere;
   text-align: left;
   vertical-align: top;
 }
@@ -1693,15 +1698,24 @@ button {
   font-weight: 700;
 }
 
-.composer-permission-menu__head span {
+.composer-permission-menu__learn-more {
+  padding: 0;
   color: #747b86;
+  background: transparent;
+  border: 0;
   border-bottom: 1px solid currentColor;
+  border-radius: 0;
+  cursor: pointer;
   font-size: 11px;
   font-weight: 650;
   white-space: nowrap;
 }
 
-.composer-permission-menu button {
+.composer-permission-menu__learn-more:hover {
+  color: #222222;
+}
+
+.composer-permission-menu__option {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) 16px;
   align-items: center;
@@ -1716,11 +1730,11 @@ button {
   text-align: left;
 }
 
-.composer-permission-menu button:hover {
+.composer-permission-menu__option:hover {
   background: #f4f6f9;
 }
 
-.composer-permission-menu button > i {
+.composer-permission-menu__option > i {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1735,23 +1749,24 @@ button {
   line-height: 1;
 }
 
-.composer-permission-menu button span {
+.composer-permission-menu__option span {
   min-width: 0;
 }
 
-.composer-permission-menu button strong {
+.composer-permission-menu__option strong {
   display: block;
   color: #222222;
   font-size: 12px;
   font-weight: 760;
 }
 
-.composer-permission-menu button > svg {
+.composer-permission-menu__option > svg {
   justify-self: end;
   color: #5f6774;
 }
 
-.composer__tools button span {
+.composer__link-picker > span,
+.composer__permission-picker > span {
   color: inherit;
   font-size: 12px;
   white-space: nowrap;

@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -182,7 +181,6 @@ func main() {
 		Title:     title,
 		Width:     width,
 		Height:    height,
-		Frameless: goruntime.GOOS == "windows",
 		Logger:    newCrashCaptureLogger(app),
 		MinWidth:  760,
 		MinHeight: 480,

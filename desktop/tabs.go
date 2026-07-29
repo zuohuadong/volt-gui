@@ -3550,17 +3550,8 @@ func (a *App) applySessionBindingToTab(tab *WorkspaceTab, binding sessionBinding
 	}
 }
 
-func sessionBindingWorkspaceNotice(oldScope, oldWorkspaceRoot, scope, workspaceRoot string) string {
-	return "Session belongs to " + describeSessionBindingWorkspace(scope, workspaceRoot) +
-		"; switched tab from " + describeSessionBindingWorkspace(oldScope, oldWorkspaceRoot) +
-		" to match the saved session."
-}
-
-func describeSessionBindingWorkspace(scope, workspaceRoot string) string {
-	if strings.TrimSpace(scope) == "project" && strings.TrimSpace(workspaceRoot) != "" {
-		return fmt.Sprintf("project workspace %q", strings.TrimSpace(workspaceRoot))
-	}
-	return "global workspace"
+func sessionBindingWorkspaceNotice(_, _, _, _ string) string {
+	return "当前会话属于其他工作区，已切换到会话保存的工作区。"
 }
 
 func (a *App) resolveSessionBinding(sessionPath string) (sessionBinding, bool) {

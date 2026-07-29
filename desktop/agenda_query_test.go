@@ -197,6 +197,24 @@ func TestIsTodayAgendaQueryRejectsMutationIntent(t *testing.T) {
 	}
 }
 
+func TestIsTodayAgendaQueryRejectsMeetingDocumentIntent(t *testing.T) {
+	for _, query := range []string{
+		"整理今天的会议纪要",
+		"请总结今天会议并输出文档",
+		"起草一份今日会议纪要",
+		"总结今天的日程",
+		"整理今日待办",
+		"生成今天安排",
+	} {
+		if isTodayAgendaQuery(query) {
+			t.Fatalf("isTodayAgendaQuery(%q) = true, want false for a document task", query)
+		}
+	}
+	if !isTodayAgendaQuery("今天有哪些会议安排") {
+		t.Fatal("a read-only meeting agenda question should remain local")
+	}
+}
+
 func TestIsTodayAgendaQueryRejectsExplicitWorkspaceIntent(t *testing.T) {
 	for _, query := range []string{
 		"今天有没有什么安排，顺便读取 @README.md",

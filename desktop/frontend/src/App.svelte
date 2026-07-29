@@ -133,6 +133,7 @@
   } from "./lib/task-lifecycle";
   import type { QueuedThreadMessage } from "./lib/task-lifecycle";
   import type { RecoveryAction } from "./lib/task-activity";
+  import { errorText, formatUserError } from "./lib/user-error";
   import {
     addDiffReviewComment,
     buildDiffFixPrompt,
@@ -1024,6 +1025,7 @@
       return b.updatedAtMs - a.updatedAtMs;
     })
     .map((project) => ({ id: project.id, label: project.name })));
+  const materialProjectOptions = $derived(newTaskProjectOptions);
   const sortedSidebarProjects = $derived([...sidebarProjects].sort((a, b) => {
     if (sidebarProjectSort === "name") return a.name.localeCompare(b.name, "zh-Hans-CN");
     if (sidebarProjectSort === "tasks") return sidebarProjectConversations(b).length - sidebarProjectConversations(a).length || a.name.localeCompare(b.name, "zh-Hans-CN");
@@ -1449,9 +1451,10 @@
     }
   }
   function materialFileUploadError(fileName: string, error: unknown) {
+    const rawDetail = errorText(error);
     const detail = formatErrorMessage(error);
-    if (detail.includes("between 1 byte and 64 MiB")) return `资料文件“${fileName}”未导入：单个文件不能超过 64 MiB。`;
-    if (detail.includes("25 MiB")) return `资料文件“${fileName}”未导入：浏览器 data URL 导入最多支持 25 MiB，请在桌面端重新选择文件。`;
+    if (rawDetail.includes("between 1 byte and 64 MiB")) return `资料文件“${fileName}”未导入：单个文件不能超过 64 MiB。`;
+    if (rawDetail.includes("25 MiB")) return `资料文件“${fileName}”未导入：浏览器 data URL 导入最多支持 25 MiB，请在桌面端重新选择文件。`;
     return `资料文件“${fileName}”未导入。请确认文件仍可读取且当前工作区可写：${detail}`;
   }
   function handleIngestFilesChange(event: Event) {
@@ -2328,9 +2331,10 @@
       showWorkbenchNotice(`${saved.title} 已执行。`);
     } catch (error) {
       console.error("Failed to run automation", error);
+      const rawMessage = errorText(error);
       const message = formatErrorMessage(error);
       await refreshAutomations();
-      showWorkbenchNotice(message.includes("state was saved")
+      showWorkbenchNotice(rawMessage.includes("state was saved")
         ? `自动化命令已执行且状态已保存，但结果收件箱写入失败：${message}`
         : `执行自动化任务失败：${message}`);
     }
@@ -2650,7 +2654,7 @@
       await refreshModelSettings();
       settingsMessage = "设置已保存。";
     } catch (error) {
-      modelSettingsError = error instanceof Error ? error.message : String(error);
+      modelSettingsError = formatErrorMessage(error);
     } finally {
       settingsSaving = false;
     }
@@ -2667,7 +2671,7 @@
       await refreshModelSettings();
       settingsMessage = `已撤销 ${site.host} 的永久内网授权。`;
     } catch (error) {
-      modelSettingsError = error instanceof Error ? error.message : String(error);
+      modelSettingsError = formatErrorMessage(error);
     } finally {
       trustedIntranetRemoving = "";
     }
@@ -2683,7 +2687,7 @@
       browserCredentials = await app().ListBrowserCredentials();
       settingsMessage = `已删除 ${credential.origin} 的浏览器登录凭据。`;
     } catch (error) {
-      modelSettingsError = error instanceof Error ? error.message : String(error);
+      modelSettingsError = formatErrorMessage(error);
     } finally {
       browserCredentialRemoving = "";
     }
@@ -2790,7 +2794,7 @@
       }
       syncSettingsDraft(modelSettings);
     } catch (error) {
-      modelSettingsError = error instanceof Error ? error.message : String(error);
+      modelSettingsError = formatErrorMessage(error);
     } finally {
       modelSettingsLoading = false;
     }
@@ -2815,7 +2819,7 @@
       applySelectedDraftModels(current.length ? current : fetchedModels);
       modelDraftMessage = `已拉取 ${fetchedModels.length} 个模型，请选择要添加的模型。`;
     } catch (error) {
-      modelDraftError = error instanceof Error ? error.message : String(error);
+      modelDraftError = formatErrorMessage(error);
     } finally {
       modelDraftFetching = false;
     }
@@ -2851,7 +2855,7 @@
       await refresh();
       configDialog = undefined;
     } catch (error) {
-      modelDraftError = error instanceof Error ? error.message : String(error);
+      modelDraftError = formatErrorMessage(error);
     } finally {
       modelDraftSaving = false;
     }
@@ -2870,7 +2874,7 @@
       await refresh();
       modelSettingsMessage = `已将 ${provider.name} / ${model} 设为默认，并切换当前会话。`;
     } catch (error) {
-      modelSettingsError = error instanceof Error ? error.message : String(error);
+      modelSettingsError = formatErrorMessage(error);
     }
   }
 
@@ -2891,7 +2895,7 @@
         ? `内置渠道“${provider.name}”已从当前配置移除。`
         : `渠道“${provider.name}”已删除。`;
     } catch (error) {
-      modelSettingsError = error instanceof Error ? error.message : String(error);
+      modelSettingsError = formatErrorMessage(error);
     }
   }
 
@@ -3431,7 +3435,7 @@
   }
 
   function isMissingTabError(error: unknown) {
-    const message = formatErrorMessage(error).toLowerCase();
+    const message = errorText(error).toLowerCase();
     return message.includes("tab ") && message.includes(" not found");
   }
 
@@ -3721,7 +3725,7 @@
     activeSidebarProjectId = project.id;
     const linked = projectCards.find((item) => item.id === project.id || item.name === project.name);
     selectedProjectId = linked?.id ?? "";
-    linkedProject = linked?.name ?? (project.kind === "inbox" ? "收件箱项目" : project.name);
+    linkedProject = project.kind === "inbox" ? "" : linked?.name ?? project.name;
   }
   function openUnifiedNav(navId: string) {
     activityMode = "work";
@@ -4120,8 +4124,9 @@ function openGovernanceCenter() {
     return reportCanExport(report) ? "报告已通过审批，可以导出" : "报告尚未通过审批，暂不能导出";
   }
   function reportExportErrorMessage(error: unknown, batch = false) {
+    const rawDetail = errorText(error);
     const detail = formatErrorMessage(error);
-    if (detail.includes("is not approved for export")) {
+    if (rawDetail.includes("is not approved for export")) {
       return batch ? "批量导出失败：仍有报告未通过审批。" : "导出失败：该报告尚未通过审批。";
     }
     return `导出报告失败：${detail}`;
@@ -4652,7 +4657,7 @@ function openGovernanceCenter() {
       await refreshWorkbenchData();
       showWorkbenchNotice(`${result.room.title}：${result.run.status === "completed" ? "运行完成" : "运行已记录"}`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = formatErrorMessage(error);
       console.error("Failed to run team runtime", error);
       teamRooms = previousTeamRooms;
       showWorkbenchNotice(`团队 runtime 执行失败：${message}`);
@@ -4718,20 +4723,36 @@ function openGovernanceCenter() {
     agentSelectorOpen = false;
   }
   function linkProjectById(projectId: string) {
-    if (!projectId) {
+    const targetProjectId = projectId || INBOX_PROJECT_ID;
+    const sidebarProject = sidebarProjects.find((item) => item.id === targetProjectId);
+    if (!sidebarProject) {
       selectedProjectId = "";
-      linkedProject = "收件箱项目";
+      linkedProject = "";
       activeSidebarProjectId = INBOX_PROJECT_ID;
       return;
     }
-    const sidebarProject = sidebarProjects.find((item) => item.id === projectId);
-    const project = projectCards.find((item) => item.id === projectId || item.name === sidebarProject?.name);
-    selectedProjectId = project?.id ?? "";
-    linkedProject = sidebarProject?.name ?? project?.name ?? "";
-    if (sidebarProject) {
-      activeSidebarProjectId = sidebarProject.id;
-      sidebarProjects = sidebarProjects.map((item) => item.id === sidebarProject.id ? { ...item, expanded: true, updatedAtMs: Date.now() } : item);
-    }
+    saveActiveSidebarConversationTranscript({ touch: false });
+    moveActiveConversationToProject(targetProjectId);
+    syncSidebarProjectContext(sidebarProject);
+    sidebarProjects = sidebarProjects.map((item) => item.id === targetProjectId ? { ...item, expanded: true, updatedAtMs: Date.now() } : item);
+    agentSelectionContextKey = `work:${targetProjectId}:${activeSidebarConversationId || "draft"}`;
+  }
+  function moveActiveConversationToProject(targetProjectId: string) {
+    if (!activeSidebarConversationId || activeSidebarProjectId === targetProjectId) return;
+    const sourceProject = sidebarProjects.find((item) => item.id === activeSidebarProjectId);
+    const conversation = sourceProject?.tasks.find((item) => item.id === activeSidebarConversationId);
+    if (!conversation) return;
+    const now = Date.now();
+    sidebarProjects = sidebarProjects.map((item) => {
+      if (item.id === sourceProject?.id) return { ...item, tasks: item.tasks.filter((task) => task.id !== conversation.id) };
+      if (item.id !== targetProjectId) return item;
+      return {
+        ...item,
+        expanded: true,
+        updatedAtMs: now,
+        tasks: [{ ...conversation, updatedAt: "刚刚", updatedAtMs: now }, ...item.tasks.filter((task) => task.id !== conversation.id)],
+      };
+    });
   }
   function linkProjectToTask(projectName: string) { const project = projectCards.find((item) => item.name === projectName); if (project) selectedProjectId = project.id; linkedProject = projectName; focusNewTask(); setComposerInput(`关联项目：${projectName}\n`); void tick().then(focusComposer); }
   function linkCustomerToTask(customerName: string) { const customer = customerCards.find((item) => item.name === customerName); if (customer) selectedCustomerId = customer.id; linkedCustomer = customerName; setComposerInput(`关联客户：${customerName}\n`); focusNewTask(); }
@@ -4836,9 +4857,9 @@ function openGovernanceCenter() {
     configDialog = "regulation";
   }
   function resetMaterialDraft() {
-    const project = selectedProject();
+    const projectId = defaultMaterialProjectId();
     materialDraftTitle = "";
-    materialDraftProjectId = project?.id ?? projectCards[0]?.id ?? "";
+    materialDraftProjectId = projectId;
     materialDraftCategory = "项目资料";
     materialDraftSource = "manual";
     materialDraftStatus = "待复核";
@@ -4848,8 +4869,7 @@ function openGovernanceCenter() {
     materialDraftFileLabel = "";
   }
   function resetIngestDraft() {
-    const project = selectedProject();
-    ingestDraftProjectId = project?.id ?? projectCards[0]?.id ?? "";
+    ingestDraftProjectId = defaultMaterialProjectId();
     ingestDraftCategory = "项目资料";
     ingestDraftSource = "local files";
     ingestDraftStatus = "待复核";
@@ -4857,6 +4877,18 @@ function openGovernanceCenter() {
     ingestDraftDesc = "";
     ingestDraftFiles = [];
     ingestDraftFileLabel = "";
+  }
+  function defaultMaterialProjectId() {
+    const available = new Set(materialProjectOptions.map((project) => project.id));
+    return [selectedProjectId, activeSidebarProjectId, projectCards[0]?.id, INBOX_PROJECT_ID].find((id) => id && available.has(id)) ?? "";
+  }
+
+  function resolveMaterialProject(projectId: string) {
+    const sidebarProject = sidebarProjects.find((project) => project.id === projectId);
+    const card = projectCards.find((project) => project.id === projectId || project.name === sidebarProject?.name);
+    if (card) return { id: card.id, name: card.name };
+    if (sidebarProject) return { id: sidebarProject.id, name: sidebarProject.name };
+    return undefined;
   }
   function resetKnowledgeDraft() {
     knowledgeDraftTitle = "";
@@ -5159,8 +5191,9 @@ function openGovernanceCenter() {
       showWorkbenchNotice(`已新建项目：${saved.name}`);
     } catch (error) {
       console.error("Failed to save project", error);
+      const rawMessage = errorText(error);
       const message = formatErrorMessage(error);
-      const validation = projectSaveErrorValidation(message);
+      const validation = projectSaveErrorValidation(rawMessage);
       if (validation) {
         if (validation[0] === "project-code") projectAdvancedOpen = true;
         showConfigValidation(...validation);
@@ -5219,7 +5252,7 @@ function openGovernanceCenter() {
       showConfigValidation("material-title", "请填写资料名称后再确认。");
       return;
     }
-    const project = projectCards.find((item) => item.id === materialDraftProjectId) ?? selectedProject();
+    const project = resolveMaterialProject(materialDraftProjectId);
     if (!project?.id) {
       showConfigValidation("material-project", "请选择资料归属项目后再确认。");
       return;
@@ -5297,10 +5330,12 @@ function openGovernanceCenter() {
           ? { ...item, materials: existed ? item.materials : item.materials + 1, updatedAt: "刚刚" }
           : item,
       );
-      selectedProjectId = saved.projectId;
-      if (fromResourceCenter) {
+      const savedProject = projectCards.find((item) => item.id === saved.projectId);
+      selectedProjectId = savedProject?.id ?? "";
+      if (fromResourceCenter || !savedProject) {
         workLayer = "resources";
         resourceTab = "resources";
+        projectDetailOpen = false;
       } else {
         projectDetailTab = "materials";
         projectDetailOpen = true;
@@ -5317,7 +5352,7 @@ function openGovernanceCenter() {
       showConfigValidation("ingest-files", "请选择至少一个资料文件后再确认导入。");
       return;
     }
-    const project = projectCards.find((item) => item.id === ingestDraftProjectId) ?? selectedProject();
+    const project = resolveMaterialProject(ingestDraftProjectId);
     if (!project?.id) {
       showConfigValidation("ingest-project", "请选择导入资料的归属项目后再确认。");
       return;
@@ -5358,9 +5393,11 @@ function openGovernanceCenter() {
           ? { ...item, materials: item.materials + saved.length, updatedAt: "刚刚" }
           : item,
       );
-      selectedProjectId = project.id;
+      const savedProject = projectCards.find((item) => item.id === project.id);
+      selectedProjectId = savedProject?.id ?? "";
       workLayer = "resources";
-      resourceTab = "ingest";
+      resourceTab = "resources";
+      projectDetailOpen = false;
       configDialog = undefined;
       showWorkbenchNotice(`已批量导入 ${saved.length} 份资料。`);
     } catch (error) {
@@ -6775,36 +6812,37 @@ function openGovernanceCenter() {
   }
 
   function finishTurnWithError(message: string) {
+    const userMessage = formatErrorMessage(message);
     const lastAssistant = [...transcript].reverse().find((item) => item.role === "assistant" && item.pending);
     if (lastAssistant && !lastAssistant.body.trim()) {
       lastAssistant.role = "notice";
       lastAssistant.title = "请求失败";
-      lastAssistant.body = message;
+      lastAssistant.body = userMessage;
       lastAssistant.pending = false;
       saveActiveSidebarConversationTranscript();
       scrollConversationToBottom();
       return;
     }
-    appendTranscript({ id: `error-${Date.now()}`, role: "notice", title: "请求失败", body: message });
+    appendTranscript({ id: `error-${Date.now()}`, role: "notice", title: "请求失败", body: userMessage });
   }
 
   function isTurnAlreadyRunningError(message: string) {
-    return message.toLowerCase().includes("turn already running");
+    const normalized = message.toLowerCase();
+    return normalized.includes("turn already running") || normalized.includes("上一轮任务仍在运行");
   }
 
   function isWorkspaceStillStartingError(message: string) {
-    return message.toLowerCase().includes("workspace is still starting");
+    const normalized = message.toLowerCase();
+    return normalized.includes("workspace is still starting") || normalized.includes("工作区正在准备中");
   }
 
   function isCancellationError(message: string) {
     const normalized = message.trim().toLowerCase();
-    return normalized === "context canceled" || normalized === "context cancelled" || normalized === "operation canceled" || normalized === "operation cancelled" || normalized === "canceled" || normalized === "cancelled";
+    return normalized === "context canceled" || normalized === "context cancelled" || normalized === "operation canceled" || normalized === "operation cancelled" || normalized === "canceled" || normalized === "cancelled" || normalized === "操作已取消。";
   }
 
   function formatErrorMessage(error: unknown) {
-    if (error instanceof Error && error.message.trim()) return error.message;
-    if (typeof error === "string" && error.trim()) return error;
-    return "发送失败，请检查当前会话是否已启动，或稍后重试。";
+    return formatUserError(error);
   }
 
   function toolTranscriptId(id?: string) {
@@ -6823,8 +6861,8 @@ function openGovernanceCenter() {
       if (!evidence) throw new Error("归档详情当前不可用。");
       if (currentTranscriptTabId() !== tabID) return;
       updateTranscriptItem(item.id, {
-        body: evidence.args || item.body,
-        toolOutput: evidence.output,
+        body: item.error ? "" : evidence.args || item.body,
+        toolOutput: item.error ? undefined : evidence.output,
         archiveLoading: false,
         archiveLoaded: true,
         archiveLoadError: undefined,
@@ -6873,13 +6911,13 @@ function openGovernanceCenter() {
             id: `${idPrefix}-tool-${index}-${call.id || toolIndex}`,
             role: "tool",
             title: call.name || result?.toolName || "tool",
-            body: call.arguments || "",
+            body: result?.toolResultError ? "" : call.arguments || "",
             pending: false,
             toolSubject: call.subject,
             toolSummary: call.summary,
             toolId: call.id || undefined,
-            toolOutput: archived && !result?.toolResultError ? undefined : result?.content || undefined,
-            error: result?.toolResultError,
+            toolOutput: result?.toolResultError || archived ? undefined : result?.content || undefined,
+            error: result?.toolResultError ? formatErrorMessage(result.toolResultError) : undefined,
             archived,
           });
         }
@@ -6892,8 +6930,8 @@ function openGovernanceCenter() {
           title: message.toolName || "tool",
           body: "",
           pending: false,
-          toolOutput: message.content || undefined,
-          error: message.toolResultError,
+          toolOutput: message.toolResultError ? undefined : message.content || undefined,
+          error: message.toolResultError ? formatErrorMessage(message.toolResultError) : undefined,
           archived: Boolean(message.toolResultArchived),
         });
       }
@@ -7152,7 +7190,8 @@ function openGovernanceCenter() {
 
   function setLastTurnError(tabID: string, error: string) {
     if (!tabID) return;
-    lastTurnErrorByTab = { ...lastTurnErrorByTab, [tabID]: error.trim() };
+    const detail = error.trim();
+    lastTurnErrorByTab = { ...lastTurnErrorByTab, [tabID]: detail ? formatErrorMessage(detail) : "" };
   }
 
   function setTabSending(tabID: string, value: boolean) {
@@ -7206,9 +7245,10 @@ function openGovernanceCenter() {
     }
     if (event.kind === "turn_done" && queuedEventTabID) {
       setTabSending(queuedEventTabID, false);
-      setLastTurnError(queuedEventTabID, event.err && !isCancellationError(event.err) ? event.err : "");
+      const userError = event.err && !isCancellationError(event.err) ? formatErrorMessage(event.err) : "";
+      setLastTurnError(queuedEventTabID, userError);
       clearPendingPrompts(queuedEventTabID);
-      settleTaskReceiptForTab(queuedEventTabID, event.err);
+      settleTaskReceiptForTab(queuedEventTabID, userError);
       const finishedTab = tabs.find((tab) => tab.id === queuedEventTabID);
       if (finishedTab) void refreshCodeDock(finishedTab, queuedEventTabID === composerTabId);
       const draft = submittedDraftByTab[queuedEventTabID];
@@ -7328,7 +7368,7 @@ function openGovernanceCenter() {
           id,
           role: "tool",
           title: event.tool.name,
-          body: event.tool.args ?? "",
+          body: event.tool.err ? "" : event.tool.args ?? "",
           toolId: event.tool.id,
           pending: true,
           createdAtMs: now,
@@ -7362,13 +7402,14 @@ function openGovernanceCenter() {
           parentId: event.tool.parentId ? toolTranscriptId(event.tool.parentId) : undefined,
           durationMs: event.tool.durationMs,
           truncated: event.tool.truncated,
-          error: event.tool.err,
-          toolOutput: event.tool.output,
+          error: event.tool.err ? formatErrorMessage(event.tool.err) : undefined,
+          toolOutput: event.tool.err ? undefined : event.tool.output,
         });
       } else {
         tool.toolId = event.tool.id;
-        tool.toolOutput = mergeStreamingText(tool.toolOutput ?? "", event.tool.output ?? "");
-        tool.error = event.tool.err || undefined;
+        tool.body = event.tool.err ? "" : tool.body;
+        tool.toolOutput = event.tool.err ? undefined : mergeStreamingText(tool.toolOutput ?? "", event.tool.output ?? "");
+        tool.error = event.tool.err ? formatErrorMessage(event.tool.err) : undefined;
         tool.durationMs = event.tool.durationMs;
         tool.truncated = event.tool.truncated;
         tool.pending = false;
@@ -7653,7 +7694,7 @@ function openGovernanceCenter() {
     const verification = verificationEvidenceFromTool({
       toolName: tool.name,
       args: tool.args,
-      error: tool.err,
+      error: tool.err ? formatErrorMessage(tool.err) : undefined,
       existingItems: receipt.sections.verification.items,
     });
     if (verification) {
@@ -7665,7 +7706,7 @@ function openGovernanceCenter() {
       appendTaskReceiptEvidenceForTab(tabID, "changes", {
         items: [`${tool.name}：+${tool.added ?? 0} / -${tool.removed ?? 0}`],
         note: "来自工具返回的 Diff 证据",
-        error: tool.err,
+        error: tool.err ? formatErrorMessage(tool.err) : undefined,
       });
     }
   }
@@ -7748,7 +7789,7 @@ function openGovernanceCenter() {
   function settleTaskReceiptForTab(tabID: string, error?: string) {
     const receipt = taskReceiptForTab(tabID);
     if (!receipt) return;
-    persistTaskReceiptForTab(tabID, settleTaskReceipt(receipt, { error }));
+    persistTaskReceiptForTab(tabID, settleTaskReceipt(receipt, { error: error ? formatErrorMessage(error) : undefined }));
   }
 
   function queuedMessageID() {
@@ -8209,7 +8250,7 @@ function openGovernanceCenter() {
       else {
         activeSidebarProjectId = INBOX_PROJECT_ID;
         selectedProjectId = "";
-        linkedProject = "收件箱项目";
+        linkedProject = "";
       }
       activeSidebarConversationId = "";
       activeTaskReceipt = undefined;
@@ -9356,7 +9397,7 @@ function openGovernanceCenter() {
                         <div class="agent-runtime-summary" aria-label="当前 Thread 的 Agent 运行配置">
                           <header>
                             <span class:applied={appliedAgentProfile}>{appliedAgentProfile ? "当前 Thread 已应用" : "下次发送时应用"}</span>
-                            <em>以桌面后端确认结果为准</em>
+                            <em>实际生效配置以最终执行为准</em>
                           </header>
                           <dl>
                             <div><dt>模型</dt><dd>{agentProfileModelLabel(currentAgent)}</dd></div>
@@ -11243,7 +11284,7 @@ function openGovernanceCenter() {
       {#if modelDraftError}<div class="model-inline-alert wide"><AlertTriangle size={15} /> {modelDraftError}</div>{/if}
       {#if modelDraftMessage}<div class="model-inline-alert wide"><Check size={15} /> {modelDraftMessage}</div>{/if}
     </div>
-  {:else if configDialog === "report"}<div class="config-grid"><label class:invalid={configValidationField === "report-title"}>报告标题 *<input data-config-field="report-title" aria-invalid={configValidationField === "report-title"} bind:value={reportDraftTitle} placeholder="例如 项目风险分析报告" /></label><label>报告类型<select bind:value={reportDraftKind}>{#each reportKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={reportDraftStatus}>{#each reportStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>优先级<select bind:value={reportDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>关联项目<select bind:value={reportDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>关联客户<select bind:value={reportDraftCustomerId}><option value="">不关联客户</option>{#each customerCards as customer (customer.id)}<option value={customer.id}>{customer.name}</option>{/each}</select></label><label>负责人 / Agent<select bind:value={reportDraftOwner}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>生成来源<select bind:value={reportDraftSource}>{#each reportSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>输出格式<select bind:value={reportDraftFormat}>{#each reportFormatOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>截止时间<input type="datetime-local" bind:value={reportDraftDueAt} /></label><label class="wide">报告摘要<textarea rows="3" bind:value={reportDraftDesc} placeholder="填写报告摘要、适用对象和核心结论"></textarea></label><label class="wide">结构化正文<textarea rows="8" bind:value={reportDraftBody} placeholder="填写背景、数据依据、分析过程、结论和行动建议"></textarea></label></div>{:else if configDialog === "knowledge"}<div class="config-grid"><label class:invalid={configValidationField === "knowledge-title"}>知识标题 *<input data-config-field="knowledge-title" aria-invalid={configValidationField === "knowledge-title"} bind:value={knowledgeDraftTitle} placeholder="例如 交付验收规范" /></label><label>知识类型<select bind:value={knowledgeDraftType}>{#each knowledgeTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={knowledgeDraftSource}>{#each knowledgeSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<select bind:value={knowledgeDraftTags}><option value="">不设置标签</option>{#each knowledgeTagOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide knowledge-document-field"><span>上传文档（可选）</span><div class="knowledge-document-picker"><strong>{knowledgeDraftFileLabel || "未选择文件"}</strong><button type="button" onclick={() => void pickKnowledgeDocumentFile()}>选择文件</button></div><em>支持 PDF、DOCX、Markdown、文本等文件；上传后自动提取正文并建立索引。</em></label><label class="wide">摘要<textarea rows="3" bind:value={knowledgeDraftDescription} placeholder="填写这条知识的摘要、适用场景或关键结论"></textarea></label><label class="wide" class:invalid={configValidationField === "knowledge-content"}>正文（无附件时必填）<textarea data-config-field="knowledge-content" aria-invalid={configValidationField === "knowledge-content"} rows="8" bind:value={knowledgeDraftContent} placeholder="填写要直接写入知识库并参与全文检索的正文内容"></textarea></label></div>{:else if configDialog === "template"}<div class="config-grid"><label class:invalid={configValidationField === "template-title"}>模板名称 *<input data-config-field="template-title" aria-invalid={configValidationField === "template-title"} bind:value={templateDraftTitle} placeholder="例如 需求澄清记录模板" /></label><label>模板类型<select bind:value={templateDraftType}>{#each templateTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={templateDraftStatus}>{#each templateStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={templateDraftSource}>{#each templateSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<input bind:value={templateDraftTags} placeholder="用 / 或逗号分隔，例如 模板 / 工作台" /></label><label class="wide template-material-picker"><span>关联资料</span><div>{#each projectMaterialRows as material (material.id)}<button class:active={templateDraftMaterialIds.includes(material.id)} type="button" onclick={() => toggleTemplateMaterial(material.id)}><strong>{material.title}</strong><em>{materialProjectName(material)} / {material.category}</em></button>{:else}<p>资料库暂无可关联资料，请先上传资料。</p>{/each}</div><small>已关联 {templateDraftMaterialIds.length} 份资料，文档数会自动按关联数量计算。</small></label><label class="wide">模板说明<textarea rows="5" bind:value={templateDraftDescription} placeholder="填写模板用途、适用场景、字段结构或使用说明"></textarea></label></div>{:else if configDialog === "ingest"}<div class="config-grid"><label class="wide material-file-field" class:invalid={configValidationField === "ingest-files"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="ingest-files" aria-invalid={configValidationField === "ingest-files"} type="file" multiple aria-label="批量选择资料文件" onchange={handleIngestFilesChange} /><strong>选择文件</strong><span>{ingestDraftFileLabel || "未选择文件"}</span></div><em>可一次选择多个本地资料文件，确认后会写入资料库。</em></label><label class:invalid={configValidationField === "ingest-project"}>归属项目<select data-config-field="ingest-project" aria-invalid={configValidationField === "ingest-project"} bind:value={ingestDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={ingestDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>导入来源<select bind:value={ingestDraftSource}><option value="local files">local files</option><option value="workspace">workspace</option><option value="manual">manual</option></select></label><label>索引状态<select bind:value={ingestDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>索引策略<select bind:value={ingestDraftStrategy}><option>自动分类并去重</option><option>仅入库</option></select></label><label class="wide">批量说明<textarea rows="4" bind:value={ingestDraftDesc} placeholder="补充导入来源、用途、关联客户或处理说明"></textarea></label></div>{:else if configDialog === "dossier" || configDialog === "resource"}<div class="config-grid"><label class:invalid={configValidationField === "material-title"}>资料名称 *<input data-config-field="material-title" aria-invalid={configValidationField === "material-title"} bind:value={materialDraftTitle} placeholder="例如 项目验收附件" /></label>{#if configDialog === "resource" || configDialog === "dossier"}<label class="wide material-file-field" class:invalid={configValidationField === "material-file"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="material-file" aria-invalid={configValidationField === "material-file"} type="file" aria-label="选择资料文件" onchange={handleMaterialFileChange} /><strong>选择文件</strong><span>{materialDraftFileLabel || "未选择文件"}</span></div><em>请选择本地资料文件</em></label>{/if}<label class:invalid={configValidationField === "material-project"}>归属项目<select data-config-field="material-project" aria-invalid={configValidationField === "material-project"} bind:value={materialDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={materialDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<input bind:value={materialDraftSource} placeholder="manual / 文件名 / URL" /></label><label>索引状态<select bind:value={materialDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">资料说明<textarea rows="4" bind:value={materialDraftDesc} placeholder="补充资料来源、用途、关联客户或待复核内容"></textarea></label></div>{:else if configDialog === "project"}<div class="config-grid"><label class:invalid={configValidationField === "project-name"}>项目名称 *<input data-config-field="project-name" aria-invalid={configValidationField === "project-name"} aria-describedby="project-name-hint" maxlength={WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} bind:value={projectDraftName} placeholder="例如 客户门户上线" /><small id="project-name-hint">最多 {WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} 个字符</small></label><label class:invalid={configValidationField === "project-code"}>项目编号<input data-config-field="project-code" aria-invalid={configValidationField === "project-code"} bind:value={projectDraftCode} placeholder="PRJ-2026-0702" /></label><label>客户/归属方<input bind:value={projectDraftClient} placeholder="例如 内部研发 / 客户名称" /></label><label>阶段<select bind:value={projectDraftStage}>{#each projectStageOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>负责人<input bind:value={projectDraftOwner} placeholder="例如 交付团队" /></label><label>项目类型<select bind:value={projectDraftCategory}>{#each projectCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>预算<input bind:value={projectDraftBudget} inputmode="decimal" placeholder="例如 120,000" /></label><label>立项日期<input type="date" bind:value={projectDraftAcceptedAt} /></label><label>状态<select bind:value={projectDraftStatus}><option value="active">进行中</option><option value="closed">已归档</option></select></label><label>进度<div class="percent-input"><input bind:value={projectDraftProgress} type="number" min="0" max="100" /><span>%</span></div></label><label>优先级<select bind:value={projectDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>风险<select bind:value={projectDraftRisk}>{#each projectRiskOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>执行 Agent<select bind:value={projectDraftAgent}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>下一步<input bind:value={projectDraftNextStep} placeholder="例如 完成验收并输出报告" /></label><label class="wide">项目说明<textarea rows="4" bind:value={projectDraftDesc} placeholder="补充项目背景、目标、交付物或验收标准"></textarea></label></div>{:else if configDialog === "schedule"}<div class="config-grid schedule-config-grid"><label>标题<input bind:value={scheduleDraftTitleValue} placeholder="请输入日程标题" /></label><label>日期<input type="date" bind:value={scheduleDraftDate} /></label><label>时间<input type="time" bind:value={scheduleDraftTimeValue} /></label><label>类型<select bind:value={scheduleDraftType}><option value="">请选择类型</option><option value="meeting">meeting</option></select></label><label class="wide">地点<input bind:value={scheduleDraftPlaceValue} placeholder="请输入地点" /></label></div>{:else if configDialog === "todo"}<div class="config-grid"><label>名称<input bind:value={todoDraftTitle} placeholder="例如 跟进客户反馈" /></label><label>关联对象<select bind:value={todoDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select bind:value={todoDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input type="datetime-local" bind:value={todoDraftDue} /></label><label class="wide">配置说明<textarea rows="4" bind:value={todoDraftDesc} placeholder="补充待办背景、验收标准或下一步动作"></textarea></label></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} readonly /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label><label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer>{#if configValidationMessage}<p class="config-validation-message" role="alert" aria-live="polite">{configValidationMessage}</p>{/if}<button type="button" onclick={() => { clearConfigValidation(); configDialog = undefined; }}>取消</button><button type="button" disabled={modelDraftSaving} onclick={confirmConfigDialog}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
+  {:else if configDialog === "report"}<div class="config-grid"><label class:invalid={configValidationField === "report-title"}>报告标题 *<input data-config-field="report-title" aria-invalid={configValidationField === "report-title"} bind:value={reportDraftTitle} placeholder="例如 项目风险分析报告" /></label><label>报告类型<select bind:value={reportDraftKind}>{#each reportKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={reportDraftStatus}>{#each reportStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>优先级<select bind:value={reportDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>关联项目<select bind:value={reportDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>关联客户<select bind:value={reportDraftCustomerId}><option value="">不关联客户</option>{#each customerCards as customer (customer.id)}<option value={customer.id}>{customer.name}</option>{/each}</select></label><label>负责人 / Agent<select bind:value={reportDraftOwner}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>生成来源<select bind:value={reportDraftSource}>{#each reportSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>输出格式<select bind:value={reportDraftFormat}>{#each reportFormatOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>截止时间<input type="datetime-local" bind:value={reportDraftDueAt} /></label><label class="wide">报告摘要<textarea rows="3" bind:value={reportDraftDesc} placeholder="填写报告摘要、适用对象和核心结论"></textarea></label><label class="wide">结构化正文<textarea rows="8" bind:value={reportDraftBody} placeholder="填写背景、数据依据、分析过程、结论和行动建议"></textarea></label></div>{:else if configDialog === "knowledge"}<div class="config-grid"><label class:invalid={configValidationField === "knowledge-title"}>知识标题 *<input data-config-field="knowledge-title" aria-invalid={configValidationField === "knowledge-title"} bind:value={knowledgeDraftTitle} placeholder="例如 交付验收规范" /></label><label>知识类型<select bind:value={knowledgeDraftType}>{#each knowledgeTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={knowledgeDraftSource}>{#each knowledgeSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<select bind:value={knowledgeDraftTags}><option value="">不设置标签</option>{#each knowledgeTagOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide knowledge-document-field"><span>上传文档（可选）</span><div class="knowledge-document-picker"><strong>{knowledgeDraftFileLabel || "未选择文件"}</strong><button type="button" onclick={() => void pickKnowledgeDocumentFile()}>选择文件</button></div><em>支持 PDF、DOCX、Markdown、文本等文件；上传后自动提取正文并建立索引。</em></label><label class="wide">摘要<textarea rows="3" bind:value={knowledgeDraftDescription} placeholder="填写这条知识的摘要、适用场景或关键结论"></textarea></label><label class="wide" class:invalid={configValidationField === "knowledge-content"}>正文（无附件时必填）<textarea data-config-field="knowledge-content" aria-invalid={configValidationField === "knowledge-content"} rows="8" bind:value={knowledgeDraftContent} placeholder="填写要直接写入知识库并参与全文检索的正文内容"></textarea></label></div>{:else if configDialog === "template"}<div class="config-grid"><label class:invalid={configValidationField === "template-title"}>模板名称 *<input data-config-field="template-title" aria-invalid={configValidationField === "template-title"} bind:value={templateDraftTitle} placeholder="例如 需求澄清记录模板" /></label><label>模板类型<select bind:value={templateDraftType}>{#each templateTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={templateDraftStatus}>{#each templateStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={templateDraftSource}>{#each templateSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<input bind:value={templateDraftTags} placeholder="用 / 或逗号分隔，例如 模板 / 工作台" /></label><label class="wide template-material-picker"><span>关联资料</span><div>{#each projectMaterialRows as material (material.id)}<button class:active={templateDraftMaterialIds.includes(material.id)} type="button" onclick={() => toggleTemplateMaterial(material.id)}><strong>{material.title}</strong><em>{materialProjectName(material)} / {material.category}</em></button>{:else}<p>资料库暂无可关联资料，请先上传资料。</p>{/each}</div><small>已关联 {templateDraftMaterialIds.length} 份资料，文档数会自动按关联数量计算。</small></label><label class="wide">模板说明<textarea rows="5" bind:value={templateDraftDescription} placeholder="填写模板用途、适用场景、字段结构或使用说明"></textarea></label></div>{:else if configDialog === "ingest"}<div class="config-grid"><label class="wide material-file-field" class:invalid={configValidationField === "ingest-files"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="ingest-files" aria-invalid={configValidationField === "ingest-files"} type="file" multiple aria-label="批量选择资料文件" onchange={handleIngestFilesChange} /><strong>选择文件</strong><span>{ingestDraftFileLabel || "未选择文件"}</span></div><em>可一次选择多个本地资料文件，确认后会写入资料库。</em></label><label class:invalid={configValidationField === "ingest-project"}>归属项目<select data-config-field="ingest-project" aria-invalid={configValidationField === "ingest-project"} bind:value={ingestDraftProjectId}>{#each materialProjectOptions as project (project.id)}<option value={project.id}>{project.label}</option>{/each}</select></label><label>资料分类<select bind:value={ingestDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>导入来源<select bind:value={ingestDraftSource}><option value="local files">本地文件</option><option value="workspace">工作区</option><option value="manual">手动录入</option></select></label><label>索引状态<select bind:value={ingestDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>索引策略<select bind:value={ingestDraftStrategy}><option>自动分类并去重</option><option>仅入库</option></select></label><label class="wide">批量说明<textarea rows="4" bind:value={ingestDraftDesc} placeholder="补充导入来源、用途、关联客户或处理说明"></textarea></label></div>{:else if configDialog === "dossier" || configDialog === "resource"}<div class="config-grid"><label class:invalid={configValidationField === "material-title"}>资料名称 *<input data-config-field="material-title" aria-invalid={configValidationField === "material-title"} bind:value={materialDraftTitle} placeholder="例如 项目验收附件" /></label>{#if configDialog === "resource" || configDialog === "dossier"}<label class="wide material-file-field" class:invalid={configValidationField === "material-file"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="material-file" aria-invalid={configValidationField === "material-file"} type="file" aria-label="选择资料文件" onchange={handleMaterialFileChange} /><strong>选择文件</strong><span>{materialDraftFileLabel || "未选择文件"}</span></div><em>请选择本地资料文件</em></label>{/if}<label class:invalid={configValidationField === "material-project"}>归属项目<select data-config-field="material-project" aria-invalid={configValidationField === "material-project"} bind:value={materialDraftProjectId}>{#each materialProjectOptions as project (project.id)}<option value={project.id}>{project.label}</option>{/each}</select></label><label>资料分类<select bind:value={materialDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<input bind:value={materialDraftSource} placeholder="手动录入 / 文件名 / URL" /></label><label>索引状态<select bind:value={materialDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">资料说明<textarea rows="4" bind:value={materialDraftDesc} placeholder="补充资料来源、用途、关联客户或待复核内容"></textarea></label></div>{:else if configDialog === "project"}<div class="config-grid"><label class:invalid={configValidationField === "project-name"}>项目名称 *<input data-config-field="project-name" aria-invalid={configValidationField === "project-name"} aria-describedby="project-name-hint" maxlength={WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} bind:value={projectDraftName} placeholder="例如 客户门户上线" /><small id="project-name-hint">最多 {WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} 个字符</small></label><label class:invalid={configValidationField === "project-code"}>项目编号<input data-config-field="project-code" aria-invalid={configValidationField === "project-code"} bind:value={projectDraftCode} placeholder="PRJ-2026-0702" /></label><label>客户/归属方<input bind:value={projectDraftClient} placeholder="例如 内部研发 / 客户名称" /></label><label>阶段<select bind:value={projectDraftStage}>{#each projectStageOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>负责人<input bind:value={projectDraftOwner} placeholder="例如 交付团队" /></label><label>项目类型<select bind:value={projectDraftCategory}>{#each projectCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>预算<input bind:value={projectDraftBudget} inputmode="decimal" placeholder="例如 120,000" /></label><label>立项日期<input type="date" bind:value={projectDraftAcceptedAt} /></label><label>状态<select bind:value={projectDraftStatus}><option value="active">进行中</option><option value="closed">已归档</option></select></label><label>进度<div class="percent-input"><input bind:value={projectDraftProgress} type="number" min="0" max="100" /><span>%</span></div></label><label>优先级<select bind:value={projectDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>风险<select bind:value={projectDraftRisk}>{#each projectRiskOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>执行 Agent<select bind:value={projectDraftAgent}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>下一步<input bind:value={projectDraftNextStep} placeholder="例如 完成验收并输出报告" /></label><label class="wide">项目说明<textarea rows="4" bind:value={projectDraftDesc} placeholder="补充项目背景、目标、交付物或验收标准"></textarea></label></div>{:else if configDialog === "schedule"}<div class="config-grid schedule-config-grid"><label>标题<input bind:value={scheduleDraftTitleValue} placeholder="请输入日程标题" /></label><label>日期<input type="date" bind:value={scheduleDraftDate} /></label><label>时间<input type="time" bind:value={scheduleDraftTimeValue} /></label><label>类型<select bind:value={scheduleDraftType}><option value="">请选择类型</option><option value="meeting">meeting</option></select></label><label class="wide">地点<input bind:value={scheduleDraftPlaceValue} placeholder="请输入地点" /></label></div>{:else if configDialog === "todo"}<div class="config-grid"><label>名称<input bind:value={todoDraftTitle} placeholder="例如 跟进客户反馈" /></label><label>关联对象<select bind:value={todoDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select bind:value={todoDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input type="datetime-local" bind:value={todoDraftDue} /></label><label class="wide">配置说明<textarea rows="4" bind:value={todoDraftDesc} placeholder="补充待办背景、验收标准或下一步动作"></textarea></label></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} readonly /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label><label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer>{#if configValidationMessage}<p class="config-validation-message" role="alert" aria-live="polite">{configValidationMessage}</p>{/if}<button type="button" onclick={() => { clearConfigValidation(); configDialog = undefined; }}>取消</button><button type="button" disabled={modelDraftSaving} onclick={confirmConfigDialog}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
       {/if}
       {#if knowledgeTemplateRenderDocument}
         <div class="modal-backdrop" role="presentation">
@@ -16468,13 +16509,12 @@ function openGovernanceCenter() {
   }
 
   .agent-runtime-summary dd {
-    overflow: hidden;
     margin: 3px 0 0;
     color: var(--aorist-ink);
     font-size: 10px;
     font-weight: 650;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 
   .agent-quick-tasks {
@@ -16566,8 +16606,9 @@ function openGovernanceCenter() {
     gap: 6px;
   }
 
-  .agent-compose-card :global(.composer__tools button),
+  .agent-compose-card :global(.composer__tools > .composer__plus-trigger),
   .agent-compose-card :global(.composer__link-picker),
+  .agent-compose-card :global(.composer__permission-picker),
   .agent-compose-card :global(.composer__model) {
     border-radius: 10px;
     background: hsl(220 20% 96%);
@@ -19019,17 +19060,21 @@ function openGovernanceCenter() {
     border-top-color: var(--aorist-border-divider);
   }
 
-  .home__composer :global(.composer__tools button),
+  .home__composer :global(.composer__tools > .composer__plus-trigger),
   .home__composer :global(.composer__link-picker),
+  .home__composer :global(.composer__permission-picker),
   .home__composer :global(.composer__model),
-  .stage__composer :global(.composer__tools button),
+  .stage__composer :global(.composer__tools > .composer__plus-trigger),
   .stage__composer :global(.composer__link-picker),
+  .stage__composer :global(.composer__permission-picker),
   .stage__composer :global(.composer__model),
-  :global(.task-composer-card .composer__tools button),
+  :global(.task-composer-card .composer__tools > .composer__plus-trigger),
   :global(.task-composer-card .composer__link-picker),
+  :global(.task-composer-card .composer__permission-picker),
   :global(.task-composer-card .composer__model),
-  .agent-compose-card :global(.composer__tools button),
+  .agent-compose-card :global(.composer__tools > .composer__plus-trigger),
   .agent-compose-card :global(.composer__link-picker),
+  .agent-compose-card :global(.composer__permission-picker),
   .agent-compose-card :global(.composer__model) {
     border-color: transparent;
     border-radius: 10px;
@@ -19754,16 +19799,18 @@ function openGovernanceCenter() {
     cursor: pointer;
   }
 
-  .home__composer :global(.composer__tools button),
-  .stage__composer :global(.composer__tools button),
-  :global(.task-composer-card .composer__tools button),
-  .agent-compose-card :global(.composer__tools button),
+  .home__composer :global(.composer__tools > .composer__plus-trigger),
+  .stage__composer :global(.composer__tools > .composer__plus-trigger),
+  :global(.task-composer-card .composer__tools > .composer__plus-trigger),
+  .agent-compose-card :global(.composer__tools > .composer__plus-trigger),
   .home__composer :global(.composer__link-picker),
   .stage__composer :global(.composer__link-picker),
   .agent-compose-card :global(.composer__link-picker),
+  :global(.task-composer-card .composer__link-picker),
   .home__composer :global(.composer__permission-picker),
   .stage__composer :global(.composer__permission-picker),
   .agent-compose-card :global(.composer__permission-picker),
+  :global(.task-composer-card .composer__permission-picker),
   .home__composer :global(.composer__model),
   .stage__composer :global(.composer__model),
   .agent-compose-card :global(.composer__model) {
@@ -19824,9 +19871,9 @@ function openGovernanceCenter() {
     color: var(--aorist-ink);
   }
 
-  .home__composer :global(.composer__tools .composer-permission-menu button),
-  .stage__composer :global(.composer__tools .composer-permission-menu button),
-  .agent-compose-card :global(.composer__tools .composer-permission-menu button) {
+  .home__composer :global(.composer__tools .composer-permission-menu__option),
+  .stage__composer :global(.composer__tools .composer-permission-menu__option),
+  .agent-compose-card :global(.composer__tools .composer-permission-menu__option) {
     display: grid;
     grid-template-columns: 24px minmax(0, 1fr) 16px;
     width: 100%;

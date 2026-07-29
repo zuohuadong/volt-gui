@@ -1254,6 +1254,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	userCreatedAt := time.Now().UnixMilli()
 	a.activeTurnCreatedAt.Store(userCreatedAt)
 	defer a.activeTurnCreatedAt.Store(0)
+	turnStartMessages := a.session.Snapshot()
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input, Images: userImages(ctx), CreatedAt: userCreatedAt})
 
 	finalReadinessBlocks := 0
@@ -1262,6 +1263,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	handoffNudges := 0
 	usedAnyTool := false
 	streamRecoveries := 0
+	providerStreamStarted := false
 	graceRound := false
 	recoveryGraceRound := false
 	todoProgress, trackingTodoProgress := a.canonicalTodoProgress()
@@ -1282,6 +1284,12 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			a.session.Add(provider.Message{Role: provider.RoleUser, Content: a.withTurnPreferences(midTurnSteerMessage(text))})
 			a.sink.Emit(event.Event{Kind: event.Steer, Text: text})
 		}
+		if err := a.preflightContext(ctx); err != nil {
+			if !providerStreamStarted {
+				a.session.Rewrite(turnStartMessages)
+			}
+			return err
+		}
 		schemas := a.tools.Schemas()
 		prefixShape := a.capturePrefixShape(schemas)
 		prevPrefixShape := a.lastPrefixShape
@@ -1289,6 +1297,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			prevPrefixShape = prefixShape
 		}
 
+		providerStreamStarted = true
 		text, reasoning, signature, calls, usage, interrupted, partialToolStarted, partialCalls, err := a.stream(ctx, step+1)
 		if err != nil {
 			if interrupted && streamRecoveries < maxStreamRecoveries {

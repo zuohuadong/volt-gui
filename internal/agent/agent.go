@@ -1284,7 +1284,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			a.session.Add(provider.Message{Role: provider.RoleUser, Content: a.withTurnPreferences(midTurnSteerMessage(text))})
 			a.sink.Emit(event.Event{Kind: event.Steer, Text: text})
 		}
-		if err := a.preflightContext(ctx); err != nil {
+		if err := a.preflightContext(); err != nil {
 			if !providerStreamStarted {
 				a.session.Rewrite(turnStartMessages)
 			}

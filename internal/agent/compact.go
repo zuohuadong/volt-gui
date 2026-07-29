@@ -180,7 +180,13 @@ func estimateMessagesTokens(msgs []provider.Message) int {
 	return total
 }
 
-func (a *Agent) preflightContext(ctx context.Context) error {
+// preflightContext rejects a turn whose fixed prompt content — the system
+// prompt, the tool schemas, and the active user message with its images —
+// cannot fit in the configured window even with every foldable message removed.
+// Compaction can never shrink those, so starting the stream would only fail
+// deep inside the provider. History overflow stays on the usage-driven
+// compaction path so the cache-stable prefix is preserved.
+func (a *Agent) preflightContext() error {
 	if a.contextWindow <= 0 {
 		return nil
 	}
@@ -188,26 +194,74 @@ func (a *Agent) preflightContext(ctx context.Context) error {
 	if a.tools != nil {
 		schemas = a.tools.Schemas()
 	}
-	estimated := estimateProviderPromptTokens(a.session.Messages, schemas)
-	if estimated >= int(float64(a.contextWindow)*a.compactRatio) {
-		a.maybeCompact(ctx, &provider.Usage{PromptTokens: estimated})
+	fixed := estimatePreflightMessagesTokens(a.fixedPromptMessages())
+	if len(schemas) > 0 {
+		if encoded, err := json.Marshal(schemas); err == nil {
+			fixed += estimatePreflightTextTokens(string(encoded))
+		}
 	}
-	if estimateProviderPromptTokens(a.session.Messages, schemas) < a.preflightPromptBudget() {
+	if fixed < a.preflightPromptBudget() {
 		return nil
 	}
 	return fmt.Errorf("当前对话已超出模型上下文限制，请压缩对话或新建会话后重试")
 }
 
-func estimateProviderPromptTokens(msgs []provider.Message, schemas []provider.ToolSchema) int {
-	total := estimateMessagesTokens(msgs)
-	if len(schemas) == 0 {
-		return total
+// fixedPromptMessages returns the messages compaction cannot remove: the
+// system prompt and the user message that opened the active turn.
+func (a *Agent) fixedPromptMessages() []provider.Message {
+	msgs := a.session.Messages
+	var fixed []provider.Message
+	for _, m := range msgs {
+		if m.Role == provider.RoleSystem {
+			fixed = append(fixed, m)
+		}
 	}
-	encoded, err := json.Marshal(schemas)
-	if err != nil {
-		return total
+	if active := a.activeTurnStart(msgs); active >= 0 && active < len(msgs) {
+		fixed = append(fixed, msgs[active])
 	}
-	return total + estimateTextTokens(string(encoded))
+	return fixed
+}
+
+// estimatePreflightMessagesTokens mirrors estimateMessagesTokens but prices
+// text with estimatePreflightTextTokens, whose per-class split matches real
+// tokenizers more closely. It stays separate from estimateTextTokens so the
+// conservative calibration behind fold economics is untouched.
+func estimatePreflightMessagesTokens(msgs []provider.Message) int {
+	total := 0
+	for _, m := range msgs {
+		total += 4 // chat-message framing overhead
+		total += estimatePreflightTextTokens(m.Content)
+		total += estimatePreflightTextTokens(m.ReasoningContent)
+		total += estimatePreflightTextTokens(m.Name)
+		total += estimatePreflightTextTokens(m.ToolCallID)
+		for _, tc := range m.ToolCalls {
+			total += 8
+			total += estimatePreflightTextTokens(tc.ID)
+			total += estimatePreflightTextTokens(tc.Name)
+			total += estimatePreflightTextTokens(tc.Arguments)
+		}
+		total += len(m.Images) * defaultImageTokenEstimate
+	}
+	return total
+}
+
+// estimatePreflightTextTokens approximates tokens as ~4 bytes per token for
+// ASCII and ~1 rune per token for everything else, counting the two classes
+// independently so mixed CJK/ASCII text is not mispriced.
+func estimatePreflightTextTokens(s string) int {
+	if s == "" {
+		return 0
+	}
+	asciiBytes := 0
+	nonASCII := 0
+	for _, r := range s {
+		if r < utf8.RuneSelf {
+			asciiBytes++
+		} else {
+			nonASCII++
+		}
+	}
+	return (asciiBytes+3)/4 + nonASCII
 }
 
 func (a *Agent) preflightPromptBudget() int {
@@ -243,19 +297,15 @@ func estimateTextTokens(s string) int {
 	if s == "" {
 		return 0
 	}
-	// English-ish text trends near four bytes per token, while CJK-heavy text is
-	// closer to one rune per token. Count the two classes independently so ASCII
-	// is not accidentally treated as one token per character.
-	asciiBytes := 0
-	nonASCII := 0
-	for _, r := range s {
-		if r < utf8.RuneSelf {
-			asciiBytes++
-		} else {
-			nonASCII++
-		}
+	// A conservative cross-language approximation: English-ish text trends near
+	// four bytes per token, while CJK-heavy text is closer to one rune per token.
+	bytes := len(s)
+	runes := utf8.RuneCountInString(s)
+	byBytes := (bytes + 3) / 4
+	if runes > byBytes {
+		return runes
 	}
-	return (asciiBytes+3)/4 + nonASCII
+	return byBytes
 }
 
 // compact summarizes the older middle of the session and replaces it in place:

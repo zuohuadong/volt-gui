@@ -22,12 +22,6 @@
     "issue-delivery": ShieldCheck,
     "release-acceptance": PackageCheck,
   } as const;
-
-  const launchSteps = [
-    { no: "01", title: "描述目标", desc: "用一句话说清想要的结果，可直接粘贴资料。" },
-    { no: "02", title: "交给执行者", desc: "确认 Agent、模型与权限，其余交给它自动推进。" },
-    { no: "03", title: "复核交付", desc: "只在需要你决定时打扰，每份结果都可回溯。" },
-  ];
 </script>
 
 <section class="outcome-launcher" data-testid="outcome-template-launcher">
@@ -75,14 +69,6 @@
       </div>
     </details>
   {/if}
-  <ol class="launch-steps" aria-label="上手三步">
-    {#each launchSteps as step (step.no)}
-      <li>
-        <b>{step.no}</b>
-        <div><strong>{step.title}</strong><span>{step.desc}</span></div>
-      </li>
-    {/each}
-  </ol>
 </section>
 
 <style>
@@ -248,61 +234,9 @@
     min-height: 104px;
   }
 
-  .launch-steps {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .launch-steps li {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    min-width: 0;
-    padding: 12px 14px;
-    border: 1px solid color-mix(in srgb, var(--border, #dce1db) 62%, transparent);
-    border-radius: 12px;
-    background: var(--surface-muted, #f1f1ef);
-  }
-
-  .launch-steps b {
-    flex: 0 0 auto;
-    margin-top: 1px;
-    color: color-mix(in srgb, var(--accent, #2d6a4f) 58%, var(--muted-foreground, #687169));
-    font-size: 11px;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.04em;
-  }
-
-  .launch-steps li > div {
-    display: grid;
-    gap: 3px;
-    min-width: 0;
-  }
-
-  .launch-steps strong {
-    color: var(--foreground, #1f2421);
-    font-size: 12px;
-    font-weight: 600;
-  }
-
-  .launch-steps span {
-    color: var(--muted-foreground, #687169);
-    font-size: 11px;
-    line-height: 1.5;
-  }
-
   @media (max-width: 640px) {
     .template-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .launch-steps {
-      grid-template-columns: 1fr;
     }
   }
 

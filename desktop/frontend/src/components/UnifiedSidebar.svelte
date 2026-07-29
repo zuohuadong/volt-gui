@@ -261,7 +261,7 @@
 
   <footer>
     <button class:active={governanceActive} type="button" aria-pressed={governanceActive} onclick={() => { onGovernance(); onDrawerClose(); }}><Settings2 size={15} /><span>{displayMode === "office" ? "设置" : "配置与治理"}</span><em>{displayMode === "office" ? "模型、权限与同步" : "设置、能力与安全"}</em></button>
-    {#if appVersion}<p class="sidebar-version" data-testid="sidebar-version">{appVersion === "dev" ? "开发模式" : `v${appVersion}`}</p>{/if}
+    {#if appVersion}<p class="sidebar-version" data-testid="sidebar-version">{appVersion === "dev" ? "开发模式" : appVersion.startsWith("v") ? appVersion : `v${appVersion}`}</p>{/if}
   </footer>
 </aside>
 
@@ -269,8 +269,8 @@
   .unified-sidebar {
     position: relative;
     z-index: 45;
-    display: grid;
-    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    display: flex;
+    flex-direction: column;
     width: var(--sidebar-width, 252px);
     height: 100dvh;
     min-height: 0;
@@ -286,7 +286,7 @@
   .brand-info:hover { background: color-mix(in srgb, var(--card, #fff) 60%, transparent); }
   .brand-info .brand-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; font-weight: 700; font-size: 14px; background: color-mix(in srgb, var(--foreground, #1f2421) 12%, var(--card, #fff)); overflow: hidden; }
   .brand-info .brand-mark img { width: 100%; height: 100%; object-fit: cover; }
-  .sidebar-version { margin: 0; padding: 4px 10px 2px; color: var(--muted-foreground, #687169); font-size: 10px; text-align: center; }
+  .sidebar-version { margin: 0; padding: 0 10px 2px 31px; color: color-mix(in srgb, var(--muted-foreground, #687169) 78%, transparent); font-size: 10px; }
   .sidebar-brand { display: grid; grid-template-columns: 30px minmax(0, 1fr) 32px; align-items: center; gap: 9px; min-height: 56px; padding: 9px 10px; border-bottom: 1px solid color-mix(in srgb, var(--border, #dce1db) 78%, transparent); }
   .is-macos .sidebar-brand { --wails-draggable: drag; min-height: 76px; padding-top: 29px; }
   .sidebar-brand button { --wails-draggable: no-drag; }
@@ -312,14 +312,16 @@
   .primary-nav section { display: grid; gap: 2px; }
   .nav-group-heading { display: grid; grid-template-columns: minmax(0, 1fr) 28px; align-items: center; min-height: 28px; padding: 0 2px 0 9px; }
   .nav-group-label { color: var(--muted-foreground, #687169); font-size: 11px; font-weight: 650; letter-spacing: .07em; }
-  .primary-nav button:not(.new-task-action) { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; min-height: 34px; padding: 3px 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted-foreground, #687169); text-align: left; transition: background .15s ease, color .15s ease; }
-  .primary-nav button:not(.new-task-action):hover { background: color-mix(in srgb, var(--card, #fff) 66%, transparent); color: var(--foreground, #1f2421); }
-  .primary-nav button:not(.new-task-action).active { background: color-mix(in srgb, var(--card, #fff) 78%, var(--foreground, #1f2421) 7%); color: var(--foreground, #1f2421); }
+  .primary-nav button:not(.new-task-action) { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; min-height: 35px; padding: 3px 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted-foreground, #687169); text-align: left; transition: background .15s ease, color .15s ease, border-color .15s ease; }
+  .primary-nav button:not(.new-task-action):hover { background: color-mix(in srgb, var(--card, #fff) 72%, transparent); color: var(--foreground, #1f2421); }
+  .primary-nav button:not(.new-task-action).active { border-color: color-mix(in srgb, var(--border, #dce1db) 82%, transparent); background: var(--card, #fff); color: var(--foreground, #1f2421); }
+  .primary-nav button:not(.new-task-action) > :global(svg) { justify-self: center; color: color-mix(in srgb, var(--foreground, #1f2421) 52%, var(--muted-foreground, #687169)); transition: color .15s ease; }
+  .primary-nav button:not(.new-task-action):hover > :global(svg), .primary-nav button:not(.new-task-action).active > :global(svg) { color: var(--foreground, #1f2421); }
   .primary-nav button > span, .primary-nav strong, .primary-nav em { display: block; min-width: 0; }
   .primary-nav strong { font-size: 12px; font-weight: 620; }
   .primary-nav em { display: none; }
 
-  .project-tree { min-height: 0; overflow: hidden; padding: 12px 8px 8px; }
+  .project-tree { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; padding: 12px 8px 8px; }
   .project-tree > header { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; min-height: 30px; padding: 0 2px; }
   .project-tree > header > button { transition: transform .15s ease; }
   .project-tree > header > button:not(.expanded) { transform: rotate(-90deg); }
@@ -332,8 +334,9 @@
   .project-tree > header aside button:hover { background: var(--card, #fff); color: var(--foreground, #1f2421); }
   .project-list { display: grid; gap: 1px; max-height: calc(100% - 30px); overflow-y: auto; padding-top: 2px; }
   .project-node { min-width: 0; }
-  .project-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-height: 32px; border-radius: 7px; }
-  .project-node.active > .project-row { background: color-mix(in srgb, var(--card, #fff) 76%, var(--foreground, #1f2421) 5%); }
+  .project-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-height: 32px; border: 1px solid transparent; border-radius: 7px; transition: background .15s ease, border-color .15s ease; }
+  .project-row:hover { background: color-mix(in srgb, var(--card, #fff) 62%, transparent); }
+  .project-node.active > .project-row { border-color: color-mix(in srgb, var(--border, #dce1db) 82%, transparent); background: var(--card, #fff); }
   .project-open { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 2px; min-width: 0; min-height: 32px; padding: 0 6px; border-radius: 7px; text-align: left; }
   .project-open span { overflow: hidden; font-size: 12px; font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
   .project-node.active .project-open span { font-weight: 640; }
@@ -347,8 +350,9 @@
   .project-toggle { transition: transform .15s ease; }
   .project-toggle:not(.expanded) { transform: rotate(-90deg); }
   .task-list { display: grid; gap: 1px; padding: 1px 0 4px 20px; }
-  .task-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; border-radius: 7px; }
-  .task-row.active { background: color-mix(in srgb, var(--card, #fff) 82%, var(--foreground, #1f2421) 8%); color: var(--foreground, #1f2421); }
+  .task-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; border: 1px solid transparent; border-radius: 7px; transition: background .15s ease, border-color .15s ease; }
+  .task-row:hover { background: color-mix(in srgb, var(--card, #fff) 62%, transparent); }
+  .task-row.active { border-color: color-mix(in srgb, var(--border, #dce1db) 82%, transparent); background: var(--card, #fff); color: var(--foreground, #1f2421); }
   .task-open { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 8px; min-width: 0; min-height: 30px; padding: 0 7px; border-radius: 7px; text-align: left; }
   .task-open span { overflow: hidden; color: color-mix(in srgb, var(--foreground, #1f2421) 86%, transparent); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .task-open em { color: var(--muted-foreground, #687169); font-size: 11px; font-style: normal; }
@@ -359,10 +363,11 @@
   .task-row .danger { color: var(--destructive, #b42318); }
   .empty-task { display: flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 7px; color: var(--muted-foreground, #687169) !important; font-size: 11px; }
 
-  footer { padding: 9px 10px 12px; border-top: 1px solid var(--border, #dce1db); }
-  footer button { display: grid; grid-template-columns: 22px minmax(0,1fr); width: 100%; min-height: 38px; padding: 4px 8px; border-radius: 8px; text-align: left; }
-  footer button:hover { background: var(--card, #fff); }
-  footer button.active { border: 1px solid color-mix(in srgb, var(--foreground, #1f2421) 14%, var(--border, #dce1db)); background: color-mix(in srgb, var(--card, #fff) 82%, var(--foreground, #1f2421) 8%); color: var(--foreground, #1f2421); }
+  footer { display: grid; flex: 0 0 auto; gap: 3px; padding: 9px 10px 10px; border-top: 1px solid color-mix(in srgb, var(--border, #dce1db) 78%, transparent); }
+  footer button { display: grid; grid-template-columns: 22px minmax(0,1fr); align-items: center; width: 100%; min-height: 35px; padding: 3px 8px; border: 1px solid transparent; border-radius: 8px; color: var(--muted-foreground, #687169); text-align: left; transition: background .15s ease, color .15s ease, border-color .15s ease; }
+  footer button > :global(svg) { justify-self: center; }
+  footer button:hover { background: color-mix(in srgb, var(--card, #fff) 72%, transparent); color: var(--foreground, #1f2421); }
+  footer button.active { border-color: color-mix(in srgb, var(--border, #dce1db) 82%, transparent); background: var(--card, #fff); color: var(--foreground, #1f2421); }
   footer span, footer em { grid-column: 2; }
   footer span { font-size: 12px; font-weight: 600; }
   footer em { display: none; }

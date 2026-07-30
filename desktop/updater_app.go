@@ -13,11 +13,9 @@ import (
 	"voltui/internal/repair"
 )
 
-// updater_app.go is the auto-updater's bound command surface — the App methods the
+// updater_app.go is the updater's bound command surface — the App methods the
 // frontend calls — mirroring settings_app.go's "one file per concern" split. The
-// transport-free logic lives in updater.go; this file is the Wails glue: it streams
-// download progress as "updater:progress" events and routes macOS to the manual
-// download path unless the macOS build was Developer ID signed and notarized.
+// transport-free logic lives in updater.go; this file is the Wails glue.
 
 var errUpdateManualRequired = errors.New("update: manual update required")
 
@@ -25,69 +23,24 @@ var errUpdateManualRequired = errors.New("update: manual update required")
 // frontend displays it; CheckUpdate compares against it.
 func (a *App) Version() string { return version }
 
-// CheckUpdate fetches the manifest (R2, then GitHub) and reports whether a newer
-// build is available for this platform. Safe to call on startup: a network error
-// surfaces in UpdateInfo.Err rather than failing, so the UI can stay quiet.
+// CheckUpdate reports the manual-update policy without contacting any release
+// service. This avoids an inherited updater choosing an installer for a different
+// product.
 func (a *App) CheckUpdate(selectedChannel string) (*UpdateInfo, error) {
-	selectedChannel = targetUpdateChannel(selectedChannel)
-	profile := detectInstallProfile()
-	c, err := httpClient()
-	if err != nil {
-		a.recordUpdateError(err)
-		return &UpdateInfo{
-			Current:           version,
-			Channel:           selectedChannel,
-			CanSelfUpdate:     profile.CanSelfUpdate && canSelfUpdate(),
-			ManualOnly:        !(profile.CanSelfUpdate && canSelfUpdate()),
-			ManualReason:      firstNonEmptyStr(profile.ManualReason, manualUpdateReason()),
-			InstallMode:       profile.Mode,
-			RequiresElevation: profile.RequiresElev,
-			DownloadURL:       downloadPage(),
-			Err:               err.Error(),
-		}, nil
-	}
-	ctx, cancel := context.WithTimeout(a.reqCtx(), httpTimeout)
-	defer cancel()
-	v4, _ := httpClientIPv4()
-	m, err := fetchManifest(ctx, c, v4, selectedChannel)
-	if err != nil {
-		a.recordUpdateError(err)
-		return &UpdateInfo{
-			Current:           version,
-			Channel:           selectedChannel,
-			CanSelfUpdate:     profile.CanSelfUpdate && canSelfUpdate(),
-			ManualOnly:        !(profile.CanSelfUpdate && canSelfUpdate()),
-			ManualReason:      firstNonEmptyStr(profile.ManualReason, manualUpdateReason()),
-			InstallMode:       profile.Mode,
-			RequiresElevation: profile.RequiresElev,
-			DownloadURL:       downloadPage(),
-			Err:               err.Error(),
-		}, nil
-	}
-	info := evaluateForChannel(version, selectedChannel, m)
+	info := manualUpdateInfo(selectedChannel)
 	return &info, nil
 }
 
-// OpenDownloadPage opens the install page in the browser — the macOS manual-update
-// path and a fallback link elsewhere.
+// OpenDownloadPage opens Anyong's release page in the browser.
 func (a *App) OpenDownloadPage() {
-	page := downloadPage()
-	if c, err := httpClient(); err == nil {
-		ctx, cancel := context.WithTimeout(a.reqCtx(), httpTimeout)
-		defer cancel()
-		v4, _ := httpClientIPv4()
-		if m, err := fetchManifest(ctx, c, v4, targetUpdateChannel("")); err == nil && m.DownloadPage != "" {
-			page = m.DownloadPage
-		}
-	}
 	if a.ctx != nil {
-		wruntime.BrowserOpenURL(a.ctx, page)
+		wruntime.BrowserOpenURL(a.ctx, downloadPage())
 	}
 }
 
-// DownloadUpdate downloads, verifies, and caches the latest build. Installation is
-// deliberately a separate user action so the UI can show "downloaded" before the
-// app quits to finish the update.
+// DownloadUpdate rejects in-place updates while Anyong has no verified update
+// channel. The retained download implementation is unreachable until that channel
+// is introduced and independently validated.
 func (a *App) DownloadUpdate(selectedChannel string) (*UpdateDownloadResult, error) {
 	selectedChannel = targetUpdateChannel(selectedChannel)
 	profile := detectInstallProfile()
@@ -132,7 +85,8 @@ func (a *App) DownloadUpdate(selectedChannel string) (*UpdateDownloadResult, err
 	}, nil
 }
 
-// InstallUpdate applies the cached, verified update and then exits/relaunches.
+// InstallUpdate rejects in-place updates while Anyong has no verified update
+// channel.
 func (a *App) InstallUpdate(selectedChannel string) error {
 	selectedChannel = targetUpdateChannel(selectedChannel)
 	profile := detectInstallProfile()

@@ -30,6 +30,8 @@ export function UpdateBanner({
   if (!enabled) return null;
 
   switch (status.kind) {
+    case "manual":
+      return null;
     case "available": {
       const info = status.info;
       if (info.latest === dismissed) return null;

@@ -19,11 +19,15 @@
     onclose: () => void;
   } = $props();
 
-  let updateStatus = $state<"idle" | "checking" | "up-to-date" | "available" | "error">("idle");
-  let updateInfo = $state<{ version?: string; url?: string } | undefined>();
+  let updateStatus = $state<"idle" | "checking" | "up-to-date" | "manual" | "available" | "error">("idle");
+  let updateInfo = $state<{ version?: string; reason?: string } | undefined>();
 
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === "Escape") onclose();
+  }
+
+  function closeWhenBackdropClicked(event: MouseEvent) {
+    if (event.target === event.currentTarget) onclose();
   }
 
   async function checkForUpdates() {
@@ -34,9 +38,12 @@
     updateStatus = "checking";
     try {
       const result = await app().CheckUpdate();
-      if (result?.available) {
+      if (result?.manualOnly && !result.available) {
+        updateStatus = "manual";
+        updateInfo = { reason: result.manualReason };
+      } else if (result?.available) {
         updateStatus = "available";
-        updateInfo = { version: result.latest, url: result.downloadUrl };
+        updateInfo = { version: result.latest };
       } else {
         updateStatus = "up-to-date";
       }
@@ -52,8 +59,8 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="about-backdrop" role="presentation" onclick={onclose}>
-  <div class="about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title" onclick={(e) => e.stopPropagation()}>
+<div class="about-backdrop" role="presentation" onclick={closeWhenBackdropClicked}>
+  <div class="about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title">
     <button class="about-close" type="button" aria-label="关闭" onclick={onclose}><X size={18} /></button>
 
     <div class="about-brand">
@@ -75,12 +82,18 @@
       {:else if updateStatus === "up-to-date"}
         <CheckCircle2 size={16} />
         <span>已是最新版本</span>
+      {:else if updateStatus === "manual"}
+        <Info size={16} />
+        <span>{updateInfo?.reason || "自动更新暂不可用，请前往发布页下载。"}</span>
       {:else if updateStatus === "available"}
         <Info size={16} />
         <span>有新版本可用{updateInfo?.version ? `：v${updateInfo.version}` : ""}</span>
       {:else if updateStatus === "error"}
         <Info size={16} />
         <span>无法检查更新</span>
+      {/if}
+      {#if updateStatus === "manual"}
+        <button type="button" onclick={() => void app().OpenDownloadPage()}><Info size={13} /> 前往下载页</button>
       {/if}
       <button type="button" onclick={() => void checkForUpdates()} disabled={updateStatus === "checking"}><RefreshCw size={13} /> 重新检查</button>
     </div>
@@ -160,6 +173,7 @@
   .about-update button:hover:not(:disabled) { color: var(--foreground, #1f2421); }
   .about-update button:disabled { opacity: 0.5; cursor: default; }
   .about-update[data-status="up-to-date"] { color: #2a7a4a; }
+  .about-update[data-status="manual"] { color: #9a5b00; }
   .about-update[data-status="available"] { color: #b58105; }
   .about-update[data-status="error"] { color: var(--muted-foreground, #687169); }
 

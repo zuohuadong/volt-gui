@@ -10,6 +10,7 @@ export type UpdateStatus =
   | { kind: "idle" }
   | { kind: "checking" }
   | { kind: "upToDate"; current: string }
+  | { kind: "manual"; info: UpdateInfo }
   | { kind: "available"; info: UpdateInfo }
   | { kind: "downloading"; received: number; total: number; info: UpdateInfo }
   | { kind: "verifying"; info: UpdateInfo }
@@ -93,6 +94,10 @@ function useUpdaterInternal(): Updater {
       }
       if (info.err) {
         setStatus({ kind: "error", message: info.err, info });
+        return;
+      }
+      if (info.manualOnly && !info.available) {
+        setStatus({ kind: "manual", info });
         return;
       }
       if (!info.available) {

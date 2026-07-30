@@ -162,55 +162,21 @@ func TestManualUpdateRequiredErrorPreservesReason(t *testing.T) {
 	}
 }
 
-func TestChannelSelectsDistinctPointers(t *testing.T) {
-	stable := manifestEndpoints("stable")
-	preview := manifestEndpoints("preview")
-
-	for _, u := range stable {
-		if strings.Contains(u, "preview") || strings.Contains(u, "canary") {
-			t.Errorf("stable endpoint leaks into preview: %q", u)
+func TestAnyongDistributionRequiresManualUpdate(t *testing.T) {
+	if canSelfUpdate() {
+		t.Fatal("Anyong distribution must not self-update before it owns a verified release channel")
+	}
+	if got := downloadPage(); got != "https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases" {
+		t.Fatalf("download page = %q", got)
+	}
+	source, err := os.ReadFile("updater.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, inheritedSource := range []string{"dl.reasonix.io", "crash.reasonix.io", "esengine/DeepSeek-VoltUI"} {
+		if strings.Contains(string(source), inheritedSource) {
+			t.Fatalf("updater still references inherited release source %q", inheritedSource)
 		}
-	}
-	if !strings.Contains(stable[0], "/latest/latest.json") {
-		t.Errorf("stable primary = %q, want the latest/ pointer", stable[0])
-	}
-	if stable[1] != releaseGatewayBase+"/stable/latest.json" {
-		t.Errorf("stable fallback = %q, want the release gateway", stable[1])
-	}
-	// GitHub is stable's explicit last resort only (#6005: both first-party
-	// endpoints share one Cloudflare zone). Stable desktop releases own the
-	// repo-wide latest release and carry latest.json directly; no other slot may
-	// lean on repository-wide latest.
-	if len(stable) != 3 || stable[2] != githubManifestFallback {
-		t.Errorf("stable endpoints = %q, want the GitHub compatibility manifest last", stable)
-	}
-	for _, u := range append(stable[:2:2], preview...) {
-		if strings.Contains(u, "/releases/latest") {
-			t.Errorf("manifest endpoint uses GitHub's repository-wide latest release: %q", u)
-		}
-	}
-	for _, u := range preview {
-		if strings.Contains(u, "/latest/") {
-			t.Errorf("preview endpoint hits the stable latest/ pointer: %q", u)
-		}
-	}
-	if preview[0] != r2Base+"/preview/latest.json" {
-		t.Errorf("preview primary = %q, want the preview/ pointer", preview[0])
-	}
-	if preview[1] != r2Base+"/canary/latest.json" {
-		t.Errorf("preview compatibility fallback = %q, want the legacy canary/ pointer", preview[1])
-	}
-	if preview[2] != releaseGatewayBase+"/preview/latest.json" {
-		t.Errorf("preview gateway = %q, want the preview release gateway", preview[2])
-	}
-	if preview[3] != releaseGatewayBase+"/canary/latest.json" {
-		t.Errorf("preview gateway compatibility fallback = %q, want the legacy canary gateway", preview[3])
-	}
-	if strings.Contains(downloadPage(), "/releases/latest") {
-		t.Errorf("download page should not use GitHub's repository-wide latest release: %q", downloadPage())
-	}
-	if downloadPage() != "https://reasonix.io/?download=desktop#start" {
-		t.Errorf("download page = %q, want the desktop install deep link", downloadPage())
 	}
 }
 
@@ -239,32 +205,37 @@ func TestManifestChannelValidation(t *testing.T) {
 	}
 }
 
-func TestFetchManifestSkipsLegacyCanaryBuildForPreview(t *testing.T) {
-	var calls []string
-	client := &http.Client{Transport: rtFunc(func(req *http.Request) (*http.Response, error) {
-		calls = append(calls, req.URL.String())
-		version := "v1.17.21-canary.56"
-		if strings.Contains(req.URL.Path, "/canary/") {
-			version = "v1.18.0-preview.7"
-		}
-		body := fmt.Sprintf(`{"version":%q}`, version)
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Status:     "200 OK",
-			Body:       io.NopCloser(strings.NewReader(body)),
-			Header:     make(http.Header),
-		}, nil
-	})}
-
-	manifest, err := fetchManifest(context.Background(), client, nil, "preview")
+func TestManualUpdateBoundariesNeverFetchOrInstall(t *testing.T) {
+	app := &App{}
+	info, err := app.CheckUpdate("preview")
 	if err != nil {
-		t.Fatalf("fetchManifest: %v", err)
+		t.Fatalf("CheckUpdate: %v", err)
 	}
-	if manifest.Version != "v1.18.0-preview.7" {
-		t.Fatalf("version = %q, want Preview compatibility manifest", manifest.Version)
+	if info.Available || info.CanSelfUpdate || !info.ManualOnly || info.InstallMode != installModeManual {
+		t.Fatalf("manual update info = %+v", info)
 	}
-	if len(calls) != 2 || !strings.Contains(calls[0], "/preview/") || !strings.Contains(calls[1], "/canary/") {
-		t.Fatalf("endpoint calls = %q, want Preview first and legacy Canary fallback second", calls)
+	if info.Channel != "preview" || info.DownloadURL != downloadPage() {
+		t.Fatalf("manual update routing = %+v", info)
+	}
+	if _, err := app.DownloadUpdate("stable"); !errors.Is(err, errUpdateManualRequired) {
+		t.Fatalf("DownloadUpdate error = %v, want manual-update sentinel", err)
+	}
+	if err := app.InstallUpdate("stable"); !errors.Is(err, errUpdateManualRequired) {
+		t.Fatalf("InstallUpdate error = %v, want manual-update sentinel", err)
+	}
+}
+
+func TestWindowsInstallerRecreatesDesktopShortcutWithLauncher(t *testing.T) {
+	installer, err := os.ReadFile("build/windows/installer/project.nsi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shortcut := `CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}"`
+	if !strings.Contains(string(installer), shortcut) {
+		t.Fatalf("desktop shortcut must target the launcher: %q", shortcut)
+	}
+	if strings.Contains(string(installer), `CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_UPDATE_HELPER}"`) {
+		t.Fatal("desktop shortcut must not target the update helper")
 	}
 }
 

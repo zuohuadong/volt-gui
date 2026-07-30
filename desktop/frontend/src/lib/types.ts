@@ -1406,7 +1406,13 @@ export interface UpdateInfo {
   current: string;
   latest: string;
   notes: string;
+  channel?: string;
   canSelfUpdate: boolean;
+  manualOnly?: boolean;
+  manualReason?: string;
+  installMode?: string;
+  requiresElevation?: boolean;
+  downloaded?: boolean;
   downloadUrl: string;
   assetSize: number;
   err?: string;

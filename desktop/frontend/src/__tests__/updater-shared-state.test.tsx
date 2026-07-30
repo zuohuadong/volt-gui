@@ -70,8 +70,8 @@ await act(async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
 });
 
-ok(document.getElementById("banner-status")?.textContent === "upToDate", "banner receives the check result");
-ok(document.getElementById("settings-status")?.textContent === "upToDate", "settings receives the same check result");
+ok(document.getElementById("banner-status")?.textContent === "manual", "banner receives the manual update status");
+ok(document.getElementById("settings-status")?.textContent === "manual", "settings receives the same manual update status");
 
 const debInfo = {
   available: true,

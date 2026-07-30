@@ -34,31 +34,12 @@ import (
 // has no Wails dependency so the logic is unit-tested directly; updater_app.go is
 // the thin Wails binding that wires these into App methods and progress events.
 
-// Manifest endpoints — R2 CDN first (fast, especially in CN), then the crash
-// worker release gateway, then GitHub as the stable channel's last resort. The
-// selected update channel picks the rolling pointer; it is user-configurable and
-// independent from the build channel embedded for diagnostics/backcompat. The
-// gateway still avoids GitHub's repository-wide /releases/latest shortcut so the
-// app is not coupled to GitHub's homepage badge semantics.
 const (
-	r2Base                  = "https://dl.reasonix.io"
-	releaseGatewayBase      = "https://crash.reasonix.io/v1/desktop/releases"
-	downloadPageURL         = "https://reasonix.io/?download=desktop#start"
-	httpTimeout             = 15 * time.Second
-	manifestEndpointTimeout = 5 * time.Second
+	downloadPageURL = "https://cnb.cool/aizhuliren/volt/anyong-agent/-/releases"
+	httpTimeout     = 15 * time.Second
 )
 
 var fetchAttemptTimeout = 5 * time.Second
-
-// githubManifestFallback is the stable channel's last-resort manifest source.
-// dl.reasonix.io and crash.reasonix.io share one Cloudflare zone, so bot
-// protection that 403s a user's egress IP takes out both first-party endpoints
-// at once (#6005); GitHub is separate infrastructure. Stable desktop releases
-// own the repo-wide latest badge and publish latest.json directly, while
-// release.yml also keeps a desktop-manifest mirror attached to stable CLI
-// releases for older publishing windows. Preview has no GitHub release, so its
-// chain remains first-party only.
-const githubManifestFallback = "https://github.com/esengine/DeepSeek-VoltUI/releases/latest/download/latest.json"
 
 func normalizeUpdateChannel(ch string) string {
 	return config.NormalizeDesktopUpdateChannel(ch)
@@ -83,36 +64,13 @@ func runningUpdateChannel() string {
 	return normalizeUpdateChannel(channel)
 }
 
-// manifestEndpoints returns the manifest URLs for the selected update channel,
-// in the order fetchManifest tries them.
-func manifestEndpoints(selected string) []string {
-	switch normalizeUpdateChannel(selected) {
-	case "preview":
-		return []string{
-			r2Base + "/preview/latest.json",
-			r2Base + "/canary/latest.json",
-			releaseGatewayBase + "/preview/latest.json",
-			releaseGatewayBase + "/canary/latest.json",
-		}
-	default:
-		return []string{
-			r2Base + "/latest/latest.json",
-			releaseGatewayBase + "/stable/latest.json",
-			githubManifestFallback,
-		}
-	}
-}
-
-// updaterUserAgent identifies updater traffic. Go's default Go-http-client UA
-// is exactly what edge bot protection scores worst (#6005); a descriptive UA
-// lets the release edge allowlist updater requests and makes them attributable
-// in server logs.
+// updaterUserAgent identifies updater traffic when an Anyong-owned, verified
+// self-update channel is introduced.
 func updaterUserAgent(selected string) string {
 	return fmt.Sprintf("VoltUI-Updater/%s (%s/%s; build=%s; update=%s)", version, runtime.GOOS, runtime.GOARCH, channel, normalizeUpdateChannel(selected))
 }
 
-// downloadPage is the human-facing releases page shown when self-update is
-// unavailable (macOS) or the manifest omits its own link.
+// downloadPage is the human-facing releases page for manual installation.
 func downloadPage() string {
 	return downloadPageURL
 }
@@ -124,7 +82,7 @@ type UpdateInfo struct {
 	Latest            string `json:"latest"`
 	Notes             string `json:"notes"`
 	Channel           string `json:"channel"`
-	CanSelfUpdate     bool   `json:"canSelfUpdate"` // win/linux true; macOS true only for signed/notarized builds
+	CanSelfUpdate     bool   `json:"canSelfUpdate"` // false until Anyong owns a verified update channel
 	ManualOnly        bool   `json:"manualOnly,omitempty"`
 	ManualReason      string `json:"manualReason,omitempty"`
 	InstallMode       string `json:"installMode"`                 // portable | deb | manual
@@ -168,18 +126,15 @@ func newHTTPClient(forceIPv4 bool) (*http.Client, error) {
 	return netclient.NewHTTPClient(cfg.NetworkProxySpec(), netclient.TransportOptions{ForceIPv4: forceIPv4})
 }
 
-// canSelfUpdate reports whether in-place update is possible. Windows and Linux
-// can replace the verified artifact directly; macOS requires an explicitly
-// signed/notarized build flag so local or ad-hoc builds stay manual.
+// canSelfUpdate remains false until Anyong publishes its own signed manifest and
+// end-to-end update path. Falling back to a different product's installer can
+// overwrite the running installation, so updates must fail closed for now.
 func canSelfUpdate() bool {
-	return runtime.GOOS != "darwin" || macSelfUpdateAllowed()
+	return false
 }
 
 func manualUpdateReason() string {
-	if runtime.GOOS == "darwin" && !macSelfUpdateAllowed() {
-		return "macOS automatic updates require a Developer ID signed and notarized build"
-	}
-	return ""
+	return "Automatic updates are temporarily disabled. Download the current Anyong installer from the releases page."
 }
 
 // normalizeVersion canonicalizes a version to semver "vX.Y.Z". It reports ok=false
@@ -222,53 +177,21 @@ func validateManifestChannel(selected string, m *update.Manifest) error {
 	return nil
 }
 
-// fetchManifest pulls latest.json from each endpoint in order until one both
-// responds, decodes, and matches the selected public channel. Every endpoint's
-// failure is kept — a user staring at a gateway 403 (#6005) needs to see that
-// the R2 pointer failed too, not just whichever endpoint happened to die last.
+// fetchManifest fails closed until Anyong has an independently verified update
+// manifest. No call path may reuse an inherited product's release metadata.
 func fetchManifest(ctx context.Context, c, fallback *http.Client, selected string) (*update.Manifest, error) {
-	var errs []error
-	selected = normalizeUpdateChannel(selected)
-	for _, url := range manifestEndpoints(selected) {
-		endpointCtx, cancel := context.WithTimeout(ctx, manifestEndpointTimeout)
-		b, err := fetchManifestBytes(endpointCtx, c, fallback, selected, url)
-		cancel()
-		if err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		var m update.Manifest
-		if err := json.Unmarshal(b, &m); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", url, err))
-			continue
-		}
-		if err := validateManifestChannel(selected, &m); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", url, err))
-			continue
-		}
-		return &m, nil
-	}
-	return nil, fmt.Errorf("update: fetch manifest: %w", errors.Join(errs...))
+	return nil, errors.New("update: self-update is disabled for this Anyong distribution")
 }
 
-// fetchManifestBytes gives the default and IPv4 transports separate halves of
-// the endpoint budget. A stalled IPv6 dial must not consume the whole timeout
-// before the IPv4 fallback gets a chance to run (#6713).
-func fetchManifestBytes(ctx context.Context, c, fallback *http.Client, selected, url string) ([]byte, error) {
-	attemptTimeout := manifestEndpointTimeout / 2
-	attemptCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
-	data, err := fetchBytesOnce(attemptCtx, c, selected, url)
-	cancel()
-	if err == nil || !isTransientFetchError(err) || fallback == nil {
-		return data, err
+func manualUpdateInfo(selectedChannel string) UpdateInfo {
+	return UpdateInfo{
+		Current:      version,
+		Channel:      targetUpdateChannel(selectedChannel),
+		ManualOnly:   true,
+		ManualReason: manualUpdateReason(),
+		InstallMode:  installModeManual,
+		DownloadURL:  downloadPage(),
 	}
-	attemptCtx, cancel = context.WithTimeout(ctx, attemptTimeout)
-	fallbackData, fallbackErr := fetchBytesOnce(attemptCtx, fallback, selected, url)
-	cancel()
-	if fallbackErr == nil {
-		return fallbackData, nil
-	}
-	return nil, errors.Join(err, fallbackErr)
 }
 
 // evaluateForChannel compares the running version against the selected channel's

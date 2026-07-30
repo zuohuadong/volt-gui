@@ -6765,6 +6765,13 @@ function UpdatesSection({
       {status.kind === "available" && (
         <div className="mem-hint">{t("updater.channelLabel", { channel: status.info.channel || "stable" })}</div>
       )}
+      {status.kind === "manual" && (
+        <SettingsField label={status.info.manualReason || t("updater.macHint")}>
+          <button className="btn btn--small btn--primary" onClick={openDownload}>
+            {t("updater.goToDownload")}
+          </button>
+        </SettingsField>
+      )}
       {status.kind === "upToDate" && <div className="mem-hint">{t("updater.upToDate")}</div>}
       {status.kind === "available" && (
         <>

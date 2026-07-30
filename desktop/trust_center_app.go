@@ -732,15 +732,11 @@ func trustDiagnosticFlows(cfg *config.Config) []TrustFlow {
 		}
 		return TrustStatusDisabled
 	}
-	updateDestinations := make([]TrustDestination, 0, len(manifestEndpoints(cfg.DesktopUpdateChannel())))
-	for _, endpoint := range manifestEndpoints(cfg.DesktopUpdateChannel()) {
-		updateDestinations = append(updateDestinations, sanitizeTrustDestination(endpoint, ""))
-	}
 	return []TrustFlow{
 		{ID: "diagnostic:telemetry", Category: "diagnostic", Name: "启动遥测", Status: status(cfg.DesktopTelemetry()), Direction: "本机 -> 诊断服务", Destinations: []TrustDestination{sanitizeTrustDestination(pingEndpoint, "")}, Classification: "external", DataCategories: []string{"安装 ID", "版本", "操作系统与架构", "已登录时的账户标识资料"}, Detail: "每次正式版启动一次；关闭 desktop.telemetry 后停用。"},
 		{ID: "diagnostic:metrics", Category: "diagnostic", Name: "聚合指标", Status: status(cfg.DesktopMetrics()), Direction: "本机 -> 诊断服务", Destinations: []TrustDestination{sanitizeTrustDestination(metricsEndpoint, "")}, Classification: "external", DataCategories: []string{"功能信号计数", "有限枚举桶"}, Detail: "不包含提示词、文件内容、路径、密钥或自定义服务 URL。"},
 		{ID: "diagnostic:crash", Category: "diagnostic", Name: "崩溃报告", Status: status(cfg.DesktopTelemetry()), Direction: "本机 -> 诊断服务", Destinations: []TrustDestination{sanitizeTrustDestination(crashEndpoint, "")}, Classification: "external", DataCategories: []string{"净化后的错误消息", "净化后的堆栈", "版本与设备信息"}, Detail: "Go panic 可暂存并在下次启动按遥测设置处理；前端报告仍需用户明确发送。"},
-		{ID: "diagnostic:update", Category: "diagnostic", Name: "更新检查", Status: status(cfg.DesktopCheckUpdates()), Direction: "本机 -> 发布服务", Destinations: updateDestinations, Classification: "external", DataCategories: []string{"当前版本", "发布通道", "平台与架构", "更新 User-Agent"}, Detail: "仅检查发布清单；下载与安装是独立用户动作。"},
+		{ID: "diagnostic:update", Category: "diagnostic", Name: "更新检查", Status: TrustStatusDisabled, Direction: "不执行自动更新检查", Destinations: []TrustDestination{}, Classification: "local", DataCategories: []string{}, Detail: "此版本已停用自动更新；仅在用户操作时打开 Anyong 发布页下载。"},
 		{ID: "diagnostic:notifications", Category: "diagnostic", Name: "系统通知", Status: status(cfg.Notifications.Enabled), Direction: "本机应用 -> 操作系统通知中心", Classification: "local", DataCategories: []string{"任务完成/审批/提问事件标题"}, Detail: "由本机操作系统通知服务显示，不需要远程目标。"},
 	}
 }

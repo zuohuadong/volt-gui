@@ -227,6 +227,16 @@ func TestDataTrustCenterForTabIncludesStoragePolicyDiagnosticsAndFileEgress(t *t
 	}
 }
 
+func TestTrustDiagnosticsDisablesAutomaticUpdateChecks(t *testing.T) {
+	cfg := config.Default()
+	cfg.Desktop.CheckUpdates = trustBoolPtr(true)
+
+	update := trustFlowByID(t, trustDiagnosticFlows(cfg), "diagnostic:update")
+	if update.Status != TrustStatusDisabled || update.Classification != "local" || len(update.Destinations) != 0 {
+		t.Fatalf("automatic update diagnostic = %+v", update)
+	}
+}
+
 func TestDataTrustCenterHandlesUnknownDestinationAndMissingTabs(t *testing.T) {
 	destination := sanitizeTrustDestination("::::not-a-url", "")
 	if destination.Classification != "unknown" || destination.URL != "" {

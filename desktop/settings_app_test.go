@@ -391,6 +391,42 @@ func TestFetchProviderModelsUsesSavedCredentialBeforeEnvironment(t *testing.T) {
 	}
 }
 
+func TestFetchProviderModelsUsesDraftKeyWithoutPersistingIt(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	const keyEnv = "TEST_PROVIDER_DRAFT_FETCH_KEY"
+	os.Unsetenv(keyEnv)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer unsaved-draft-key" {
+			http.Error(w, "unexpected authorization", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{{"id": "draft-model", "object": "model"}},
+		})
+	}))
+	defer srv.Close()
+
+	got, err := NewApp().FetchProviderModels(ProviderView{
+		Name:        "draft-provider",
+		BaseURL:     srv.URL,
+		APIKeyEnv:   keyEnv,
+		APIKeyValue: "  unsaved-draft-key  ",
+	})
+	if err != nil {
+		t.Fatalf("FetchProviderModels: %v", err)
+	}
+	if want := []string{"draft-model"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("FetchProviderModels = %v, want %v", got, want)
+	}
+	if resolution := config.ResolveCredential(keyEnv); resolution.Set {
+		t.Fatalf("draft key was persisted: source=%+v", resolution.Source)
+	}
+	if got := os.Getenv(keyEnv); got != "" {
+		t.Fatalf("draft key leaked into process environment: %q", got)
+	}
+}
+
 func TestSaveProviderFiltersNonChatModels(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

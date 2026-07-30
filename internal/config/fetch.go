@@ -24,10 +24,17 @@ var knownModelFetchCompatSuffixes = []string{
 // FetchModels queries the provider's OpenAI-compatible GET /models endpoint and
 // returns the available model IDs, sorted alphabetically.
 func (e *ProviderEntry) FetchModels(ctx context.Context) ([]string, error) {
+	return e.FetchModelsWithAPIKey(ctx, e.APIKey())
+}
+
+// FetchModelsWithAPIKey probes model-list endpoints with a caller-provided key.
+// The key is scoped to this request and is never written to process state or the
+// credential store. Settings uses this path to validate an unsaved form draft.
+func (e *ProviderEntry) FetchModelsWithAPIKey(ctx context.Context, apiKey string) ([]string, error) {
 	if e.BaseURL == "" {
 		return nil, fmt.Errorf("fetch models: provider %q has no base_url", e.Name)
 	}
-	key := e.APIKey()
+	key := strings.TrimSpace(apiKey)
 	if e.RequiresAPIKey() && key == "" {
 		return nil, fmt.Errorf("fetch models: provider %q has no API key (set %s in .env)", e.Name, e.APIKeyEnv)
 	}

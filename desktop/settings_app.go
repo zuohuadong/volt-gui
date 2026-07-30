@@ -32,6 +32,7 @@ import (
 
 type ProviderView struct {
 	Name              string                      `json:"name"`
+	DisplayName       string                      `json:"displayName"`
 	BuiltIn           bool                        `json:"builtIn"`
 	Added             bool                        `json:"added"`
 	Kind              string                      `json:"kind"`
@@ -520,7 +521,7 @@ func providerViewFromEntryForRootWithResolver(p config.ProviderEntry, builtIn, a
 	key := resolver.ResolveGlobalFirst(p.APIKeyEnv)
 	requiresKey := p.RequiresAPIKey()
 	return ProviderView{
-		Name: p.Name, BuiltIn: builtIn, Added: added, Kind: p.Kind, BaseURL: p.BaseURL, ChatURL: p.ChatURL, APISurface: config.EffectiveAPISurface(&p), ResponsesURL: p.ResponsesURL,
+		Name: p.Name, DisplayName: p.DisplayLabel(), BuiltIn: builtIn, Added: added, Kind: p.Kind, BaseURL: p.BaseURL, ChatURL: p.ChatURL, APISurface: config.EffectiveAPISurface(&p), ResponsesURL: p.ResponsesURL,
 		Models: nonNil(models), VisionModels: nonNil(providerVisionModels(models, visionModels)), VisionModelsSet: visionModelsSet, ModelsURL: p.ModelsURL, Default: p.DefaultModel(),
 		APIKeyEnv:         p.APIKeyEnv,
 		Headers:           nonNilStringMap(p.Headers),
@@ -2126,6 +2127,7 @@ func saveProviderConfig(c *config.Config, p ProviderView) error {
 		}
 	}
 	e.Name = p.Name
+	e.DisplayName = strings.TrimSpace(p.DisplayName)
 	e.Kind = p.Kind
 	e.BaseURL = p.BaseURL
 	e.ChatURL = strings.TrimSpace(p.ChatURL)

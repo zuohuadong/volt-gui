@@ -69,6 +69,7 @@ function providerFromData(data: unknown, previous?: BaseRecord): ProviderView {
   const name = String(record.name ?? record.id ?? "").trim();
   return {
     name,
+    displayName: String(record.displayName ?? "").trim(),
     kind: String(record.kind ?? "openai").trim() || "openai",
     baseUrl: String(record.baseUrl ?? record.baseURL ?? ""),
     models: parseList(record.models).length > 0 ? parseList(record.models) : [String(record.default ?? "model").trim()].filter(Boolean),

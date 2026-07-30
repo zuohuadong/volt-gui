@@ -112,7 +112,7 @@ trap cleanup EXIT
 cp "$PAYLOAD/$BINNAME.exe" "$portable_staging/$BINNAME.exe"
 cp "$PAYLOAD/$GUARDNAME.exe" "$portable_staging/$GUARDNAME.exe"
 cp "$PAYLOAD/$LAUNCHERNAME.exe" "$portable_staging/$LAUNCHERNAME.exe"
-cp "$PAYLOAD/$LAUNCHERNAME.exe" "$portable_staging/$APPNAME.exe"
+cp "$PAYLOAD/$BINNAME.exe" "$portable_staging/$APPNAME.exe"
 cp "$PAYLOAD/$UPDATE_HELPER" "$portable_staging/$UPDATE_HELPER"
 cp "$PAYLOAD/$WINDOWS_CLINAME.exe" "$portable_staging/$WINDOWS_CLINAME.exe"
 if [ -e "$INSTALLER_DIR/$BUNDLED_ENV" ]; then

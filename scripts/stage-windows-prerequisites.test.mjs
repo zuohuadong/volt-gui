@@ -224,6 +224,23 @@ printf 'installer\n' > ../../bin/voltui-desktop-amd64-installer.exe
       'voltui-launcher.exe',
       'voltui-update-helper.exe',
     ]);
+    const portableApp = spawnSync('unzip', ['-p', join(fixture, 'dist', 'Anyong-windows-amd64.zip'), 'Anyong.exe'], {
+      env: { ...process.env, PATH: '/usr/bin:/bin' },
+      encoding: 'utf8',
+    });
+    const desktopApp = spawnSync('unzip', ['-p', join(fixture, 'dist', 'Anyong-windows-amd64.zip'), 'voltui-desktop.exe'], {
+      env: { ...process.env, PATH: '/usr/bin:/bin' },
+      encoding: 'utf8',
+    });
+    const updateLauncher = spawnSync('unzip', ['-p', join(fixture, 'dist', 'Anyong-windows-amd64.zip'), 'voltui-launcher.exe'], {
+      env: { ...process.env, PATH: '/usr/bin:/bin' },
+      encoding: 'utf8',
+    });
+    assert.equal(portableApp.status, 0, portableApp.stderr || portableApp.stdout);
+    assert.equal(desktopApp.status, 0, desktopApp.stderr || desktopApp.stdout);
+    assert.equal(updateLauncher.status, 0, updateLauncher.stderr || updateLauncher.stdout);
+    assert.equal(portableApp.stdout, desktopApp.stdout);
+    assert.notEqual(portableApp.stdout, updateLauncher.stdout);
     const bundled = spawnSync('unzip', ['-p', join(fixture, 'dist', 'Anyong-windows-amd64.zip'), 'bundled.env'], {
       env: { ...process.env, PATH: '/usr/bin:/bin' },
       encoding: 'utf8',
@@ -258,6 +275,9 @@ test('NSIS preserves its generated uninstaller without a Windows command shell',
     assert.doesNotMatch(installer, /!uninstfinalize 'cmd\.exe/);
     assert.match(installer, /OutFile "\.\.\\\.\.\\bin\\voltui-desktop-\$\{ARCH\}-installer\.exe"/);
     assert.doesNotMatch(installer, /OutFile .+INFO_PROJECTNAME/);
+    assert.match(installer, /CreateShortcut "\$SMPROGRAMS\\\$\{INFO_PRODUCTNAME\}\.lnk" "\$INSTDIR\\\$\{PRODUCT_EXECUTABLE\}"/);
+    assert.match(installer, /CreateShortCut "\$DESKTOP\\\$\{INFO_PRODUCTNAME\}\.lnk" "\$INSTDIR\\\$\{PRODUCT_EXECUTABLE\}"/);
+    assert.doesNotMatch(installer, /CreateShortCut .+REASONIX_LAUNCHER/);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

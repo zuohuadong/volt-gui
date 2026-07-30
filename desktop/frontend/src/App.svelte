@@ -437,6 +437,7 @@
   };
   type ModelProviderDraft = {
     name: string;
+    displayName: string;
     kind: string;
     baseUrl: string;
     modelsText: string;
@@ -2457,6 +2458,7 @@
   function emptyModelProviderDraft(): ModelProviderDraft {
     return {
       name: "",
+      displayName: "",
       kind: "openai",
       baseUrl: "",
       modelsText: "",
@@ -2711,6 +2713,7 @@
     if (!provider) return emptyModelProviderDraft();
     return {
       name: provider.name,
+      displayName: provider.displayName || "",
       kind: provider.kind || "openai",
       baseUrl: provider.baseUrl || "",
       modelsText: (provider.models ?? []).join("\n"),
@@ -2738,6 +2741,7 @@
     const priority = Number.parseInt(modelDraft.priority.trim(), 10);
     return {
       name: modelDraft.name.trim(),
+      displayName: modelDraft.displayName.trim(),
       kind: modelDraft.kind.trim() || "openai",
       baseUrl: modelDraft.baseUrl.trim(),
       apiSurface: modelDraft.apiSurface.trim() || "chat_completions",

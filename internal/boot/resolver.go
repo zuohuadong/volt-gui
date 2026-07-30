@@ -28,7 +28,7 @@ func (r *LocalProviderResolver) Catalog() []provider.Descriptor {
 		e := &r.cfg.Providers[i]
 		ref := modelRefFromEntry(e)
 		d := provider.Descriptor{
-			Ref: ref, DisplayName: e.Name, Model: e.Model,
+			Ref: ref, DisplayName: e.DisplayNameOrName(), Model: e.Model,
 			ContextWindow: e.ContextWindow, Vision: config.EffectiveVision(e),
 			Tools: true, DefaultEffort: config.EffectiveEffort(e),
 		}

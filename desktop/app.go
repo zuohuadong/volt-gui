@@ -5678,8 +5678,14 @@ func (a *App) MetaForTab(tabID string) Meta {
 	tokenMode := snap.currentTokenMode()
 	goal := snap.currentGoal()
 	goalStatus := snap.currentGoalStatus()
+	label := snap.label
+	if cfg, err := config.LoadForRoot(cwd); err == nil {
+		if entry, ok := cfg.ResolveModel(snap.model); ok && entry.DisplayLabel() != "" {
+			label = entry.DisplayLabel()
+		}
+	}
 	return Meta{
-		Label:             snap.label,
+		Label:             label,
 		Ready:             runtimeView.Phase == sessionRuntimeReady && snap.ctrl != nil,
 		Runtime:           runtimeView,
 		StartupErr:        snap.startupErr,
@@ -7721,6 +7727,7 @@ type ModelInfo struct {
 	Ref      string `json:"ref"`
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
+	Label    string `json:"label,omitempty"`
 	Current  bool   `json:"current"`
 	Vision   bool   `json:"vision"`
 }
@@ -7770,7 +7777,7 @@ func (a *App) ModelsForTab(tabID string) []ModelInfo {
 			if entry, ok := cfg.ResolveModel(ref); ok {
 				vision = config.EffectiveVision(entry)
 			}
-			out = append(out, ModelInfo{Ref: ref, Provider: p.Name, Model: m, Current: ref == curModel, Vision: vision})
+			out = append(out, ModelInfo{Ref: ref, Provider: p.Name, Model: m, Label: p.DisplayLabel(), Current: ref == curModel, Vision: vision})
 		}
 	}
 	return out

@@ -174,8 +174,7 @@
   }
 
   function modelLabel(model: ModelInfo, index: number) {
-    const label = model.label || model.model || model.name || model.ref || `模型 ${index + 1}`;
-    return model.vision ? `${label} (${t.composer.imageInputShort})` : label;
+    return model.label || model.model || model.name || model.ref || `模型 ${index + 1}`;
   }
 
   function commandKey(command: CommandInfo, index: number) {

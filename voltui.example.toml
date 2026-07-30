@@ -2,7 +2,7 @@
 # Resolution order: flag > ./voltui.toml > ~/.config/voltui/config.toml > built-in defaults.
 # Secrets come from the environment via api_key_env; never put keys here.
 
-default_model = "qwen-thinking"   # a provider name (→ its default model) or "provider/model"
+default_model = "xllm"   # a provider name (→ its default model) or "provider/model"
 # language      = "zh"   # ui language; empty = auto-detect from $LANG / $VOLTUI_LANG
 
 # White-label / OEM branding — replace the product name and logos for your
@@ -48,41 +48,27 @@ compact_force_ratio = 0.9   # force compacting at this high-water mark
 # models. Use `models = [...]` to expose several under a single entry — switching
 # models reuses the same connection; no need to re-declare base_url/api_key.
 # 西谷内网模型网关 — OpenAI 兼容接口 (http://192.168.1.47:9010/v1)
-# 每个模型单独一个 provider entry，model 字段写完整 id（含 provider 前缀斜杠）
-# 调用时 default_model = "qwen-thinking" 或 "glm-5.2"，ResolveModel 自动拼接
-# 短名语义: qwen-thinking(思考) / qwen-fast(非思考) / glm-5.2 / image-gen(图像)
+# 只公开两个业务代号：xllm（纯文本）和 vlm（多模态）。
+# display_name 仅用于客户端展示，实际请求始终使用 model 中的业务代号。
 
 [[providers]]
-name           = "glm-5.2"
+name           = "xllm"
+display_name   = "纯文本"
 kind           = "openai"
 base_url       = "http://192.168.1.47:9010/v1"
-model          = "glm-primary/glm-5.2-nvfp4"
+model          = "xllm"
 api_key_env    = "volt_API_KEY"
 context_window = 131072
 
 [[providers]]
-name           = "qwen-thinking"
+name           = "vlm"
+display_name   = "多模态"
 kind           = "openai"
 base_url       = "http://192.168.1.47:9010/v1"
-model          = "qwen-gpu4/qwen36-opus-prisma8-gpu4"
+model          = "vlm"
 api_key_env    = "volt_API_KEY"
 context_window = 131072
-
-[[providers]]
-name           = "qwen-fast"
-kind           = "openai"
-base_url       = "http://192.168.1.47:9010/v1"
-model          = "qwen-gpu5/qwen36-opus-prisma8-gpu5"
-api_key_env    = "volt_API_KEY"
-context_window = 131072
-
-[[providers]]
-name           = "image-gen"
-kind           = "openai"
-base_url       = "http://192.168.1.47:9010/v1"
-model          = "image-gpu5/image-gpu5"
-api_key_env    = "volt_API_KEY"
-context_window = 131072
+vision         = true
 
 # A single-model provider still works (use `model = "..."`) — pick this form when a
 # model needs its own base_url / context_window / price (e.g. the two MiMo SKUs

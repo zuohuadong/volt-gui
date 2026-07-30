@@ -969,12 +969,13 @@ func TestRenderTOMLRoundTripsVisionModels(t *testing.T) {
 func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 	orig := Default()
 	orig.Providers = []ProviderEntry{{
-		Name:      "gateway",
-		Kind:      "openai",
-		BaseURL:   "https://gateway.example/v1",
-		Models:    []string{"deepseek-v4-flash", "plain-chat"},
-		Default:   "plain-chat",
-		APIKeyEnv: "GATEWAY_API_KEY",
+		Name:        "gateway",
+		DisplayName: "Gateway Chat",
+		Kind:        "openai",
+		BaseURL:     "https://gateway.example/v1",
+		Models:      []string{"deepseek-v4-flash", "plain-chat"},
+		Default:     "plain-chat",
+		APIKeyEnv:   "GATEWAY_API_KEY",
 		Headers: map[string]string{
 			"HTTP-Referer": "https://app.example",
 			"X-Title":      "VoltUI",
@@ -1028,6 +1029,9 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 	}
 	if !p.AuthHeader {
 		t.Fatal("auth_header after round trip = false, want true")
+	}
+	if p.DisplayLabel() != "Gateway Chat" {
+		t.Fatalf("display name after round trip = %q", p.DisplayLabel())
 	}
 	metadata, ok := p.ExtraBody["metadata"].(map[string]any)
 	if !ok || metadata["mode"] != "fast" {

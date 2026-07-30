@@ -89,7 +89,7 @@ await act(async () => {
 
 await act(async () => {
   window.dispatchEvent(new Event("reasonix:model-catalog-changed"));
-  fresh.resolve([{ ref: "glm-cn/glm-5.2", provider: "glm-cn", model: "glm-5.2", current: true }]);
+  fresh.resolve([{ ref: "glm-cn/glm-5.2", provider: "glm-cn", model: "glm-5.2", label: "纯文本", current: true }]);
   await fresh.promise;
 });
 await act(async () => {
@@ -102,8 +102,11 @@ await act(async () => {
 });
 
 const options = Array.from(document.querySelectorAll<HTMLElement>("[role='option']")).map((item) => item.textContent?.trim());
-if (JSON.stringify(options) !== JSON.stringify(["glm-5.2"])) {
+if (JSON.stringify(options) !== JSON.stringify(["纯文本"])) {
   throw new Error(`model catalog did not keep the fresh result: ${JSON.stringify(options)}`);
+}
+if (document.body.textContent?.includes("glm-cn")) {
+  throw new Error(`internal provider alias leaked into the model picker: ${document.body.textContent}`);
 }
 if (calls < 3) throw new Error(`expected mount, settings refresh, and open loads; got ${calls}`);
 

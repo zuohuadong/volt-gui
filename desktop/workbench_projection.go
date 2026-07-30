@@ -99,8 +99,8 @@ func workbenchModels(catalog protocol.WorkspaceCatalogResult, current string) []
 	out := make([]ModelInfo, 0, len(catalog.Models))
 	for _, model := range catalog.Models {
 		out = append(out, ModelInfo{
-			Ref: string(model.Ref), Provider: model.Provider, Model: model.Model,
-			Current: string(model.Ref) == current,
+			Ref: string(model.Ref), Provider: model.Provider, Model: model.Model, Label: model.Label,
+			Current: string(model.Ref) == current, Vision: model.Vision,
 		})
 	}
 	return out

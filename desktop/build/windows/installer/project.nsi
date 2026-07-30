@@ -100,6 +100,7 @@ OutFile "..\..\bin\voltui-desktop-${ARCH}-installer.exe" # Keep the build path A
 !define REASONIX_LAUNCHER "voltui-launcher.exe"
 !define REASONIX_CLI "voltui-cli.exe"
 !define REASONIX_PORTABLE_ENTRY "VoltUI.exe"
+!define REASONIX_BUNDLED_ENV "bundled.env"
 !define REASONIX_UNLOCK_RETRIES 60
 Var VoltUIUpdateMode
 InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation" # Reuse the previous install path on update; .onInit falls back to the default on first install.
@@ -340,6 +341,12 @@ reasonix_no_portable_entry:
     !else
     !warning "${REASONIX_CLI} was not found; remote upload installation will be unavailable."
     !endif
+    !if /FileExists "${REASONIX_BUNDLED_ENV}"
+    File "/oname=${REASONIX_BUNDLED_ENV}" "${REASONIX_BUNDLED_ENV}"
+    !else
+    ; Do not retain stale OEM settings when a non-OEM build is installed over one.
+    Delete "$INSTDIR\${REASONIX_BUNDLED_ENV}"
+    !endif
 
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
@@ -359,6 +366,7 @@ Section "uninstall"
     Delete "$INSTDIR\${REASONIX_LAUNCHER}"
     Delete "$INSTDIR\${REASONIX_CLI}"
     Delete "$INSTDIR\${REASONIX_PORTABLE_ENTRY}"
+    Delete "$INSTDIR\${REASONIX_BUNDLED_ENV}"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"

@@ -61,7 +61,7 @@ main:
 
     # Pipeline 2: 自动发版（仅约定式提交触发）
     # CNB 直接构建 Windows 桌面端、生成 SHA-256 manifest，并上传 CNB Release 资产
-    # imports 导入密钥仓库文件 (.cnb/envs.yml), 提供 XIGU_API_KEY 给 build-windows-desktop;
+    # imports 导入 OEM 模型配置 (.cnb/envs.yml), 提供 XIGU_MODEL_BASE_URL / XIGU_API_KEY;
     # env 里的同名 key 优先于 imports.
     - docker:
         image: golang:1.26
@@ -75,6 +75,7 @@ main:
         XIGU_BRAND_NAME: "西谷智灯暗涌系统"
         VOLTUI_BRAND_NAME: "西谷智灯暗涌系统"
         DESKTOP_APP_NAME: "Anyong"   # release artifact prefix (Anyong-windows-amd64-...); overrides upstream VoltUI
+        REQUIRE_XIGU_MODEL_BUNDLE: "1"
       stages:
         - name: resolve-release
           script: |
@@ -165,8 +166,8 @@ main:
             . ./.release_env
 
             rm -rf dist desktop/build/bin
-            # XIGU_API_KEY (CNB secret, 由 imports/env 注入) 在 desktop-build.sh 里
-            # 落盘为随包发布的 OEM 网关密钥 sidecar (bundled.env)；缺失时不影响构建。
+            # 内网模型 URL / Key 由 imports/env 注入，desktop-build.sh 将其落盘为
+            # 随安装版和便携版发布的最低优先级 OEM sidecar (bundled.env)。
             # Windows is built by cross-compiling Wails from the CNB Linux container.
             # macOS and Linux targets are intentionally disabled for now:
             #   scripts/desktop-build.sh darwin/universal "$VERSION"

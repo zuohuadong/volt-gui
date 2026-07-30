@@ -199,6 +199,9 @@ printf 'installer\n' > ../../bin/voltui-desktop-amd64-installer.exe
         ...process.env,
         PATH: `${bin}:/usr/bin:/bin`,
         DESKTOP_APP_NAME: 'Anyong',
+        REQUIRE_XIGU_MODEL_BUNDLE: '1',
+        XIGU_MODEL_BASE_URL: 'http://gateway.internal.test/v1',
+        XIGU_API_KEY: 'test-oem-key',
       },
       encoding: 'utf8',
     });
@@ -214,12 +217,21 @@ printf 'installer\n' > ../../bin/voltui-desktop-amd64-installer.exe
     assert.equal(archiveEntries.status, 0, archiveEntries.stderr || archiveEntries.stdout);
     assert.deepEqual(archiveEntries.stdout.trim().split('\n').sort(), [
       'Anyong.exe',
+      'bundled.env',
       'voltui-cli.exe',
       'voltui-desktop.exe',
       'voltui-guard.exe',
       'voltui-launcher.exe',
       'voltui-update-helper.exe',
     ]);
+    const bundled = spawnSync('unzip', ['-p', join(fixture, 'dist', 'Anyong-windows-amd64.zip'), 'bundled.env'], {
+      env: { ...process.env, PATH: '/usr/bin:/bin' },
+      encoding: 'utf8',
+    });
+    assert.equal(bundled.status, 0, bundled.stderr || bundled.stdout);
+    assert.match(bundled.stdout, /^XIGU_MODEL_BASE_URL=http:\/\/gateway\.internal\.test\/v1$/m);
+    assert.match(bundled.stdout, /^XIGU_API_KEY=test-oem-key$/m);
+    assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /test-oem-key/);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
@@ -275,6 +287,9 @@ test('desktop packaging excludes prerequisites while keeping the online WebView2
   assert.match(cnb, /tag_push:/);
   assert.match(cnb, /--make-latest=false/);
   assert.match(cnb, /scripts\/desktop-build\.sh windows\/amd64 "\$VERSION"/);
+  assert.match(cnb, /REQUIRE_XIGU_MODEL_BUNDLE: "1"/);
+  assert.match(installer, /File "\/oname=\$\{REASONIX_BUNDLED_ENV\}" "\$\{REASONIX_BUNDLED_ENV\}"/);
+  assert.match(installer, /Delete "\$INSTDIR\\\$\{REASONIX_BUNDLED_ENV\}"/);
   assert.match(cnb, /scripts\/build-windows-prerequisites\.sh windows\/amd64/);
   assert.match(cnb, /CHANGELOG_LIMIT=50/);
   assert.match(cnb, /git log --max-count="\$CHANGELOG_LIMIT"/);

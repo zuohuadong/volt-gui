@@ -399,6 +399,23 @@ func UserCredentialsPath() string {
 	return filepath.Join(dir, ".env")
 }
 
+// bundledEnvPath points at the OEM settings shipped beside the running
+// executable. Release builds may use it for build-time model gateway settings
+// without placing private deployment details in source-controlled defaults.
+// Tests replace this seam with an isolated fixture.
+var bundledEnvPath = defaultBundledEnvPath
+
+func defaultBundledEnvPath() string {
+	executable, err := os.Executable()
+	if err != nil || executable == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+		executable = resolved
+	}
+	return filepath.Join(filepath.Dir(executable), "bundled.env")
+}
+
 // ArchiveDir is where compacted conversation history is archived for
 // traceability (one timestamped .jsonl per compaction). Empty if the user state
 // directory cannot be resolved, in which case archiving is skipped.

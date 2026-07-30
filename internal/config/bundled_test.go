@@ -7,8 +7,7 @@ import (
 )
 
 // TestBundledCredentialIsLowestPriority locks down the OEM bundled.env
-// behavior: it only supplies a key when neither the VoltUI credentials store
-// nor the process environment has one. Env wins; bundled is the last resort.
+// behavior: a user-saved credential wins and the bundle is the fallback.
 func TestBundledCredentialIsLowestPriority(t *testing.T) {
 	// Stage a temp bundled.env carrying an OEM gateway key.
 	dir := t.TempDir()
@@ -20,16 +19,18 @@ func TestBundledCredentialIsLowestPriority(t *testing.T) {
 	// Pin the path seam + isolate from the real machine's credentials store.
 	prevPath := bundledEnvPath
 	bundledEnvPath = func() string { return bundled }
+	storedValue := ""
 	prevLookup := storedCredentialValueLookup
 	storedCredentialValueLookup = func(string) (string, CredentialSource, bool) {
-		return "", CredentialSource{}, false
+		if storedValue == "" {
+			return "", CredentialSource{}, false
+		}
+		return storedValue, CredentialSource{Kind: CredentialSourceCredentials}, true
 	}
 	t.Cleanup(func() {
 		bundledEnvPath = prevPath
 		storedCredentialValueLookup = prevLookup
 	})
-
-	t.Setenv("XIGU_API_KEY", "")
 
 	// 1) Nothing else configured -> bundled fallback applies.
 	res := resolveCredentialForRootGlobalFirst(".", "XIGU_API_KEY")
@@ -40,13 +41,46 @@ func TestBundledCredentialIsLowestPriority(t *testing.T) {
 		t.Fatalf("source kind = %q, want bundled", res.Source.Kind)
 	}
 
-	// 2) A real environment value shadows the bundled key.
-	t.Setenv("XIGU_API_KEY", "from-env")
+	// 2) A key explicitly saved by the user shadows the bundled key.
+	storedValue = "from-user"
 	res = resolveCredentialForRootGlobalFirst(".", "XIGU_API_KEY")
-	if !res.Set || res.Value != "from-env" {
-		t.Fatalf("env must beat bundled, got Set=%v Value=%q", res.Set, res.Value)
+	if !res.Set || res.Value != "from-user" {
+		t.Fatalf("user credential must beat bundled, got Set=%v Value=%q", res.Set, res.Value)
 	}
-	if res.Source.Kind != CredentialSourceEnvironment {
-		t.Fatalf("source kind = %q, want environment", res.Source.Kind)
+	if res.Source.Kind != CredentialSourceCredentials {
+		t.Fatalf("source kind = %q, want credentials", res.Source.Kind)
+	}
+}
+
+func TestDefaultUsesBundledXiguGateway(t *testing.T) {
+	dir := t.TempDir()
+	bundled := filepath.Join(dir, "bundled.env")
+	const baseURL = "http://gateway.internal.test/v1"
+	if err := os.WriteFile(bundled, []byte("XIGU_MODEL_BASE_URL="+baseURL+"\nXIGU_API_KEY=test-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	previousPath := bundledEnvPath
+	bundledEnvPath = func() string { return bundled }
+	t.Cleanup(func() { bundledEnvPath = previousPath })
+
+	cfg := Default()
+	if cfg.DefaultModel != "qwen-thinking" {
+		t.Fatalf("default model = %q, want qwen-thinking", cfg.DefaultModel)
+	}
+	want := map[string]string{
+		"qwen-thinking": "qwen-gpu4/qwen36-opus-prisma8-gpu4",
+		"glm-5.2":       "glm-primary/glm-5.2-nvfp4",
+		"qwen-fast":     "qwen-gpu5/qwen36-opus-prisma8-gpu5",
+		"image-gen":     "image-gpu5/image-gpu5",
+	}
+	for name, model := range want {
+		entry, ok := cfg.Provider(name)
+		if !ok {
+			t.Fatalf("bundled provider %q is missing", name)
+		}
+		if entry.BaseURL != baseURL || entry.Model != model || entry.APIKeyEnv != "XIGU_API_KEY" || !entry.NoProxy {
+			t.Errorf("provider %q = %+v", name, entry)
+		}
 	}
 }

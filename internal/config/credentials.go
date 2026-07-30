@@ -29,6 +29,7 @@ const (
 	CredentialSourceCredentials = "credentials"
 	CredentialSourceHomeEnv     = "home_env"
 	CredentialSourceLegacy      = "legacy_credentials"
+	CredentialSourceBundled     = "bundled"
 )
 
 type CredentialSource struct {
@@ -57,6 +58,7 @@ var credentialSourceTracker = struct {
 
 var storedCredentialValueLookup = storedCredentialValue
 var legacyKeyringCredentialValueLookup = legacyKeyringCredentialValue
+var bundledCredentialValueLookup = bundledCredentialValue
 
 // CredentialResolver resolves credentials repeatedly for one caller-owned view
 // build. It keeps expensive global credential-store lookups bounded to one per
@@ -416,6 +418,8 @@ func credentialSourceLabel(source CredentialSource) string {
 		return "home .env"
 	case CredentialSourceLegacy:
 		return "legacy VoltUI credentials"
+	case CredentialSourceBundled:
+		return "bundled OEM key"
 	case CredentialSourceEnvironment:
 		return "environment variable"
 	default:
@@ -470,6 +474,13 @@ func resolveCredentialForRootGlobalFirst(root, key string) CredentialResolution 
 		res.Shadowed = shadowedCredentialSources(root, key, value, res.Source)
 		return res
 	}
+	if value, source, ok := bundledCredentialValueLookup(key); ok {
+		res.Set = true
+		res.Value = value
+		res.Source = source
+		res.Source.Label = credentialSourceLabel(res.Source)
+		return res
+	}
 	return res
 }
 
@@ -480,6 +491,28 @@ func storedCredentialValue(key string) (string, CredentialSource, bool) {
 		}
 	}
 	return "", CredentialSource{}, false
+}
+
+func bundledEnvValue(key string) (string, bool) {
+	path := bundledEnvPath()
+	if path == "" {
+		return "", false
+	}
+	value, ok := envFileValue(path, key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(value), true
+}
+
+// bundledCredentialValue is the lowest-priority provider-key source. A key
+// explicitly saved by the user always wins over the OEM bundle.
+func bundledCredentialValue(key string) (string, CredentialSource, bool) {
+	value, ok := bundledEnvValue(key)
+	if !ok {
+		return "", CredentialSource{}, false
+	}
+	return value, CredentialSource{Kind: CredentialSourceBundled, Path: bundledEnvPath()}, true
 }
 
 func inferCredentialSource(root, key, value string) (CredentialSource, bool) {

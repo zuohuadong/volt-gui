@@ -810,6 +810,7 @@ export interface WorkbenchKnowledgeDocument {
   filePath?: string;
   mimeType?: string;
   fileSize?: number;
+  contentHash?: string;
   chunkCount?: number;
   indexedAt?: string;
   error?: string;

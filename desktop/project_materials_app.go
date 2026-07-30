@@ -76,21 +76,64 @@ func (a *App) SaveProjectMaterialsBatch(inputs []WorkbenchProjectMaterialInput) 
 	if len(inputs) == 0 {
 		return nil, errors.New("material batch is empty")
 	}
-	saved := make([]WorkbenchProjectMaterialView, 0, len(inputs))
+	var saved []WorkbenchProjectMaterialView
 	err := a.withActiveWorkspaceDo(func() error {
-		for _, input := range inputs {
-			material, err := saveProjectMaterialInput(input)
-			if err != nil {
-				return err
-			}
-			saved = append(saved, material)
-		}
-		return nil
+		var err error
+		saved, err = saveProjectMaterialBatchInputs(inputs)
+		return err
 	})
+	return saved, err
+}
+
+func saveProjectMaterialBatchInputs(inputs []WorkbenchProjectMaterialInput) ([]WorkbenchProjectMaterialView, error) {
+	materials, err := loadProjectMaterials()
 	if err != nil {
 		return nil, err
 	}
-	return saved, nil
+	materialIDByFile := projectMaterialIDsByFile(materials)
+	savedMaterialsByID := make(map[string]WorkbenchProjectMaterialView, len(inputs))
+	for _, input := range inputs {
+		input = projectMaterialInputWithExistingID(input, materialIDByFile)
+		material, err := saveProjectMaterialInput(input)
+		if err != nil {
+			return nil, err
+		}
+		rememberProjectMaterialFile(materialIDByFile, material)
+		savedMaterialsByID[material.ID] = material
+	}
+	return sortedProjectMaterialsFromMap(savedMaterialsByID), nil
+}
+
+func projectMaterialIDsByFile(materials []WorkbenchProjectMaterialView) map[string]string {
+	materialIDByFile := make(map[string]string, len(materials))
+	for _, material := range materials {
+		rememberProjectMaterialFile(materialIDByFile, material)
+	}
+	return materialIDByFile
+}
+
+func projectMaterialInputWithExistingID(input WorkbenchProjectMaterialInput, materialIDByFile map[string]string) WorkbenchProjectMaterialInput {
+	fileKey := projectMaterialFileKey(input.ProjectID, input.FileName, input.FileSize)
+	if existingID := materialIDByFile[fileKey]; existingID != "" {
+		input.ID = existingID
+	}
+	return input
+}
+
+func rememberProjectMaterialFile(materialIDByFile map[string]string, material WorkbenchProjectMaterialView) {
+	fileKey := projectMaterialFileKey(material.ProjectID, material.FileName, material.FileSize)
+	if fileKey != "" {
+		materialIDByFile[fileKey] = material.ID
+	}
+}
+
+func sortedProjectMaterialsFromMap(materialsByID map[string]WorkbenchProjectMaterialView) []WorkbenchProjectMaterialView {
+	materials := make([]WorkbenchProjectMaterialView, 0, len(materialsByID))
+	for _, material := range materialsByID {
+		materials = append(materials, material)
+	}
+	sortProjectMaterials(materials)
+	return materials
 }
 
 func (a *App) DeleteProjectMaterial(id string) error {
@@ -247,12 +290,42 @@ func loadProjectMaterials() ([]WorkbenchProjectMaterialView, error) {
 		}
 	}
 	sortProjectMaterials(materials)
+	materials, deduped := dedupeProjectMaterials(materials)
+	migrated = migrated || deduped
 	if migrated {
 		if err := saveProjectMaterials(materials); err != nil {
 			return nil, err
 		}
 	}
 	return materials, nil
+}
+
+func projectMaterialFileKey(projectID, fileName string, fileSize int64) string {
+	projectID = strings.TrimSpace(projectID)
+	fileName = strings.TrimSpace(strings.ReplaceAll(fileName, "\\", "/"))
+	if projectID == "" || fileName == "" {
+		return ""
+	}
+	fileName = strings.ToLower(filepath.Base(fileName))
+	return projectID + "\x00" + fileName + "\x00" + strconv.FormatInt(maxInt64(fileSize, 0), 10)
+}
+
+func dedupeProjectMaterials(materials []WorkbenchProjectMaterialView) ([]WorkbenchProjectMaterialView, bool) {
+	seen := make(map[string]struct{}, len(materials))
+	uniqueMaterials := make([]WorkbenchProjectMaterialView, 0, len(materials))
+	deduped := false
+	for _, material := range materials {
+		key := projectMaterialFileKey(material.ProjectID, material.FileName, material.FileSize)
+		if key != "" {
+			if _, exists := seen[key]; exists {
+				deduped = true
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+		uniqueMaterials = append(uniqueMaterials, material)
+	}
+	return uniqueMaterials, deduped
 }
 
 func saveProjectMaterials(materials []WorkbenchProjectMaterialView) error {

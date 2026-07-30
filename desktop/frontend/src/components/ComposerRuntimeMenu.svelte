@@ -29,6 +29,7 @@
   let goalInput = $state<HTMLTextAreaElement>();
   let popoverStyle = $state("");
   let goalDraft = $derived(goal);
+  let goalValidation = $state("");
 
   const modeLabel = $derived(collaborationMode === "plan" ? "计划" : collaborationMode === "goal" ? "目标" : "标准");
 
@@ -63,7 +64,15 @@
   async function selectMode(mode: CollaborationMode) {
     if (changing || mode === collaborationMode) return;
     if (mode === "goal") {
-      requestAnimationFrame(() => goalInput?.focus());
+      const objective = goalDraft.trim();
+      if (!objective) {
+        goalValidation = "请先填写长期目标";
+        requestAnimationFrame(() => goalInput?.focus());
+        return;
+      }
+      goalValidation = "";
+      await onGoalChange?.(objective);
+      open = false;
       return;
     }
     await onCollaborationModeChange?.(mode);
@@ -72,7 +81,13 @@
 
   async function saveGoal() {
     const objective = goalDraft.trim();
-    if (changing || !objective) return;
+    if (changing) return;
+    if (!objective) {
+      goalValidation = "请先填写长期目标";
+      requestAnimationFrame(() => goalInput?.focus());
+      return;
+    }
+    goalValidation = "";
     await onGoalChange?.(objective);
     open = false;
   }
@@ -115,7 +130,8 @@
       </label>
 
       <div class="runtime-menu__goal">
-        <label>长期目标<textarea bind:this={goalInput} rows="3" bind:value={goalDraft} placeholder="描述需要持续推进的具体结果"></textarea></label>
+        <label>长期目标 *<textarea bind:this={goalInput} rows="3" bind:value={goalDraft} aria-invalid={Boolean(goalValidation)} aria-describedby="runtime-goal-validation" placeholder="描述需要持续推进的具体结果" oninput={() => (goalValidation = "")}></textarea></label>
+        {#if goalValidation}<p id="runtime-goal-validation" class="runtime-menu__validation" role="alert">{goalValidation}</p>{/if}
         <div><button type="button" disabled={changing || !goal} onclick={() => void clearGoal()}>清除目标</button><button class="primary" type="button" disabled={changing || !goalDraft.trim()} onclick={() => void saveGoal()}>保存目标</button></div>
       </div>
     </div>
@@ -141,6 +157,8 @@
   select, textarea { width: 100%; min-height: 34px; padding: 7px 9px; color: var(--fg, #1f2421); background: var(--surface, #fff); border: 1px solid var(--border, #dce1db); border-radius: 7px; font: inherit; }
   textarea { resize: vertical; }
   .runtime-menu__goal { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border, #dce1db); }
+  .runtime-menu__goal textarea[aria-invalid="true"] { border-color: var(--destructive, #b42318); box-shadow: 0 0 0 2px color-mix(in srgb, var(--destructive, #b42318) 14%, transparent); }
+  .runtime-menu__validation { margin: -2px 0 0; color: var(--destructive, #b42318); font-size: 10px; }
   .runtime-menu__goal > div { display: flex; justify-content: flex-end; gap: 7px; }
   .runtime-menu__goal button { min-height: 32px; padding: 0 10px; color: var(--fg, #1f2421); background: var(--surface, #fff); border: 1px solid var(--border, #dce1db); border-radius: 7px; font-size: 11px; }
   .runtime-menu__goal button.primary { color: #fff; background: var(--primary, #0f7b55); border-color: var(--primary, #0f7b55); }

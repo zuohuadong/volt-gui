@@ -218,3 +218,63 @@ func TestSaveProjectMaterialsBatchPersistsItems(t *testing.T) {
 		}
 	}
 }
+
+func TestSaveProjectMaterialsBatchDeduplicatesFilesAndRetries(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := &App{}
+	inputs := []WorkbenchProjectMaterialInput{
+		{ProjectID: "volt-gui", Title: "重复资料", FileName: "Report.PDF", FileSize: 2048},
+		{ProjectID: "volt-gui", Title: "重复资料副本", FileName: "report.pdf", FileSize: 2048},
+	}
+	first, err := app.SaveProjectMaterialsBatch(inputs)
+	if err != nil {
+		t.Fatalf("SaveProjectMaterialsBatch() first error = %v", err)
+	}
+	if len(first) != 1 {
+		t.Fatalf("SaveProjectMaterialsBatch() first returned %d items, want 1", len(first))
+	}
+
+	second, err := app.SaveProjectMaterialsBatch(inputs)
+	if err != nil {
+		t.Fatalf("SaveProjectMaterialsBatch() retry error = %v", err)
+	}
+	if len(second) != 1 || second[0].ID != first[0].ID {
+		t.Fatalf("SaveProjectMaterialsBatch() retry = %+v, want one update to %q", second, first[0].ID)
+	}
+
+	reloaded, err := app.ListProjectMaterials()
+	if err != nil {
+		t.Fatalf("ListProjectMaterials() error = %v", err)
+	}
+	if len(reloaded) != 1 {
+		t.Fatalf("ListProjectMaterials() returned %d items, want 1: %+v", len(reloaded), reloaded)
+	}
+}
+
+func TestListProjectMaterialsMigratesHistoricalDuplicateFiles(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	if err := saveProjectMaterials([]WorkbenchProjectMaterialView{
+		{ID: "newer", ProjectID: "volt-gui", Title: "最新记录", FileName: "report.pdf", FileSize: 2048, UpdatedISO: "2026-07-30T10:00:00Z"},
+		{ID: "older", ProjectID: "volt-gui", Title: "历史重复记录", FileName: "REPORT.PDF", FileSize: 2048, UpdatedISO: "2026-07-29T10:00:00Z"},
+	}); err != nil {
+		t.Fatalf("saveProjectMaterials() error = %v", err)
+	}
+
+	materials, err := (&App{}).ListProjectMaterials()
+	if err != nil {
+		t.Fatalf("ListProjectMaterials() error = %v", err)
+	}
+	if len(materials) != 1 || materials[0].ID != "newer" {
+		t.Fatalf("ListProjectMaterials() = %+v, want only the newest duplicate", materials)
+	}
+
+	reloaded, err := (&App{}).ListProjectMaterials()
+	if err != nil {
+		t.Fatalf("ListProjectMaterials() reload error = %v", err)
+	}
+	if len(reloaded) != 1 || reloaded[0].ID != "newer" {
+		t.Fatalf("persisted migration = %+v, want only the newest duplicate", reloaded)
+	}
+}

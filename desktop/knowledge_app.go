@@ -33,6 +33,14 @@ type KnowledgeDocumentImportInput struct {
 }
 
 func (a *App) KnowledgeBase() (KnowledgeBaseView, error) {
+	materials, err := loadProjectMaterials()
+	if err != nil {
+		return KnowledgeBaseView{}, err
+	}
+	materialIDs := make(map[string]struct{}, len(materials))
+	for _, material := range materials {
+		materialIDs[material.ID] = struct{}{}
+	}
 	store, err := openKnowledgeStore()
 	if err != nil {
 		return KnowledgeBaseView{}, err
@@ -49,13 +57,19 @@ func (a *App) KnowledgeBase() (KnowledgeBaseView, error) {
 	indexed := make(map[string]WorkbenchKnowledgeDocumentView, len(docs))
 	for _, doc := range docs {
 		view := workbenchKnowledgeDocumentFromStore(doc)
+		if _, exists := materialIDs[view.ID]; exists {
+			view.MaterialIDs = []string{view.ID}
+			view.Count = 1
+		}
 		indexed[view.ID] = view
 	}
 	data, err := loadWorkbenchData()
 	if err != nil {
 		return KnowledgeBaseView{}, err
 	}
+	workbenchDocumentIDs := make(map[string]struct{}, len(data.KnowledgeDocuments))
 	for _, doc := range data.KnowledgeDocuments {
+		workbenchDocumentIDs[doc.ID] = struct{}{}
 		if view, ok := indexed[doc.ID]; ok {
 			view.MaterialIDs = doc.MaterialIDs
 			if len(doc.MaterialIDs) > 0 {
@@ -70,12 +84,55 @@ func (a *App) KnowledgeBase() (KnowledgeBaseView, error) {
 		}
 		indexed[doc.ID] = doc
 	}
-	items := make([]WorkbenchKnowledgeDocumentView, 0, len(indexed))
+	documents := make([]WorkbenchKnowledgeDocumentView, 0, len(indexed))
 	for _, doc := range indexed {
-		items = append(items, doc)
+		documents = append(documents, doc)
 	}
-	sort.SliceStable(items, func(i, j int) bool { return items[i].UpdatedAt > items[j].UpdatedAt })
-	return KnowledgeBaseView{Documents: items, Status: status}, nil
+	sort.SliceStable(documents, func(i, j int) bool { return documents[i].UpdatedAt > documents[j].UpdatedAt })
+	documents = mergeDuplicateIndexedKnowledge(documents, workbenchDocumentIDs)
+	return KnowledgeBaseView{Documents: documents, Status: status}, nil
+}
+
+func mergeDuplicateIndexedKnowledge(documents []WorkbenchKnowledgeDocumentView, workbenchDocumentIDs map[string]struct{}) []WorkbenchKnowledgeDocumentView {
+	merged := make([]WorkbenchKnowledgeDocumentView, 0, len(documents))
+	indexByHash := make(map[string]int, len(documents))
+	for _, document := range documents {
+		hash := strings.TrimSpace(document.ContentHash)
+		_, isWorkbenchDocument := workbenchDocumentIDs[document.ID]
+		if hash == "" || isWorkbenchDocument {
+			merged = append(merged, document)
+			continue
+		}
+		if index, exists := indexByHash[hash]; exists {
+			mergeIndexedKnowledgeMetadata(&merged[index], document)
+			continue
+		}
+		document.MaterialIDs = uniqueStrings(document.MaterialIDs)
+		document.Count = 1
+		indexByHash[hash] = len(merged)
+		merged = append(merged, document)
+	}
+	return merged
+}
+
+func mergeIndexedKnowledgeMetadata(kept *WorkbenchKnowledgeDocumentView, duplicate WorkbenchKnowledgeDocumentView) {
+	kept.MaterialIDs = uniqueStrings(append(kept.MaterialIDs, duplicate.MaterialIDs...))
+	kept.Type = mergeKnowledgeLabels(kept.Type, duplicate.Type)
+	kept.Tags = mergeKnowledgeLabels(kept.Tags, duplicate.Tags)
+	kept.Count = 1
+}
+
+func mergeKnowledgeLabels(primaryLabels, additionalLabels string) string {
+	labels := make([]string, 0, 2)
+	for _, labelGroup := range []string{primaryLabels, additionalLabels} {
+		for _, label := range strings.FieldsFunc(labelGroup, func(r rune) bool { return r == '/' || r == '、' || r == ',' || r == '，' }) {
+			label = strings.TrimSpace(label)
+			if label != "" {
+				labels = append(labels, label)
+			}
+		}
+	}
+	return strings.Join(uniqueStrings(labels), " / ")
 }
 
 func (a *App) KnowledgeStatus() (knowledge.Status, error) {
@@ -226,6 +283,7 @@ func workbenchKnowledgeDocumentFromStore(doc knowledge.Document) WorkbenchKnowle
 		FilePath:    doc.FilePath,
 		MimeType:    doc.MimeType,
 		FileSize:    doc.FileSize,
+		ContentHash: doc.ContentHash,
 		ChunkCount:  doc.ChunkCount,
 		IndexedAt:   doc.IndexedAt,
 		Error:       doc.Error,

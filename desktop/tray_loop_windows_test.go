@@ -2,11 +2,26 @@
 
 package main
 
-import "testing"
+import (
+	"runtime"
+	"testing"
 
-func TestWindowsDesktopTrayLoopEntryPoint(t *testing.T) {
-	var start func(func(), func()) func() = startDesktopTray
-	if start == nil {
-		t.Fatal("startDesktopTray must be available on Windows")
+	"golang.org/x/sys/windows"
+)
+
+func TestDesktopTrayLoopRunsOnLockedOSThread(t *testing.T) {
+	loopRan := false
+	runDesktopTrayLoop(func() {
+		firstThreadID := windows.GetCurrentThreadId()
+		for i := 0; i < 100; i++ {
+			runtime.Gosched()
+		}
+		if got := windows.GetCurrentThreadId(); got != firstThreadID {
+			t.Fatalf("tray loop moved OS threads: first=%d got=%d", firstThreadID, got)
+		}
+		loopRan = true
+	})
+	if !loopRan {
+		t.Fatal("tray loop did not run")
 	}
 }

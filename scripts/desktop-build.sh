@@ -96,6 +96,51 @@ stamp_windows_executable() {
 		-original-filename "$original_filename"
 }
 
+validate_volt_model_bundle() {
+	local base_url="$1"
+	local api_key="$2"
+
+	if [ -z "$base_url" ] || [ -z "$api_key" ]; then
+		echo "OEM model bundle requires both volt_MODEL_BASE_URL and volt_API_KEY" >&2
+		return 1
+	fi
+	case "$base_url$api_key" in
+	*$'\r'* | *$'\n'*)
+		echo "OEM model bundle values must not contain newlines" >&2
+		return 1
+		;;
+	esac
+	if ! node -e 'const u=new URL(process.argv[1]);if(!["http:","https:"].includes(u.protocol)||!u.hostname)process.exit(1)' "$base_url"; then
+		echo "volt_MODEL_BASE_URL must be an absolute HTTP(S) URL" >&2
+		return 1
+	fi
+}
+
+stage_volt_model_bundle() {
+	local target="build/windows/installer/bundled.env"
+	local base_url="${volt_MODEL_BASE_URL:-}"
+	local api_key="${volt_API_KEY:-}"
+
+	rm -f "$target"
+	if [ -z "$base_url" ] && [ -z "$api_key" ]; then
+		[ "${REQUIRE_volt_MODEL_BUNDLE:-0}" != "1" ] && return 0
+		echo "required OEM model bundle is missing volt_MODEL_BASE_URL and volt_API_KEY" >&2
+		return 1
+	fi
+	validate_volt_model_bundle "$base_url" "$api_key"
+
+	echo "==> staging OEM model bundle"
+	mkdir -p "$(dirname "$target")"
+	(
+		umask 077
+		{
+			echo "# Build-time OEM model gateway settings. User-saved credentials take priority."
+			printf 'volt_MODEL_BASE_URL=%s\n' "$base_url"
+			printf 'volt_API_KEY=%s\n' "$api_key"
+		} > "$target"
+	)
+}
+
 # Stamp the version resource (Windows file properties, macOS CFBundleVersion) from
 # the tag. Wails feeds info.productVersion into goversioninfo and NSIS's
 # VIFileVersion, both of which demand a strictly numeric X.X.X, so strip the
@@ -109,6 +154,7 @@ ldflags="-X main.version=$VERSION -X main.channel=$CHANNEL $source_revision_ldfl
 [ "$os" = "darwin" ] && [ "${HAS_APPLE_CERT:-}" = "true" ] && ldflags="$ldflags -X main.macSelfUpdate=true"
 UPDATE_HELPER="voltui-update-helper.exe"
 if [ "$os" = windows ]; then
+	stage_volt_model_bundle
 	windows_resource_tool_dir=$(mktemp -d)
 	windows_resource_tool="$windows_resource_tool_dir/voltui-windows-resource.exe"
 	echo "==> build Windows resource stamper"

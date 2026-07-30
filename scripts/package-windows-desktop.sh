@@ -30,6 +30,7 @@ LAUNCHERNAME="voltui-launcher"
 UPDATE_HELPER="voltui-update-helper.exe"
 WINDOWS_CLINAME="voltui-cli"
 UNINSTALLER="voltui-uninstall.exe"
+BUNDLED_ENV="bundled.env"
 
 [ -d "$payload_input" ] || { echo "Windows payload directory is missing: $payload_input" >&2; exit 1; }
 PAYLOAD="$(cd "$payload_input" && pwd)"
@@ -114,6 +115,10 @@ cp "$PAYLOAD/$LAUNCHERNAME.exe" "$portable_staging/$LAUNCHERNAME.exe"
 cp "$PAYLOAD/$LAUNCHERNAME.exe" "$portable_staging/$APPNAME.exe"
 cp "$PAYLOAD/$UPDATE_HELPER" "$portable_staging/$UPDATE_HELPER"
 cp "$PAYLOAD/$WINDOWS_CLINAME.exe" "$portable_staging/$WINDOWS_CLINAME.exe"
+if [ -e "$INSTALLER_DIR/$BUNDLED_ENV" ]; then
+	[ -s "$INSTALLER_DIR/$BUNDLED_ENV" ] || { echo "Windows bundled model settings are empty" >&2; exit 1; }
+	cp "$INSTALLER_DIR/$BUNDLED_ENV" "$portable_staging/$BUNDLED_ENV"
+fi
 export WINDOWS_PORTABLE_APP_NAME="$APPNAME"
 export WINDOWS_PORTABLE_BINARY_PREFIX="voltui"
 "$ROOT/scripts/verify-windows-portable.sh" "$portable_staging"

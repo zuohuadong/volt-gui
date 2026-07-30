@@ -1879,9 +1879,29 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 	`whenever they switch. Let this also guide the language you think in. Always keep code, ` +
 	`identifiers, file paths, shell commands, and technical terms in their original form — never translate them.`
 
+const voltModelBaseURLEnv = "volt_MODEL_BASE_URL"
+
+func bundledvoltProviderDefaults() (string, []ProviderEntry) {
+	rawBaseURL, ok := bundledEnvValue(voltModelBaseURLEnv)
+	if !ok {
+		return "", nil
+	}
+	parsed, err := url.Parse(rawBaseURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return "", nil
+	}
+	baseURL := strings.TrimRight(rawBaseURL, "/")
+	return "qwen-thinking", []ProviderEntry{
+		{Name: "qwen-thinking", Kind: "openai", BaseURL: baseURL, Model: "qwen-gpu4/qwen36-opus-prisma8-gpu4", APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, SupportedEfforts: []string{"high", "max"}, DefaultEffort: "high", NoProxy: true},
+		{Name: "glm-5.2", Kind: "openai", BaseURL: baseURL, Model: "glm-primary/glm-5.2-nvfp4", APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, NoProxy: true},
+		{Name: "qwen-fast", Kind: "openai", BaseURL: baseURL, Model: "qwen-gpu5/qwen36-opus-prisma8-gpu5", APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, SupportedEfforts: []string{"high", "max"}, DefaultEffort: "high", NoProxy: true},
+		{Name: "image-gen", Kind: "openai", BaseURL: baseURL, Model: "image-gpu5/image-gpu5", APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, NoProxy: true},
+	}
+}
+
 // Default returns the built-in default configuration.
 func Default() *Config {
-	return &Config{
+	cfg := &Config{
 		ConfigVersion:    5,
 		DefaultModel:     "deepseek-flash",
 		Brand:            BrandConfig{Name: "VoltUI"},
@@ -1943,6 +1963,11 @@ func Default() *Config {
 			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: deepSeekV4ProPrice()},
 		},
 	}
+	if defaultModel, providers := bundledvoltProviderDefaults(); len(providers) > 0 {
+		cfg.DefaultModel = defaultModel
+		cfg.Providers = append(providers, cfg.Providers...)
+	}
+	return cfg
 }
 
 // WriteFile writes the configuration to path as annotated TOML. The write is

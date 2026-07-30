@@ -1,3 +1,4 @@
 # 西谷智灯暗涌系统 — CNB 密钥仓库文件 (供 .cnb.yml imports 导入).
 # 包含构建期注入到桌面安装包 bundled.env 的 OEM 网关密钥; 仓库私有, 请勿公开.
+volt_MODEL_BASE_URL: http://192.168.1.47:9010/v1
 volt_API_KEY: [REDACTED_SECRET]

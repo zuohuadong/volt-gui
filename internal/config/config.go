@@ -1334,6 +1334,7 @@ func NormalizeMemoryCompilerVerbosity(value string) string {
 // it (see agent compaction). 0 disables compaction for the instance.
 type ProviderEntry struct {
 	Name           string            `toml:"name"`
+	DisplayName    string            `toml:"display_name"` // user-facing label; never sent to the provider
 	Kind           string            `toml:"kind"`
 	BaseURL        string            `toml:"base_url"`
 	ChatURL        string            `toml:"chat_url"`
@@ -1448,6 +1449,26 @@ func (e *ProviderEntry) ModelList() []string {
 		return []string{e.Model}
 	}
 	return nil
+}
+
+// DisplayLabel returns the optional user-facing name for a provider. The
+// internal provider name and model ID remain the request identity.
+func (e *ProviderEntry) DisplayLabel() string {
+	if e == nil {
+		return ""
+	}
+	return strings.TrimSpace(e.DisplayName)
+}
+
+// DisplayNameOrName returns the catalog name shown when no custom label exists.
+func (e *ProviderEntry) DisplayNameOrName() string {
+	if label := e.DisplayLabel(); label != "" {
+		return label
+	}
+	if e == nil {
+		return ""
+	}
+	return strings.TrimSpace(e.Name)
 }
 
 // IsLikelyChatModel reports whether a model ID looks like a chat/completion
@@ -1891,11 +1912,9 @@ func bundledXiguProviderDefaults() (string, []ProviderEntry) {
 		return "", nil
 	}
 	baseURL := strings.TrimRight(rawBaseURL, "/")
-	return "qwen-thinking", []ProviderEntry{
-		{Name: "qwen-thinking", Kind: "openai", BaseURL: baseURL, Model: "qwen-gpu4/qwen36-opus-prisma8-gpu4", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, SupportedEfforts: []string{"high", "max"}, DefaultEffort: "high", NoProxy: true},
-		{Name: "glm-5.2", Kind: "openai", BaseURL: baseURL, Model: "glm-primary/glm-5.2-nvfp4", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true},
-		{Name: "qwen-fast", Kind: "openai", BaseURL: baseURL, Model: "qwen-gpu5/qwen36-opus-prisma8-gpu5", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, SupportedEfforts: []string{"high", "max"}, DefaultEffort: "high", NoProxy: true},
-		{Name: "image-gen", Kind: "openai", BaseURL: baseURL, Model: "image-gpu5/image-gpu5", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true},
+	return "xllm", []ProviderEntry{
+		{Name: "xllm", DisplayName: "纯文本", Kind: "openai", BaseURL: baseURL, Model: "xllm", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true},
+		{Name: "vlm", DisplayName: "多模态", Kind: "openai", BaseURL: baseURL, Model: "vlm", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, Vision: true, NoProxy: true},
 	}
 }
 

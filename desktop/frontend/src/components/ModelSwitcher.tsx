@@ -80,7 +80,7 @@ export function ModelSwitcher({
   const keyword = query.trim().toLowerCase();
   const filtered = useMemo(
     () => keyword
-      ? models.filter((m) => m.model.toLowerCase().includes(keyword) || m.provider.toLowerCase().includes(keyword))
+      ? models.filter((m) => m.model.toLowerCase().includes(keyword) || m.provider.toLowerCase().includes(keyword) || m.label?.toLowerCase().includes(keyword))
       : models,
     [models, keyword],
   );
@@ -103,13 +103,14 @@ export function ModelSwitcher({
       })
       .map(([provider, items]) => ({
         provider,
-        label: providerLabel(provider, t),
+        label: items.length === 1 ? modelDisplayName(items[0]) : providerLabel(provider, t),
         items,
       }));
   }, [filtered, t]);
 
   const currentProvider = useMemo(() => {
     const cur = models.find((m) => m.current) ?? models.find((m) => m.model === label || m.ref === label);
+    if (cur?.label?.trim()) return null;
     return cur ? providerLabel(cur.provider, t) : null;
   }, [label, models, t]);
   const triggerLabel = currentProvider ? `${label} · ${currentProvider}` : label;
@@ -214,7 +215,7 @@ export function ModelSwitcher({
                   onClick={() => pick(m)}
                 >
                   <span className="modelsw__copy">
-                    <span className="modelsw__model">{m.model}</span>
+                    <span className="modelsw__model">{modelDisplayName(m)}</span>
                   </span>
                   {m.current && <Check size={13} className="modelsw__check" />}
                 </button>
@@ -225,6 +226,10 @@ export function ModelSwitcher({
       </AnchoredPopover>
     </div>
   );
+}
+
+function modelDisplayName(model: ModelInfo): string {
+  return model.label?.trim() || model.model;
 }
 
 function providerLabel(provider: string, t: ReturnType<typeof useT>): string {

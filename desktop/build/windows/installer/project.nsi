@@ -320,22 +320,16 @@ Section
     !endif
     !if /FileExists "${REASONIX_LAUNCHER}"
     File "/oname=${REASONIX_LAUNCHER}" "${REASONIX_LAUNCHER}"
-    ; Portable archives expose VoltUI.exe as a second copy of the Guard
-    ; launcher. Preserve that layout only when upgrading an existing portable
-    ; directory, and keep the alias in lockstep with the canonical launcher.
+    ; Preserve the portable entry only when upgrading an existing portable
+    ; directory. It must be the real Wails executable, not the launcher used
+    ; by the retired self-update handoff.
     IfFileExists "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" 0 reasonix_no_portable_entry
-    File "/oname=${REASONIX_PORTABLE_ENTRY}" "${REASONIX_LAUNCHER}"
+    CopyFiles /SILENT "$INSTDIR\${PRODUCT_EXECUTABLE}" "$INSTDIR\${REASONIX_PORTABLE_ENTRY}"
 reasonix_no_portable_entry:
-    ; Keep the Guard launcher as the target while taking the visible shortcut
-    ; icon from the Wails application. The launcher embeds the same icon too,
-    ; but an explicit icon source prevents stale/generic taskbar pins after an
-    ; in-place upgrade from a launcher build that had no Windows resources.
-    CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}" "launch --detach" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0
-    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}" "launch --detach" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0
-    !else
+    !endif
+    ; User-facing shortcuts must always start the Wails desktop binary directly.
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
-    !endif
     !if /FileExists "${REASONIX_CLI}"
     File "/oname=${REASONIX_CLI}" "${REASONIX_CLI}"
     !else

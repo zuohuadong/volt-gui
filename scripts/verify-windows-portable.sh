@@ -51,12 +51,16 @@ for expected in "${required[@]}"; do
 	$found || { echo "Windows portable entry is missing or has wrong case: $expected" >&2; exit 1; }
 done
 
-# The branded entry point is the backward-compatible desktop entry point. Prove it is the
-# GUI Guard launcher rather than merely trusting the copy commands above.
-cmp -s "$staging/$portable_app_name.exe" "$staging/$portable_binary_prefix-launcher.exe" || {
-	echo "$portable_app_name.exe is not the packaged GUI launcher" >&2
+# The branded entry point is the backward-compatible desktop entry point. It must launch
+# the real Wails application rather than the retired self-update launcher.
+cmp -s "$staging/$portable_app_name.exe" "$staging/$portable_binary_prefix-desktop.exe" || {
+	echo "$portable_app_name.exe is not the packaged desktop application" >&2
 	exit 1
 }
+if cmp -s "$staging/$portable_app_name.exe" "$staging/$portable_binary_prefix-launcher.exe"; then
+	echo "$portable_app_name.exe incorrectly points to the self-update launcher" >&2
+	exit 1
+fi
 if cmp -s "$staging/$portable_app_name.exe" "$staging/$portable_binary_prefix-cli.exe"; then
 	echo "$portable_app_name.exe was overwritten by the CLI sidecar" >&2
 	exit 1

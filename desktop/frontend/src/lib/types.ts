@@ -314,6 +314,7 @@ export interface ModelInfo {
 
 export interface ProviderView {
   name: string;
+  displayName?: string;
   builtIn?: boolean;
   added?: boolean;
   kind: string;

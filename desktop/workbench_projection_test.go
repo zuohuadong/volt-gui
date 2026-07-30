@@ -57,6 +57,16 @@ func TestWorkbenchSnapshotProjectionUsesRemoteWorkspaceAndProfile(t *testing.T) 
 	}
 }
 
+func TestWorkbenchModelsProjectDisplayNamesAndVision(t *testing.T) {
+	models := workbenchModels(protocol.WorkspaceCatalogResult{Models: []protocol.ModelCatalogItem{
+		{Ref: "xllm/xllm", Provider: "xllm", Model: "xllm", Label: "纯文本"},
+		{Ref: "vlm/vlm", Provider: "vlm", Model: "vlm", Label: "多模态", Vision: true},
+	}}, "vlm/vlm")
+	if len(models) != 2 || models[0].Label != "纯文本" || models[0].Vision || models[1].Label != "多模态" || !models[1].Vision || !models[1].Current {
+		t.Fatalf("remote model projection = %+v", models)
+	}
+}
+
 func TestWorkbenchSnapshotProjectionPreservesCanonicalTodos(t *testing.T) {
 	content := "Ship the fix"
 	meta := workbenchMeta(protocol.SessionSnapshot{Todos: []protocol.TodoItem{{

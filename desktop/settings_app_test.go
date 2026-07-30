@@ -568,8 +568,10 @@ func TestSaveProviderPreservesHiddenProviderFields(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	cfg := config.LoadForEdit(config.UserConfigPath())
+	cfg.Desktop.ProviderAccess = []string{"custom"}
 	cfg.Providers = []config.ProviderEntry{{
 		Name:         "custom",
+		DisplayName:  "用户显示名",
 		Kind:         "openai",
 		BaseURL:      "https://proxy.example.com/v1",
 		Models:       []string{"model-a", "model-b"},
@@ -604,6 +606,9 @@ func TestSaveProviderPreservesHiddenProviderFields(t *testing.T) {
 	if view.ExtraBody["enable_thinking"] != true {
 		t.Fatalf("settings extra_body = %+v, want enable_thinking=true", view.ExtraBody)
 	}
+	if view.DisplayName != "用户显示名" {
+		t.Fatalf("settings display name = %q, want 用户显示名", view.DisplayName)
+	}
 
 	if err := app.SaveProvider(view); err != nil {
 		t.Fatalf("SaveProvider: %v", err)
@@ -631,6 +636,9 @@ func TestSaveProviderPreservesHiddenProviderFields(t *testing.T) {
 	}
 	if !got.NoProxy {
 		t.Fatal("no_proxy = false, want preserved true")
+	}
+	if got.DisplayLabel() != "用户显示名" {
+		t.Fatalf("display name = %q, want 用户显示名", got.DisplayLabel())
 	}
 }
 

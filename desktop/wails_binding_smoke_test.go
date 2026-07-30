@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -196,32 +195,34 @@ func TestWailsBindingSmokeAnswerQuestion(t *testing.T) {
 
 func TestWailsBindingSmokeModelAndEffortForTab(t *testing.T) {
 	app, tab, _, _ := newSmokeApp(t)
-	projectRoot := tab.WorkspaceRoot
-	t.Setenv("SMOKE_MODEL_KEY", "test-key")
 	configBody := `default_model = "smoke-a/deepseek-v4-flash"
 [codegraph]
 enabled = false
 
+[desktop]
+provider_access = ["smoke-a", "smoke-b"]
+
 [[providers]]
 name = "smoke-a"
+display_name = "纯文本"
 kind = "openai"
-base_url = "https://api.deepseek.com"
+base_url = "http://127.0.0.1:18181/v1"
 model = "deepseek-v4-flash"
 models = ["deepseek-v4-flash"]
-api_key_env = "SMOKE_MODEL_KEY"
 effort = "medium"
 
 [[providers]]
 name = "smoke-b"
+display_name = "多模态"
 kind = "openai"
-base_url = "https://api.deepseek.com"
+base_url = "http://127.0.0.1:18181/v1"
 model = "deepseek-v4-flash"
 models = ["deepseek-v4-flash"]
-api_key_env = "SMOKE_MODEL_KEY"
 effort = "max"
+vision = true
 `
-	if err := os.WriteFile(filepath.Join(projectRoot, "voltui.toml"), []byte(configBody), 0o644); err != nil {
-		t.Fatalf("write project config: %v", err)
+	if err := os.WriteFile(config.UserConfigPath(), []byte(configBody), 0o644); err != nil {
+		t.Fatalf("write user config: %v", err)
 	}
 	tab.model = "smoke-a/deepseek-v4-flash"
 
@@ -229,11 +230,29 @@ effort = "max"
 	if !hasModel(models, "smoke-a/deepseek-v4-flash", true) || !hasModel(models, "smoke-b/deepseek-v4-flash", false) {
 		t.Fatalf("ModelsForTab = %#v, want smoke-a current and smoke-b available", models)
 	}
+	for _, model := range models {
+		switch model.Ref {
+		case "smoke-a/deepseek-v4-flash":
+			if model.Label != "纯文本" || model.Vision {
+				t.Fatalf("text model presentation = %#v", model)
+			}
+		case "smoke-b/deepseek-v4-flash":
+			if model.Label != "多模态" || !model.Vision {
+				t.Fatalf("multimodal model presentation = %#v", model)
+			}
+		}
+	}
+	if meta := app.MetaForTab(tab.ID); meta.Label != "纯文本" {
+		t.Fatalf("MetaForTab label = %q, want 纯文本", meta.Label)
+	}
 	if err := app.SetModelForTab(tab.ID, "smoke-b/deepseek-v4-flash"); err != nil {
 		t.Fatalf("SetModelForTab: %v", err)
 	}
 	if tab.model != "smoke-b/deepseek-v4-flash" {
 		t.Fatalf("tab model = %q, want smoke-b/deepseek-v4-flash", tab.model)
+	}
+	if meta := app.MetaForTab(tab.ID); meta.Label != "多模态" {
+		t.Fatalf("MetaForTab label = %q, want 多模态", meta.Label)
 	}
 	if got := app.EffortForTab(tab.ID); !got.Supported || got.Current != "max" {
 		t.Fatalf("EffortForTab after model switch = %+v, want max", got)

@@ -2,7 +2,7 @@
 
 export const REMOTE_SCHEMA_FORMAT = "reasonix.remote.schema.v1" as const;
 export const REMOTE_PROTOCOL_VERSION = "1" as const;
-export const REMOTE_SCHEMA_HASH = "sha256:d54a081817469abfad9b84c82d908a9480e083b6832727f0d35cc13f83c8cd12" as const;
+export const REMOTE_SCHEMA_HASH = "sha256:ef4cff089227390b500fdcff8b576829f1340ab25fd6244f6e007ade0f8bb388" as const;
 
 export const REMOTE_FIXED_RESOURCES = {
   "protocol": {
@@ -435,7 +435,7 @@ export type RemoteEventHydrated = {
   };
 };
 
-export type ReasonixErrorCode = "CAPABILITY_UNAVAILABLE" | "CHECKPOINT_NOT_FOUND" | "CHECKPOINT_SCOPE_UNAVAILABLE" | "CONTENT_REF_EXPIRED" | "DAEMON_RESTART_REQUIRED" | "DIRECTORY_NOT_FOUND" | "EFFORT_NOT_SUPPORTED" | "GIT_OBJECT_NOT_FOUND" | "GIT_UNAVAILABLE" | "HOST_BUSY" | "HOST_STOPPED" | "INVALID_PROFILE" | "LEASE_NOT_HELD" | "MODEL_NOT_AVAILABLE" | "NOT_DIRECTORY" | "NOT_FILE" | "OPERATION_MISMATCH" | "OPERATION_NOT_ACTIVE" | "PATH_NOT_FOUND" | "PERMISSION_DENIED" | "PROMPT_DECISION_NOT_ALLOWED" | "PROMPT_KIND_MISMATCH" | "PROMPT_NOT_PENDING" | "QUERY_FAILED" | "RECOVERY_GUARD_FAILED" | "REMOTE_NOT_INSTALLED" | "REQUEST_ID_CONFLICT" | "REWIND_PARTIAL" | "RUNTIME_START_FAILED" | "SESSION_BUSY" | "SESSION_CLEANUP_PENDING" | "SESSION_NOT_FOUND" | "SESSION_PERSIST_FAILED" | "SESSION_TRASHED" | "SNAPSHOT_EXPIRED" | "STALE_CONNECTION" | "STALE_CURSOR" | "STALE_DIRECTORY_REF" | "STALE_HOST_EPOCH" | "STALE_RUNTIME_EPOCH" | "SUBSCRIPTION_NOT_FOUND" | "TOPIC_NOT_EMPTY" | "TOPIC_NOT_FOUND" | "TRASH_ENTRY_NOT_FOUND" | "TURN_ALREADY_RUNNING" | "TURN_MISMATCH" | "TURN_NOT_ACTIVE" | "VERSION_MISMATCH" | "WORKSPACE_IN_USE" | "WORKSPACE_NOT_FOUND" | "WORKSPACE_SESSION_MISMATCH";
+export type VoltUIErrorCode = "CAPABILITY_UNAVAILABLE" | "CHECKPOINT_NOT_FOUND" | "CHECKPOINT_SCOPE_UNAVAILABLE" | "CONTENT_REF_EXPIRED" | "DAEMON_RESTART_REQUIRED" | "DIRECTORY_NOT_FOUND" | "EFFORT_NOT_SUPPORTED" | "GIT_OBJECT_NOT_FOUND" | "GIT_UNAVAILABLE" | "HOST_BUSY" | "HOST_STOPPED" | "INVALID_PROFILE" | "LEASE_NOT_HELD" | "MODEL_NOT_AVAILABLE" | "NOT_DIRECTORY" | "NOT_FILE" | "OPERATION_MISMATCH" | "OPERATION_NOT_ACTIVE" | "PATH_NOT_FOUND" | "PERMISSION_DENIED" | "PROMPT_DECISION_NOT_ALLOWED" | "PROMPT_KIND_MISMATCH" | "PROMPT_NOT_PENDING" | "QUERY_FAILED" | "RECOVERY_GUARD_FAILED" | "REMOTE_NOT_INSTALLED" | "REQUEST_ID_CONFLICT" | "REWIND_PARTIAL" | "RUNTIME_START_FAILED" | "SESSION_BUSY" | "SESSION_CLEANUP_PENDING" | "SESSION_NOT_FOUND" | "SESSION_PERSIST_FAILED" | "SESSION_TRASHED" | "SNAPSHOT_EXPIRED" | "STALE_CONNECTION" | "STALE_CURSOR" | "STALE_DIRECTORY_REF" | "STALE_HOST_EPOCH" | "STALE_RUNTIME_EPOCH" | "SUBSCRIPTION_NOT_FOUND" | "TOPIC_NOT_EMPTY" | "TOPIC_NOT_FOUND" | "TRASH_ENTRY_NOT_FOUND" | "TURN_ALREADY_RUNNING" | "TURN_MISMATCH" | "TURN_NOT_ACTIVE" | "VERSION_MISMATCH" | "WORKSPACE_IN_USE" | "WORKSPACE_NOT_FOUND" | "WORKSPACE_SESSION_MISMATCH";
 export type RemoteAction = "none" | "reconnect" | "restart_daemon" | "resubscribe" | "retry" | "run_command";
 export type RemoteErrorDataRaw = {
   "action"?: "none" | "reconnect" | "restart_daemon" | "resubscribe" | "retry" | "run_command";
@@ -545,7 +545,7 @@ export const REMOTE_ERROR_CONTRACTS = [
   {
     "reasonixCode": "HOST_STOPPED",
     "jsonRpcCode": -32000,
-    "message": "Reasonix Remote is not running on the Host.",
+    "message": "VoltUI Remote is not running on the Host.",
     "retryable": true,
     "action": "run_command",
     "suggestedCommand": "reasonix remote start"
@@ -651,7 +651,7 @@ export const REMOTE_ERROR_CONTRACTS = [
   {
     "reasonixCode": "REMOTE_NOT_INSTALLED",
     "jsonRpcCode": -32000,
-    "message": "Reasonix Remote is not installed on the Host.",
+    "message": "VoltUI Remote is not installed on the Host.",
     "retryable": false,
     "action": "run_command",
     "suggestedCommand": "reasonix remote install"
@@ -5287,9 +5287,11 @@ export type WorkspaceCatalogResultRaw = {
       "levels": Array<string>;
       "supported": boolean;
     };
+    "label"?: string;
     "model": string;
     "provider": string;
     "ref": string;
+    "vision"?: boolean;
   }>;
   "revision": string;
   "tokenModes": Array<"delivery" | "economy" | "full">;
@@ -5310,9 +5312,11 @@ export type WorkspaceCatalogResultHydrated = {
       "levels": Array<string>;
       "supported": boolean;
     };
+    "label"?: string;
     "model": string;
     "provider": string;
     "ref": string;
+    "vision"?: boolean;
   }>;
   "revision": string;
   "tokenModes": Array<"delivery" | "economy" | "full">;

@@ -116,12 +116,15 @@ func TestWorkbenchProviderCatalogUsesReplacedAccessAndCurrentMetadata(t *testing
 	if err != nil || len(catalog) != 1 || catalog[0].Ref != "first/model-a" || catalog[0].ContextWindow != 64_000 {
 		t.Fatalf("first catalog = %+v err=%v", catalog, err)
 	}
+	if catalog[0].DisplayName != "first" {
+		t.Fatalf("fallback catalog name = %q, want first", catalog[0].DisplayName)
+	}
 
 	access.replace(map[string]struct{}{"second/model-b": {}})
 	second := &config.Config{
 		Desktop: config.DesktopConfig{ProviderAccess: []string{"second"}},
 		Providers: []config.ProviderEntry{{
-			Name: "second", Kind: "openai", BaseURL: "http://127.0.0.1:11434/v1", Models: []string{"model-b"},
+			Name: "second", DisplayName: "多模态", Kind: "openai", BaseURL: "http://127.0.0.1:11434/v1", Models: []string{"model-b"}, Vision: true,
 			ContextWindow: 1_000_000, Price: &provider.Pricing{CacheHit: 0.1, Input: 1.25, Output: 4.5, Currency: "USD"},
 		}},
 	}
@@ -130,7 +133,7 @@ func TestWorkbenchProviderCatalogUsesReplacedAccessAndCurrentMetadata(t *testing
 		t.Fatalf("replaced catalog = %+v err=%v", catalog, err)
 	}
 	got := catalog[0]
-	if got.ContextWindow != 1_000_000 || got.PricingCurrency != "USD" || got.CacheHitPerMillion != 0.1 || got.InputPerMillion != 1.25 || got.OutputPerMillion != 4.5 {
+	if got.DisplayName != "多模态" || !got.SupportsVision || got.ContextWindow != 1_000_000 || got.PricingCurrency != "USD" || got.CacheHitPerMillion != 0.1 || got.InputPerMillion != 1.25 || got.OutputPerMillion != 4.5 {
 		t.Fatalf("replaced catalog metadata = %+v", got)
 	}
 

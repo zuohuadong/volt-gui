@@ -189,6 +189,8 @@ type ModelCatalogItem struct {
 	Ref      ModelRef      `json:"ref"`
 	Provider string        `json:"provider" validate:"nonempty"`
 	Model    string        `json:"model" validate:"nonempty"`
+	Label    string        `json:"label,omitempty"`
+	Vision   bool          `json:"vision,omitempty"`
 	Effort   EffortCatalog `json:"effort"`
 }
 

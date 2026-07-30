@@ -287,6 +287,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		for _, p := range c.Providers {
 			b.WriteString("[[providers]]\n")
 			fmt.Fprintf(&b, "name        = %q\n", p.Name)
+			if p.DisplayLabel() != "" {
+				fmt.Fprintf(&b, "display_name = %q   # user-facing label; internal name and model stay unchanged\n", p.DisplayLabel())
+			}
 			fmt.Fprintf(&b, "kind        = %q\n", p.Kind)
 			fmt.Fprintf(&b, "base_url    = %q\n", p.BaseURL)
 			if p.ChatURL != "" {
@@ -932,6 +935,9 @@ func RenderTOMLProjectDelta(c *Config) string {
 		for _, p := range proj.Providers {
 			b.WriteString("[[providers]]\n")
 			fmt.Fprintf(&b, "name        = %q\n", p.Name)
+			if p.DisplayLabel() != "" {
+				fmt.Fprintf(&b, "display_name = %q\n", p.DisplayLabel())
+			}
 			fmt.Fprintf(&b, "kind        = %q\n", p.Kind)
 			fmt.Fprintf(&b, "base_url    = %q\n", p.BaseURL)
 			if p.ChatURL != "" {

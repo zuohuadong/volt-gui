@@ -671,8 +671,12 @@ func (s *Server) workspaceCatalog(p protocol.WorkspaceCatalogParams) (protocol.W
 		if providerName == "" {
 			providerName = descriptor.DisplayName
 		}
+		label := ""
+		if descriptor.DisplayName != providerName {
+			label = descriptor.DisplayName
+		}
 		models = append(models, protocol.ModelCatalogItem{
-			Ref: protocol.ModelRef(descriptor.Ref), Provider: providerName, Model: model,
+			Ref: protocol.ModelRef(descriptor.Ref), Provider: providerName, Model: model, Label: label, Vision: descriptor.Vision,
 			Effort: protocol.EffortCatalog{
 				Supported: len(descriptor.Efforts) > 0, Default: descriptor.DefaultEffort,
 				Levels: append([]string(nil), descriptor.Efforts...),

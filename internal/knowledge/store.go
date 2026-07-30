@@ -439,21 +439,38 @@ func (s *Store) DeleteDocument(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM chunks_fts WHERE document_id = ?`, id); err != nil {
+	rollback := func(cause error) error {
 		_ = tx.Rollback()
-		return err
+		s.lastError = cause.Error()
+		return cause
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM chunks_fts WHERE document_id = ?`, id); err != nil {
+		return rollback(fmt.Errorf("delete knowledge full-text index: %w", err))
 	}
 	if s.vecAvailable {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM chunk_vectors WHERE document_id = ?`, id); err != nil {
-			s.vecAvailable = false
-			s.lastError = err.Error()
+			return rollback(fmt.Errorf("delete knowledge vector index: %w", err))
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM documents WHERE id = ?`, id); err != nil {
-		_ = tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM chunks WHERE document_id = ?`, id); err != nil {
+		return rollback(fmt.Errorf("delete knowledge chunks: %w", err))
+	}
+	deletedDocument, err := tx.ExecContext(ctx, `DELETE FROM documents WHERE id = ?`, id)
+	if err != nil {
+		return rollback(fmt.Errorf("delete knowledge document: %w", err))
+	}
+	deleted, err := deletedDocument.RowsAffected()
+	if err != nil {
+		return rollback(fmt.Errorf("verify deleted knowledge document: %w", err))
+	}
+	if deleted != 1 {
+		return rollback(fmt.Errorf("knowledge document %q not found", id))
+	}
+	if err := tx.Commit(); err != nil {
+		s.lastError = err.Error()
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *Store) Status(ctx context.Context) (Status, error) {

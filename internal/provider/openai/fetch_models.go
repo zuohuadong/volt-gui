@@ -14,7 +14,6 @@ import (
 
 type modelFetchStatusError struct {
 	status int
-	body   string
 }
 
 type ModelFetchAuthMode string
@@ -31,7 +30,7 @@ type FetchModelsOptions struct {
 }
 
 func (e modelFetchStatusError) Error() string {
-	return fmt.Sprintf("fetch models: status %d: %s", e.status, strings.TrimSpace(e.body))
+	return fmt.Sprintf("fetch models: status %d", e.status)
 }
 
 // IsModelFetchEndpointMiss reports whether a model-list request reached a
@@ -79,7 +78,7 @@ func FetchModelsWithOptions(ctx context.Context, baseURL, apiKey string, opts Fe
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, modelFetchStatusError{status: resp.StatusCode, body: truncateFetchBody(string(body))}
+		return nil, modelFetchStatusError{status: resp.StatusCode}
 	}
 
 	var result struct {
@@ -114,14 +113,4 @@ func applyModelFetchAPIKeyHeader(h http.Header, baseURL, apiKey string, mode Mod
 	default:
 		applyAPIKeyHeader(h, baseURL, apiKey)
 	}
-}
-
-func truncateFetchBody(body string) string {
-	body = strings.TrimSpace(body)
-	const max = 512
-	if len([]rune(body)) <= max {
-		return body
-	}
-	r := []rune(body)
-	return string(r[:max]) + "..."
 }

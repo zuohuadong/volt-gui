@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -120,6 +121,9 @@ func TestFetchModelsAuthError(t *testing.T) {
 	_, err := FetchModels(context.Background(), srv.URL, "bad-key", nil)
 	if err == nil {
 		t.Fatal("expected error for bad key")
+	}
+	if strings.Contains(err.Error(), "invalid key") || strings.Contains(err.Error(), "bad-key") {
+		t.Fatalf("model fetch error exposed provider response or credential: %v", err)
 	}
 }
 

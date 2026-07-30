@@ -45,6 +45,7 @@ type ProviderView struct {
 	ModelsURL         string                      `json:"modelsUrl"`
 	Default           string                      `json:"default"`
 	APIKeyEnv         string                      `json:"apiKeyEnv"`
+	APIKeyValue       string                      `json:"apiKeyValue,omitempty"`
 	Headers           map[string]string           `json:"headers"`
 	ExtraBody         map[string]any              `json:"extraBody"`
 	AuthHeader        bool                        `json:"authHeader"`
@@ -2294,10 +2295,16 @@ func (a *App) FetchProviderModels(p ProviderView) ([]string, error) {
 		Headers:    p.Headers,
 		AuthHeader: p.AuthHeader,
 	}
-	e.ResolveAPIKeyForRoot(a.activeWorkspaceRoot())
 	ctx, cancel := context.WithTimeout(a.reqCtx(), 15*time.Second)
 	defer cancel()
-	models, err := e.FetchModels(ctx)
+	var models []string
+	var err error
+	if draftKey := strings.TrimSpace(p.APIKeyValue); draftKey != "" {
+		models, err = e.FetchModelsWithAPIKey(ctx, draftKey)
+	} else {
+		e.ResolveAPIKeyForRoot(a.activeWorkspaceRoot())
+		models, err = e.FetchModels(ctx)
+	}
 	if err != nil {
 		return []string{}, err
 	}

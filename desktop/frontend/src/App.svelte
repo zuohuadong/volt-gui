@@ -142,6 +142,8 @@
   } from "./lib/task-lifecycle";
   import type { QueuedThreadMessage } from "./lib/task-lifecycle";
   import type { RecoveryAction } from "./lib/task-activity";
+  import { confirmKnowledgeDocumentDeletion } from "./lib/knowledge-delete";
+  import { formatProviderModelFetchError } from "./lib/provider-model-error";
   import {
     addDiffReviewComment,
     buildDiffFixPrompt,
@@ -1653,6 +1655,7 @@
       showWorkbenchNotice("知识库管理接口未就绪，请重启桌面 dev 窗口后重试。");
       return;
     }
+    if (typeof window !== "undefined" && !confirmKnowledgeDocumentDeletion(item.title, window.confirm.bind(window))) return;
     try {
       await deleteDocument(item.id);
       documentItems = documentItems.filter((document) => document.id !== item.id);
@@ -2848,7 +2851,7 @@
       applySelectedDraftModels(current.length ? current : fetchedModels);
       modelDraftMessage = `已拉取 ${fetchedModels.length} 个模型，请选择要添加的模型。`;
     } catch (error) {
-      modelDraftError = error instanceof Error ? error.message : String(error);
+      modelDraftError = formatProviderModelFetchError(error);
     } finally {
       modelDraftFetching = false;
     }
@@ -9731,8 +9734,8 @@ function openGovernanceCenter() {
       {#if knowledgeLibraryTab === "documents"}
         <div class="aorist-card-grid knowledge-template-grid">
           {#each filteredKnowledgeEntries as item (item.id)}
-            <article class="capability-item knowledge-template-card" class:active={selectedKnowledgeDocument()?.id === item.id}>
-              <header><span>{item.status}</span><em>{item.type}</em></header>
+            <article class="capability-item knowledge-template-card" class:active={selectedKnowledgeDocument()?.id === item.id} title={knowledgeDocumentMeta(item)}>
+              <header class="knowledge-card-header"><span class="knowledge-card-status">{item.status}</span><em class="knowledge-card-type">{item.type}</em></header>
               <strong>{item.title}</strong>
               <p>{item.description || `${item.type} / ${knowledgeDocumentCount(item)} 份关联资料`}</p>
               <dl>
@@ -9750,8 +9753,8 @@ function openGovernanceCenter() {
       {:else if knowledgeLibraryTab === "templates"}
         <div class="aorist-card-grid knowledge-template-grid">
           {#each filteredKnowledgeTemplates as item (item.id)}
-            <article class="capability-item knowledge-template-card" class:active={selectedKnowledgeDocument()?.id === item.id}>
-              <header><span>{item.status}</span><em>{item.type}</em></header>
+            <article class="capability-item knowledge-template-card" class:active={selectedKnowledgeDocument()?.id === item.id} title={knowledgeDocumentMeta(item)}>
+              <header class="knowledge-card-header"><span class="knowledge-card-status">{item.status}</span><em class="knowledge-card-type">{item.type}</em></header>
               <strong>{item.title}</strong>
               <p>{item.description || `${item.type} / ${knowledgeDocumentCount(item)} 份关联资料`}</p>
               <dl>
@@ -9770,7 +9773,7 @@ function openGovernanceCenter() {
         <div class="aorist-card-grid knowledge-template-grid">
           {#each filteredRegulations as item, itemIndex (indexedKey(item.id || item.title, itemIndex))}
             <article class="capability-item knowledge-template-card regulation-knowledge-card" class:active={activeRegulation?.id === item.id} title={`${item.category} / ${item.status} / ${item.tags || "未设置标签"}`}>
-              <header><span>{item.status}</span><em>规范</em></header>
+              <header class="knowledge-card-header"><span class="knowledge-card-status">{item.status}</span><em class="knowledge-card-type">规范</em></header>
               <strong>{item.title}</strong>
               <p>{item.category} / {item.tags || "未设置标签"}</p>
               <dl>
@@ -19908,59 +19911,6 @@ function openGovernanceCenter() {
     color: var(--aorist-ink);
   }
 
-  .home__composer :global(.composer__tools .composer-plus-menu button),
-  .home__composer :global(.composer__tools .composer-plus-menu__select),
-  .stage__composer :global(.composer__tools .composer-plus-menu button),
-  .stage__composer :global(.composer__tools .composer-plus-menu__select),
-  .agent-compose-card :global(.composer__tools .composer-plus-menu button),
-  .agent-compose-card :global(.composer__tools .composer-plus-menu__select) {
-    display: grid;
-    grid-template-columns: 22px minmax(0, 1fr);
-    justify-content: start;
-    width: 100%;
-    max-width: none;
-    min-height: 28px;
-    padding: 4px 8px;
-    background: transparent;
-    color: var(--aorist-ink);
-  }
-
-  .home__composer :global(.composer-plus-menu svg),
-  .stage__composer :global(.composer-plus-menu svg),
-  .agent-compose-card :global(.composer-plus-menu svg) {
-    color: #59616d;
-  }
-
-  .home__composer :global(.composer-plus-menu .plugin-docs),
-  .stage__composer :global(.composer-plus-menu .plugin-docs),
-  .agent-compose-card :global(.composer-plus-menu .plugin-docs) {
-    color: #4f7df3;
-  }
-
-  .home__composer :global(.composer-plus-menu .plugin-pdf),
-  .stage__composer :global(.composer-plus-menu .plugin-pdf),
-  .agent-compose-card :global(.composer-plus-menu .plugin-pdf) {
-    color: #ff6b6b;
-  }
-
-  .home__composer :global(.composer-plus-menu .plugin-sheet),
-  .stage__composer :global(.composer-plus-menu .plugin-sheet),
-  .agent-compose-card :global(.composer-plus-menu .plugin-sheet) {
-    color: #4f9b58;
-  }
-
-  .home__composer :global(.composer-plus-menu .plugin-slides),
-  .stage__composer :global(.composer-plus-menu .plugin-slides),
-  .agent-compose-card :global(.composer-plus-menu .plugin-slides) {
-    color: #d7a32e;
-  }
-
-  .home__composer :global(.composer-plus-menu .plugin-template),
-  .stage__composer :global(.composer-plus-menu .plugin-template),
-  .agent-compose-card :global(.composer-plus-menu .plugin-template) {
-    color: #f08aa0;
-  }
-
   .home__composer :global(.composer__submit),
   .stage__composer :global(.composer__submit),
   :global(.task-composer-card .composer__submit),
@@ -23530,7 +23480,9 @@ function openGovernanceCenter() {
 @media(max-width:980px){.knowledge-stack .knowledge-content-panel{max-height:480px}}
 @media(max-width:640px){.knowledge-content-tabs{justify-content:flex-start;overflow:auto}.knowledge-content-tabs button{min-width:80px;padding-inline:10px}}
 .knowledge-template-card{display:grid;grid-template-rows:auto 44px 44px minmax(128px,1fr) 34px;gap:10px;height:336px;min-height:336px;padding:18px;box-sizing:border-box;overflow:hidden}
-.knowledge-template-card header{min-height:22px}
+.knowledge-template-card .knowledge-card-header{min-width:0;min-height:22px}
+.knowledge-template-card .knowledge-card-status{flex:0 0 auto;white-space:nowrap}
+.knowledge-template-card .knowledge-card-type{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .knowledge-template-card>strong{min-height:44px;max-height:44px}
   .knowledge-template-card p{min-height:44px;max-height:44px;margin:0;line-height:1.55}
   .knowledge-template-card dl{align-self:stretch;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0}

@@ -177,6 +177,23 @@ func TestSaveWorkbenchProjectRejectsNameLongerThanOneHundredCharacters(t *testin
 	}
 }
 
+func TestSaveWorkbenchProjectRejectsInvalidBudget(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+
+	for _, budget := range []string{"-2", "not-a-number"} {
+		if _, err := app.SaveWorkbenchProject(WorkbenchProjectInput{Name: "预算校验 " + budget, Budget: budget}); err == nil || !strings.Contains(err.Error(), "project budget must be a non-negative number") {
+			t.Fatalf("SaveWorkbenchProject(Budget=%q) error = %v, want non-negative validation", budget, err)
+		}
+	}
+	if _, err := app.SaveWorkbenchProject(WorkbenchProjectInput{Name: "零预算项目", Budget: "0"}); err != nil {
+		t.Fatalf("SaveWorkbenchProject() should accept zero budget: %v", err)
+	}
+	if _, err := app.SaveWorkbenchProject(WorkbenchProjectInput{Name: "逗号预算项目", Budget: "120,000"}); err != nil {
+		t.Fatalf("SaveWorkbenchProject() should accept formatted non-negative budget: %v", err)
+	}
+}
+
 func mustParseProjectTestDate(t *testing.T, value string) time.Time {
 	t.Helper()
 	parsed, err := time.Parse("2006-01-02", value)

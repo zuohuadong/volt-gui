@@ -194,6 +194,7 @@ type WorkbenchKnowledgeDocumentView struct {
 	FilePath    string   `json:"filePath,omitempty"`
 	MimeType    string   `json:"mimeType,omitempty"`
 	FileSize    int64    `json:"fileSize,omitempty"`
+	ContentHash string   `json:"contentHash,omitempty"`
 	ChunkCount  int      `json:"chunkCount,omitempty"`
 	IndexedAt   string   `json:"indexedAt,omitempty"`
 	Error       string   `json:"error,omitempty"`

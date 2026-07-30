@@ -65,8 +65,8 @@
   function flowMeta(flow: TrustFlow): string[] {
     return [
       flow.apiSurface ? `API 接口 ${normalizeTrustCopy(flow.apiSurface)}` : "",
-      flow.transport ? `传输 ${flow.transport}` : "",
-      flow.runtime ? `运行时 ${flow.runtime}` : "",
+      flow.transport ? `传输 ${normalizeTrustCopy(flow.transport)}` : "",
+      flow.runtime ? `运行时 ${normalizeTrustCopy(flow.runtime)}` : "",
       flow.provider ? `渠道 ${flow.provider}` : "",
     ].filter(Boolean);
   }

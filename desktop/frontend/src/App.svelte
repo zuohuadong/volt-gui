@@ -189,6 +189,7 @@
   } from "./lib/workbench-ia";
   import { reportStyleGatePolicy } from "./lib/report-style-gate";
   import { formatKnowledgeTimestamp } from "./lib/data-governance";
+  import { checkpointRestoreMessage } from "./lib/checkpoint-feedback";
   import { stripInternalTranscriptBlocks } from "./lib/transcript-visibility";
   import type {
     ActivityMode,
@@ -584,6 +585,8 @@
   let modelDraftFetching = $state(false);
   let modelDraftMessage = $state("");
   let modelDraftError = $state("");
+  let modelDraftNameInvalid = $state(false);
+  let modelDraftNameInput = $state<HTMLInputElement>();
   let teamViewMode = $state<"teams" | "office" | "chat">("teams");
   let teamConfigTitle = $state<string | undefined>();
   let teamBuilderName = $state("");
@@ -854,6 +857,7 @@
   let ingestDraftDesc = $state("");
   let ingestDraftFiles = $state<File[]>([]);
   let ingestDraftFileLabel = $state("");
+  let ingestDraftSaving = $state(false);
   let knowledgeDraftTitle = $state("");
   let knowledgeDraftType = $state("文档");
   let knowledgeDraftSource = $state("manual");
@@ -1320,6 +1324,7 @@
     return projectMaterialRows.filter((material) => ids.has(material.id));
   }
   function knowledgeDocumentCount(item?: WorkbenchKnowledgeDocument) {
+    if (item?.contentHash) return Math.max(1, Number(item.count || 0));
     const linkedCount = knowledgeDocumentMaterials(item).length;
     if (linkedCount > 0) return linkedCount;
     return Number(item?.chunkCount ?? item?.count ?? 0);
@@ -1495,7 +1500,7 @@
     if (knowledgeDoc || scope.includes("知识库") || scope.includes("文档知识")) {
       if (knowledgeDoc) {
         resourceTab = "knowledge";
-        openKnowledgeDocument(knowledgeDoc);
+        void openKnowledgeDocument(knowledgeDoc, "located");
         return;
       }
       showWorkbenchNotice("未找到对应知识详情，请同步知识库后重试。");
@@ -1596,18 +1601,14 @@
   }
   function normalizeKnowledgeDocumentForUI(document: WorkbenchKnowledgeDocument): WorkbenchKnowledgeDocument {
     const chunkCount = Number(document.chunkCount ?? document.count ?? 0);
+    const documentCount = Number(document.count ?? 0);
     return {
       ...document,
       type: document.type || "文档",
-      count: chunkCount > 0 ? chunkCount : document.count || 0,
+      count: documentCount > 0 ? documentCount : chunkCount,
       chunkCount,
       status: document.status || "已入库",
     };
-  }
-  function knowledgeDocumentMeta(item: WorkbenchKnowledgeDocument) {
-    const chunks = knowledgeDocumentCount(item);
-    const file = item.fileName || item.source || "手动知识";
-    return `${item.type || "文档"} / ${chunks} 个切片 / ${file}`;
   }
   function knowledgeVectorLabel() {
     return knowledgeStatus.sqliteVec ? "已启用" : "待启用";
@@ -1706,6 +1707,7 @@
   }
   async function deleteMaterial(material?: WorkbenchProjectMaterial) {
     if (!material) return;
+    if (typeof window !== "undefined" && !window.confirm(`确认删除资料“${material.title}”吗？删除后将无法恢复。`)) return;
     const deleteMaterialBinding = projectMaterialPersistenceBindings()?.DeleteProjectMaterial;
     if (typeof deleteMaterialBinding !== "function") {
       desktopBackendUnavailable("删除资料");
@@ -2029,7 +2031,7 @@
   function indexedKey(value: unknown, index: number) {
     return `${String(value ?? "item")}-${index}`;
   }
-  function openKnowledgeDocument(item: (typeof documentItems)[number]) {
+  async function openKnowledgeDocument(item: (typeof documentItems)[number], notice: "loaded" | "located" = "loaded") {
     selectedRegulationId = "";
     selectedKnowledgeDocumentId = item.id;
     knowledgePreviewTitle = item.title;
@@ -2041,8 +2043,10 @@
       item.indexedAt ? `索引时间：${formatWorkbenchDateTime(item.indexedAt)}` : "",
       item.error ? `错误：${item.error}` : "",
     ].filter(Boolean).join(" / ");
-    void loadKnowledgeDocumentPreview(item);
-    showWorkbenchNotice(`已打开文档知识：${item.title}`);
+    const loaded = await loadKnowledgeDocumentPreview(item);
+    if (loaded) {
+      showWorkbenchNotice(notice === "located" ? `已定位至知识库：${item.title}` : `已加载知识详情：${item.title}`);
+    }
   }
   async function pickKnowledgeDocumentFile() {
     if (!hasWailsBindings()) {
@@ -2065,14 +2069,14 @@
       showWorkbenchNotice(`选择知识文档失败：${formatErrorMessage(error)}`);
     }
   }
-  async function loadKnowledgeDocumentPreview(item: WorkbenchKnowledgeDocument) {
+  async function loadKnowledgeDocumentPreview(item: WorkbenchKnowledgeDocument): Promise<boolean> {
     const previewDocument = knowledgePersistenceBindings()?.KnowledgeDocumentPreview;
     knowledgePreviewDocumentId = item.id;
     knowledgePreviewContent = "";
     knowledgePreviewError = "";
     if (typeof previewDocument !== "function") {
       knowledgePreviewError = "知识正文预览接口未就绪。";
-      return;
+      return false;
     }
     knowledgePreviewLoading = true;
     try {
@@ -2080,10 +2084,12 @@
       if (knowledgePreviewDocumentId === item.id) {
         knowledgePreviewContent = content || "未提取到可预览的正文。";
       }
+      return knowledgePreviewDocumentId === item.id;
     } catch (error) {
       if (knowledgePreviewDocumentId === item.id) {
         knowledgePreviewError = formatErrorMessage(error);
       }
+      return false;
     } finally {
       if (knowledgePreviewDocumentId === item.id) knowledgePreviewLoading = false;
     }
@@ -2112,6 +2118,10 @@
     }
   }
   async function renderKnowledgeDocument(item: WorkbenchKnowledgeDocument) {
+    if (!knowledgeDocumentIsTemplate(item)) {
+      await openKnowledgeDocument(item);
+      return;
+    }
     const listVariables = workbenchDataPersistenceBindings()?.KnowledgeTemplateVariables;
     const renderDocument = workbenchDataPersistenceBindings()?.RenderKnowledgeDocument;
     if (typeof listVariables !== "function" || typeof renderDocument !== "function") {
@@ -2125,6 +2135,10 @@
     } catch (error) {
       showWorkbenchNotice(`无法打开模板渲染表单：${formatErrorMessage(error)}`);
     }
+  }
+  function knowledgeDocumentIsTemplate(item: WorkbenchKnowledgeDocument) {
+    const type = item.type.trim().toLowerCase();
+    return type === "模板" || type === "template";
   }
   async function reindexKnowledgeDocument(item: WorkbenchKnowledgeDocument) {
     const reindexDocument = workbenchDataPersistenceBindings()?.ReindexKnowledgeDocument;
@@ -2744,10 +2758,17 @@
   function openModelProviderDialog(provider?: ProviderView) {
     modelDraft = providerDraftFromView(provider);
     modelDraftEditing = Boolean(provider);
+    modelDraftNameInvalid = false;
     modelDraftMessage = "";
     modelDraftError = "";
     configDialog = "model";
     closeUserPanelDialog();
+  }
+
+  function showModelProviderNameConflict() {
+    modelDraftNameInvalid = true;
+    modelDraftError = "渠道名称已存在，请换一个名称。";
+    requestAnimationFrame(() => modelDraftNameInput?.focus());
   }
 
   function isDraftFetchedModelSelected(model: string) {
@@ -2827,6 +2848,11 @@
       return;
     }
     const provider = providerViewFromDraft();
+    const duplicateName = !modelDraftEditing && modelSettings?.providers.some((item) => item.name.trim().toLocaleLowerCase() === provider.name.toLocaleLowerCase());
+    if (duplicateName) {
+      showModelProviderNameConflict();
+      return;
+    }
     if (!provider.name || !provider.kind || !provider.baseUrl || !provider.models.length) {
       modelDraftError = "请填写名称、类型、Base URL 和至少一个模型。";
       return;
@@ -2837,6 +2863,7 @@
       return;
     }
     modelDraftSaving = true;
+    modelDraftNameInvalid = false;
     modelDraftError = "";
     modelDraftMessage = "";
     try {
@@ -2851,7 +2878,12 @@
       await refresh();
       configDialog = undefined;
     } catch (error) {
-      modelDraftError = error instanceof Error ? error.message : String(error);
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      if (/provider name(?:\(s\))? already exist|provider .+ already exists/i.test(rawMessage)) {
+        showModelProviderNameConflict();
+      } else {
+        modelDraftError = rawMessage;
+      }
     } finally {
       modelDraftSaving = false;
     }
@@ -4720,7 +4752,7 @@ function openGovernanceCenter() {
   function linkProjectById(projectId: string) {
     if (!projectId) {
       selectedProjectId = "";
-      linkedProject = "收件箱项目";
+      linkedProject = "";
       activeSidebarProjectId = INBOX_PROJECT_ID;
       return;
     }
@@ -5068,20 +5100,32 @@ function openGovernanceCenter() {
     }
     return undefined;
   }
+  function projectBudgetValidation(budgetText: string): [field: string, message: string] | undefined {
+    const normalized = budgetText.trim().replace(/,/g, "");
+    if (!normalized) return undefined;
+    const budget = Number(normalized);
+    if (!Number.isFinite(budget) || budget < 0) {
+      return ["project-budget", "项目预算必须为大于或等于 0 的数字。"];
+    }
+    return undefined;
+  }
   function projectSaveErrorValidation(message: string): [field: string, message: string] | undefined {
     if (message.includes("project name already exists")) return ["project-name", "项目名称已存在，请换一个名称。"];
     if (message.includes("project code already exists")) return ["project-code", "项目编号已存在，请换一个编号。"];
     if (message.includes("project name must not exceed")) {
       return ["project-name", `项目名称不能超过 ${WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} 个字符。`];
     }
+    if (message.includes("project budget must be a non-negative number")) {
+      return ["project-budget", "项目预算必须为大于或等于 0 的数字。"];
+    }
     return undefined;
   }
   async function submitProjectDraft() {
     const name = projectDraftName.trim();
     const code = projectDraftCode.trim();
-    const validation = projectDraftIdentityValidation(name, code);
+    const validation = projectDraftIdentityValidation(name, code) ?? projectBudgetValidation(projectDraftBudget);
     if (validation) {
-      if (validation[0] === "project-code") projectAdvancedOpen = true;
+      if (validation[0] === "project-code" || validation[0] === "project-budget") projectAdvancedOpen = true;
       showConfigValidation(...validation);
       return;
     }
@@ -5129,7 +5173,7 @@ function openGovernanceCenter() {
       const message = formatErrorMessage(error);
       const validation = projectSaveErrorValidation(message);
       if (validation) {
-        if (validation[0] === "project-code") projectAdvancedOpen = true;
+        if (validation[0] === "project-code" || validation[0] === "project-budget") projectAdvancedOpen = true;
         showConfigValidation(...validation);
       }
       else showWorkbenchNotice(`新建项目失败：${message}`);
@@ -5280,6 +5324,7 @@ function openGovernanceCenter() {
     }
   }
   async function submitIngestDraft() {
+    if (ingestDraftSaving) return;
     if (!ingestDraftFiles.length) {
       showConfigValidation("ingest-files", "请选择至少一个资料文件后再确认导入。");
       return;
@@ -5298,6 +5343,7 @@ function openGovernanceCenter() {
       desktopBackendUnavailable("批量导入资料");
       return;
     }
+    ingestDraftSaving = true;
     try {
       const inputs: WorkbenchProjectMaterialBatchInput = [];
       for (const file of ingestDraftFiles) {
@@ -5317,12 +5363,14 @@ function openGovernanceCenter() {
           mimeType: file.type,
         });
       }
+      const existingMaterialIDs = new Set(projectMaterialRows.map((material) => material.id));
       const saved = await saveBatch(inputs);
+      const newlyCreatedCount = saved.filter((material) => !existingMaterialIDs.has(material.id)).length;
       await refreshProjectMaterials();
       await refreshKnowledgeBase();
       projectCards = projectCards.map((item) =>
         item.id === project.id
-          ? { ...item, materials: item.materials + saved.length, updatedAt: "刚刚" }
+          ? { ...item, materials: item.materials + newlyCreatedCount, updatedAt: "刚刚" }
           : item,
       );
       selectedProjectId = project.id;
@@ -5333,6 +5381,8 @@ function openGovernanceCenter() {
     } catch (error) {
       console.error("Failed to batch import project materials", error);
       showWorkbenchNotice("批量导入失败，请稍后重试。");
+    } finally {
+      ingestDraftSaving = false;
     }
   }
   async function submitCustomerDraft() {
@@ -5635,7 +5685,7 @@ function openGovernanceCenter() {
       resourceTab = "knowledge";
       workLayer = "resources";
       configDialog = undefined;
-      openKnowledgeDocument(normalizeKnowledgeDocumentForUI(saved));
+      await openKnowledgeDocument(normalizeKnowledgeDocumentForUI(saved));
       showWorkbenchNotice(`已导入知识：${saved.title}`);
     } catch (error) {
       console.error("Failed to import knowledge document", error);
@@ -7967,6 +8017,10 @@ function openGovernanceCenter() {
     }
     if (!activeTab) return;
     const queueTabID = currentComposerTab?.id || activeTab.id;
+    // A rapid second submit can arrive before Svelte has reflected the first
+    // optimistic message into the disabled state. Ignore that duplicate while
+    // still allowing deliberate follow-ups once the backend turn is running.
+    if (directSubmissionTabIDs.includes(queueTabID)) return;
     if (composerIsBusy || currentComposerTab?.running) {
       queueThreadMessage(queueTabID, text, submission);
       return;
@@ -8711,7 +8765,10 @@ function openGovernanceCenter() {
       id: `rewind-${Date.now()}`,
       role: "notice",
       title: "rewind",
-      body: t.transcript.rewound.replace("{turn}", String(turn)).replace("{scope}", scope),
+      body: checkpointRestoreMessage(turn, {
+        initial: t.transcript.rewoundInitial,
+        checkpoint: t.transcript.rewoundCheckpoint,
+      }),
     });
   }
 
@@ -9621,17 +9678,17 @@ function openGovernanceCenter() {
       {#if knowledgeLibraryTab === "documents"}
         <div class="aorist-card-grid knowledge-template-grid">
           {#each filteredKnowledgeEntries as item (item.id)}
-            <article class="capability-item knowledge-template-card" class:active={selectedKnowledgeDocument()?.id === item.id} title={knowledgeDocumentMeta(item)}>
+            <article class="capability-item knowledge-template-card" class:active={selectedKnowledgeDocument()?.id === item.id}>
               <header><span>{item.status}</span><em>{item.type}</em></header>
               <strong>{item.title}</strong>
               <p>{item.description || `${item.type} / ${knowledgeDocumentCount(item)} 份关联资料`}</p>
               <dl>
-                <div><dt>来源</dt><dd>{item.source || "工作台"}</dd></div>
-                <div><dt>文档数</dt><dd>{knowledgeDocumentCount(item)}</dd></div>
-                <div><dt>标签</dt><dd>{item.tags || "未设置"}</dd></div>
-                <div><dt>更新</dt><dd>{materialUpdatedAtLabel({ updatedAt: item.updatedAt, createdAt: item.createdAt })}</dd></div>
+                <div title={`来源：${item.source || "工作台"}`}><dt>来源</dt><dd>{item.source || "工作台"}</dd></div>
+                <div title={`文档数：${knowledgeDocumentCount(item)}`}><dt>文档数</dt><dd>{knowledgeDocumentCount(item)}</dd></div>
+                <div title={`标签：${item.tags || "未设置"}`}><dt>标签</dt><dd>{item.tags || "未设置"}</dd></div>
+                <div title={`更新：${materialUpdatedAtLabel({ updatedAt: item.updatedAt, createdAt: item.createdAt })}`}><dt>更新</dt><dd>{materialUpdatedAtLabel({ updatedAt: item.updatedAt, createdAt: item.createdAt })}</dd></div>
               </dl>
-              <footer class="knowledge-card-actions"><button type="button" onclick={() => openKnowledgeDocument(item)}>详情</button><button type="button" onclick={() => void renderKnowledgeDocument(item)}>渲染</button><button type="button" onclick={() => editKnowledgeDocument(item)}>编辑</button>{#if item.status === "索引失败" || item.status === "无可索引文本"}<button type="button" disabled={knowledgeIndexingDocumentId === item.id} onclick={() => void reindexKnowledgeDocument(item)}>{knowledgeIndexingDocumentId === item.id ? "索引中" : "重新索引"}</button>{/if}<button type="button" onclick={() => void deleteKnowledgeDocument(item)}>删除</button></footer>
+              <footer class="knowledge-card-actions"><button type="button" onclick={() => void openKnowledgeDocument(item)}>详情</button><button type="button" onclick={() => void renderKnowledgeDocument(item)}>{knowledgeDocumentIsTemplate(item) ? "渲染" : "预览"}</button><button type="button" onclick={() => editKnowledgeDocument(item)}>编辑</button>{#if item.status === "索引失败" || item.status === "无可索引文本"}<button type="button" disabled={knowledgeIndexingDocumentId === item.id} onclick={() => void reindexKnowledgeDocument(item)}>{knowledgeIndexingDocumentId === item.id ? "索引中" : "重新索引"}</button>{/if}<button type="button" onclick={() => void deleteKnowledgeDocument(item)}>删除</button></footer>
             </article>
           {:else}
             <article class="detail-empty"><strong>暂无知识文档</strong><p>导入或手动录入知识后会显示在这里。</p></article>
@@ -9640,17 +9697,17 @@ function openGovernanceCenter() {
       {:else if knowledgeLibraryTab === "templates"}
         <div class="aorist-card-grid knowledge-template-grid">
           {#each filteredKnowledgeTemplates as item (item.id)}
-            <article class="capability-item knowledge-template-card" class:active={selectedKnowledgeDocument()?.id === item.id} title={knowledgeDocumentMeta(item)}>
+            <article class="capability-item knowledge-template-card" class:active={selectedKnowledgeDocument()?.id === item.id}>
               <header><span>{item.status}</span><em>{item.type}</em></header>
               <strong>{item.title}</strong>
               <p>{item.description || `${item.type} / ${knowledgeDocumentCount(item)} 份关联资料`}</p>
               <dl>
-                <div><dt>来源</dt><dd>{item.source || "工作台"}</dd></div>
-                <div><dt>文档数</dt><dd>{knowledgeDocumentCount(item)}</dd></div>
-                <div><dt>标签</dt><dd>{item.tags || "未设置"}</dd></div>
-                <div><dt>更新</dt><dd>{materialUpdatedAtLabel({ updatedAt: item.updatedAt, createdAt: item.createdAt })}</dd></div>
+                <div title={`来源：${item.source || "工作台"}`}><dt>来源</dt><dd>{item.source || "工作台"}</dd></div>
+                <div title={`文档数：${knowledgeDocumentCount(item)}`}><dt>文档数</dt><dd>{knowledgeDocumentCount(item)}</dd></div>
+                <div title={`标签：${item.tags || "未设置"}`}><dt>标签</dt><dd>{item.tags || "未设置"}</dd></div>
+                <div title={`更新：${materialUpdatedAtLabel({ updatedAt: item.updatedAt, createdAt: item.createdAt })}`}><dt>更新</dt><dd>{materialUpdatedAtLabel({ updatedAt: item.updatedAt, createdAt: item.createdAt })}</dd></div>
               </dl>
-              <footer class="knowledge-card-actions"><button type="button" onclick={() => openKnowledgeDocument(item)}>详情</button><button type="button" onclick={() => void renderKnowledgeDocument(item)}>渲染</button><button type="button" onclick={() => editKnowledgeDocument(item)}>编辑</button>{#if item.status === "索引失败" || item.status === "无可索引文本"}<button type="button" disabled={knowledgeIndexingDocumentId === item.id} onclick={() => void reindexKnowledgeDocument(item)}>{knowledgeIndexingDocumentId === item.id ? "索引中" : "重新索引"}</button>{/if}<button type="button" onclick={() => void deleteKnowledgeDocument(item)}>删除</button></footer>
+              <footer class="knowledge-card-actions"><button type="button" onclick={() => void openKnowledgeDocument(item)}>详情</button><button type="button" onclick={() => void renderKnowledgeDocument(item)}>{knowledgeDocumentIsTemplate(item) ? "渲染" : "预览"}</button><button type="button" onclick={() => editKnowledgeDocument(item)}>编辑</button>{#if item.status === "索引失败" || item.status === "无可索引文本"}<button type="button" disabled={knowledgeIndexingDocumentId === item.id} onclick={() => void reindexKnowledgeDocument(item)}>{knowledgeIndexingDocumentId === item.id ? "索引中" : "重新索引"}</button>{/if}<button type="button" onclick={() => void deleteKnowledgeDocument(item)}>删除</button></footer>
             </article>
           {:else}
             <article class="detail-empty"><strong>暂无文档模板</strong><p>新建模板后会显示在这里。</p></article>
@@ -11090,7 +11147,7 @@ function openGovernanceCenter() {
                   <label>阶段<select bind:value={projectDraftStage}>{#each projectStageOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
                   <label>负责人<input bind:value={projectDraftOwner} placeholder="默认项目负责人" /></label>
                   <label>项目类型<select bind:value={projectDraftCategory}>{#each projectCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label>
-                  <label>预算<input bind:value={projectDraftBudget} inputmode="decimal" placeholder="可选，例如 120,000" /></label>
+                  <label class:invalid={configValidationField === "project-budget"}>预算<input data-config-field="project-budget" aria-invalid={configValidationField === "project-budget"} bind:value={projectDraftBudget} type="number" min="0" step="0.01" placeholder="可选，例如 120000" /></label>
                   <label>立项日期<input type="date" bind:value={projectDraftAcceptedAt} /></label>
                   <label>状态<select bind:value={projectDraftStatus}><option value="active">进行中</option><option value="closed">已归档</option></select></label>
                   <label>进度<div class="percent-input"><input bind:value={projectDraftProgress} type="number" min="0" max="100" /><span>%</span></div></label>
@@ -11152,7 +11209,7 @@ function openGovernanceCenter() {
     </aside>
   </div>{:else if configDialog === "model"}
     <div class="config-grid">
-      <label>渠道名称 *<input bind:value={modelDraft.name} placeholder="例如 company-llm" disabled={modelDraftEditing} /></label>
+      <label class:invalid={modelDraftNameInvalid}>渠道名称 *<input bind:this={modelDraftNameInput} data-config-field="model-channel-name" aria-invalid={modelDraftNameInvalid} bind:value={modelDraft.name} placeholder="例如 company-llm" disabled={modelDraftEditing} oninput={() => (modelDraftNameInvalid = false)} /></label>
       <label>类型 *<select bind:value={modelDraft.kind}>{#each providerKindOptions as kind (kind)}<option value={kind}>{kind}</option>{/each}</select></label>
       <label class="wide">Base URL *<input bind:value={modelDraft.baseUrl} placeholder="https://api.example.com/v1" /></label>
       <label>API Key 环境变量<input bind:value={modelDraft.apiKeyEnv} placeholder="CUSTOM_API_KEY" /></label>
@@ -11203,7 +11260,7 @@ function openGovernanceCenter() {
       {#if modelDraftError}<div class="model-inline-alert wide"><AlertTriangle size={15} /> {modelDraftError}</div>{/if}
       {#if modelDraftMessage}<div class="model-inline-alert wide"><Check size={15} /> {modelDraftMessage}</div>{/if}
     </div>
-  {:else if configDialog === "report"}<div class="config-grid"><label class:invalid={configValidationField === "report-title"}>报告标题 *<input data-config-field="report-title" aria-invalid={configValidationField === "report-title"} bind:value={reportDraftTitle} placeholder="例如 项目风险分析报告" /></label><label>报告类型<select bind:value={reportDraftKind}>{#each reportKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={reportDraftStatus}>{#each reportStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>优先级<select bind:value={reportDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>关联项目<select bind:value={reportDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>关联客户<select bind:value={reportDraftCustomerId}><option value="">不关联客户</option>{#each customerCards as customer (customer.id)}<option value={customer.id}>{customer.name}</option>{/each}</select></label><label>负责人 / Agent<select bind:value={reportDraftOwner}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>生成来源<select bind:value={reportDraftSource}>{#each reportSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>输出格式<select bind:value={reportDraftFormat}>{#each reportFormatOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>截止时间<input type="datetime-local" bind:value={reportDraftDueAt} /></label><label class="wide">报告摘要<textarea rows="3" bind:value={reportDraftDesc} placeholder="填写报告摘要、适用对象和核心结论"></textarea></label><label class="wide">结构化正文<textarea rows="8" bind:value={reportDraftBody} placeholder="填写背景、数据依据、分析过程、结论和行动建议"></textarea></label></div>{:else if configDialog === "knowledge"}<div class="config-grid"><label class:invalid={configValidationField === "knowledge-title"}>知识标题 *<input data-config-field="knowledge-title" aria-invalid={configValidationField === "knowledge-title"} bind:value={knowledgeDraftTitle} placeholder="例如 交付验收规范" /></label><label>知识类型<select bind:value={knowledgeDraftType}>{#each knowledgeTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={knowledgeDraftSource}>{#each knowledgeSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<select bind:value={knowledgeDraftTags}><option value="">不设置标签</option>{#each knowledgeTagOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide knowledge-document-field"><span>上传文档（可选）</span><div class="knowledge-document-picker"><strong>{knowledgeDraftFileLabel || "未选择文件"}</strong><button type="button" onclick={() => void pickKnowledgeDocumentFile()}>选择文件</button></div><em>支持 PDF、DOCX、Markdown、文本等文件；上传后自动提取正文并建立索引。</em></label><label class="wide">摘要<textarea rows="3" bind:value={knowledgeDraftDescription} placeholder="填写这条知识的摘要、适用场景或关键结论"></textarea></label><label class="wide" class:invalid={configValidationField === "knowledge-content"}>正文（无附件时必填）<textarea data-config-field="knowledge-content" aria-invalid={configValidationField === "knowledge-content"} rows="8" bind:value={knowledgeDraftContent} placeholder="填写要直接写入知识库并参与全文检索的正文内容"></textarea></label></div>{:else if configDialog === "template"}<div class="config-grid"><label class:invalid={configValidationField === "template-title"}>模板名称 *<input data-config-field="template-title" aria-invalid={configValidationField === "template-title"} bind:value={templateDraftTitle} placeholder="例如 需求澄清记录模板" /></label><label>模板类型<select bind:value={templateDraftType}>{#each templateTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={templateDraftStatus}>{#each templateStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={templateDraftSource}>{#each templateSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<input bind:value={templateDraftTags} placeholder="用 / 或逗号分隔，例如 模板 / 工作台" /></label><label class="wide template-material-picker"><span>关联资料</span><div>{#each projectMaterialRows as material (material.id)}<button class:active={templateDraftMaterialIds.includes(material.id)} type="button" onclick={() => toggleTemplateMaterial(material.id)}><strong>{material.title}</strong><em>{materialProjectName(material)} / {material.category}</em></button>{:else}<p>资料库暂无可关联资料，请先上传资料。</p>{/each}</div><small>已关联 {templateDraftMaterialIds.length} 份资料，文档数会自动按关联数量计算。</small></label><label class="wide">模板说明<textarea rows="5" bind:value={templateDraftDescription} placeholder="填写模板用途、适用场景、字段结构或使用说明"></textarea></label></div>{:else if configDialog === "ingest"}<div class="config-grid"><label class="wide material-file-field" class:invalid={configValidationField === "ingest-files"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="ingest-files" aria-invalid={configValidationField === "ingest-files"} type="file" multiple aria-label="批量选择资料文件" onchange={handleIngestFilesChange} /><strong>选择文件</strong><span>{ingestDraftFileLabel || "未选择文件"}</span></div><em>可一次选择多个本地资料文件，确认后会写入资料库。</em></label><label class:invalid={configValidationField === "ingest-project"}>归属项目<select data-config-field="ingest-project" aria-invalid={configValidationField === "ingest-project"} bind:value={ingestDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={ingestDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>导入来源<select bind:value={ingestDraftSource}><option value="local files">local files</option><option value="workspace">workspace</option><option value="manual">manual</option></select></label><label>索引状态<select bind:value={ingestDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>索引策略<select bind:value={ingestDraftStrategy}><option>自动分类并去重</option><option>仅入库</option></select></label><label class="wide">批量说明<textarea rows="4" bind:value={ingestDraftDesc} placeholder="补充导入来源、用途、关联客户或处理说明"></textarea></label></div>{:else if configDialog === "dossier" || configDialog === "resource"}<div class="config-grid"><label class:invalid={configValidationField === "material-title"}>资料名称 *<input data-config-field="material-title" aria-invalid={configValidationField === "material-title"} bind:value={materialDraftTitle} placeholder="例如 项目验收附件" /></label>{#if configDialog === "resource" || configDialog === "dossier"}<label class="wide material-file-field" class:invalid={configValidationField === "material-file"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="material-file" aria-invalid={configValidationField === "material-file"} type="file" aria-label="选择资料文件" onchange={handleMaterialFileChange} /><strong>选择文件</strong><span>{materialDraftFileLabel || "未选择文件"}</span></div><em>请选择本地资料文件</em></label>{/if}<label class:invalid={configValidationField === "material-project"}>归属项目<select data-config-field="material-project" aria-invalid={configValidationField === "material-project"} bind:value={materialDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={materialDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<input bind:value={materialDraftSource} placeholder="manual / 文件名 / URL" /></label><label>索引状态<select bind:value={materialDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">资料说明<textarea rows="4" bind:value={materialDraftDesc} placeholder="补充资料来源、用途、关联客户或待复核内容"></textarea></label></div>{:else if configDialog === "project"}<div class="config-grid"><label class:invalid={configValidationField === "project-name"}>项目名称 *<input data-config-field="project-name" aria-invalid={configValidationField === "project-name"} aria-describedby="project-name-hint" maxlength={WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} bind:value={projectDraftName} placeholder="例如 客户门户上线" /><small id="project-name-hint">最多 {WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} 个字符</small></label><label class:invalid={configValidationField === "project-code"}>项目编号<input data-config-field="project-code" aria-invalid={configValidationField === "project-code"} bind:value={projectDraftCode} placeholder="PRJ-2026-0702" /></label><label>客户/归属方<input bind:value={projectDraftClient} placeholder="例如 内部研发 / 客户名称" /></label><label>阶段<select bind:value={projectDraftStage}>{#each projectStageOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>负责人<input bind:value={projectDraftOwner} placeholder="例如 交付团队" /></label><label>项目类型<select bind:value={projectDraftCategory}>{#each projectCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>预算<input bind:value={projectDraftBudget} inputmode="decimal" placeholder="例如 120,000" /></label><label>立项日期<input type="date" bind:value={projectDraftAcceptedAt} /></label><label>状态<select bind:value={projectDraftStatus}><option value="active">进行中</option><option value="closed">已归档</option></select></label><label>进度<div class="percent-input"><input bind:value={projectDraftProgress} type="number" min="0" max="100" /><span>%</span></div></label><label>优先级<select bind:value={projectDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>风险<select bind:value={projectDraftRisk}>{#each projectRiskOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>执行 Agent<select bind:value={projectDraftAgent}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>下一步<input bind:value={projectDraftNextStep} placeholder="例如 完成验收并输出报告" /></label><label class="wide">项目说明<textarea rows="4" bind:value={projectDraftDesc} placeholder="补充项目背景、目标、交付物或验收标准"></textarea></label></div>{:else if configDialog === "schedule"}<div class="config-grid schedule-config-grid"><label>标题<input bind:value={scheduleDraftTitleValue} placeholder="请输入日程标题" /></label><label>日期<input type="date" bind:value={scheduleDraftDate} /></label><label>时间<input type="time" bind:value={scheduleDraftTimeValue} /></label><label>类型<select bind:value={scheduleDraftType}><option value="">请选择类型</option><option value="meeting">meeting</option></select></label><label class="wide">地点<input bind:value={scheduleDraftPlaceValue} placeholder="请输入地点" /></label></div>{:else if configDialog === "todo"}<div class="config-grid"><label>名称<input bind:value={todoDraftTitle} placeholder="例如 跟进客户反馈" /></label><label>关联对象<select bind:value={todoDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select bind:value={todoDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input type="datetime-local" bind:value={todoDraftDue} /></label><label class="wide">配置说明<textarea rows="4" bind:value={todoDraftDesc} placeholder="补充待办背景、验收标准或下一步动作"></textarea></label></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} readonly /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label><label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer>{#if configValidationMessage}<p class="config-validation-message" role="alert" aria-live="polite">{configValidationMessage}</p>{/if}<button type="button" onclick={() => { clearConfigValidation(); configDialog = undefined; }}>取消</button><button type="button" disabled={modelDraftSaving} onclick={confirmConfigDialog}>{modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
+  {:else if configDialog === "report"}<div class="config-grid"><label class:invalid={configValidationField === "report-title"}>报告标题 *<input data-config-field="report-title" aria-invalid={configValidationField === "report-title"} bind:value={reportDraftTitle} placeholder="例如 项目风险分析报告" /></label><label>报告类型<select bind:value={reportDraftKind}>{#each reportKindOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={reportDraftStatus}>{#each reportStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>优先级<select bind:value={reportDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>关联项目<select bind:value={reportDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>关联客户<select bind:value={reportDraftCustomerId}><option value="">不关联客户</option>{#each customerCards as customer (customer.id)}<option value={customer.id}>{customer.name}</option>{/each}</select></label><label>负责人 / Agent<select bind:value={reportDraftOwner}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>生成来源<select bind:value={reportDraftSource}>{#each reportSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>输出格式<select bind:value={reportDraftFormat}>{#each reportFormatOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>截止时间<input type="datetime-local" bind:value={reportDraftDueAt} /></label><label class="wide">报告摘要<textarea rows="3" bind:value={reportDraftDesc} placeholder="填写报告摘要、适用对象和核心结论"></textarea></label><label class="wide">结构化正文<textarea rows="8" bind:value={reportDraftBody} placeholder="填写背景、数据依据、分析过程、结论和行动建议"></textarea></label></div>{:else if configDialog === "knowledge"}<div class="config-grid"><label class:invalid={configValidationField === "knowledge-title"}>知识标题 *<input data-config-field="knowledge-title" aria-invalid={configValidationField === "knowledge-title"} bind:value={knowledgeDraftTitle} placeholder="例如 交付验收规范" /></label><label>知识类型<select bind:value={knowledgeDraftType}>{#each knowledgeTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={knowledgeDraftSource}>{#each knowledgeSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<select bind:value={knowledgeDraftTags}><option value="">不设置标签</option>{#each knowledgeTagOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide knowledge-document-field"><span>上传文档（可选）</span><div class="knowledge-document-picker"><strong>{knowledgeDraftFileLabel || "未选择文件"}</strong><button type="button" onclick={() => void pickKnowledgeDocumentFile()}>选择文件</button></div><em>支持 PDF、DOCX、Markdown、文本等文件；上传后自动提取正文并建立索引。</em></label><label class="wide">摘要<textarea rows="3" bind:value={knowledgeDraftDescription} placeholder="填写这条知识的摘要、适用场景或关键结论"></textarea></label><label class="wide" class:invalid={configValidationField === "knowledge-content"}>正文（无附件时必填）<textarea data-config-field="knowledge-content" aria-invalid={configValidationField === "knowledge-content"} rows="8" bind:value={knowledgeDraftContent} placeholder="填写要直接写入知识库并参与全文检索的正文内容"></textarea></label></div>{:else if configDialog === "template"}<div class="config-grid"><label class:invalid={configValidationField === "template-title"}>模板名称 *<input data-config-field="template-title" aria-invalid={configValidationField === "template-title"} bind:value={templateDraftTitle} placeholder="例如 需求澄清记录模板" /></label><label>模板类型<select bind:value={templateDraftType}>{#each templateTypeOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>状态<select bind:value={templateDraftStatus}>{#each templateStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<select bind:value={templateDraftSource}>{#each templateSourceOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>标签<input bind:value={templateDraftTags} placeholder="用 / 或逗号分隔，例如 模板 / 工作台" /></label><label class="wide template-material-picker"><span>关联资料</span><div>{#each projectMaterialRows as material (material.id)}<button class:active={templateDraftMaterialIds.includes(material.id)} type="button" onclick={() => toggleTemplateMaterial(material.id)}><strong>{material.title}</strong><em>{materialProjectName(material)} / {material.category}</em></button>{:else}<p>资料库暂无可关联资料，请先上传资料。</p>{/each}</div><small>已关联 {templateDraftMaterialIds.length} 份资料，文档数会自动按关联数量计算。</small></label><label class="wide">模板说明<textarea rows="5" bind:value={templateDraftDescription} placeholder="填写模板用途、适用场景、字段结构或使用说明"></textarea></label></div>{:else if configDialog === "ingest"}<div class="config-grid"><label class="wide material-file-field" class:invalid={configValidationField === "ingest-files"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="ingest-files" aria-invalid={configValidationField === "ingest-files"} type="file" multiple aria-label="批量选择资料文件" onchange={handleIngestFilesChange} /><strong>选择文件</strong><span>{ingestDraftFileLabel || "未选择文件"}</span></div><em>可一次选择多个本地资料文件，确认后会写入资料库。</em></label><label class:invalid={configValidationField === "ingest-project"}>归属项目<select data-config-field="ingest-project" aria-invalid={configValidationField === "ingest-project"} bind:value={ingestDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={ingestDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>导入来源<select bind:value={ingestDraftSource}><option value="local files">local files</option><option value="workspace">workspace</option><option value="manual">manual</option></select></label><label>索引状态<select bind:value={ingestDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>索引策略<select bind:value={ingestDraftStrategy}><option>自动分类并去重</option><option>仅入库</option></select></label><label class="wide">批量说明<textarea rows="4" bind:value={ingestDraftDesc} placeholder="补充导入来源、用途、关联客户或处理说明"></textarea></label></div>{:else if configDialog === "dossier" || configDialog === "resource"}<div class="config-grid"><label class:invalid={configValidationField === "material-title"}>资料名称 *<input data-config-field="material-title" aria-invalid={configValidationField === "material-title"} bind:value={materialDraftTitle} placeholder="例如 项目验收附件" /></label>{#if configDialog === "resource" || configDialog === "dossier"}<label class="wide material-file-field" class:invalid={configValidationField === "material-file"}><span>选择文件 *</span><div class="material-file-picker"><input data-config-field="material-file" aria-invalid={configValidationField === "material-file"} type="file" aria-label="选择资料文件" onchange={handleMaterialFileChange} /><strong>选择文件</strong><span>{materialDraftFileLabel || "未选择文件"}</span></div><em>请选择本地资料文件</em></label>{/if}<label class:invalid={configValidationField === "material-project"}>归属项目<select data-config-field="material-project" aria-invalid={configValidationField === "material-project"} bind:value={materialDraftProjectId}>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>资料分类<select bind:value={materialDraftCategory}>{#each materialCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>来源<input bind:value={materialDraftSource} placeholder="manual / 文件名 / URL" /></label><label>索引状态<select bind:value={materialDraftStatus}>{#each materialStatusOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label class="wide">资料说明<textarea rows="4" bind:value={materialDraftDesc} placeholder="补充资料来源、用途、关联客户或待复核内容"></textarea></label></div>{:else if configDialog === "project"}<div class="config-grid"><label class:invalid={configValidationField === "project-name"}>项目名称 *<input data-config-field="project-name" aria-invalid={configValidationField === "project-name"} aria-describedby="project-name-hint" maxlength={WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} bind:value={projectDraftName} placeholder="例如 客户门户上线" /><small id="project-name-hint">最多 {WORKBENCH_PROJECT_NAME_MAX_CHARACTERS} 个字符</small></label><label class:invalid={configValidationField === "project-code"}>项目编号<input data-config-field="project-code" aria-invalid={configValidationField === "project-code"} bind:value={projectDraftCode} placeholder="PRJ-2026-0702" /></label><label>客户/归属方<input bind:value={projectDraftClient} placeholder="例如 内部研发 / 客户名称" /></label><label>阶段<select bind:value={projectDraftStage}>{#each projectStageOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>负责人<input bind:value={projectDraftOwner} placeholder="例如 交付团队" /></label><label>项目类型<select bind:value={projectDraftCategory}>{#each projectCategoryOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>预算<input bind:value={projectDraftBudget} inputmode="decimal" placeholder="例如 120,000" /></label><label>立项日期<input type="date" bind:value={projectDraftAcceptedAt} /></label><label>状态<select bind:value={projectDraftStatus}><option value="active">进行中</option><option value="closed">已归档</option></select></label><label>进度<div class="percent-input"><input bind:value={projectDraftProgress} type="number" min="0" max="100" /><span>%</span></div></label><label>优先级<select bind:value={projectDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>风险<select bind:value={projectDraftRisk}>{#each projectRiskOptions as option (option)}<option value={option}>{option}</option>{/each}</select></label><label>执行 Agent<select bind:value={projectDraftAgent}>{#each agentCards as agent (agent.id)}<option value={agent.name}>{agent.name}</option>{/each}</select></label><label>下一步<input bind:value={projectDraftNextStep} placeholder="例如 完成验收并输出报告" /></label><label class="wide">项目说明<textarea rows="4" bind:value={projectDraftDesc} placeholder="补充项目背景、目标、交付物或验收标准"></textarea></label></div>{:else if configDialog === "schedule"}<div class="config-grid schedule-config-grid"><label>标题<input bind:value={scheduleDraftTitleValue} placeholder="请输入日程标题" /></label><label>日期<input type="date" bind:value={scheduleDraftDate} /></label><label>时间<input type="time" bind:value={scheduleDraftTimeValue} /></label><label>类型<select bind:value={scheduleDraftType}><option value="">请选择类型</option><option value="meeting">meeting</option></select></label><label class="wide">地点<input bind:value={scheduleDraftPlaceValue} placeholder="请输入地点" /></label></div>{:else if configDialog === "todo"}<div class="config-grid"><label>名称<input bind:value={todoDraftTitle} placeholder="例如 跟进客户反馈" /></label><label>关联对象<select bind:value={todoDraftProjectId}><option value="">不关联项目</option>{#each projectCards as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select bind:value={todoDraftPriority}><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input type="datetime-local" bind:value={todoDraftDue} /></label><label class="wide">配置说明<textarea rows="4" bind:value={todoDraftDesc} placeholder="补充待办背景、验收标准或下一步动作"></textarea></label></div>{:else}<div class="config-grid"><label>名称<input value={configDialogTitle()} /></label><label>关联对象<input value={linkedProject || linkedCustomer || selectedProject()?.name || "Volt GUI"} readonly /></label><label>执行 Agent<select><option>{agentCards.find((agent) => agent.id === selectedAgentId)?.name}</option>{#each agentCards as agent (agent.id)}<option>{agent.name}</option>{/each}</select></label><label>模型<select><option>{selectedModel || agentModel}</option>{#each modelCards as model (model.ref)}<option>{model.name}</option>{/each}</select></label><label>优先级<select><option>中</option><option>高</option><option>低</option></select></label><label>截止时间<input value="今天 18:00" /></label><label class="wide">配置说明<textarea rows="4">{configDialogIntro()}</textarea></label></div>{/if}<footer>{#if configValidationMessage}<p class="config-validation-message" role="alert" aria-live="polite">{configValidationMessage}</p>{/if}<button type="button" disabled={ingestDraftSaving || modelDraftSaving} onclick={() => { clearConfigValidation(); configDialog = undefined; }}>取消</button><button type="button" disabled={ingestDraftSaving || modelDraftSaving} onclick={confirmConfigDialog}>{ingestDraftSaving ? "导入中" : modelDraftSaving ? "保存中" : configDialog === "model" ? "保存渠道" : "确认"}</button></footer></section></div>
       {/if}
       {#if knowledgeTemplateRenderDocument}
         <div class="modal-backdrop" role="presentation">
@@ -19629,6 +19686,7 @@ function openGovernanceCenter() {
     width: min(276px, calc(100vw - 40px));
     max-height: min(300px, calc(100vh - 160px));
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 8px;
     border: 1px solid var(--aorist-border-divider);
     border-radius: 16px;
@@ -23635,6 +23693,7 @@ function openGovernanceCenter() {
   }
 
   .model-provider-filters button {
+    flex: 0 0 auto;
     min-height: 30px;
     padding: 0 10px;
     border: 0;
@@ -23643,6 +23702,7 @@ function openGovernanceCenter() {
     color: #667085;
     font-size: 11px;
     font-weight: 650;
+    white-space: nowrap;
   }
 
   .model-provider-filters button.active {
@@ -25574,5 +25634,37 @@ function openGovernanceCenter() {
     color: var(--text-muted, #667085);
     font-size: 11px;
     font-style: normal;
+  }
+  .knowledge-detail-panel {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+  .knowledge-detail-panel > strong,
+  .knowledge-detail-panel > p,
+  .knowledge-detail-panel dd {
+    min-width: 0;
+    max-width: 100%;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .knowledge-detail-panel dl,
+  .knowledge-detail-panel dl div,
+  .knowledge-document-preview,
+  .knowledge-linked-materials,
+  .knowledge-linked-materials > div,
+  .knowledge-linked-materials article {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  .resource-section-top,
+  .resource-section-top .aorist-search,
+  .resource-section-top .aorist-search input {
+    min-width: 0;
   }
 </style>

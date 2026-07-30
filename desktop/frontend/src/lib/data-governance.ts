@@ -83,6 +83,12 @@ export function normalizeTrustCopy(value?: string): string {
     .replace(/browser[\s_-]*control/gi, "browserControl")
     .replace(/MCP\s*\/\s*工具/g, "MCP 或工具")
     .replace(/工具参数\s*\/\s*本地文件引用/g, "工具参数或本地文件引用")
+    .replace(/\blocal\s*->\s*(?:user specified\s*)?URL\b/gi, "本机 → 用户指定 URL")
+    .replace(/\blocal subprocess\b/gi, "本地子进程")
+    .replace(/\bstdio\b/gi, "标准输入输出（stdio）")
+    .replace(/\bweb_fetch\b/gi, "网络抓取（web_fetch）")
+    .replace(/\bcomputer-use\b/gi, "电脑操作（computer-use）")
+    .replace(/\boffice\b/gi, "办公工具（office）")
     .trim();
 }
 

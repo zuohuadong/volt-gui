@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -117,6 +118,9 @@ func saveWorkbenchProjectInput(input WorkbenchProjectInput) (WorkbenchProjectVie
 	}
 	if utf8.RuneCountInString(name) > workbenchProjectNameMaxCharacters {
 		return WorkbenchProjectView{}, fmt.Errorf("project name must not exceed %d characters", workbenchProjectNameMaxCharacters)
+	}
+	if err := validateProjectBudget(input.Budget); err != nil {
+		return WorkbenchProjectView{}, err
 	}
 	projects, err := loadWorkbenchProjects()
 	if err != nil {
@@ -356,6 +360,18 @@ func normalizeProjectBudget(value string) string {
 		return "0"
 	}
 	return value
+}
+
+func validateProjectBudget(budgetText string) error {
+	normalized := strings.ReplaceAll(strings.TrimSpace(budgetText), ",", "")
+	if normalized == "" {
+		return nil
+	}
+	budget, err := strconv.ParseFloat(normalized, 64)
+	if err != nil || math.IsNaN(budget) || math.IsInf(budget, 0) || budget < 0 {
+		return errors.New("project budget must be a non-negative number")
+	}
+	return nil
 }
 
 func workbenchProjectCodePrefix(now time.Time) string {

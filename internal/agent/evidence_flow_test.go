@@ -367,6 +367,27 @@ func TestDeliveryProfileAllowsEvidenceBackedReadOnlyAnalysis(t *testing.T) {
 	}
 }
 
+func TestDeliveryProfileAllowsProseOnlyDocumentDraft(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "write_file", readOnly: false})
+	prov := &scriptedProvider{name: "delivery", turns: [][]provider.Chunk{
+		{{Type: provider.ChunkText, Text: "# 项目说明\n\n这是可直接评审的文档初稿。"}, {Type: provider.ChunkDone}},
+	}}
+	a := New(prov, reg, NewSession(""), Options{DeliveryProfile: true}, event.Discard)
+	if err := a.Run(context.Background(), "请起草一份项目说明文档"); err != nil {
+		t.Fatalf("prose-only document draft should not require host work: %v", err)
+	}
+}
+
+func TestDeliveryProfileKeepsEvidenceForDocumentExport(t *testing.T) {
+	if deliveryTaskNeedsEvidence("请起草一份项目说明文档") {
+		t.Fatal("prose-only document draft unexpectedly requires host evidence")
+	}
+	if !deliveryTaskNeedsEvidence("请起草一份项目说明文档并保存为 docs/brief.docx") {
+		t.Fatal("document export request must keep host evidence")
+	}
+}
+
 func TestEvidenceFlowEnforcesProjectChecksAfterWrite(t *testing.T) {
 	completeStep, ok := tool.LookupBuiltin("complete_step")
 	if !ok {

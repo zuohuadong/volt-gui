@@ -269,11 +269,56 @@ function cleanTimestamp(value: unknown, fallback = Date.now()): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-function sanitizeReceiptSection(value: unknown): TaskReceiptSection {
+function sanitizeReceiptSection(value: unknown, sectionID?: ReceiptSectionID): TaskReceiptSection {
   if (!isRecord(value)) return { status: "pending", items: [], note: "等待执行证据" };
   const status = value.status === "ready" || value.status === "failed" ? value.status : "pending";
-  const items = Array.isArray(value.items) ? value.items.filter((item): item is string => typeof item === "string" && item.trim() !== "") : [];
+  const rawItems = Array.isArray(value.items) ? value.items.filter((item): item is string => typeof item === "string" && item.trim() !== "") : [];
+  const items = sectionID === "runtime" ? visibleReceiptRuntimeFromLegacy(rawItems) : sectionID === "dataPath" ? redactReceiptDataPath(rawItems) : rawItems;
   return { status, items, note: cleanString(value.note) || "等待执行证据" };
+}
+
+function legacyReceiptValue(items: string[], labels: RegExp[]): string {
+  for (const item of items) {
+    for (const label of labels) {
+      const match = item.match(label);
+      if (match?.[1]?.trim()) return match[1].trim();
+    }
+  }
+  return "";
+}
+
+/** Runtime details are deliberately limited to the two business labels users need. */
+export function visibleReceiptRuntime(projectName: string, agentName: string): string[] {
+  return [
+    `Project: ${cleanString(projectName) || "未关联项目"}`,
+    `Agent: ${cleanString(agentName) || "未配置"}`,
+  ];
+}
+
+function visibleReceiptRuntimeFromLegacy(items: string[]): string[] {
+  return visibleReceiptRuntime(
+    legacyReceiptValue(items, [/^Project:\s*(.*)$/i]),
+    legacyReceiptValue(items, [/^Agent:\s*(.*)$/i, /^Agent Profile:\s*(.*)$/i]),
+  );
+}
+
+/** Do not persist or render absolute Workspace/Session paths in a user receipt. */
+export function redactReceiptDataPath(items: string[]): string[] {
+  const redacted: string[] = [];
+  for (const item of items) {
+    const value = item.trim();
+    if (!value) continue;
+    if (/^Workspace:\s*/i.test(value)) {
+      redacted.push("交付数据保存在当前项目中");
+      continue;
+    }
+    if (/^Session:\s*/i.test(value)) {
+      redacted.push("任务会话已本地保存");
+      continue;
+    }
+    redacted.push(value.replace(/(^|\s)(?:\/Users|\/home|[A-Z]:\\|\\\\)[^\s]*/g, (_match, prefix: string) => `${prefix}当前项目路径`));
+  }
+  return [...new Set(redacted)];
 }
 
 function sanitizeReceipt(value: unknown): TaskResultReceipt | undefined {
@@ -292,7 +337,7 @@ function sanitizeReceipt(value: unknown): TaskResultReceipt | undefined {
     state: value.state === "failed" || value.state === "pending-review" ? value.state : "running",
     createdAt: cleanString(value.createdAt),
     updatedAt: cleanString(value.updatedAt),
-    sections: Object.fromEntries(RECEIPT_SECTIONS.map((section) => [section, sanitizeReceiptSection(rawSections[section])])) as Record<ReceiptSectionID, TaskReceiptSection>,
+    sections: Object.fromEntries(RECEIPT_SECTIONS.map((section) => [section, sanitizeReceiptSection(rawSections[section], section)])) as Record<ReceiptSectionID, TaskReceiptSection>,
   };
 }
 

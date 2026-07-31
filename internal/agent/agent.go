@@ -2026,7 +2026,23 @@ func registryHasWriterTools(reg *tool.Registry) bool {
 }
 
 func deliveryTaskNeedsEvidence(input string) bool {
+	// A document draft can be a valid final answer without touching the
+	// workspace. Do not make the delivery gate invent a host-observable write
+	// for a prose-only request; persistence/export wording keeps the normal
+	// evidence contract in place.
+	if proseOnlyDocumentDraft(input) {
+		return false
+	}
 	return heuristicInputIsTask(input)
+}
+
+var proseDocumentDraftTerms = []string{"起草", "撰写", "写一份", "写一个", "生成一份", "拟定", "draft", "write a document", "compose"}
+var proseDocumentPersistenceTerms = []string{"保存", "写入", "导出", "下载", "附件", "文件", "路径", ".docx", ".md", ".txt", ".pdf", "save", "export", "download", "file", "path"}
+
+func proseOnlyDocumentDraft(input string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(input))
+	return normalized != "" && containsAnySubstring(normalized, proseDocumentDraftTerms) &&
+		!containsAnySubstring(normalized, proseDocumentPersistenceTerms)
 }
 
 func deliveryTaskNeedsMutation(input string) bool {

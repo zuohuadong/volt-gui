@@ -10,11 +10,13 @@ import {
   deriveWorkspaceOptions,
   migrateWorkbenchSnapshot,
   persistentWorkbenchSnapshot,
+  redactReceiptDataPath,
   recoveredTaskThreadsFromBackend,
   reconcileProjectTaskNodes,
   restartTaskReceipt,
   settleTaskReceipt,
   verificationEvidenceFromTool,
+  visibleReceiptRuntime,
 } from "./workbench-ia";
 
 describe("unified workbench IA state", () => {
@@ -110,6 +112,67 @@ describe("unified workbench IA state", () => {
     ]);
     expect(persisted.inboxTasks[0].transcript).toBeUndefined();
     expect(JSON.stringify(persisted)).not.toContain("不应写入后端侧栏快照");
+  });
+
+  test("limits legacy and new receipt runtime details to project and agent", () => {
+    expect(visibleReceiptRuntime("交付项目", "文档助手")).toEqual([
+      "Project: 交付项目",
+      "Agent: 文档助手",
+    ]);
+
+    const migrated = migrateWorkbenchSnapshot({
+      version: 2,
+      projectTasks: [{
+        projectId: "project-1",
+        expanded: true,
+        updatedAtMs: 1,
+        tasks: [{
+          id: "task-1",
+          title: "历史收据",
+          updatedAt: "刚刚",
+          receipt: {
+            id: "receipt-1",
+            taskId: "task-1",
+            templateId: "write-document",
+            sections: {
+              runtime: {
+                status: "ready",
+                items: [
+                  "Workspace: /Users/example/private-project",
+                  "Project: 交付项目",
+                  "Agent Profile: 文档助手",
+                  "Model: glm-primary/glm-5.2-nvfp4",
+                  "Permission: ask",
+                  "Memory: project-1",
+                ],
+              },
+              dataPath: {
+                status: "ready",
+                items: ["Workspace: /Users/example/private-project", "Session: /Users/example/.volt/sessions/one.jsonl"],
+              },
+            },
+          },
+        }],
+      }],
+    });
+
+    const receipt = migrated.projectTasks[0].tasks[0].receipt;
+    expect(receipt?.sections.runtime.items).toEqual(["Project: 交付项目", "Agent: 文档助手"]);
+    expect(receipt?.sections.dataPath.items).toEqual(["交付数据保存在当前项目中", "任务会话已本地保存"]);
+    expect(JSON.stringify(receipt)).not.toContain("private-project");
+    expect(JSON.stringify(receipt)).not.toContain("glm-primary");
+  });
+
+  test("redacts raw local paths from new receipt data-path evidence", () => {
+    expect(redactReceiptDataPath([
+      "Workspace: C:\\Users\\example\\private-project",
+      "Session: C:\\Users\\example\\.volt\\sessions\\one.jsonl",
+      "artifact stored at /home/example/private-project/report.docx",
+    ])).toEqual([
+      "交付数据保存在当前项目中",
+      "任务会话已本地保存",
+      "artifact stored at 当前项目路径",
+    ]);
   });
 
   test("rebuilds recoverable inbox tasks from backend topics when WebView storage is gone", () => {

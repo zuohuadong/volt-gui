@@ -159,6 +159,8 @@ func redactSessionCandidate(path string) bool {
 		return true
 	case strings.HasSuffix(name, ".events.jsonl"):
 		return true
+	case strings.HasSuffix(name, ".events.jsonl.damaged"):
+		return true
 	case strings.HasSuffix(name, ".guardian.jsonl"):
 		return true
 	case strings.HasSuffix(name, ".goal-state.json"):
@@ -179,6 +181,8 @@ func redactionSessionPath(path string) string {
 		return strings.TrimSuffix(path, ".meta")
 	case strings.HasSuffix(path, ".events.jsonl"):
 		return strings.TrimSuffix(path, ".events.jsonl") + ".jsonl"
+	case strings.HasSuffix(path, ".events.jsonl.damaged"):
+		return strings.TrimSuffix(path, ".events.jsonl.damaged") + ".jsonl"
 	case strings.HasSuffix(path, ".goal-state.json"):
 		return strings.TrimSuffix(path, ".goal-state.json") + ".jsonl"
 	case strings.HasSuffix(filepath.Base(filepath.Dir(path)), ".jobs"):
@@ -204,6 +208,17 @@ func sessionRedactionLeaseHeld(sessionPath string) bool {
 func redactSessionArtifact(path string, dryRun bool) (changed int64, bytesRewritten int64, err error) {
 	name := filepath.Base(path)
 	switch {
+	case strings.HasSuffix(name, ".events.jsonl.damaged"):
+		// The salvage sidecar preserves raw bytes that tail repair truncated
+		// away; those bytes are undecodable by definition, so no format-aware
+		// masking can prove them clean. Delete the file so no secret survives.
+		if dryRun {
+			return 1, 0, nil
+		}
+		if err := os.Remove(path); err != nil {
+			return 0, 0, err
+		}
+		return 1, 0, nil
 	case store.IsSessionTranscriptName(name), strings.HasSuffix(name, ".guardian.jsonl"):
 		return redactSessionTranscript(path, dryRun)
 	case strings.HasSuffix(name, ".events.jsonl"):
@@ -227,12 +242,13 @@ func redactSessionArtifact(path string, dryRun bool) (changed int64, bytesRewrit
 }
 
 // redactSessionTranscript rewrites one session (anchor .jsonl plus its event
-// log) through the agent's own save machinery. Session.Save re-runs
-// RedactMessages on the snapshot, folds the event log into a single redacted
-// replace event, refreshes the anchor and event index, and records the
-// revision under the same cross-process file locks live sessions use — so
-// digests, the CAS ledger, and event-log replay stay coherent, and a rerun is
-// a no-op because Redact is idempotent on decoded content.
+// log) through the agent's own save machinery. The messages are redacted
+// explicitly before Session.Save — Save itself does not redact — which folds
+// the event log into a single redacted replace event, refreshes the anchor
+// and event index, and records the revision under the same cross-process
+// file locks live sessions use — so digests, the CAS ledger, and event-log
+// replay stay coherent, and a rerun is a no-op because Redact is idempotent
+// on decoded content.
 func redactSessionTranscript(path string, dryRun bool) (int64, int64, error) {
 	s, err := agent.LoadSession(path)
 	if err != nil {
@@ -259,6 +275,7 @@ func redactSessionTranscript(path string, dryRun bool) (int64, int64, error) {
 	if dryRun {
 		return files, redactedEncodedSize(s.Messages), nil
 	}
+	s.Messages = secrets.RedactMessages(s.Messages)
 	if err := s.Save(path); err != nil {
 		return 0, 0, err
 	}

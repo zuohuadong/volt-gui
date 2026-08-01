@@ -251,6 +251,9 @@ func loadCredentialStoreForRoot(root string) {
 	if len(names) == 0 {
 		return
 	}
+	for _, legacy := range legacyCredentialsPaths() {
+		loadDotEnvFileAs(legacy, CredentialSource{Kind: CredentialSourceCredentials, Path: legacy, Label: "VoltUI legacy credentials"})
+	}
 	if p := UserCredentialsPath(); p != "" {
 		loadDotEnvFileAs(p, CredentialSource{Kind: CredentialSourceCredentials, Path: p, Label: "VoltUI credentials (.env)"})
 	}

@@ -52,10 +52,7 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	cfg.setExpansionEnv(expansionEnv)
 	cfg.CredentialsStore = credentialsStoreMode()
 
-	projectTOML := "reasonix.toml"
-	if root != "." {
-		projectTOML = filepath.Join(root, "reasonix.toml")
-	}
+	projectTOML := projectConfigLoadPath(root)
 
 	mergeTOML := mergeFile
 	if migrateOnDisk {
@@ -74,6 +71,7 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	userDefaultModel := cfg.DefaultModel
 	globalSecrets := cfg.Secrets
 	globalRemote := cfg.Remote.Clone()
+	globalTrustedIntranet := cloneTrustedIntranetConfig(cfg.Network.TrustedIntranet)
 
 	tomlSources = append(tomlSources, projectTOML)
 	if err := mergeTOML(cfg, projectTOML); err != nil {
@@ -87,6 +85,9 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	// must not be able to inject hosts, jump chains, or port forwards that
 	// steer where VoltUI opens connections.
 	cfg.Remote = globalRemote
+	// Intranet grants are also user-global because they permit direct access to
+	// private addresses that are otherwise rejected by web_fetch.
+	cfg.Network.TrustedIntranet = globalTrustedIntranet
 	// TOML decoding replaces [[plugins]] wholesale, so cfg.Plugins now holds
 	// only the last file's. Re-merge by name across all sources (later wins) so a
 	// project reasonix.toml doesn't drop the global config's MCP servers.
@@ -717,10 +718,7 @@ func MigrateLegacyAgentStepLimitsForRoot(root string) (bool, error) {
 	if userPath := userConfigLoadPath(); userPath != "" {
 		paths = append(paths, userPath)
 	}
-	projectPath := "reasonix.toml"
-	if root != "." {
-		projectPath = filepath.Join(root, "reasonix.toml")
-	}
+	projectPath := projectConfigLoadPath(root)
 	paths = append(paths, projectPath)
 
 	changedAny := false
@@ -783,10 +781,7 @@ func MigrateLegacyRedactToolOutputForRoot(root string) (bool, error) {
 	if userPath := userConfigLoadPath(); userPath != "" {
 		paths = append(paths, userPath)
 	}
-	projectPath := "reasonix.toml"
-	if root != "." {
-		projectPath = filepath.Join(root, "reasonix.toml")
-	}
+	projectPath := projectConfigLoadPath(root)
 	paths = append(paths, projectPath)
 
 	changedAny := false
@@ -846,10 +841,7 @@ func MigrateLegacyMemoryCompilerForRoot(root string) (bool, error) {
 	if userPath := userConfigLoadPath(); userPath != "" {
 		paths = append(paths, userPath)
 	}
-	projectPath := "reasonix.toml"
-	if root != "." {
-		projectPath = filepath.Join(root, "reasonix.toml")
-	}
+	projectPath := projectConfigLoadPath(root)
 	paths = append(paths, projectPath)
 
 	changedAny := false

@@ -119,7 +119,10 @@ func (n notebookEdit) Preview(raw json.RawMessage) (diff.Change, error) {
 		return diff.Change{}, err
 	}
 	a.Path = resolveIn(n.workDir, a.Path)
-	data, err := os.ReadFile(a.Path)
+	if err := confinePreview(n.roots, n.guard, n.managed, a.Path); err != nil {
+		return diff.Change{}, err
+	}
+	data, err := readPreviewFile(a.Path)
 	if err != nil {
 		return diff.Change{}, fmt.Errorf("read %s: %w", a.Path, err)
 	}

@@ -1895,7 +1895,7 @@ export type DisplayMode = "office" | "developer";
 
 // ── Upstream-only types merged from upstream/main-v2 ──
 
-export type EventKind =
+export type EventKind = WireEventKind;
 
 export interface WireCompaction {
   trigger?: string; // "auto" | "manual"
@@ -2318,8 +2318,15 @@ export interface MemorySuggestionsView {
 export type SettingsTab = "general" | "models" | "providers" | "bots" | "mcp" | "remote" | "skills" | "subagents" | "plugins" | "memory" | "hooks" | "diagnostics" | "shortcuts" | "permissions" | "sandbox" | "network" | "appearance" | "updates";
 
 export type RemoteConnState =
+  | "stopped"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "degraded"
+  | "pending_hostkey"
+  | "pending_secret";
 
-export type RemoteServerState =
+export type RemoteServerState = "stopped" | "starting" | "ready" | "error";
 
 export interface RemoteHostView {
   id: string;

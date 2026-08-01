@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -119,6 +120,46 @@ func TestPreviewMatchesExecute(t *testing.T) {
 				t.Fatalf("Preview.OldText = %q, want seed %q", change.OldText, tc.seed)
 			}
 		})
+	}
+}
+
+func TestPreviewRespectsWriteConfinement(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("DEEPSEEK_API_KEY=sk-real-secret-value-123456\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	w := writeFile{roots: realRoots([]string{root})}
+	if _, err := w.Preview(argsJSON(t, map[string]any{
+		"path":    outside,
+		"content": "replacement\n",
+	})); err == nil {
+		t.Fatal("Preview read outside writable roots, want confinement error")
+	}
+}
+
+func TestPreviewReadLimit(t *testing.T) {
+	// Cases: exactly at the limit is allowed, one byte over is rejected, and a
+	// non-regular file is rejected before any content read.
+	root := t.TempDir()
+	atLimit := filepath.Join(root, "at-limit.txt")
+	if err := os.WriteFile(atLimit, bytes.Repeat([]byte("x"), maxPreviewReadBytes), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := readPreviewFile(atLimit); err != nil || len(data) != maxPreviewReadBytes {
+		t.Fatalf("read at limit = (%d bytes, %v)", len(data), err)
+	}
+
+	overLimit := filepath.Join(root, "over-limit.txt")
+	if err := os.WriteFile(overLimit, bytes.Repeat([]byte("x"), maxPreviewReadBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPreviewFile(overLimit); err == nil {
+		t.Fatal("preview read over the limit, want error")
+	}
+	if _, err := readPreviewFile(root); err == nil {
+		t.Fatal("preview read a directory, want error")
 	}
 }
 

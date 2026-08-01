@@ -37,7 +37,7 @@
     }
     updateStatus = "checking";
     try {
-      const result = await app().CheckUpdate();
+      const result = await app().CheckUpdate(channel === "canary" ? "preview" : "stable");
       if (result?.manualOnly && !result.available) {
         updateStatus = "manual";
         updateInfo = { reason: result.manualReason };

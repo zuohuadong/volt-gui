@@ -3,11 +3,14 @@ package builtin
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
 	"voltui/internal/diff"
 	fileenc "voltui/internal/fileutil/encoding"
 )
+
+const maxPreviewReadBytes = 1 << 20
 
 // preview.go gives the file-writing built-ins the optional tool.Previewer
 // capability: compute the change a call would make, reading the current file
@@ -34,9 +37,12 @@ func (w writeFile) Preview(args json.RawMessage) (diff.Change, error) {
 		return diff.Change{}, fmt.Errorf("path is required")
 	}
 	p.Path = resolveIn(w.workDir, p.Path)
+	if err := confinePreview(w.roots, w.guard, w.managed, p.Path); err != nil {
+		return diff.Change{}, err
+	}
 
 	old, kind := "", diff.Create
-	if data, err := os.ReadFile(p.Path); err == nil {
+	if data, err := readPreviewFile(p.Path); err == nil {
 		enc, _ := fileenc.Detect(data)
 		old, kind = string(fileenc.Decode(data, enc)), diff.Modify
 	} else if !os.IsNotExist(err) {
@@ -64,8 +70,11 @@ func (e editFile) Preview(args json.RawMessage) (diff.Change, error) {
 		return diff.Change{}, fmt.Errorf("old_string is required")
 	}
 	p.Path = resolveIn(e.workDir, p.Path)
+	if err := confinePreview(e.roots, e.guard, e.managed, p.Path); err != nil {
+		return diff.Change{}, err
+	}
 
-	content, _, err := readFileEncoded(p.Path)
+	content, _, err := readFileEncodedPreview(p.Path)
 	if err != nil {
 		return diff.Change{}, fmt.Errorf("read %s: %w", p.Path, err)
 	}
@@ -102,8 +111,11 @@ func (m multiEdit) Preview(args json.RawMessage) (diff.Change, error) {
 		return diff.Change{}, fmt.Errorf("edits must not be empty")
 	}
 	p.Path = resolveIn(m.workDir, p.Path)
+	if err := confinePreview(m.roots, m.guard, m.managed, p.Path); err != nil {
+		return diff.Change{}, err
+	}
 
-	content, _, err := readFileEncoded(p.Path)
+	content, _, err := readFileEncodedPreview(p.Path)
 	if err != nil {
 		return diff.Change{}, fmt.Errorf("read %s: %w", p.Path, err)
 	}
@@ -124,4 +136,47 @@ func (m multiEdit) Preview(args json.RawMessage) (diff.Change, error) {
 		}
 	}
 	return diff.Build(p.Path, original, content, diff.Modify), nil
+}
+
+func readFileEncodedPreview(path string) (content string, enc fileenc.Kind, err error) {
+	b, err := readPreviewFile(path)
+	if err != nil {
+		return "", 0, err
+	}
+	enc, _ = fileenc.Detect(b)
+	return string(fileenc.Decode(b, enc)), enc, nil
+}
+
+func readPreviewFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePreviewFile(path, info); err != nil {
+		return nil, err
+	}
+	limit := maxPreviewReadBytes + 1
+	data, err := io.ReadAll(io.LimitReader(f, int64(limit)))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxPreviewReadBytes {
+		return nil, fmt.Errorf("preview refuses to read %s: file exceeds %d bytes", path, maxPreviewReadBytes)
+	}
+	return data, nil
+}
+
+func validatePreviewFile(path string, info os.FileInfo) error {
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("preview refuses non-regular file %s", path)
+	}
+	if info.Size() > maxPreviewReadBytes {
+		return fmt.Errorf("preview refuses to read %s: file is %d bytes, limit is %d", path, info.Size(), maxPreviewReadBytes)
+	}
+	return nil
 }

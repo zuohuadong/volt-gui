@@ -97,7 +97,7 @@ func (d deleteRange) preview(args json.RawMessage) (diff.Change, error) {
 		return diff.Change{}, err
 	}
 
-	original, _, err := readFileEncoded(p.Path)
+	original, _, err := readFileEncodedPreview(p.Path)
 	if err != nil {
 		return diff.Change{}, fmt.Errorf("read %s: %w", p.Path, err)
 	}

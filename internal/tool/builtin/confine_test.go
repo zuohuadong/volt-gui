@@ -105,6 +105,24 @@ func TestWriteFileConfinement(t *testing.T) {
 	}
 }
 
+func TestWriteFileRejectsDanglingSymlinkTarget(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	link := filepath.Join(root, "link.txt")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	w := writeFile{roots: realRoots([]string{root})}
+	args, _ := json.Marshal(map[string]string{"path": link, "content": "escaped"})
+	if _, err := w.Execute(context.Background(), args); err == nil {
+		t.Fatal("write through dangling symlink target succeeded, want error")
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("outside target was created: %v", err)
+	}
+}
+
 func TestWriteFileDefaultRootsDenyUserConfigUnlessAllowed(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

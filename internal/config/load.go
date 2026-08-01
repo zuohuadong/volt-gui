@@ -51,7 +51,7 @@ func LoadForRoot(root string) (*Config, error) {
 	globalMemoryCompiler := cfg.Agent.MemoryCompiler
 	globalAutoPlan := cfg.Agent.AutoPlan
 	globalSecrets := cfg.Secrets
-	globalTrustedIntranet := cfg.Network.TrustedIntranet
+	globalTrustedIntranet := cloneTrustedIntranetConfig(cfg.Network.TrustedIntranet)
 	userDefaultModel := cfg.DefaultModel
 	if cfg.Secrets.RedactToolOutput != nil {
 		v := *cfg.Secrets.RedactToolOutput

@@ -133,7 +133,7 @@ func (d deleteSymbol) Preview(args json.RawMessage) (diff.Change, error) {
 		return diff.Change{}, err
 	}
 
-	src, err := os.ReadFile(p.Path)
+	src, err := readPreviewFile(p.Path)
 	if err != nil {
 		return diff.Change{}, fmt.Errorf("read %s: %w", p.Path, err)
 	}

@@ -53,10 +53,16 @@ func runDiff(o diffOpts) string {
 	var best diffReport
 	made := 0
 	for i := 1; i <= attempts; i++ {
-		if i > 1 {
-			resetTree(o.repo)
+		attemptRepo, cleanup, err := createAttemptWorktree(o.repo)
+		if err != nil {
+			best = diffReport{srcFiles: srcFiles, pkgs: pkgs, runErr: err, profile: o.profile}
+			made = i
+			break
 		}
-		r := runOnce(o, srcFiles, pkgs, prompt)
+		attemptOpts := o
+		attemptOpts.repo = attemptRepo
+		r := runOnce(attemptOpts, srcFiles, pkgs, prompt)
+		cleanup()
 		made = i
 		if i == 1 || better(r, best) {
 			best = r
@@ -149,11 +155,48 @@ func ratio(n, d int) float64 {
 	return float64(n) / float64(d)
 }
 
-// resetTree restores the PR-head tree between attempts, dropping the previous
-// attempt's generated tests but keeping the provider config the workflow wrote.
-func resetTree(repo string) {
-	_ = exec.Command("git", "-C", repo, "checkout", "--", ".").Run()
-	_ = exec.Command("git", "-C", repo, "clean", "-fd", "-e", "voltui.toml").Run()
+// createAttemptWorktree gives each stochastic retry an isolated PR-head tree,
+// keeping destructive cleanup out of the caller's repository.
+func createAttemptWorktree(repo string) (string, func(), error) {
+	parent, err := os.MkdirTemp("", "e2ebench-worktree-*")
+	if err != nil {
+		return "", func() {}, err
+	}
+	worktree := filepath.Join(parent, "repo")
+	cleanup := attemptWorktreeCleanup(repo, worktree, parent)
+	cmd := exec.Command("git", "-C", repo, "worktree", "add", "--detach", worktree, "HEAD")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("create attempt worktree: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if err := copyAttemptConfigs(repo, worktree); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return worktree, cleanup, nil
+}
+
+func attemptWorktreeCleanup(repo, worktree, parent string) func() {
+	return func() {
+		_ = exec.Command("git", "-C", repo, "worktree", "remove", "--force", worktree).Run()
+		_ = os.RemoveAll(parent)
+	}
+}
+
+func copyAttemptConfigs(repo, worktree string) error {
+	for _, name := range []string{"voltui.toml", "reasonix.toml"} {
+		src := filepath.Join(repo, name)
+		if _, err := os.Stat(src); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("inspect %s before attempt: %w", name, err)
+		}
+		if err := copyFile(src, filepath.Join(worktree, name)); err != nil {
+			return fmt.Errorf("copy %s into attempt worktree: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func goBuildAll(repo string) (bool, string) {

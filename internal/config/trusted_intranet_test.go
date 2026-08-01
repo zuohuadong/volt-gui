@@ -74,6 +74,20 @@ func TestTrustedIntranetSiteAddMatchRemoveAndRender(t *testing.T) {
 func TestProjectConfigCannotGrantTrustedIntranetAccess(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", filepath.Join(home, "reasonix"))
+	user := `[network.trusted_intranet]
+enabled = true
+
+[[network.trusted_intranet.sites]]
+host = "lims.internal"
+cidrs = ["192.168.2.0/24"]
+ports = [443]
+`
+	if err := os.MkdirAll(filepath.Dir(UserConfigPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(UserConfigPath(), []byte(user), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	project := `[network.trusted_intranet]
 enabled = true
@@ -92,5 +106,8 @@ ports = [80]
 	}
 	if cfg.TrustedIntranetAllows("metadata.internal", "192.168.1.14", 80) {
 		t.Fatal("a project config must not grant trusted intranet access")
+	}
+	if !cfg.TrustedIntranetAllows("lims.internal", "192.168.2.14", 443) {
+		t.Fatal("project config removed the user-global trusted intranet grant")
 	}
 }

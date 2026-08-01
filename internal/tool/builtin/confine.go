@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -145,10 +146,16 @@ func confine(roots []string, target string) error {
 func confineWrite(ctx context.Context, roots []string, guard SessionDataGuard, managed ManagedConfigPaths, target string) error {
 	confineErr := confine(roots, target)
 	if confineErr == nil {
+		if err := rejectFinalSymlink(target); err != nil {
+			return err
+		}
 		return guard.Check(target)
 	}
 	if !managed.Match(target) {
 		return confineErr
+	}
+	if err := rejectFinalSymlink(target); err != nil {
+		return err
 	}
 	if err := guard.Check(target); err != nil {
 		return err
@@ -162,12 +169,32 @@ func confineWrite(ctx context.Context, roots []string, guard SessionDataGuard, m
 func confinePreview(roots []string, guard SessionDataGuard, managed ManagedConfigPaths, target string) error {
 	confineErr := confine(roots, target)
 	if confineErr == nil {
+		if err := rejectFinalSymlink(target); err != nil {
+			return err
+		}
 		return guard.Check(target)
 	}
 	if !managed.Match(target) {
 		return confineErr
 	}
+	if err := rejectFinalSymlink(target); err != nil {
+		return err
+	}
 	return guard.Check(target)
+}
+
+func rejectFinalSymlink(target string) error {
+	info, err := os.Lstat(target)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("inspect %s: %w", target, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("path %q is a symbolic link; write tools refuse symlink targets", target)
+	}
+	return nil
 }
 
 // realPath resolves path to an absolute, symlink-free form. Because a write

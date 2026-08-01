@@ -92,6 +92,12 @@ func legacyCredentialsPaths() []string {
 	if dir := legacyOSSupportDir(); dir != "" {
 		add(filepath.Join(dir, "credentials"))
 	}
+	if path := legacyUserConfigPath(); path != "" {
+		add(filepath.Join(filepath.Dir(path), "credentials"))
+	}
+	if p := legacyUserCredentialsPath(); p != "" {
+		add(p)
+	}
 	if dir := userSupportDir(); dir != "" {
 		add(filepath.Join(dir, "credentials"))
 		add(filepath.Join(dir, ".env"))

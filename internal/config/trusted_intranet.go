@@ -173,6 +173,16 @@ func (c *Config) TrustedIntranetSites() []TrustedIntranetSiteConfig {
 	return out
 }
 
+func cloneTrustedIntranetConfig(in TrustedIntranetConfig) TrustedIntranetConfig {
+	out := in
+	out.Sites = append([]TrustedIntranetSiteConfig(nil), in.Sites...)
+	for i := range out.Sites {
+		out.Sites[i].CIDRs = append([]string(nil), in.Sites[i].CIDRs...)
+		out.Sites[i].Ports = append([]int(nil), in.Sites[i].Ports...)
+	}
+	return out
+}
+
 func (c *Config) TrustedIntranetAllows(host, ipText string, port int) bool {
 	host, err := normalizeTrustedIntranetHost(host)
 	if err != nil {

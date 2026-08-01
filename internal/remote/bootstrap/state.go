@@ -37,7 +37,7 @@ func UnmarshalState(data []byte) (ServeState, error) {
 
 // remoteDir is the ~/.voltui/remote directory given the resolved remote home.
 func remoteDir(home string) string {
-	return path.Join(home, ".reasonix", store.RemoteDirName)
+	return path.Join(home, ".voltui", store.RemoteDirName)
 }
 
 // pathsFor derives every per-workspace state path from the resolved remote

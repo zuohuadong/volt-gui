@@ -65,6 +65,31 @@ func reasonixHomeDir() string {
 	return ""
 }
 
+func legacyVoltUIHomeDir() string {
+	if IsolatedHomeDir() != "" {
+		return ""
+	}
+	if dir := cleanEnvDir("VOLTUI_HOME"); dir != "" {
+		return dir
+	}
+	if runtimeGOOS == "windows" {
+		if dir := osUserConfigDir(); dir != "" {
+			return filepath.Join(dir, "voltui")
+		}
+		if home, err := osUserHomeDir(); err == nil && home != "" {
+			return filepath.Join(home, "AppData", "Roaming", "voltui")
+		}
+		return ""
+	}
+	if home, err := osUserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".voltui")
+	}
+	if dir := osUserConfigDir(); dir != "" {
+		return filepath.Join(dir, "voltui")
+	}
+	return ""
+}
+
 func userConfigLoadPath() string {
 	primary := userConfigPath()
 	if primary == "" {
@@ -76,6 +101,11 @@ func userConfigLoadPath() string {
 	if legacy := legacyUserConfigPath(); legacy != "" {
 		if _, err := os.Stat(legacy); err == nil {
 			return legacy
+		}
+	}
+	if legacy := legacyOSSupportDir(); legacy != "" {
+		if _, err := os.Stat(filepath.Join(legacy, "config.toml")); err == nil {
+			return filepath.Join(legacy, "config.toml")
 		}
 	}
 	for _, legacy := range legacyXDGConfigPaths() {
@@ -90,7 +120,7 @@ func userConfigLoadPath() string {
 }
 
 func legacyUserConfigPath() string {
-	dir := legacyOSSupportDir()
+	dir := legacyVoltUIHomeDir()
 	if dir == "" {
 		return ""
 	}
@@ -108,6 +138,9 @@ func userConfigCandidatePaths() []string {
 	}
 	if p := legacyUserConfigPath(); p != "" {
 		paths = append(paths, p)
+	}
+	if dir := legacyOSSupportDir(); dir != "" {
+		paths = append(paths, filepath.Join(dir, "config.toml"))
 	}
 	paths = append(paths, legacyXDGConfigPaths()...)
 	return paths
@@ -134,9 +167,11 @@ func legacyXDGConfigPaths() []string {
 		paths = append(paths, path)
 	}
 	if dir := cleanEnvDir("XDG_CONFIG_HOME"); dir != "" {
+		add(filepath.Join(dir, "voltui", "config.toml"))
 		add(filepath.Join(dir, "reasonix", "config.toml"))
 	}
 	if home, err := osUserHomeDir(); err == nil && home != "" {
+		add(filepath.Join(home, ".config", "voltui", "config.toml"))
 		add(filepath.Join(home, ".config", "reasonix", "config.toml"))
 	}
 	return paths
@@ -229,6 +264,18 @@ func samePath(a, b string) bool {
 // paths or import data from the system-wide production install.
 func IsolatedHomeDir() string {
 	return cleanEnvDir("REASONIX_HOME")
+}
+
+func legacyUserCredentialsPath() string {
+	dir := legacyVoltUIHomeDir()
+	if dir == "" {
+		return ""
+	}
+	path := filepath.Join(dir, ".env")
+	if primary := UserCredentialsPath(); primary != "" && samePath(path, primary) {
+		return ""
+	}
+	return path
 }
 
 // userConfigDisplayPath is userConfigPath collapsed to a ~-relative form for
@@ -525,7 +572,7 @@ func MemoryUserDir() string {
 // the same set. Note: hooks are NOT scanned across these — a .claude/settings.json
 // uses a different hook schema that can't be parsed as ours, so hooks stay in
 // .voltui/settings.json (see internal/hook).
-var ConventionDirs = []string{".reasonix", ".agents", ".agent", ".claude"}
+var ConventionDirs = []string{".reasonix", ".voltui", ".agents", ".agent", ".claude"}
 
 // conventionSubdirsAsc joins sub under each ConventionDir of base, in ascending
 // priority (reverse of ConventionDirs) so the canonical .reasonix ends up the
@@ -616,10 +663,7 @@ func SourcePath() string {
 // root, or "" if none. Equivalent to SourcePath() when root is ".".
 func SourcePathForRoot(root string) string {
 	root = resolveRoot(root)
-	projectTOML := "reasonix.toml"
-	if root != "." {
-		projectTOML = filepath.Join(root, "reasonix.toml")
-	}
+	projectTOML := projectConfigLoadPath(root)
 	if _, err := os.Stat(projectTOML); err == nil {
 		return projectTOML
 	}
@@ -629,4 +673,21 @@ func SourcePathForRoot(root string) string {
 		}
 	}
 	return ""
+}
+
+func projectConfigLoadPath(root string) string {
+	root = resolveRoot(root)
+	reasonixTOML := "reasonix.toml"
+	voltuiTOML := "voltui.toml"
+	if root != "." {
+		reasonixTOML = filepath.Join(root, "reasonix.toml")
+		voltuiTOML = filepath.Join(root, "voltui.toml")
+	}
+	if _, err := os.Stat(reasonixTOML); err == nil {
+		return reasonixTOML
+	}
+	if _, err := os.Stat(voltuiTOML); err == nil {
+		return voltuiTOML
+	}
+	return reasonixTOML
 }

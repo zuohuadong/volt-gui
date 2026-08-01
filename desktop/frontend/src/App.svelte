@@ -674,7 +674,7 @@
   let sidebarStateHydrated = false;
   let sidebarStateSourceAvailable = false;
   let sidebarStateReady: Promise<void> = Promise.resolve();
-  let sidebarPersistenceTimer: ReturnType<typeof setTimeout> | undefined;
+  let sidebarPersistenceTimer: number | undefined;
   let queueStateHydrated = false;
   let diffReviewStateHydrated = false;
 
@@ -1380,7 +1380,7 @@
   let knowledgePreviewError = $state("");
   let capabilityAgentBindings = $state<Record<string, string[]>>({});
   let distillSampleTodoId = $state("");
-  let workbenchNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+  let workbenchNoticeTimer: number | undefined;
 
   function hasWailsBindings() {
     return typeof window !== "undefined" && Boolean(window.go?.main?.App);
@@ -3214,7 +3214,7 @@
   let pendingTextBuffer = "";
   let pendingTextTabId = "";
   let textFlushScheduled = false;
-  const contextPanelRefreshTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+  const contextPanelRefreshTimers: Record<string, number> = {};
 
   function currentTranscriptTabId() {
     if (activityMode === "work" && workLayer === "newTask") return activeConversationTabId;
@@ -5124,39 +5124,6 @@ function openGovernanceCenter() {
     } catch (error) {
       console.error("Failed to update project status", error);
       showWorkbenchNotice(`更新项目状态失败：${formatErrorMessage(error)}`);
-    }
-  }
-  async function deleteProject(project: WorkbenchProject) {
-    if (typeof window !== "undefined" && !window.confirm(`确定删除项目“${project.name}”吗？此操作不会删除已关联的资料、日程、报告和待办记录。`)) return;
-    const deleteProjectBinding = projectPersistenceBindings()?.DeleteWorkbenchProject;
-    if (typeof deleteProjectBinding !== "function") {
-      showWorkbenchNotice("当前环境未连接项目删除接口，请重启桌面 dev 窗口后重试。");
-      return;
-    }
-    try {
-      await deleteProjectBinding(project.id);
-      const remainingProjects = projectCards.filter((item) => item.id !== project.id);
-      const state = snapshotFromProjectNodes({
-        workspaces: [],
-        projectNodes: sidebarProjects,
-        activeWorkspaceId,
-        activeProjectId: activeSidebarProjectId,
-        activeTaskId: activeSidebarConversationId,
-        projectSort: sidebarProjectSort,
-        projectDockCollapsed: sidebarProjectDockCollapsed,
-      });
-      projectCards = remainingProjects;
-      sidebarProjects = reconcileProjectTaskNodes(remainingProjects, state);
-      if (activeSidebarProjectId === project.id) activeSidebarProjectId = INBOX_PROJECT_ID;
-      if (selectedProjectId === project.id) {
-        selectedProjectId = remainingProjects[0]?.id ?? "";
-        projectDetailOpen = false;
-      }
-      openProjectActionMenuId = "";
-      showWorkbenchNotice(`已删除项目：${project.name}`);
-    } catch (error) {
-      console.error("Failed to delete project", error);
-      showWorkbenchNotice(`删除项目失败：${formatErrorMessage(error)}`);
     }
   }
   function projectDraftIdentityValidation(name: string, code: string): [field: string, message: string] | undefined {

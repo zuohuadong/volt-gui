@@ -100,6 +100,27 @@ func TestRefreshModelsForTabAddsNewLiveModelForProviderNamespace(t *testing.T) {
 	}
 }
 
+func TestReconcileModelCatalogDoesNotCrossSingleProviderNamespace(t *testing.T) {
+	configured := []ModelInfo{{
+		Ref:      "qwen-thinking/qwen-gpu4/step3p7-flash",
+		Provider: "qwen-thinking",
+		Model:    "qwen-gpu4/step3p7-flash",
+	}}
+	probeKeys := map[string]string{"qwen-thinking": "gateway"}
+	outcomes := map[string]modelCatalogProbeOutcome{
+		"gateway": {modelIDs: []string{
+			"qwen-gpu4/step3p7-flash",
+			"glm-primary/glm-5.2-nvfp4",
+			"glm-5.2",
+		}},
+	}
+
+	models := reconcileModelCatalog(configured, probeKeys, outcomes)
+	if len(models) != 1 || models[0].Ref != configured[0].Ref || models[0].Availability != "available" {
+		t.Fatalf("reconciled catalog = %+v, want only the qwen-gpu4 model", models)
+	}
+}
+
 func TestReconcileModelCatalogMapsBareModelToMatchingProviderName(t *testing.T) {
 	configured := []ModelInfo{
 		{Ref: "glm-5.2/glm-primary/glm-5.2-nvfp4", Provider: "glm-5.2", Model: "glm-primary/glm-5.2-nvfp4"},

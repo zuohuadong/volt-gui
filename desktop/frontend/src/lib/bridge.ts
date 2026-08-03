@@ -149,6 +149,7 @@ interface AppBindings {
   Fork(turn: number): Promise<TabMeta>;
   Rewind(turn: number, scope: string): Promise<void>;
   ModelsForTab(tabID: string): Promise<ModelInfo[]>;
+  RefreshModelsForTab(tabID: string): Promise<ModelInfo[]>;
   SetModelForTab(tabID: string, name: string): Promise<void>;
   SetAgentProfileForTab(tabID: string, profileID: string): Promise<void>;
   DataTrustCenter(): Promise<TrustCenterView>;
@@ -3279,6 +3280,9 @@ function makeMockApp(): AppBindings {
           const tab = mockTabs.find((item) => item.id === tabID) ?? mockTabs.find((item) => item.active) ?? mockTabs[0];
           const current = mockTabModelRef(tab);
           return mockModelCatalog.map((model) => ({ ...model, current: model.ref === current }));
+        },
+        async RefreshModelsForTab(tabID) {
+          return this.ModelsForTab(tabID);
         },
         async SetModel(name) {
           setMockTabModel(undefined, name);

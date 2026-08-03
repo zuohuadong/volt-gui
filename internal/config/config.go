@@ -1472,7 +1472,7 @@ func (e *ProviderEntry) DisplayNameOrName() string {
 }
 
 // IsLikelyChatModel reports whether a model ID looks like a chat/completion
-// model rather than a specialised audio/vision/embedding model. It applies a
+// model rather than a specialised audio/image-generation/embedding model. It applies a
 // conservative name-based heuristic — the OpenAI-compatible /models API does
 // not return capability/modality metadata, so this is the most reliable
 // fallback until providers add such fields.
@@ -1494,7 +1494,7 @@ func IsLikelyChatModel(model string) bool {
 
 	// Pass 1: compound terms that span separator boundaries.
 	var compoundNonChat = []string{
-		"text-embedding", "text-to-speech", "speech-to-text",
+		"text-embedding", "text-to-speech", "speech-to-text", "text-to-image",
 	}
 	for _, c := range compoundNonChat {
 		if strings.Contains(lower, c) {
@@ -1508,7 +1508,7 @@ func IsLikelyChatModel(model string) bool {
 	})
 	var nonChatTokens = map[string]bool{
 		"asr": true, "stt": true, "tts": true,
-		"whisper": true, "embedding": true,
+		"whisper": true, "embedding": true, "image": true, "images": true,
 		"moderation": true, "rerank": true, "dall": true,
 		"transcription": true,
 	}

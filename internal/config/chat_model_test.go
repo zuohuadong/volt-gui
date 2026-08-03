@@ -48,6 +48,8 @@ func TestIsLikelyChatModel_FiltersNonChatKeywords(t *testing.T) {
 		"text-moderation-stable",
 		"rerank-v1",
 		"dall-e-3",
+		"gpt-image-1", "image-gpu5", "image-gpu5/image-gpu5",
+		"text-to-image-v1",
 		"text-to-speech-v1", "speech-to-text-v2",
 	} {
 		if IsLikelyChatModel(model) {

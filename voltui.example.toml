@@ -57,16 +57,8 @@ base_url       = "http://192.168.1.47:9010/v1"
 model          = "qwen-gpu4/step3p7-flash"
 api_key_env    = "volt_API_KEY"
 context_window = 131072
-supported_efforts = ["high", "max"]
-default_effort = "high"
-
-[[providers]]
-name           = "glm-5.2"
-kind           = "openai"
-base_url       = "http://192.168.1.47:9010/v1"
-model          = "glm-primary/glm-5.2-nvfp4"
-api_key_env    = "volt_API_KEY"
-context_window = 131072
+supported_efforts = ["low", "medium", "high"]
+default_effort = "low"
 
 # A single-model provider still works (use `model = "..."`) — pick this form when a
 # model needs its own base_url / context_window / price (e.g. the two MiMo SKUs

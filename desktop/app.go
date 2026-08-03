@@ -7394,11 +7394,13 @@ func removeServerOrder(order []string, name string) []string {
 // ModelInfo is one (provider, model) the bottom switcher can pick. Ref ("provider/
 // model") is what SetModel takes; Provider/Model are for display.
 type ModelInfo struct {
-	Ref      string `json:"ref"`
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	Current  bool   `json:"current"`
-	Vision   bool   `json:"vision"`
+	Ref               string `json:"ref"`
+	Provider          string `json:"provider"`
+	Model             string `json:"model"`
+	Current           bool   `json:"current"`
+	Vision            bool   `json:"vision"`
+	Availability      string `json:"availability,omitempty"`
+	UnavailableReason string `json:"unavailableReason,omitempty"`
 }
 
 type EffortInfo struct {
@@ -7447,6 +7449,23 @@ func (a *App) ModelsForTab(tabID string) []ModelInfo {
 				vision = config.EffectiveVision(entry)
 			}
 			out = append(out, ModelInfo{Ref: ref, Provider: p.Name, Model: m, Current: ref == curModel, Vision: vision})
+		}
+	}
+	if curModel != "" {
+		seenCurrent := false
+		for _, model := range out {
+			if model.Current {
+				seenCurrent = true
+				break
+			}
+		}
+		if !seenCurrent {
+			if entry, ok := cfg.ResolveModel(curModel); ok && modelProviderAccessAllowed(access, entry.Name) {
+				out = append(out, ModelInfo{
+					Ref: curModel, Provider: entry.Name, Model: entry.Model,
+					Current: true, Vision: config.EffectiveVision(entry),
+				})
+			}
 		}
 	}
 	return out
@@ -7645,6 +7664,9 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	entry, ok := cfg.ResolveModel(name)
 	if !ok {
 		return fmt.Errorf("unknown model %q", name)
+	}
+	if !config.IsLikelyChatModel(entry.Model) {
+		return fmt.Errorf("model %q does not support chat conversations", name)
 	}
 	if !modelProviderAccessAllowed(providerAccessSet(cfg.Desktop.ProviderAccess), entry.Name) {
 		return fmt.Errorf("model %q is not available because provider %q is not added", name, entry.Name)

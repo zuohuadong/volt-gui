@@ -148,6 +148,7 @@ interface AppBindings {
   Fork(turn: number): Promise<TabMeta>;
   Rewind(turn: number, scope: string): Promise<void>;
   ModelsForTab(tabID: string): Promise<ModelInfo[]>;
+  RefreshModelsForTab(tabID: string): Promise<ModelInfo[]>;
   SetModelForTab(tabID: string, name: string): Promise<void>;
   SetAgentProfileForTab(tabID: string, profileID: string): Promise<void>;
   DataTrustCenter(): Promise<TrustCenterView>;

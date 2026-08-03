@@ -19785,7 +19785,7 @@ function openGovernanceCenter() {
     position: absolute;
     bottom: calc(100% + 8px);
     left: 0;
-    z-index: 30;
+    z-index: 50;
     display: grid;
     gap: 1px;
     width: min(276px, calc(100vw - 40px));

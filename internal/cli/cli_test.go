@@ -973,7 +973,7 @@ func TestAppendEnvUpsertHandlesExportPrefix(t *testing.T) {
 func TestGroupByFamily(t *testing.T) {
 	order, members, info := groupByFamily(config.Default().Providers)
 
-	wantOrder := []string{"qwen-thinking", "volt", "qwen-fast", "image-gen", "deepseek", "mimo-pro", "mimo-flash"}
+	wantOrder := []string{"qwen-thinking", "volt", "deepseek", "mimo-pro", "mimo-flash"}
 	if !reflect.DeepEqual(order, wantOrder) {
 		t.Fatalf("family order = %v, want %v", order, wantOrder)
 	}
@@ -981,17 +981,13 @@ func TestGroupByFamily(t *testing.T) {
 	wantMembers := map[string][]int{
 		"qwen-thinking": {0},
 		"volt":          {1},
-		"qwen-fast":     {2},
-		"image-gen":     {3},
-		"deepseek":      {4, 5},
-		"mimo-pro":      {6},
-		"mimo-flash":    {7},
+		"deepseek":      {2, 3},
+		"mimo-pro":      {4},
+		"mimo-flash":    {5},
 	}
 	wantNames := map[string]string{
 		"qwen-thinking": "qwen-thinking",
 		"volt":          "西谷内网",
-		"qwen-fast":     "qwen-fast",
-		"image-gen":     "image-gen",
 		"deepseek":      "DeepSeek",
 		"mimo-pro":      "mimo-pro",
 		"mimo-flash":    "mimo-flash",

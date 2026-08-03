@@ -86,6 +86,14 @@ func (a *App) fetchModelCatalogs(workspaceRoot string, probes map[string]config.
 func reconcileModelCatalog(configured []ModelInfo, providerProbeKeys map[string]string, outcomesByProbe map[string]modelCatalogProbeOutcome) []ModelInfo {
 	refreshed := make([]ModelInfo, 0, len(configured))
 	for _, model := range configured {
+		if !config.IsLikelyChatModel(model.Model) {
+			if model.Current {
+				model.Availability = "unavailable"
+				model.UnavailableReason = "当前模型不支持文本对话，请切换到聊天模型。"
+				refreshed = append(refreshed, model)
+			}
+			continue
+		}
 		key := providerProbeKeys[model.Provider]
 		outcome, ok := outcomesByProbe[key]
 		if !ok || outcome.err != nil {

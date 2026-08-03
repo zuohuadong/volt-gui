@@ -16,9 +16,7 @@ func TestDefaultUsesXiguInternalGateway(t *testing.T) {
 
 	want := map[string]string{
 		"glm-5.2":       "glm-primary/glm-5.2-nvfp4",
-		"qwen-thinking": "qwen-gpu4/qwen36-opus-prisma8-gpu4",
-		"qwen-fast":     "qwen-gpu5/qwen36-opus-prisma8-gpu5",
-		"image-gen":     "image-gpu5/image-gpu5",
+		"qwen-thinking": "qwen-gpu4/step3p7-flash",
 	}
 	for name, model := range want {
 		provider, ok := cfg.Provider(name)
@@ -40,11 +38,30 @@ func TestDefaultUsesXiguInternalGateway(t *testing.T) {
 		if provider.ContextWindow != 131_072 {
 			t.Errorf("%s context_window = %d, want 131072", name, provider.ContextWindow)
 		}
-		if name == "qwen-thinking" || name == "qwen-fast" {
+		if name == "qwen-thinking" {
 			if provider.DefaultEffort != "high" || len(provider.SupportedEfforts) != 2 || provider.SupportedEfforts[0] != "high" || provider.SupportedEfforts[1] != "max" {
 				t.Errorf("%s effort = default %q supported %v, want high with [high max]", name, provider.DefaultEffort, provider.SupportedEfforts)
 			}
 		}
+	}
+	for _, removed := range []string{"qwen-fast", "image-gen"} {
+		if _, ok := cfg.Provider(removed); ok {
+			t.Errorf("retired default provider %q is still configured", removed)
+		}
+	}
+}
+
+func TestResolveExplicitProviderModelUsesConfiguredEndpoint(t *testing.T) {
+	cfg := Default()
+	entry, ok := cfg.ResolveExplicitProviderModel("qwen-thinking/qwen-gpu4/future-model")
+	if !ok {
+		t.Fatal("explicit provider model did not resolve")
+	}
+	if entry.Model != "qwen-gpu4/future-model" || entry.BaseURL != "http://192.168.1.47:9010/v1" || entry.APIKeyEnv != "XIGU_API_KEY" {
+		t.Fatalf("explicit provider model = %+v", entry)
+	}
+	if _, ok := cfg.ResolveExplicitProviderModel("missing/qwen-gpu4/future-model"); ok {
+		t.Fatal("unknown provider resolved")
 	}
 }
 

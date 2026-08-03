@@ -158,11 +158,13 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 	if _, err := decodeTOMLFile(path, &header); err != nil {
 		return false, fmt.Errorf("config %s: %w", path, err)
 	}
-	if header.ConfigVersion >= Default().ConfigVersion {
+	defaultVersion := Default().ConfigVersion
+	currentVersionXiguUpgrade := header.ConfigVersion >= defaultVersion && hasRetiredBundledXiguGLM(&header)
+	if header.ConfigVersion >= defaultVersion && !currentVersionXiguUpgrade {
 		return false, nil
 	}
 	cfg := LoadForEdit(path)
-	changed := false
+	changed := migrateRetiredBundledXiguGLM(cfg)
 	if header.ConfigVersion < deepSeekPricingResetConfigVersion {
 		resetOfficialProviderPricingDefaults(cfg)
 		changed = true
@@ -183,11 +185,126 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 	if !changed {
 		return false, nil
 	}
-	cfg.ConfigVersion = Default().ConfigVersion
+	if header.ConfigVersion < defaultVersion {
+		cfg.ConfigVersion = defaultVersion
+	}
 	if err := cfg.SaveTo(path); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+const (
+	retiredXiguGLMProvider = "glm-5.2"
+	retiredXiguGLMModel    = "glm-primary/glm-5.2-nvfp4"
+)
+
+func migrateRetiredBundledXiguGLM(c *Config) bool {
+	if c == nil {
+		return false
+	}
+	replacementRef, bundled := bundledXiguProviderDefaults()
+	if replacementRef == "" || len(bundled) != 1 {
+		return false
+	}
+	replacement := bundled[0]
+	configuredReplacement, ok := c.Provider(replacementRef)
+	if !ok || !sameBundledXiguRoute(*configuredReplacement, replacement) {
+		return false
+	}
+
+	retiredIndex := retiredBundledXiguGLMIndex(c, replacement)
+	if retiredIndex < 0 {
+		return false
+	}
+	migrateRetiredXiguAgentRefs(c, replacementRef)
+	migrateRetiredXiguBotRefs(c, replacementRef)
+	c.Desktop.ProviderAccess = migrateRetiredXiguGLMProviderAccess(c.Desktop.ProviderAccess, replacementRef)
+	c.Providers = append(c.Providers[:retiredIndex], c.Providers[retiredIndex+1:]...)
+	return true
+}
+
+func migrateRetiredXiguAgentRefs(c *Config, replacement string) {
+	c.DefaultModel = migrateRetiredXiguGLMRef(c.DefaultModel, replacement)
+	c.Agent.PlannerModel = migrateRetiredXiguGLMRef(c.Agent.PlannerModel, replacement)
+	c.Agent.GuardianModel = migrateRetiredXiguGLMRef(c.Agent.GuardianModel, replacement)
+	c.Agent.RecoveryModel = migrateRetiredXiguGLMRef(c.Agent.RecoveryModel, replacement)
+	c.Agent.SubagentModel = migrateRetiredXiguGLMRef(c.Agent.SubagentModel, replacement)
+	for name, ref := range c.Agent.SubagentModels {
+		c.Agent.SubagentModels[name] = migrateRetiredXiguGLMRef(ref, replacement)
+	}
+}
+
+func migrateRetiredXiguBotRefs(c *Config, replacement string) {
+	c.Bot.Model = migrateRetiredXiguGLMRef(c.Bot.Model, replacement)
+	c.Bot.QQ.Model = migrateRetiredXiguGLMRef(c.Bot.QQ.Model, replacement)
+	for i := range c.Bot.Routes {
+		c.Bot.Routes[i].Model = migrateRetiredXiguGLMRef(c.Bot.Routes[i].Model, replacement)
+	}
+	for i := range c.Bot.Connections {
+		c.Bot.Connections[i].Model = migrateRetiredXiguGLMRef(c.Bot.Connections[i].Model, replacement)
+	}
+}
+
+func hasRetiredBundledXiguGLM(c *Config) bool {
+	_, bundled := bundledXiguProviderDefaults()
+	return len(bundled) == 1 && retiredBundledXiguGLMIndex(c, bundled[0]) >= 0
+}
+
+func retiredBundledXiguGLMIndex(c *Config, replacement ProviderEntry) int {
+	if c == nil {
+		return -1
+	}
+	for i := range c.Providers {
+		entry := c.Providers[i]
+		if strings.TrimSpace(entry.Name) == retiredXiguGLMProvider &&
+			strings.EqualFold(strings.TrimSpace(entry.Kind), "openai") &&
+			strings.TrimRight(strings.TrimSpace(entry.BaseURL), "/") == strings.TrimRight(replacement.BaseURL, "/") &&
+			strings.TrimSpace(entry.Model) == retiredXiguGLMModel &&
+			len(entry.Models) == 0 && strings.TrimSpace(entry.APIKeyEnv) == replacement.APIKeyEnv {
+			return i
+		}
+	}
+	return -1
+}
+
+func sameBundledXiguRoute(got, want ProviderEntry) bool {
+	return strings.TrimSpace(got.Name) == strings.TrimSpace(want.Name) &&
+		strings.EqualFold(strings.TrimSpace(got.Kind), strings.TrimSpace(want.Kind)) &&
+		strings.TrimRight(strings.TrimSpace(got.BaseURL), "/") == strings.TrimRight(strings.TrimSpace(want.BaseURL), "/") &&
+		strings.TrimSpace(got.Model) == strings.TrimSpace(want.Model) &&
+		len(got.Models) == 0 && strings.TrimSpace(got.APIKeyEnv) == strings.TrimSpace(want.APIKeyEnv)
+}
+
+func migrateRetiredXiguGLMRef(ref, replacement string) string {
+	trimmed := strings.TrimSpace(ref)
+	if trimmed == retiredXiguGLMProvider || strings.HasPrefix(trimmed, retiredXiguGLMProvider+"/") {
+		return replacement
+	}
+	return ref
+}
+
+func migrateRetiredXiguGLMProviderAccess(access []string, replacement string) []string {
+	if access == nil {
+		return nil
+	}
+	out := make([]string, 0, len(access))
+	seen := make(map[string]struct{}, len(access))
+	for _, name := range access {
+		name = strings.TrimSpace(name)
+		if name == retiredXiguGLMProvider {
+			name = replacement
+		}
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out
 }
 
 // ResetOfficialProviderPricingOnUpgrade is retained for older call sites.

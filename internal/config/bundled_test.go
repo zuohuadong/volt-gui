@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -72,7 +73,6 @@ func TestDefaultUsesBundledXiguGateway(t *testing.T) {
 		model string
 	}{
 		"qwen-thinking": {model: "qwen-gpu4/step3p7-flash"},
-		"glm-5.2":       {model: "glm-primary/glm-5.2-nvfp4"},
 	}
 	if len(cfg.Providers) != len(want)+2 {
 		t.Fatalf("provider count = %d, want %d bundled and 2 public defaults", len(cfg.Providers), len(want))
@@ -86,13 +86,13 @@ func TestDefaultUsesBundledXiguGateway(t *testing.T) {
 			t.Errorf("provider %q = %+v", name, entry)
 		}
 	}
-	for _, retired := range []string{"xllm", "vlm"} {
+	for _, retired := range []string{"xllm", "vlm", "glm-5.2"} {
 		if _, ok := cfg.Provider(retired); ok {
 			t.Errorf("retired bundled provider %q is still configured", retired)
 		}
 	}
 	qwen, _ := cfg.Provider("qwen-thinking")
-	if qwen.DefaultEffort != "high" || len(qwen.SupportedEfforts) != 2 || qwen.SupportedEfforts[0] != "high" || qwen.SupportedEfforts[1] != "max" {
-		t.Errorf("qwen effort = default %q supported %v, want high with [high max]", qwen.DefaultEffort, qwen.SupportedEfforts)
+	if qwen.DefaultEffort != "low" || !reflect.DeepEqual(qwen.SupportedEfforts, []string{"low", "medium", "high"}) {
+		t.Errorf("Step effort = default %q supported %v, want low with [low medium high]", qwen.DefaultEffort, qwen.SupportedEfforts)
 	}
 }

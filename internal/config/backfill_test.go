@@ -871,6 +871,116 @@ temperature = 0.4
 	}
 }
 
+func TestApplyUserConfigUpgradesOnStartupRetiresBundledXiguGLM(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("REASONIX_HOME", filepath.Join(dir, "home"))
+	bundled := filepath.Join(dir, "bundled.env")
+	const baseURL = "http://gateway.internal.test:9010/v1"
+	if err := os.WriteFile(bundled, []byte("XIGU_MODEL_BASE_URL="+baseURL+"\nXIGU_API_KEY=test-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previousPath := bundledEnvPath
+	bundledEnvPath = func() string { return bundled }
+	t.Cleanup(func() { bundledEnvPath = previousPath })
+
+	path := UserConfigPath()
+	cfg := Default()
+	cfg.ConfigVersion = 5
+	cfg.DefaultModel = "glm-5.2"
+	cfg.Agent.PlannerModel = "glm-5.2/glm-primary/glm-5.2-nvfp4"
+	cfg.Agent.GuardianModel = "glm-5.2/glm-5.2"
+	cfg.Agent.RecoveryModel = "glm-5.2/glm-5.2"
+	cfg.Agent.SubagentModel = "glm-5.2"
+	cfg.Agent.SubagentModels = map[string]string{"review": "glm-5.2/glm-primary/glm-5.2-nvfp4", "custom": "custom/model"}
+	cfg.Bot.Model = "glm-5.2"
+	cfg.Bot.QQ.Model = "glm-5.2/glm-5.2"
+	cfg.Bot.Routes = []BotRouteConfig{{ConnectionID: "route", Model: "glm-5.2/glm-primary/glm-5.2-nvfp4"}}
+	cfg.Bot.Connections = []BotConnectionConfig{{ID: "connection", Model: "glm-5.2"}}
+	cfg.Desktop.ProviderAccess = []string{"glm-5.2", "qwen-thinking", "custom"}
+	cfg.Providers = append(cfg.Providers, ProviderEntry{
+		Name: retiredXiguGLMProvider, Kind: "openai", BaseURL: baseURL,
+		Model: retiredXiguGLMModel, APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true,
+	})
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+	changed, err := ApplyUserConfigUpgradesOnStartup(path)
+	if err != nil {
+		t.Fatalf("ApplyUserConfigUpgradesOnStartup: %v", err)
+	}
+	if !changed {
+		t.Fatal("v5 OEM config should migrate to Step")
+	}
+	got := LoadForEditWithoutCredentials(path)
+	if got.ConfigVersion != 5 {
+		t.Fatalf("config_version = %d, want 5", got.ConfigVersion)
+	}
+	if _, ok := got.Provider(retiredXiguGLMProvider); ok {
+		t.Fatalf("retired bundled GLM provider remains after migration: %+v", got.Providers)
+	}
+	if step, ok := got.Provider("qwen-thinking"); !ok || step.Model != "qwen-gpu4/step3p7-flash" {
+		t.Fatalf("Step replacement = %+v, ok=%v", step, ok)
+	}
+	for field, ref := range map[string]string{
+		"default": got.DefaultModel, "planner": got.Agent.PlannerModel, "recovery": got.Agent.RecoveryModel,
+		"subagent": got.Agent.SubagentModel, "review": got.Agent.SubagentModels["review"],
+		"bot": got.Bot.Model, "qq": got.Bot.QQ.Model, "route": got.Bot.Routes[0].Model,
+		"connection": got.Bot.Connections[0].Model,
+	} {
+		if ref != "qwen-thinking" {
+			t.Errorf("%s model = %q, want qwen-thinking", field, ref)
+		}
+	}
+	if got.Agent.SubagentModels["custom"] != "custom/model" {
+		t.Fatalf("custom subagent ref changed: %q", got.Agent.SubagentModels["custom"])
+	}
+	if want := []string{"qwen-thinking", "custom"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
+		t.Fatalf("provider_access = %+v, want %+v", got.Desktop.ProviderAccess, want)
+	}
+
+	again, err := ApplyUserConfigUpgradesOnStartup(path)
+	if err != nil || again {
+		t.Fatalf("second migration = changed:%v err:%v, want no-op", again, err)
+	}
+}
+
+func TestApplyUserConfigUpgradesOnStartupPreservesCustomGLMProvider(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("REASONIX_HOME", filepath.Join(dir, "home"))
+	bundled := filepath.Join(dir, "bundled.env")
+	if err := os.WriteFile(bundled, []byte("XIGU_MODEL_BASE_URL=http://gateway.internal.test:9010/v1\nXIGU_API_KEY=test-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previousPath := bundledEnvPath
+	bundledEnvPath = func() string { return bundled }
+	t.Cleanup(func() { bundledEnvPath = previousPath })
+
+	path := UserConfigPath()
+	cfg := Default()
+	cfg.ConfigVersion = 5
+	cfg.DefaultModel = retiredXiguGLMProvider
+	cfg.Providers = append(cfg.Providers, ProviderEntry{
+		Name: retiredXiguGLMProvider, Kind: "openai", BaseURL: "https://custom.example/v1",
+		Model: retiredXiguGLMModel, APIKeyEnv: "CUSTOM_GLM_KEY", ContextWindow: 200_000,
+	})
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	changed, err := ApplyUserConfigUpgradesOnStartup(path)
+	if err != nil || changed {
+		t.Fatalf("custom provider migration = changed:%v err:%v, want no-op", changed, err)
+	}
+	got := LoadForEditWithoutCredentials(path)
+	custom, ok := got.Provider(retiredXiguGLMProvider)
+	if !ok || custom.BaseURL != "https://custom.example/v1" || custom.APIKeyEnv != "CUSTOM_GLM_KEY" {
+		t.Fatalf("custom GLM provider changed: %+v, ok=%v", custom, ok)
+	}
+	if got.DefaultModel != retiredXiguGLMProvider {
+		t.Fatalf("custom default model = %q, want preserved", got.DefaultModel)
+	}
+}
+
 func TestResolveModelUsesPerModelPricing(t *testing.T) {
 	c := &Config{Providers: []ProviderEntry{{
 		Name:    "deepseek",

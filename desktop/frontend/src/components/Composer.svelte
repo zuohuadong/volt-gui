@@ -735,7 +735,7 @@
         {#if models.length}
           {#each models as model, index (modelKey(model, index))}
             {@const value = modelValue(model)}
-            <option value={value}>{modelLabel(model, index)}</option>
+            <option value={value} disabled={model.availability === "unavailable"}>{modelLabel(model, index)}</option>
           {/each}
         {:else}
           <option value="">选择模型</option>

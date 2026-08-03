@@ -85,6 +85,37 @@ func TestRefreshModelsForTabKeepsRemovedCurrentModelUnavailable(t *testing.T) {
 	}
 }
 
+func TestRefreshModelsForTabKeepsPublishedNonChatCurrentModelUnavailable(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "LOCAL_API_KEY", "sk-test")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"chat-model"},{"id":"image-gpu5"}]}`))
+	}))
+	defer server.Close()
+
+	writeModelCatalogTestConfig(t, server.URL+"/v1")
+	models := modelCatalogTestApp("local/image-gpu5").RefreshModelsForTab("tab")
+
+	if len(models) != 2 {
+		t.Fatalf("RefreshModelsForTab() = %+v, want live chat model and current image model", models)
+	}
+	foundCurrent := false
+	for _, model := range models {
+		if !model.Current {
+			continue
+		}
+		foundCurrent = true
+		if model.Ref != "local/image-gpu5" || model.Availability != "unavailable" {
+			t.Fatalf("published current non-chat model = %+v, want unavailable image model", model)
+		}
+	}
+	if !foundCurrent {
+		t.Fatalf("RefreshModelsForTab() = %+v, want a current image model", models)
+	}
+}
+
 func TestRefreshModelsForTabRetainsStaticModelsWhenProbeFails(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "LOCAL_API_KEY", "sk-test")

@@ -235,7 +235,10 @@ func liveCatalogProviders(providers []modelCatalogProvider, liveModel string) []
 	if len(namespaceMatches) == 1 {
 		return namespaceMatches
 	}
-	if len(providers) == 1 {
+	// A single namespaced provider must not absorb unrelated models merely
+	// because it is the only provider using this gateway. That would make a
+	// qwen-gpu4 provider expose glm-primary (and other) catalog entries.
+	if len(providers) == 1 && len(providers[0].namespaces) == 0 {
 		return []string{providers[0].name}
 	}
 	return nil

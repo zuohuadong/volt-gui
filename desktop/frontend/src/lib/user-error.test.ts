@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { errorText, formatUserError, isModelAuthenticationError } from "./user-error";
+import { errorText, formatUserError, isModelAuthenticationError, isModelConnectionError } from "./user-error";
 
 describe("user-facing errors", () => {
   test("unwraps nested provider JSON without exposing it", () => {
@@ -18,6 +18,12 @@ describe("user-facing errors", () => {
   test("turns tool JSON and network errors into actionable Chinese", () => {
     expect(formatUserError("write_file arguments JSON parse: unexpected end of JSON input")).toContain("工具参数不完整");
     expect(formatUserError("connection refused: dial tcp 127.0.0.1:9000")).toContain("模型服务连接失败");
+  });
+
+  test("classifies model connection failures for runtime availability state", () => {
+    expect(isModelConnectionError("dial tcp: connection refused")).toBe(true);
+    expect(isModelConnectionError("模型服务连接失败或响应超时，请检查网络和渠道状态后重试。")).toBe(true);
+    expect(isModelConnectionError("invalid prompt")).toBe(false);
   });
 
   test("does not expose unknown paths or setup commands", () => {

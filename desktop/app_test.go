@@ -2608,6 +2608,35 @@ api_key_env = "LOCAL_API_KEY"
 	}
 }
 
+func TestModelsForTabFiltersImageGenerationModels(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "LOCAL_API_KEY", "sk-test")
+	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(config.UserConfigPath(), []byte(`
+default_model = "local/chat-model"
+
+[desktop]
+provider_access = ["local"]
+
+[[providers]]
+name = "local"
+kind = "openai"
+base_url = "http://127.0.0.1:23333/v1"
+models = ["chat-model", "image-gpu5"]
+default = "chat-model"
+api_key_env = "LOCAL_API_KEY"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	models := NewApp().Models()
+	if refs := modelRefsFromView(models); !refs["local/chat-model"] || refs["local/image-gpu5"] {
+		t.Fatalf("Models() refs = %+v, want chat model only", models)
+	}
+}
+
 func TestModelsForTabMarksVisionModels(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "LOCAL_API_KEY", "sk-test")
@@ -2847,6 +2876,34 @@ func TestSetModelForTabRejectsProviderOutsideAccess(t *testing.T) {
 	err := app.SetModelForTab(tab.ID, "other/other-model")
 	if err == nil || !strings.Contains(err.Error(), "not available") {
 		t.Fatalf("SetModelForTab hidden provider error = %v, want not available", err)
+	}
+}
+
+func TestSetModelForTabRejectsImageGenerationModel(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "LOCAL_API_KEY", "sk-test")
+
+	cfg := config.Default()
+	cfg.DefaultModel = "local/chat-model"
+	cfg.Desktop.ProviderAccess = []string{"local"}
+	cfg.Providers = []config.ProviderEntry{{
+		Name: "local", Kind: "openai", BaseURL: "https://example.invalid/v1",
+		Models: []string{"chat-model", "image-gpu5"}, Default: "chat-model", APIKeyEnv: "LOCAL_API_KEY",
+	}}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	app := NewApp()
+	app.ctx = context.Background()
+	tab := &WorkspaceTab{ID: "tab_a", Scope: "global", Ready: true, model: "local/chat-model"}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+
+	err := app.SetModelForTab(tab.ID, "local/image-gpu5")
+	if err == nil || !strings.Contains(err.Error(), "does not support chat conversations") {
+		t.Fatalf("SetModelForTab image model error = %v, want chat compatibility error", err)
 	}
 }
 

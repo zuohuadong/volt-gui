@@ -120,6 +120,9 @@
   const atDir = $derived(splitAtToken(input)?.dir ?? "");
   const canSubmit = $derived(!disabled && (input.trim() !== "" || attachments.length > 0) && pendingAttachmentWrites === 0);
   const selectedModelInfo = $derived(models.find((model) => modelValue(model) === selectedModel) ?? models.find((model) => model.current));
+  const selectedModelUnavailableReason = $derived(
+    selectedModelInfo?.availability !== "available" ? selectedModelInfo?.unavailableReason || "" : "",
+  );
   const selectedModelSupportsImages = $derived(selectedModelInfo?.vision ?? imageInputEnabled);
   const hasImageAttachments = $derived(attachments.some((attachment) => Boolean(attachment.previewUrl)));
   const imageAttachmentNote = $derived(
@@ -130,7 +133,7 @@
       : "",
   );
   const currentModelCapabilityTitle = $derived(
-    selectedModelSupportsImages ? t.composer.imageModelAvailable : t.composer.textModelOnly,
+    selectedModelUnavailableReason || (selectedModelSupportsImages ? t.composer.imageModelAvailable : t.composer.textModelOnly),
   );
   const remainingContextPercent = $derived(contextRemainingPercent(contextInfo));
   const sessionCostLabel = $derived(formatSessionCost(contextInfo?.sessionCost, contextInfo?.sessionCurrency));
@@ -174,7 +177,10 @@
   }
 
   function modelLabel(model: ModelInfo, index: number) {
-    return model.label || model.model || model.name || model.ref || `模型 ${index + 1}`;
+    const label = model.label || model.model || model.name || model.ref || `模型 ${index + 1}`;
+    if (model.availability === "unavailable") return `${label} · 不可用`;
+    if (model.availability === "unknown") return `${label} · 状态未知`;
+    return label;
   }
 
   function commandKey(command: CommandInfo, index: number) {

@@ -100,6 +100,14 @@
   import type { ComposerToolApprovalMode } from "./lib/tool-approval-mode";
   import { modelCardsFromConfiguredProviders } from "./lib/model-catalog";
   import type { ModelCard } from "./lib/model-catalog";
+  import {
+    clearModelConnectionFailure,
+    decorateModelAvailability,
+    pendingModelSelectionUnavailableReason,
+    recordModelConnectionFailure,
+    shouldDeferNewTaskModelSelection,
+  } from "./lib/model-availability";
+  import type { ModelAvailabilityByRef } from "./lib/model-availability";
   import { mcpConfigurationEnabled, mcpStatusLabel, shouldShowMCPTrust } from "./lib/mcp-detail";
   import {
     filterModelProviders,
@@ -133,7 +141,7 @@
   } from "./lib/task-lifecycle";
   import type { QueuedThreadMessage } from "./lib/task-lifecycle";
   import type { RecoveryAction } from "./lib/task-activity";
-  import { errorText, formatUserError } from "./lib/user-error";
+  import { errorText, formatUserError, isModelConnectionError } from "./lib/user-error";
   import {
     addDiffReviewComment,
     buildDiffFixPrompt,
@@ -653,6 +661,8 @@
   let submittedDraftByTab = $state<Record<string, { display: string; submission: string }>>({});
   let lastSubmittedDraftByTab = $state<Record<string, { display: string; submission: string }>>({});
   let lastTurnErrorByTab = $state<Record<string, string>>({});
+  let modelAvailabilityByRef = $state<ModelAvailabilityByRef>({});
+  let pendingNewTaskModelRef = $state("");
   let newTaskConversationActive = $state(false);
   let restoreDraftOnTurnDoneByTab = $state<Record<string, boolean>>({});
   let draftConversationThread: TabMeta | undefined;
@@ -703,6 +713,7 @@
   const currentReviewWorkflowPending = $derived(reviewWorkflowPending?.tabId === composerTabId ? reviewWorkflowPending : undefined);
   const currentLastSubmittedDraft = $derived(lastSubmittedDraftByTab[composerTabId]);
   const currentLastTurnError = $derived(lastTurnErrorByTab[composerTabId] || "");
+  const composerModels = $derived(decorateModelAvailability(models, modelAvailabilityByRef));
   const pendingPromptTabId = $derived.by(() => {
     if (activityMode === "work" && workLayer === "newTask") return activeConversationTabId;
     if (activityMode === "code" && newTaskConversationActive) return activeConversationTabId || activeTab?.id || "";
@@ -3493,7 +3504,7 @@
     }
     syncActiveWorkspaceSelection();
     try {
-      models = await app().ModelsForTab(meta.id);
+      models = await app().RefreshModelsForTab(meta.id);
       selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]);
     } catch {
       // The controller may still be starting; refresh() will hydrate models later.
@@ -3509,6 +3520,18 @@
       app().NewConversationThread(target.scope, target.workspaceRoot, title),
       "新对话创建超时，请稍后重试或重启桌面 dev 窗口。",
     );
+  }
+
+  async function applyPendingNewTaskModel(tabID: string) {
+    const ref = pendingNewTaskModelRef.trim();
+    if (!tabID || !ref) return;
+    const tabModels = await app().RefreshModelsForTab(tabID);
+    const unavailableReason = pendingModelSelectionUnavailableReason(tabModels, ref);
+    if (unavailableReason) throw new Error(unavailableReason);
+    const current = modelValue(tabModels.find((model) => model.current));
+    if (current !== ref) await app().SetModelForTab(tabID, ref);
+    pendingNewTaskModelRef = "";
+    modelAvailabilityByRef = clearModelConnectionFailure(modelAvailabilityByRef, ref);
   }
 
   const conversationThreadRequests = new Map<string, Promise<TabMeta | undefined>>();
@@ -3610,6 +3633,7 @@
       draftConversationThread = undefined;
       draftConversationThreadRequest = undefined;
       if (draftThread) {
+        await applyPendingNewTaskModel(draftThread.id);
         updateSidebarConversationThread(projectId, conversation.id, draftThread);
         activeConversationTabId = draftThread.id;
         await syncActiveTabMeta(draftThread);
@@ -3618,6 +3642,7 @@
     }
     const meta = await bindSidebarConversationThread(projectId, conversation.id);
     if (meta) {
+      await applyPendingNewTaskModel(meta.id);
       activeConversationTabId = meta.id;
       await syncActiveTabMeta(meta);
     }
@@ -3755,6 +3780,7 @@
     agentSelectionContextKey = `work:${(project?.id ?? projectId) || "global"}:${conversationId || "draft"}`;
     agentSelectionDirty = Boolean(selectedAgentId);
     clearConversationRuntime();
+    pendingNewTaskModelRef = selectedModel || modelValue(models.find((model) => model.current)) || modelValue(models[0]);
     transcript = welcomeTranscript();
     if (!conversationId && !hasSavedDraft) setComposerInput("", draftKey);
     void tick().then(focusComposer);
@@ -4004,6 +4030,7 @@ function openGovernanceCenter() {
     syncSidebarProjectContext(project);
     activeSidebarConversationId = conversationId;
     activeConversationTabId = conversation?.tabId ?? "";
+    pendingNewTaskModelRef = "";
     const provisionalDraftKey = conversation?.tabId ?? `work:${projectId}:${conversationId}`;
     activateComposerDraft(provisionalDraftKey);
     activeTaskReceipt = conversation?.receipt;
@@ -7214,9 +7241,24 @@ function openGovernanceCenter() {
     lastSubmittedDraftByTab = otherDrafts;
   }
 
+  function currentModelRefForTab(tabID: string) {
+    if (!tabID || tabID !== composerTabId) return "";
+    return selectedModel || modelValue(models.find((model) => model.current)) || modelValue(models[0]);
+  }
+
+  function clearCurrentModelConnectionFailure(tabID: string) {
+    const ref = currentModelRefForTab(tabID);
+    if (!ref) return;
+    modelAvailabilityByRef = clearModelConnectionFailure(modelAvailabilityByRef, ref);
+  }
+
   function setLastTurnError(tabID: string, error: string) {
     if (!tabID) return;
     const detail = error.trim();
+    if (detail && isModelConnectionError(detail)) {
+      const ref = currentModelRefForTab(tabID);
+      modelAvailabilityByRef = recordModelConnectionFailure(modelAvailabilityByRef, ref, detail);
+    }
     lastTurnErrorByTab = { ...lastTurnErrorByTab, [tabID]: detail ? formatErrorMessage(detail) : "" };
   }
 
@@ -7273,6 +7315,7 @@ function openGovernanceCenter() {
       setTabSending(queuedEventTabID, false);
       const userError = event.err && !isCancellationError(event.err) ? formatErrorMessage(event.err) : "";
       setLastTurnError(queuedEventTabID, userError);
+      if (!userError) clearCurrentModelConnectionFailure(queuedEventTabID);
       clearPendingPrompts(queuedEventTabID);
       settleTaskReceiptForTab(queuedEventTabID, userError);
       const finishedTab = tabs.find((tab) => tab.id === queuedEventTabID);
@@ -7490,7 +7533,7 @@ function openGovernanceCenter() {
       await settleRefreshStep("recover sidebar", recoverSidebarTasksFromBackend());
       syncActiveWorkspaceSelection();
       const active = tabs.find((tab) => tab.active) ?? tabs[0];
-      models = active ? await settleRefreshStep("models", app().ModelsForTab(active.id)) ?? models : [];
+      models = active ? await settleRefreshStep("models", app().RefreshModelsForTab(active.id)) ?? models : [];
       selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]);
       commands = await settleRefreshStep("commands", app().Commands()) ?? commands;
       await settleRefreshStep("model settings", refreshModelSettings());
@@ -8397,6 +8440,13 @@ function openGovernanceCenter() {
       desktopBackendUnavailable("切换模型");
       return;
     }
+    if (shouldDeferNewTaskModelSelection(activityMode, workLayer, activeConversationTabId)) {
+      pendingNewTaskModelRef = next;
+      selectedModel = next;
+      select.value = next;
+      showWorkbenchNotice(`新任务将在发送时使用模型：${next}`);
+      return;
+    }
     const tabID = currentComposerTab?.id || activeTab?.id;
     if (!tabID || !next) {
       select.value = current;
@@ -8415,9 +8465,10 @@ function openGovernanceCenter() {
     try {
       await app().SetModelForTab(tabID, next);
       tabs = await app().ListTabs();
-      models = await app().ModelsForTab(tabID);
+      models = await app().RefreshModelsForTab(tabID);
       selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]) || next;
       select.value = selectedModel;
+      modelAvailabilityByRef = clearModelConnectionFailure(modelAvailabilityByRef, selectedModel);
       await refreshContextPanelForTab(tabID, true);
     } catch (error) {
       select.value = current;
@@ -9001,7 +9052,7 @@ function openGovernanceCenter() {
                 onSend={send}
                 onCancel={cancel}
                 onPreviewFile={previewFile}
-                {models}
+                models={composerModels}
                 {selectedModel}
                 imageInputEnabled={Boolean(currentComposerTab?.imageInputEnabled)}
                 onModelChange={switchModel}
@@ -9445,7 +9496,7 @@ function openGovernanceCenter() {
                       onSend={send}
                       onCancel={cancel}
                       onPreviewFile={previewFile}
-                      {models}
+                      models={composerModels}
                       {selectedModel}
                       imageInputEnabled={Boolean(currentComposerTab?.imageInputEnabled)}
                       onModelChange={switchModel}
@@ -10327,7 +10378,7 @@ function openGovernanceCenter() {
                   onSend={send}
                   onCancel={cancel}
                   onPreviewFile={previewFile}
-                  {models}
+                  models={composerModels}
                   {selectedModel}
                   imageInputEnabled={Boolean(currentComposerTab?.imageInputEnabled)}
                   onModelChange={switchModel}
@@ -12213,7 +12264,7 @@ function openGovernanceCenter() {
 
   .select-list,.distill-panel{display:grid;gap:10px;margin-top:16px}.select-list>p,.distill-panel>p{margin:0;color:#5f6774;font-size:13px;line-height:1.6}.select-list button{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;text-align:left}.select-list button:hover{border-color:#93c5fd;background:#f8fbff}.select-list strong{color:#111827}.select-list span{color:#667085;font-size:12px}.distill-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.distill-steps button{min-height:36px;border:1px solid #dbe3ee;border-radius:12px;background:#fff;color:#5f6774;font-weight:700}.distill-steps button.active{border-color:#93c5fd;background:#eef4ff;color:#1d4ed8}.distill-preview{padding:0;border:0}.distill-preview div{margin-top:0}@media(max-width:720px){.distill-steps{grid-template-columns:1fr}}
 
-  .resource-center-topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px}.resource-center .resource-tabs{flex:0 1 auto;min-width:0;margin:0;flex-wrap:wrap}.resource-center .resource-tabs button{min-width:104px}.resource-center-actions{display:flex;flex:0 0 auto;align-items:center;justify-content:flex-end;gap:8px}.resource-center-actions button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:0 14px;border:1px solid #d9dee8;border-radius:999px;background:#fff;color:#222;font-size:13px;font-weight:700}.resource-center-actions button:last-child{border-color:#222;background:#222;color:#fff}.resource-center-actions button:hover{border-color:#222}.resource-section-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.resource-section-top .aorist-search{flex:1 1 320px;max-width:none;margin-bottom:0}.resource-section-top>span{flex:0 0 auto;color:#7b8494;font-size:12px;font-weight:650;white-space:nowrap}.resource-section-top .resource-actions{flex:0 0 auto;justify-content:flex-end;margin:0}.resource-library-empty,.resource-archive-empty{grid-column:1/-1}.resource-archive-summary{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:14px;padding:14px;border:1px solid rgba(226,232,240,.9);border-radius:14px;background:rgba(255,255,255,.82)}.resource-archive-summary span{display:block;color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.resource-archive-summary strong{display:block;margin-top:4px;color:#111827;font-size:18px}.resource-archive-summary em{color:#7b8494;font-size:12px;font-style:normal}.resource-archive-list{display:grid;gap:12px}.resource-archive-project{padding:14px;border:1px solid rgba(226,232,240,.9);border-radius:14px;background:rgba(255,255,255,.86)}.resource-archive-project header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.resource-archive-project header strong{display:block;color:#111827;font-size:14px}.resource-archive-project header span,.resource-archive-project header em{color:#7b8494;font-size:11px;font-style:normal}.resource-archive-project>div{display:grid;gap:8px}.resource-archive-project article{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:10px;border:1px solid #eef2f7;border-radius:10px;background:#fff}.resource-archive-project article strong{display:block;overflow:hidden;color:#111827;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.resource-archive-project article p{margin:3px 0 0;color:#7b8494;font-size:11px}.resource-archive-project article button{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:28px;padding:0 10px;border:1px solid #f3d3d3;border-radius:8px;background:#fff;color:#b42318;font-size:12px;font-weight:650}.resource-archive-project article button:hover{background:#fff5f5}.resource-actions{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}.resource-actions button{min-height:34px;padding:0 12px;border:1px solid #dce4ef;border-radius:10px;background:rgba(255,255,255,.9);color:#344054;font-size:12px;font-weight:700}.resource-actions button:hover{border-color:#bfdbfe;background:#f8fbff}@media(max-width:920px){.resource-center-topbar{align-items:flex-start;flex-direction:column}.resource-center-actions{justify-content:flex-start}}@media(max-width:720px){.resource-section-top,.resource-archive-summary{align-items:flex-start;flex-direction:column}.resource-section-top .aorist-search{width:100%;max-width:none}.resource-section-top .resource-actions{width:100%;justify-content:flex-start}.resource-archive-project article{grid-template-columns:1fr}}
+  .resource-center-topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px}.resource-center .resource-tabs{flex:0 1 auto;min-width:0;margin:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}.resource-center .resource-tabs::-webkit-scrollbar{display:none}.resource-center .resource-tabs button{flex:0 0 auto;min-width:104px;white-space:nowrap}.resource-center-actions{display:flex;flex:0 0 auto;align-items:center;justify-content:flex-end;gap:8px}.resource-center-actions button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:0 14px;border:1px solid #d9dee8;border-radius:999px;background:#fff;color:#222;font-size:13px;font-weight:700}.resource-center-actions button:last-child{border-color:#222;background:#222;color:#fff}.resource-center-actions button:hover{border-color:#222}.resource-section-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.resource-section-top .aorist-search{flex:1 1 320px;max-width:none;margin-bottom:0}.resource-section-top>span{flex:0 0 auto;color:#7b8494;font-size:12px;font-weight:650;white-space:nowrap}.resource-section-top .resource-actions{flex:0 0 auto;justify-content:flex-end;margin:0}.resource-library-empty,.resource-archive-empty{grid-column:1/-1}.resource-archive-summary{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:14px;padding:14px;border:1px solid rgba(226,232,240,.9);border-radius:14px;background:rgba(255,255,255,.82)}.resource-archive-summary span{display:block;color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.resource-archive-summary strong{display:block;margin-top:4px;color:#111827;font-size:18px}.resource-archive-summary em{color:#7b8494;font-size:12px;font-style:normal}.resource-archive-list{display:grid;gap:12px}.resource-archive-project{padding:14px;border:1px solid rgba(226,232,240,.9);border-radius:14px;background:rgba(255,255,255,.86)}.resource-archive-project header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.resource-archive-project header strong{display:block;color:#111827;font-size:14px}.resource-archive-project header span,.resource-archive-project header em{color:#7b8494;font-size:11px;font-style:normal}.resource-archive-project>div{display:grid;gap:8px}.resource-archive-project article{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:10px;border:1px solid #eef2f7;border-radius:10px;background:#fff}.resource-archive-project article strong{display:block;overflow:hidden;color:#111827;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.resource-archive-project article p{margin:3px 0 0;color:#7b8494;font-size:11px}.resource-archive-project article button{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:28px;padding:0 10px;border:1px solid #f3d3d3;border-radius:8px;background:#fff;color:#b42318;font-size:12px;font-weight:650}.resource-archive-project article button:hover{background:#fff5f5}.resource-actions{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}.resource-actions button{min-height:34px;padding:0 12px;border:1px solid #dce4ef;border-radius:10px;background:rgba(255,255,255,.9);color:#344054;font-size:12px;font-weight:700}.resource-actions button:hover{border-color:#bfdbfe;background:#f8fbff}@media(max-width:920px){.resource-center-topbar{align-items:flex-start;flex-direction:column}.resource-center .resource-tabs{width:100%}.resource-center-actions{justify-content:flex-start}}@media(max-width:720px){.resource-section-top,.resource-archive-summary{align-items:flex-start;flex-direction:column}.resource-section-top .aorist-search{width:100%;max-width:none}.resource-section-top .resource-actions{width:100%;justify-content:flex-start}.resource-archive-project article{grid-template-columns:1fr}}
   @media (max-width: 720px) {
     .resource-section-top .aorist-search {
       flex: 0 0 auto;
@@ -16338,7 +16389,7 @@ function openGovernanceCenter() {
 
   .agent-selector {
     position: relative;
-    z-index: 30;
+    z-index: 40;
     display: grid;
     justify-items: center;
   }

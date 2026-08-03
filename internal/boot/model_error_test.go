@@ -44,6 +44,46 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 }
 
+func TestBuildRequiresCallerApprovalForUnlistedProviderModel(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "local/retired-model"
+
+[codegraph]
+enabled = false
+
+[[providers]]
+name = "local"
+kind = "openai"
+base_url = "http://127.0.0.1:23333/v1"
+model = "configured-model"
+api_key_env = "VOLTUI_TEST_KEY_UNSET"
+`)
+
+	if ctrl, err := Build(context.Background(), Options{
+		Model: "local/retired-model",
+		Sink:  event.Discard,
+	}); err == nil {
+		ctrl.Close()
+		t.Fatal("unlisted provider model built without caller approval")
+	}
+
+	ctrl, err := Build(context.Background(), Options{
+		Model:              "local/retired-model",
+		AllowUnlistedModel: true,
+		Sink:               event.Discard,
+	})
+	if err != nil {
+		t.Fatalf("caller-approved unlisted provider model should build: %v", err)
+	}
+	defer ctrl.Close()
+	if ctrl.Label() != "retired-model" {
+		t.Fatalf("controller label = %q, want retired-model", ctrl.Label())
+	}
+}
+
 func TestBuildNoticesProjectDefaultModelFallback(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)

@@ -57,6 +57,233 @@ func TestRefreshModelsForTabProbesSharedGatewayOnce(t *testing.T) {
 	}
 }
 
+func TestRefreshModelsForTabAddsNewLiveModelForProviderNamespace(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "LOCAL_API_KEY", "sk-test")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"qwen-gpu4/step3p7-flash"}]}`))
+	}))
+	defer server.Close()
+
+	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	cfg := config.Default()
+	cfg.DefaultModel = "qwen-thinking/qwen-gpu4/old-model"
+	cfg.Desktop.ProviderAccess = []string{"qwen-thinking", "glm-5.2"}
+	cfg.Providers = []config.ProviderEntry{
+		{
+			Name: "qwen-thinking", Kind: "openai", BaseURL: server.URL + "/v1",
+			Models: []string{"qwen-gpu4/old-model"}, Default: "qwen-gpu4/old-model", APIKeyEnv: "LOCAL_API_KEY",
+		},
+		{
+			Name: "glm-5.2", Kind: "openai", BaseURL: server.URL + "/v1",
+			Models: []string{"glm-primary/old-model"}, Default: "glm-primary/old-model", APIKeyEnv: "LOCAL_API_KEY",
+		},
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	models := modelCatalogTestApp("qwen-thinking/qwen-gpu4/old-model").RefreshModelsForTab("tab")
+	var found ModelInfo
+	for _, model := range models {
+		if model.Ref == "qwen-thinking/qwen-gpu4/step3p7-flash" {
+			found = model
+			break
+		}
+	}
+	if found.Availability != "available" || found.Provider != "qwen-thinking" {
+		t.Fatalf("new live model = %+v, want available qwen-thinking entry", found)
+	}
+}
+
+func TestReconcileModelCatalogMapsBareModelToMatchingProviderName(t *testing.T) {
+	configured := []ModelInfo{
+		{Ref: "glm-5.2/glm-primary/glm-5.2-nvfp4", Provider: "glm-5.2", Model: "glm-primary/glm-5.2-nvfp4"},
+		{Ref: "qwen-thinking/qwen-gpu4/step3p7-flash", Provider: "qwen-thinking", Model: "qwen-gpu4/step3p7-flash"},
+	}
+	probeKeys := map[string]string{"glm-5.2": "gateway", "qwen-thinking": "gateway"}
+	outcomes := map[string]modelCatalogProbeOutcome{
+		"gateway": {modelIDs: []string{"glm-5.2", "glm-primary/glm-5.2-nvfp4", "qwen-gpu4/step3p7-flash"}},
+	}
+
+	models := reconcileModelCatalog(configured, probeKeys, outcomes)
+	for _, model := range models {
+		if model.Ref == "glm-5.2/glm-5.2" && model.Availability == "available" {
+			return
+		}
+		if model.Ref == "qwen-thinking/glm-5.2" {
+			t.Fatalf("bare GLM model mapped to qwen provider: %+v", model)
+		}
+	}
+	t.Fatalf("bare GLM model missing from reconciled catalog: %+v", models)
+}
+
+func TestReconcileModelCatalogSkipsAmbiguousNamespaceModel(t *testing.T) {
+	configured := []ModelInfo{
+		{Ref: "relay-a/qwen-gpu4/old-a", Provider: "relay-a", Model: "qwen-gpu4/old-a"},
+		{Ref: "relay-b/qwen-gpu4/old-b", Provider: "relay-b", Model: "qwen-gpu4/old-b"},
+	}
+	probeKeys := map[string]string{"relay-a": "gateway", "relay-b": "gateway"}
+	outcomes := map[string]modelCatalogProbeOutcome{
+		"gateway": {modelIDs: []string{"qwen-gpu4/new-model"}},
+	}
+
+	models := reconcileModelCatalog(configured, probeKeys, outcomes)
+	for _, model := range models {
+		if model.Model == "qwen-gpu4/new-model" {
+			t.Fatalf("ambiguous live model was added: %+v", model)
+		}
+	}
+}
+
+func TestResolveModelCatalogSelectionAllowsValidatedLiveModel(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers = []config.ProviderEntry{{
+		Name: "qwen-thinking", Kind: "openai", BaseURL: "http://127.0.0.1:9010/v1",
+		Model: "qwen-gpu4/old-model", APIKeyEnv: "LOCAL_API_KEY",
+	}}
+	ref := "qwen-thinking/qwen-gpu4/step3p7-flash"
+	entry, ok := resolveModelCatalogSelection(cfg, ref, []ModelInfo{{Ref: ref, Availability: "available"}})
+	if !ok || entry.Name != "qwen-thinking" || entry.Model != "qwen-gpu4/step3p7-flash" {
+		t.Fatalf("resolved live model = %+v, ok=%v", entry, ok)
+	}
+}
+
+func TestResolveModelCatalogSelectionRejectsUnvalidatedLiveModel(t *testing.T) {
+	cfg := config.Default()
+	ref := "qwen-thinking/qwen-gpu4/unverified-model"
+	models := []ModelInfo{{Ref: ref, Availability: "unknown"}}
+	if entry, ok := resolveModelCatalogSelection(cfg, ref, models); ok || entry != nil {
+		t.Fatalf("unverified live model resolved: %+v", entry)
+	}
+}
+
+func TestResolveDesktopModelForRebuildRequiresLiveCatalog(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "LOCAL_API_KEY", "sk-test")
+
+	var response atomic.Value
+	var fail atomic.Bool
+	response.Store(`{"data":[{"id":"qwen-gpu4/live-model"}]}`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if fail.Load() {
+			http.Error(w, "catalog unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(response.Load().(string)))
+	}))
+	defer server.Close()
+
+	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	cfg := config.Default()
+	cfg.DefaultModel = "qwen-thinking/qwen-gpu4/old-model"
+	cfg.Desktop.ProviderAccess = []string{"qwen-thinking", "glm-5.2"}
+	cfg.Providers = []config.ProviderEntry{
+		{
+			Name: "qwen-thinking", Kind: "openai", BaseURL: server.URL + "/v1",
+			Models: []string{"qwen-gpu4/old-model"}, Default: "qwen-gpu4/old-model", APIKeyEnv: "LOCAL_API_KEY",
+		},
+		{
+			Name: "glm-5.2", Kind: "openai", BaseURL: server.URL + "/v1",
+			Models: []string{"glm-primary/old-model"}, Default: "glm-primary/old-model", APIKeyEnv: "LOCAL_API_KEY",
+		},
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	app := modelCatalogTestApp("qwen-thinking/qwen-gpu4/old-model")
+	loaded, err := config.LoadForRoot("")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	ref := "qwen-thinking/qwen-gpu4/live-model"
+	resolution, err := app.resolveDesktopModelForRebuild("", ref)
+	if err != nil {
+		t.Fatalf("resolve live rebuild model: %v", err)
+	}
+	if resolution.fallback || !resolution.allowUnlisted || resolution.ref != ref {
+		t.Fatalf("live rebuild resolution = %+v", resolution)
+	}
+
+	response.Store(`{"data":[{"id":"glm-primary/live-model"}]}`)
+	spoofedRef := "qwen-thinking/glm-primary/live-model"
+	spoofedEntry, ok := loaded.ResolveExplicitProviderModel(spoofedRef)
+	if !ok {
+		t.Fatal("resolve spoofed explicit provider/model")
+	}
+	providers := liveCatalogProvidersForProbe(loaded, "", modelCatalogProbeKey(*spoofedEntry))
+	if mapped := liveCatalogProviders(providers, spoofedEntry.Model); len(mapped) != 1 || mapped[0] != "glm-5.2" {
+		probeKeys := map[string]string{}
+		for _, provider := range loaded.Providers {
+			probeKeys[provider.Name] = modelCatalogProbeKey(provider)
+		}
+		t.Fatalf("live model provider mapping = %+v from providers %+v; probe keys = %q", mapped, providers, probeKeys)
+	}
+	resolution, err = app.resolveDesktopModelForRebuild("", spoofedRef)
+	if err != nil {
+		t.Fatalf("resolve mismatched provider fallback: %v", err)
+	}
+	if !resolution.fallback || resolution.allowUnlisted || resolution.ref != "qwen-thinking/qwen-gpu4/old-model" {
+		t.Fatalf("mismatched provider resolution = %+v", resolution)
+	}
+	response.Store(`{"data":[{"id":"qwen-gpu4/live-model"}]}`)
+
+	loaded.Desktop.ProviderAccess = []string{"other-provider"}
+	if app.validateUnlistedCatalogModel(loaded, "", ref) {
+		t.Fatal("live model remained trusted after provider access removal")
+	}
+
+	fail.Store(true)
+	resolution, err = app.resolveDesktopModelForRebuild("", ref)
+	if err != nil {
+		t.Fatalf("resolve rebuild fallback: %v", err)
+	}
+	if !resolution.fallback || resolution.allowUnlisted || resolution.ref != "qwen-thinking/qwen-gpu4/old-model" {
+		t.Fatalf("failed live rebuild resolution = %+v", resolution)
+	}
+
+	fail.Store(false)
+	response.Store(`{"data":[]}`)
+	resolution, err = app.resolveDesktopModelForRebuild("", ref)
+	if err != nil || !resolution.fallback || resolution.allowUnlisted {
+		t.Fatalf("removed live rebuild resolution = %+v, err=%v", resolution, err)
+	}
+}
+
+func TestResolveDesktopModelForRebuildRejectsRemovedProviderAccess(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	setDesktopTestCredential(t, "LOCAL_API_KEY", "sk-test")
+	if err := os.MkdirAll(filepath.Dir(config.UserConfigPath()), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	cfg := config.Default()
+	cfg.DefaultModel = "allowed/allowed-model"
+	cfg.Desktop.ProviderAccess = []string{"allowed"}
+	cfg.Providers = []config.ProviderEntry{
+		{Name: "allowed", Kind: "openai", BaseURL: "https://allowed.example/v1", Models: []string{"old-model", "allowed-model"}, Default: "allowed-model", APIKeyEnv: "LOCAL_API_KEY"},
+		{Name: "removed", Kind: "openai", BaseURL: "https://removed.example/v1", Model: "removed-model", APIKeyEnv: "LOCAL_API_KEY"},
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	resolution, err := modelCatalogTestApp("removed/removed-model").resolveDesktopModelForRebuild("", "removed/removed-model")
+	if err != nil {
+		t.Fatalf("resolve removed provider model: %v", err)
+	}
+	if !resolution.fallback || resolution.allowUnlisted || resolution.ref != "allowed/allowed-model" || resolution.entry.Model != "allowed-model" {
+		t.Fatalf("removed provider resolution = %+v", resolution)
+	}
+}
+
 func TestRefreshModelsForTabKeepsRemovedCurrentModelUnavailable(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "LOCAL_API_KEY", "sk-test")

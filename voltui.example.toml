@@ -2,7 +2,7 @@
 # Resolution order: flag > ./voltui.toml > ~/.config/voltui/config.toml > built-in defaults.
 # Secrets come from the environment via api_key_env; never put keys here.
 
-default_model = "xllm"   # a provider name (→ its default model) or "provider/model"
+default_model = "qwen-thinking"   # a provider name (→ its default model) or "provider/model"
 # language      = "zh"   # ui language; empty = auto-detect from $LANG / $VOLTUI_LANG
 
 # White-label / OEM branding — replace the product name and logos for your
@@ -48,27 +48,25 @@ compact_force_ratio = 0.9   # force compacting at this high-water mark
 # models. Use `models = [...]` to expose several under a single entry — switching
 # models reuses the same connection; no need to re-declare base_url/api_key.
 # 西谷内网模型网关 — OpenAI 兼容接口 (http://192.168.1.47:9010/v1)
-# 只公开两个业务代号：xllm（纯文本）和 vlm（多模态）。
-# display_name 仅用于客户端展示，实际请求始终使用 model 中的业务代号。
+# 模型名称与 9010 的实时 /models 目录保持一致；桌面端会自动发现同 namespace 的新聊天模型。
 
 [[providers]]
-name           = "xllm"
-display_name   = "纯文本"
+name           = "qwen-thinking"
 kind           = "openai"
 base_url       = "http://192.168.1.47:9010/v1"
-model          = "xllm"
+model          = "qwen-gpu4/step3p7-flash"
 api_key_env    = "volt_API_KEY"
 context_window = 131072
+supported_efforts = ["high", "max"]
+default_effort = "high"
 
 [[providers]]
-name           = "vlm"
-display_name   = "多模态"
+name           = "glm-5.2"
 kind           = "openai"
 base_url       = "http://192.168.1.47:9010/v1"
-model          = "vlm"
+model          = "glm-primary/glm-5.2-nvfp4"
 api_key_env    = "volt_API_KEY"
 context_window = 131072
-vision         = true
 
 # A single-model provider still works (use `model = "..."`) — pick this form when a
 # model needs its own base_url / context_window / price (e.g. the two MiMo SKUs

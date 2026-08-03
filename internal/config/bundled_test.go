@@ -65,27 +65,34 @@ func TestDefaultUsesBundledvoltGateway(t *testing.T) {
 	t.Cleanup(func() { bundledEnvPath = previousPath })
 
 	cfg := Default()
-	if cfg.DefaultModel != "xllm" {
-		t.Fatalf("default model = %q, want xllm", cfg.DefaultModel)
+	if cfg.DefaultModel != "qwen-thinking" {
+		t.Fatalf("default model = %q, want qwen-thinking", cfg.DefaultModel)
 	}
 	want := map[string]struct {
-		model  string
-		label  string
-		vision bool
+		model string
 	}{
-		"xllm": {model: "xllm", label: "纯文本"},
-		"vlm":  {model: "vlm", label: "多模态", vision: true},
+		"qwen-thinking": {model: "qwen-gpu4/step3p7-flash"},
+		"glm-5.2":       {model: "glm-primary/glm-5.2-nvfp4"},
 	}
-	if len(cfg.Providers) != len(want) {
-		t.Fatalf("bundled provider count = %d, want %d", len(cfg.Providers), len(want))
+	if len(cfg.Providers) != len(want)+2 {
+		t.Fatalf("provider count = %d, want %d bundled and 2 public defaults", len(cfg.Providers), len(want))
 	}
 	for name, expected := range want {
 		entry, ok := cfg.Provider(name)
 		if !ok {
 			t.Fatalf("bundled provider %q is missing", name)
 		}
-		if entry.BaseURL != baseURL || entry.Model != expected.model || entry.DisplayLabel() != expected.label || entry.APIKeyEnv != "volt_API_KEY" || entry.Vision != expected.vision || !entry.NoProxy {
+		if entry.BaseURL != baseURL || entry.Model != expected.model || entry.APIKeyEnv != "volt_API_KEY" || entry.Vision || !entry.NoProxy {
 			t.Errorf("provider %q = %+v", name, entry)
 		}
+	}
+	for _, retired := range []string{"xllm", "vlm"} {
+		if _, ok := cfg.Provider(retired); ok {
+			t.Errorf("retired bundled provider %q is still configured", retired)
+		}
+	}
+	qwen, _ := cfg.Provider("qwen-thinking")
+	if qwen.DefaultEffort != "high" || len(qwen.SupportedEfforts) != 2 || qwen.SupportedEfforts[0] != "high" || qwen.SupportedEfforts[1] != "max" {
+		t.Errorf("qwen effort = default %q supported %v, want high with [high max]", qwen.DefaultEffort, qwen.SupportedEfforts)
 	}
 }

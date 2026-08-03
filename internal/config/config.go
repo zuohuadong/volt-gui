@@ -1912,9 +1912,9 @@ func bundledvoltProviderDefaults() (string, []ProviderEntry) {
 		return "", nil
 	}
 	baseURL := strings.TrimRight(rawBaseURL, "/")
-	return "xllm", []ProviderEntry{
-		{Name: "xllm", DisplayName: "纯文本", Kind: "openai", BaseURL: baseURL, Model: "xllm", APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, NoProxy: true},
-		{Name: "vlm", DisplayName: "多模态", Kind: "openai", BaseURL: baseURL, Model: "vlm", APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, Vision: true, NoProxy: true},
+	return "qwen-thinking", []ProviderEntry{
+		{Name: "qwen-thinking", Kind: "openai", BaseURL: baseURL, Model: "qwen-gpu4/step3p7-flash", APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, SupportedEfforts: []string{"high", "max"}, DefaultEffort: "high", NoProxy: true},
+		{Name: "glm-5.2", Kind: "openai", BaseURL: baseURL, Model: "glm-primary/glm-5.2-nvfp4", APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, NoProxy: true},
 	}
 }
 

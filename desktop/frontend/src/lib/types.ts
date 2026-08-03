@@ -310,6 +310,8 @@ export interface ModelInfo {
   label?: string;
   current?: boolean;
   vision?: boolean;
+  availability?: "available" | "unavailable" | "unknown";
+  unavailableReason?: string;
 }
 
 export interface ProviderView {

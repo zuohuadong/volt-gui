@@ -180,7 +180,7 @@ func (a *App) SetAgentProfileForTab(tabID, profileID string) error {
 	}
 
 	snap := a.tabRuntimeSnapshot(tab)
-	modelRef, fallback, err := a.resolvedModelForTab(tab)
+	modelRef, fallback, _, err := a.resolvedModelForTab(tab)
 	if err != nil {
 		return err
 	}
@@ -198,15 +198,14 @@ func (a *App) SetAgentProfileForTab(tabID, profileID string) error {
 	if baseModel == "" {
 		baseModel = modelRef
 	}
-	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, baseModel)
-	if resolved, fallback, ok := cfg.ResolveModelWithFallback(baseModel); ok {
-		if fallback {
-			a.noticeForTab(tab.ID, fmt.Sprintf("base model %q is no longer available; switched to %s", baseModel, resolved))
-		}
-		baseModel = resolved
-	} else {
-		return fmt.Errorf("agent profile base model %q is unavailable", baseModel)
+	baseResolution, err := a.resolveDesktopModelForRebuild(snap.workspaceRoot, baseModel)
+	if err != nil {
+		return fmt.Errorf("agent profile base model %q is unavailable: %w", baseModel, err)
 	}
+	if baseResolution.fallback {
+		a.noticeForTab(tab.ID, fmt.Sprintf("base model %q is no longer available; switched to %s", baseModel, baseResolution.ref))
+	}
+	baseModel = baseResolution.ref
 	modelRef, profileModelFallback, err := resolveAgentProfileModel(cfg, view, baseModel)
 	if err != nil {
 		return err
@@ -214,6 +213,11 @@ func (a *App) SetAgentProfileForTab(tabID, profileID string) error {
 	if profileModelFallback {
 		a.noticeForTab(tab.ID, fmt.Sprintf("Agent Profile %q 的模型 %q 已不可用，已改用当前模型 %s", view.ID, agentProfileModelCandidate(view), modelRef))
 	}
+	modelResolution, err := a.resolveDesktopModelForRebuild(snap.workspaceRoot, modelRef)
+	if err != nil {
+		return err
+	}
+	modelRef = modelResolution.ref
 
 	var carried []provider.Message
 	oldCtrl := a.controllerForTab(tab)
@@ -239,6 +243,7 @@ func (a *App) SetAgentProfileForTab(tabID, profileID string) error {
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    modelRef,
 		RequireKey:               false,
+		AllowUnlistedModel:       modelResolution.allowUnlisted,
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),

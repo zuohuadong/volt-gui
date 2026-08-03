@@ -86,7 +86,11 @@ type Options struct {
 	MaxSteps    int
 	MaxStepsKey string
 	RequireKey  bool
-	Sink        event.Sink
+	// AllowUnlistedModel restores an explicit provider/model selection
+	// that the desktop previously validated against the provider's live catalog.
+	// The provider endpoint and credentials still come from local config.
+	AllowUnlistedModel bool
+	Sink               event.Sink
 	// EffortOverride is a session-local reasoning effort override. Nil means use
 	// the resolved provider config; a non-nil empty string means provider default.
 	EffortOverride *string

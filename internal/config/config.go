@@ -2055,6 +2055,40 @@ func (c *Config) ResolveModel(ref string) (*ProviderEntry, bool) {
 	return nil, false
 }
 
+// ResolveExplicitProviderModel resolves an explicit provider/model reference
+// without requiring the model to be present in the provider's static list.
+// Callers must first validate the model against a trusted live catalog. The
+// provider endpoint and credentials still come exclusively from local config.
+func (c *Config) ResolveExplicitProviderModel(ref string) (*ProviderEntry, bool) {
+	providerName, model, ok := splitExplicitProviderModel(ref)
+	if !ok {
+		return nil, false
+	}
+	if access := desktopProviderAccessMap(c.Desktop.ProviderAccess); len(access) > 0 {
+		ref = retargetDesktopOfficialRef(providerName+"/"+model, access)
+		providerName, model, ok = splitExplicitProviderModel(ref)
+		if !ok {
+			return nil, false
+		}
+	}
+	e, found := c.Provider(providerName)
+	if !found {
+		return nil, false
+	}
+	cp := *e
+	cp.Model = model
+	cp.applyModelPrice()
+	cp.applyModelOverride()
+	return &cp, true
+}
+
+func splitExplicitProviderModel(ref string) (providerName, model string, ok bool) {
+	providerName, model, ok = strings.Cut(strings.TrimSpace(ref), "/")
+	providerName = strings.TrimSpace(providerName)
+	model = strings.TrimSpace(model)
+	return providerName, model, ok && providerName != "" && model != ""
+}
+
 // ResolveModelWithFallback resolves a model reference to the canonical
 // "provider/model" form used by the desktop runtime. If ref is stale or empty,
 // it tries the user's configured default_model before falling back to the first

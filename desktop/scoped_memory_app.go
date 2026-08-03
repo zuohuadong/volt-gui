@@ -203,13 +203,14 @@ func (a *App) SetMemoryContextForTab(tabID string, next scopedmemory.Context) er
 }
 
 type scopedMemoryRuntimeRebuildPlan struct {
-	tab          *WorkspaceTab
-	snap         tabRuntimeSnapshot
-	prevPath     string
-	oldCtrl      control.SessionAPI
-	carried      []provider.Message
-	modelRef     string
-	agentProfile *boot.AgentProfile
+	tab           *WorkspaceTab
+	snap          tabRuntimeSnapshot
+	prevPath      string
+	oldCtrl       control.SessionAPI
+	carried       []provider.Message
+	modelRef      string
+	allowUnlisted bool
+	agentProfile  *boot.AgentProfile
 }
 
 func (a *App) refreshScopedMemoryRuntimeForTab(tab *WorkspaceTab, next scopedmemory.Context, reason string) error {
@@ -256,7 +257,7 @@ func (a *App) prepareScopedMemoryRuntimeRebuild(tab *WorkspaceTab, reason string
 	}
 
 	snap := a.tabRuntimeSnapshot(tab)
-	modelRef, fallback, err := a.resolvedModelForTab(tab)
+	modelRef, fallback, allowUnlisted, err := a.resolvedModelForTab(tab)
 	if err != nil {
 		return scopedMemoryRuntimeRebuildPlan{}, err
 	}
@@ -283,7 +284,7 @@ func (a *App) prepareScopedMemoryRuntimeRebuild(tab *WorkspaceTab, reason string
 		prevPath = sessionPathAfterSnapshot(oldCtrl, prevPath)
 		carried = oldCtrl.History()
 	}
-	return scopedMemoryRuntimeRebuildPlan{tab: tab, snap: snap, prevPath: prevPath, oldCtrl: oldCtrl, carried: carried, modelRef: modelRef, agentProfile: agentProfile}, nil
+	return scopedMemoryRuntimeRebuildPlan{tab: tab, snap: snap, prevPath: prevPath, oldCtrl: oldCtrl, carried: carried, modelRef: modelRef, allowUnlisted: allowUnlisted, agentProfile: agentProfile}, nil
 }
 
 func (a *App) applyScopedMemoryRuntimeRebuild(plan scopedMemoryRuntimeRebuildPlan, memoryRuntime scopedMemoryRuntime, reason string) error {
@@ -293,6 +294,7 @@ func (a *App) applyScopedMemoryRuntimeRebuild(plan scopedMemoryRuntimeRebuildPla
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    plan.modelRef,
 		RequireKey:               false,
+		AllowUnlistedModel:       plan.allowUnlisted,
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),

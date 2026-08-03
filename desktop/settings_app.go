@@ -1631,15 +1631,14 @@ func (a *App) rebuildSettingLocked(setting string) error {
 		carried = oldCtrl.History()
 	}
 	snap := a.tabRuntimeSnapshot(tab)
-	model := snap.model
-	if cfg, err := config.LoadForRoot(snap.workspaceRoot); err == nil {
-		if resolved, fallback, ok := cfg.ResolveModelWithFallback(model); ok {
-			if fallback && strings.TrimSpace(model) != "" {
-				a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", model, resolved))
-			}
-			model = resolved
-		}
+	modelResolution, err := a.resolveDesktopModelForRebuild(snap.workspaceRoot, snap.model)
+	if err != nil {
+		return err
 	}
+	if modelResolution.fallback && strings.TrimSpace(snap.model) != "" {
+		a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", snap.model, modelResolution.ref))
+	}
+	model := modelResolution.ref
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
 	agentProfile, err := runtimeAgentProfileForSnapshot(snap)
 	if err != nil {
@@ -1650,7 +1649,7 @@ func (a *App) rebuildSettingLocked(setting string) error {
 		return err
 	}
 	ctrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model: model, RequireKey: false,
+		Model: model, RequireKey: false, AllowUnlistedModel: modelResolution.allowUnlisted,
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),

@@ -73,6 +73,15 @@ func resolveProvider(opts Options, cfg *config.Config, proxy netclient.ProxySpec
 	if opts.ProviderResolver != nil {
 		return opts.ProviderResolver.Resolve(selection)
 	}
+	if opts.AllowUnlistedModel {
+		allowed, ok := cfg.ResolveExplicitProviderModel(opts.Model)
+		if ok && modelRefFromEntry(allowed) == strings.TrimSpace(selection.Ref) {
+			if selection.Effort != nil {
+				allowed.Effort = *selection.Effort
+			}
+			return NewProviderWithProxy(allowed, proxy)
+		}
+	}
 	return NewLocalProviderResolver(cfg, proxy).Resolve(selection)
 }
 
@@ -98,6 +107,11 @@ func resolveModelEntry(opts Options, cfg *config.Config, modelName string) (*con
 	}
 	if entry, ok := cfg.ResolveModel(modelName); ok {
 		return entry, modelRefFromEntry(entry), nil
+	}
+	if opts.AllowUnlistedModel {
+		if entry, ok := cfg.ResolveExplicitProviderModel(modelName); ok {
+			return entry, modelRefFromEntry(entry), nil
+		}
 	}
 	return nil, "", fmt.Errorf("%w %q (configured: %s); note: defining [[providers]] replaces the built-in presets, so add a [[providers]] entry for it or use a configured name, or run `reasonix setup` to reconfigure", ErrUnknownModel, modelName, providerNames(cfg))
 }

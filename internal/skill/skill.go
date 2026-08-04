@@ -663,13 +663,9 @@ func (s *Store) CreateWithContent(name string, scope Scope, content string) (str
 	default:
 		root = s.globalSkillsRoot()
 	}
-	flat := filepath.Join(root, name+".md")
 	folder := filepath.Join(root, name, SkillFile)
-	if _, err := os.Stat(flat); err == nil {
-		return "", fmt.Errorf("skill %q already exists at %s", name, flat)
-	}
-	if _, err := os.Stat(folder); err == nil {
-		return "", fmt.Errorf("skill %q already exists at %s", name, folder)
+	if conflict := s.skillConflictPath(name, scope, root); conflict != "" {
+		return "", fmt.Errorf("skill %q already exists at %s", name, conflict)
 	}
 	if err := os.MkdirAll(filepath.Dir(folder), 0o755); err != nil {
 		return "", err
@@ -694,6 +690,25 @@ func (s *Store) globalSkillsRoot() string {
 		return filepath.Join(s.reasonixHomeDir, SkillsDirname)
 	}
 	return filepath.Join(s.homeDir, ".voltui", SkillsDirname)
+}
+
+func (s *Store) skillConflictPath(name string, scope Scope, root string) string {
+	base := s.homeDir
+	if scope == ScopeProject {
+		base = s.projectRoot
+	}
+	roots := []string{root}
+	for _, convention := range config.ConventionDirs {
+		roots = append(roots, filepath.Join(base, convention, SkillsDirname))
+	}
+	for _, candidateRoot := range roots {
+		for _, candidate := range []string{filepath.Join(candidateRoot, name+".md"), filepath.Join(candidateRoot, name, SkillFile)} {
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate
+			}
+		}
+	}
+	return ""
 }
 
 // loadBodyWithReferences appends a directory-layout skill's sibling

@@ -25,7 +25,7 @@ test("prod_test runs the Wails packaging chain in headless mode when no TTY is a
     mkdirSync(bin, { recursive: true });
     copyFileSync(join(root, "prod_test"), join(fixture, "prod_test"));
     chmodSync(join(fixture, "prod_test"), 0o755);
-    writeFileSync(join(fixture, "desktop", "wails.json"), "{}\n");
+    writeFileSync(join(fixture, "desktop", "wails.json"), JSON.stringify({name:"voltui-desktop"})+"\n");
 
     writeExecutable(
       join(fixture, "scripts", "desktop-build.sh"),
@@ -107,13 +107,18 @@ test("desktop-build skips Finder DMG layout only when explicitly requested", () 
     mkdirSync(bin, { recursive: true });
     copyFileSync(join(root, "scripts", "desktop-build.sh"), join(fixture, "scripts", "desktop-build.sh"));
     chmodSync(join(fixture, "scripts", "desktop-build.sh"), 0o755);
-    writeFileSync(join(fixture, "desktop", "wails.json"), "{}\n");
+    writeFileSync(join(fixture, "desktop", "wails.json"), JSON.stringify({name:"voltui-desktop"})+"\n");
 
     writeExecutable(
       join(bin, "node"),
       `#!/usr/bin/env bash
 case "\${1:-}" in
   */stage-computer-use-mcp.mjs|*/stage-bun-runtime.mjs) mkdir -p "$2" ;;
+  -e)
+    if [[ "$2" == *'j.name'* ]]; then
+      printf 'voltui-desktop'
+    fi
+    ;;
 esac
 `
     );

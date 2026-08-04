@@ -149,7 +149,7 @@ test('full mocked desktop build does not stage or emit prerequisites assets', {
       'cp "build/bin/voltui-desktop-amd64-installer.exe" "$root/dist/${app}-windows-${arch}-installer.exe"',
       '',
     ].join('\n'));
-    writeFileSync(join(fixture, 'desktop', 'wails.json'), '{}\n');
+    writeFileSync(join(fixture, 'desktop', 'wails.json'), JSON.stringify({name:'voltui-desktop'})+'\n');
 
     writeExecutable(join(bin, 'node'), String.raw`#!/usr/bin/env bash
 case "$1" in
@@ -169,6 +169,11 @@ case "$1" in
   */stage-windows-prerequisites.mjs)
     echo 'desktop build must not stage prerequisites' >&2
     exit 97
+    ;;
+  -e)
+    if [[ "$2" == *'j.name'* ]]; then
+      printf 'voltui-desktop'
+    fi
     ;;
 esac
 `);

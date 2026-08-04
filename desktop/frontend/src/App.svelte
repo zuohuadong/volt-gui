@@ -184,8 +184,10 @@
     reconcileProjectTaskNodes,
     recoveredTaskThreadsFromBackend,
     restartTaskReceipt,
+    restoreTaskTranscript,
     settleTaskReceipt,
     snapshotFromProjectNodes,
+    snapshotTaskTranscript,
     verificationEvidenceFromTool,
     visibleReceiptRuntime,
   } from "./lib/workbench-ia";
@@ -3351,15 +3353,11 @@
     appendTranscript({ id: `assistant-pending-${Date.now()}`, role: "assistant", title: "assistant", body: "", pending: true, createdAtMs: Date.now() });
   }
 
-  function cloneTranscriptItems(items: TranscriptItem[]) {
-    return items.map((item) => ({ ...item, pending: false }));
-  }
-
   function saveActiveSidebarConversationTranscript(options: { touch?: boolean } = {}) {
     if (!activeSidebarProjectId || !activeSidebarConversationId) return;
     const now = Date.now();
     const touch = options.touch ?? true;
-    const snapshot = cloneTranscriptItems(transcript);
+    const snapshot = snapshotTaskTranscript(transcript);
     sidebarProjects = sidebarProjects.map((project) => {
       if (project.id !== activeSidebarProjectId) return project;
       const nextConversations = project.tasks.map((conversation) =>
@@ -4051,7 +4049,9 @@ function openGovernanceCenter() {
     const knownTab = conversation?.tabId ? tabs.find((tab) => tab.id === conversation.tabId) : undefined;
     if (knownTab) syncSelectedAgentFromTab(knownTab);
     clearConversationRuntime();
-    transcript = conversation?.transcript?.length ? cloneTranscriptItems(conversation.transcript) : welcomeTranscript();
+    transcript = conversation?.transcript?.length
+      ? restoreTaskTranscript(conversation.transcript, knownTab?.running ? "running" : "idle")
+      : welcomeTranscript();
     if (conversation) {
       void bindSidebarConversationThread(projectId, conversation.id).then(async (meta) => {
         if (!meta) return;
@@ -8259,7 +8259,9 @@ function openGovernanceCenter() {
       syncSidebarProjectContext(linked.project);
       activeSidebarConversationId = linked.task.id;
       activeTaskReceipt = linked.task.receipt;
-      transcript = linked.task.transcript?.length ? cloneTranscriptItems(linked.task.transcript) : welcomeTranscript();
+      transcript = linked.task.transcript?.length
+        ? restoreTaskTranscript(linked.task.transcript, tab.running ? "running" : "idle")
+        : welcomeTranscript();
       if (linked.task.templateId) selectedOutcomeTemplateId = linked.task.templateId;
       if (activityMode === "work") {
         workLayer = "newTask";
@@ -12219,7 +12221,7 @@ function openGovernanceCenter() {
   }
 
   .resource-detail-modal{display:grid;grid-template-rows:auto minmax(0,1fr) auto;width:min(760px,calc(100vw - 44px));height:min(760px,calc(100vh - 44px));padding:0}.resource-detail-modal header{padding:18px 24px;border-bottom:1px solid #e5e7eb}.resource-detail-modal header p{margin:4px 0 0;color:#7b8494;font-size:12px}.resource-detail-body{display:grid;gap:14px;min-height:0;margin:0;padding:20px 22px;overflow:auto}.resource-detail-body article{padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc}.resource-detail-body article span{display:inline-block;margin-bottom:8px;padding:3px 8px;border-radius:999px;background:#eef4ff;color:#1f5fbf;font-size:11px}.resource-detail-body article strong{display:block;color:#111827;font-size:17px}.resource-detail-body article p{margin:7px 0 0;max-height:none;overflow-wrap:anywhere;color:#5f6774;font-size:13px;line-height:1.65}.resource-detail-body dl{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px 12px;margin:0;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#fff}.resource-detail-body dt{color:#7b8494;font-size:12px}.resource-detail-body dd{margin:0;min-width:0;overflow-wrap:anywhere;color:#111827;font-size:13px}.resource-detail-modal footer{margin:0;padding:14px 24px;border-top:1px solid #e5e7eb;background:#fff}.resource-detail-modal footer button.danger{border-color:#f3d3d3!important;background:#fff!important;color:#b42318!important}.resource-detail-modal footer button.danger:hover{background:#fff5f5!important}
-  .resource-center .aorist-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,260px));align-items:start;justify-content:start}.resource-center .media-card{display:grid;grid-template-rows:auto minmax(0,2.7em) minmax(0,3.2em) auto;gap:8px;width:100%;height:190px;min-height:0;box-sizing:border-box;overflow:hidden;align-content:start;text-align:left}.resource-center .media-card span{justify-self:start;width:auto;max-width:100%;margin:0;white-space:nowrap;word-break:keep-all}.resource-center .media-card strong,.resource-center .media-card p{display:-webkit-box;min-height:0;margin:0;overflow:hidden;line-height:1.5;-webkit-box-orient:vertical}.resource-center .media-card strong{line-height:1.35;-webkit-line-clamp:2;line-clamp:2}.resource-center .media-card p{-webkit-line-clamp:2;line-clamp:2}.resource-center .media-card em{align-self:end;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.resource-category-bar{display:flex;align-items:center;gap:10px;margin:0 0 12px}.resource-category-bar button{min-height:30px;padding:0 10px;border:1px solid #dce4ef;border-radius:9px;background:#fff;color:#344054;font-size:12px;font-weight:700}.resource-category-bar strong{color:#111827;font-size:15px}.resource-category-card{text-align:left}.resource-category-card span{background:#eef4ff;color:#1f5fbf}.resource-category-card em{display:block;margin-top:10px;color:#7b8494;font-size:12px;font-style:normal}
+  .resource-center .aorist-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,260px));align-items:start;justify-content:start}.resource-center .media-card{display:grid;grid-template-rows:auto minmax(0,3em) minmax(0,3.2em) auto;gap:8px;width:100%;height:190px;min-height:0;box-sizing:border-box;overflow:hidden;align-content:start;text-align:left}.resource-center .media-card span{justify-self:start;width:auto;max-width:100%;margin:0;white-space:nowrap;word-break:keep-all}.resource-center .media-card strong,.resource-center .media-card p{display:-webkit-box;min-height:0;margin:0;overflow:hidden;line-height:1.5;-webkit-box-orient:vertical}.resource-center .media-card strong{-webkit-line-clamp:2;line-clamp:2}.resource-center .media-card p{-webkit-line-clamp:2;line-clamp:2}.resource-center .media-card em{align-self:end;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.resource-category-bar{display:flex;align-items:center;gap:10px;margin:0 0 12px}.resource-category-bar button{min-height:30px;padding:0 10px;border:1px solid #dce4ef;border-radius:9px;background:#fff;color:#344054;font-size:12px;font-weight:700}.resource-category-bar strong{color:#111827;font-size:15px}.resource-category-card{text-align:left}.resource-category-card span{background:#eef4ff;color:#1f5fbf}.resource-category-card em{display:block;margin-top:10px;color:#7b8494;font-size:12px;font-style:normal}
   .knowledge-health{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:10px}.knowledge-health article{padding:12px;border:1px solid rgba(226,232,240,.9);border-radius:14px;background:rgba(255,255,255,.86)}.knowledge-health span{display:block;color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.knowledge-health strong{display:block;margin-top:5px;color:#111827;font-size:15px}.knowledge-local-note{margin:0 0 14px;color:#687386;font-size:12px;font-weight:650}.knowledge-card-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.knowledge-card-actions button:last-child{color:#b42318}.knowledge-preview em{display:block;margin-top:12px;color:#7b8494;font-size:11px;font-style:normal;word-break:break-all}.knowledge-stack{display:grid;gap:14px;min-width:0}.knowledge-stack section{padding:14px;border:1px solid rgba(226,232,240,.88);border-radius:18px;background:rgba(255,255,255,.76);box-shadow:0 12px 30px rgba(15,23,42,.04)}.knowledge-stack header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:12px}.knowledge-stack header span{color:#7b8494;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.knowledge-stack header strong{color:#0f172a;font-size:17px;letter-spacing:-.03em}.knowledge-layout--merged .aorist-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}@media(max-width:720px){.knowledge-health{grid-template-columns:repeat(2,minmax(0,1fr))}.knowledge-layout--merged .aorist-card-grid{grid-template-columns:1fr}.knowledge-stack header{display:grid;align-items:start}}
 
   .nav-icon :global(svg),.brand-mark :global(svg),:global(.agent-strip span svg),.agent-card header>span :global(svg),.wizard-avatar :global(svg),.wizard-preview b :global(svg){display:block;stroke-width:2}
@@ -23534,7 +23536,9 @@ function openGovernanceCenter() {
 @media(max-width:980px){.knowledge-stack .knowledge-content-panel{max-height:480px}}
 @media(max-width:640px){.knowledge-content-tabs{justify-content:flex-start;overflow:auto}.knowledge-content-tabs button{min-width:80px;padding-inline:10px}}
 .knowledge-template-card{display:grid;grid-template-rows:auto 44px 44px minmax(128px,1fr) 34px;gap:10px;height:336px;min-height:336px;padding:18px;box-sizing:border-box;overflow:hidden}
-.knowledge-template-card header{min-height:22px}
+.knowledge-template-card header{align-items:center;min-width:0;min-height:22px}
+.knowledge-template-card header>span{flex:0 0 auto;margin:0;white-space:nowrap}
+.knowledge-template-card header>em{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .knowledge-template-card>strong{min-height:44px;max-height:44px}
   .knowledge-template-card p{min-height:44px;max-height:44px;margin:0;line-height:1.55}
   .knowledge-template-card dl{align-self:stretch;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0}

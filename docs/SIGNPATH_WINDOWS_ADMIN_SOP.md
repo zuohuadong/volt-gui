@@ -20,8 +20,8 @@ Reasonix Windows Authenticode 两阶段签名链路。
 
 本次配置需要完成两阶段 Windows 签名：
 
-1. 使用 `windows-payload` 给安装后实际落盘的 6 个 EXE 签名。
-2. 使用 `windows-installer-v2` 验证这 6 个 EXE 已经签名，再给最终 NSIS
+1. 使用 `windows-payload` 给安装后实际落盘的 4 个 EXE 签名。
+2. 使用 `windows-installer-v2` 验证这 4 个 EXE 已经签名，再给最终 NSIS
    安装器签名。
 
 完整放行标准：
@@ -137,14 +137,12 @@ SignPath 权限说明：
 GitHub `upload-artifact` 提交给 SignPath 的产物是 ZIP，因此配置根节点必须是
 `<zip-file>`。
 
-该配置需要给以下 6 个 EXE 执行 `authenticode-sign`：
+该配置需要给以下 4 个 EXE 执行 `authenticode-sign`：
 
-- `reasonix-desktop.exe`
-- `reasonix-guard.exe`
-- `reasonix-launcher.exe`
-- `reasonix-update-helper.exe`
-- `reasonix-cli.exe`
-- `reasonix-uninstall.exe`
+- `voltui-desktop.exe`
+- `voltui-update-helper.exe`
+- `voltui-cli.exe`
+- `voltui-uninstall.exe`
 
 参考：
 
@@ -187,7 +185,7 @@ GitHub `upload-artifact` 提交给 SignPath 的产物是 ZIP，因此配置根�
 该配置需要：
 
 1. 对最终的 `*installer*.exe` 执行 `authenticode-sign`。
-2. 对上述 6 个内层 EXE 执行 `authenticode-verify`。
+2. 对上述 4 个内层 EXE 执行 `authenticode-verify`。
 
 如果任一内层 EXE 未签名，或签名后又被修改，第二阶段请求必须失败，不能继续
 生成可发布的安装器。
@@ -386,7 +384,7 @@ gh run watch "$RUN_ID" \
 
 1. 构建未签名 payload。
 2. 上传 payload。
-3. 使用 `windows-payload` 签署 6 个 EXE；`CI builds` 自动记录审批。
+3. 使用 `windows-payload` 签署 4 个 EXE；`CI builds` 自动记录审批。
 4. 使用已签 payload 重新生成 portable ZIP 和 NSIS 安装器。
 5. 上传 installer signing bundle。
 6. 使用 `windows-installer-v2` 验证内层可信签名并签署外层安装器。
@@ -494,7 +492,7 @@ Get-ChildItem "<Reasonix安装目录>" -Recurse -Filter *.exe |
 验收要求：
 
 - 安装器签名为 `Valid`。
-- 安装目录内全部 6 个 EXE 签名为 `Valid`。
+- 安装目录内全部 4 个 EXE 签名为 `Valid`。
 - Portable ZIP 内的可执行文件签名为 `Valid`。
 - AMD64 和 ARM64 的签名证书 Subject 符合预期。
 - Windows Defender 保持开启。

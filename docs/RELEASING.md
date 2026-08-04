@@ -207,8 +207,8 @@ strict separation from repository writers is required.
   the legacy `windows-installer` and internal test configurations available for
   older release refs and signing validation, but never use them for public
   Preview or Stable artifacts.
-  `windows-payload` signs the desktop, Guard, launcher, update helper, CLI, and
-  generated NSIS uninstaller. `windows-installer-v2` verifies those trusted
+  `windows-payload` signs the desktop, update helper, CLI, and generated NSIS
+  uninstaller. `windows-installer-v2` verifies those trusted
   payload signatures before signing the rebuilt outer installer. The release
   certificate requires SignPath approval for every request. Preview and Stable
   reach Windows signing only after their GitHub environment approval; a

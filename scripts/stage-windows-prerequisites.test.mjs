@@ -125,10 +125,10 @@ test('renders configurable product wording without changing pinned assets', () =
   assert.match(readme, /Anyong Desktop Windows 前置依赖离线包（windows\/amd64，v1\.0\.0）/);
 });
 
-test('full mocked desktop build does not stage or emit prerequisites assets', {
+test('full mocked desktop build stages prerequisites without emitting assets', {
   skip: process.platform === 'win32',
 }, () => {
-  const fixture = join(tmpdir(), `desktop-without-prerequisites-${process.pid}-${Date.now()}`);
+  const fixture = join(tmpdir(), `desktop-with-prerequisites-${process.pid}-${Date.now()}`);
   const bin = join(fixture, 'bin');
   const script = join(fixture, 'scripts', 'desktop-build.sh');
   try {
@@ -167,8 +167,8 @@ case "$1" in
     printf 'installer\n' > "$2/coreutils-system-installer.exe"
     ;;
   */stage-windows-prerequisites.mjs)
-    echo 'desktop build must not stage prerequisites' >&2
-    exit 97
+    mkdir -p "$2"
+    printf 'bootstrapper\n' > "$2/MicrosoftEdgeWebview2Setup.exe"
     ;;
   -e)
     if [[ "$2" == *'j.name'* ]]; then
@@ -218,7 +218,7 @@ mkdir -p "$(dirname "$3")"
   }
 });
 
-test('desktop packaging excludes prerequisites while keeping the online WebView2 bootstrapper', () => {
+test('desktop packaging stages prerequisites and keeps the online WebView2 bootstrapper', () => {
   const buildScript = readFileSync(new URL('./desktop-build.sh', import.meta.url), 'utf8');
   const installer = readFileSync(new URL('../desktop/build/windows/installer/project.nsi', import.meta.url), 'utf8');
   const desktopCI = readFileSync(new URL('../.github/workflows/desktop-ci.yml', import.meta.url), 'utf8');
@@ -227,9 +227,6 @@ test('desktop packaging excludes prerequisites while keeping the online WebView2
   const desktopReadme = readFileSync(new URL('../desktop/README.md', import.meta.url), 'utf8');
 
   assert.match(buildScript, /-nsis -webview2 embed/);
-  assert.doesNotMatch(buildScript, /stage-windows-prerequisites/);
-  assert.doesNotMatch(buildScript, /WINDOWS_PREREQUISITES_/);
-  assert.doesNotMatch(buildScript, /-prerequisites\.zip/);
   assert.match(installer, /ReadRegStr \$0 HKLM.+EdgeUpdate.+"pv"/);
   assert.match(installer, /separately versioned Windows prerequisites ZIP/);
   assert.doesNotMatch(installer, /VoltUI-windows-\$\{ARCH\}-prerequisites\.zip/);

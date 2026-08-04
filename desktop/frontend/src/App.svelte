@@ -201,6 +201,8 @@
   import { formatKnowledgeTimestamp } from "./lib/data-governance";
   import { checkpointRestoreMessage } from "./lib/checkpoint-feedback";
   import { stripInternalTranscriptBlocks } from "./lib/transcript-visibility";
+  import { mergeStreamingText, reconcileAssistantText } from "./lib/assistant-stream";
+  import type { AssistantTextEventKind } from "./lib/assistant-stream";
   import type {
     ActivityMode,
     AgentInput,
@@ -3285,7 +3287,7 @@
         pendingTextTabId = "";
         return;
       }
-      updateLastAssistant(pendingTextBuffer);
+      updateLastAssistant(pendingTextBuffer, "text");
       pendingTextBuffer = "";
       pendingTextTabId = "";
     });
@@ -6796,21 +6798,7 @@ function openGovernanceCenter() {
     return "在工作台中创建、导入或配置资源。";
   }
 
-  function mergeStreamingText(existing: string, incoming: string) {
-    if (!incoming) return existing;
-    if (!existing) return incoming;
-    if (incoming.startsWith(existing)) return incoming;
-    if (existing.endsWith(incoming)) return existing;
-    const maxOverlap = Math.min(existing.length, incoming.length);
-    for (let length = maxOverlap; length > 0; length -= 1) {
-      if (existing.endsWith(incoming.slice(0, length))) {
-        return existing + incoming.slice(length);
-      }
-    }
-    return existing + incoming;
-  }
-
-  function updateLastAssistant(text: string) {
+  function updateLastAssistant(text: string, kind: AssistantTextEventKind) {
     let current: TranscriptItem | undefined;
     for (let index = transcript.length - 1; index >= 0; index -= 1) {
       const item = transcript[index];
@@ -6820,7 +6808,7 @@ function openGovernanceCenter() {
       }
     }
     if (current) {
-      current.body = mergeStreamingText(current.body, text);
+      current.body = reconcileAssistantText(current.body, text, kind);
       saveActiveSidebarConversationTranscript();
       scrollConversationToBottom();
       return;
@@ -7358,11 +7346,16 @@ function openGovernanceCenter() {
     if (event.kind === "reasoning" && event.reasoning) {
       appendTranscript({ id: `reasoning-${Date.now()}`, role: "reasoning", title: t.transcript.reasoning, body: event.reasoning, pending: true });
     }
-    if ((event.kind === "text" || event.kind === "message") && event.text) {
+    if (event.kind === "text" && event.text) {
       if (pendingTextTabId && event.tabId && pendingTextTabId !== event.tabId) pendingTextBuffer = "";
       pendingTextTabId = event.tabId ?? "";
       pendingTextBuffer = mergeStreamingText(pendingTextBuffer, event.text);
       scheduleTextFlush();
+    }
+    if (event.kind === "message" && event.text) {
+      pendingTextBuffer = "";
+      pendingTextTabId = "";
+      updateLastAssistant(event.text, "message");
     }
     if (event.kind === "tool_dispatch" && event.tool) {
       const id = toolTranscriptId(event.tool.id);

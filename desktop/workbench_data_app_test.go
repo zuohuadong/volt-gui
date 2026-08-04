@@ -211,6 +211,13 @@ func TestDeleteKnowledgeDocumentRemovesIndexAndWorkbenchMetadata(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatalf("SearchKnowledge did not find indexed document")
 	}
+	workbenchResults, err := app.SearchWorkbench("SQLite 索引")
+	if err != nil {
+		t.Fatalf("SearchWorkbench: %v", err)
+	}
+	if len(workbenchResults) == 0 {
+		t.Fatalf("SearchWorkbench did not find indexed document")
+	}
 
 	if err := app.DeleteKnowledgeDocument(document.ID); err != nil {
 		t.Fatalf("DeleteKnowledgeDocument: %v", err)
@@ -230,6 +237,18 @@ func TestDeleteKnowledgeDocumentRemovesIndexAndWorkbenchMetadata(t *testing.T) {
 	}
 	if containsKnowledgeDocument(reloaded.KnowledgeDocuments, document.ID) {
 		t.Fatalf("deleted document still present in workbench metadata: %+v", reloaded.KnowledgeDocuments)
+	}
+	afterWorkbenchDelete, err := app.SearchWorkbench("SQLite 索引")
+	if err != nil {
+		t.Fatalf("SearchWorkbench after delete: %v", err)
+	}
+	for _, result := range afterWorkbenchDelete {
+		if result.Title == document.Title {
+			t.Fatalf("deleted document still present in workbench search: %+v", result)
+		}
+	}
+	if err := app.DeleteKnowledgeDocument(document.ID); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("second DeleteKnowledgeDocument error = %v, want not found", err)
 	}
 }
 

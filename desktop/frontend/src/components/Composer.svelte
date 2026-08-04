@@ -758,3 +758,88 @@
     </div>
   </div>
 </form>
+
+<style>
+  .composer__tools {
+    position: relative;
+    overflow: visible;
+  }
+
+  .composer-plus-menu {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    z-index: 80;
+    isolation: isolate;
+    display: grid;
+    gap: 1px;
+    width: min(276px, calc(100vw - 40px));
+    max-height: min(300px, calc(100vh - 160px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 8px;
+    border: 1px solid var(--aorist-border-divider, #e2e8f0);
+    border-radius: 16px;
+    background: #ffffff;
+    box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18);
+  }
+
+  .composer-plus-menu button {
+    position: relative;
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    align-items: center;
+    justify-content: start;
+    gap: 9px;
+    width: 100%;
+    max-width: none;
+    min-height: 28px;
+    padding: 4px 8px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--aorist-ink, #111827);
+    font-size: 12px;
+    font-weight: 500;
+    text-align: left;
+  }
+
+  .composer-plus-menu button:hover,
+  .composer-plus-menu button:focus-visible {
+    background: var(--aorist-card-bg-soft, #f5f6f8);
+    outline: none;
+  }
+
+  .composer-plus-menu button.active {
+    background: #f1f2f4;
+  }
+
+  .composer-plus-menu button span,
+  .composer-plus-menu button strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .composer-plus-menu button strong {
+    display: block;
+    color: var(--aorist-ink, #111827);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .composer-plus-menu__title {
+    padding: 3px 6px 4px;
+    color: var(--aorist-muted, #667085);
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .composer-plus-menu :global(svg) { color: #59616d; }
+  .composer-plus-menu :global(.plugin-docs) { color: #4f7df3; }
+  .composer-plus-menu :global(.plugin-pdf) { color: #ff6b6b; }
+  .composer-plus-menu :global(.plugin-sheet) { color: #4f9b58; }
+  .composer-plus-menu :global(.plugin-slides) { color: #d7a32e; }
+  .composer-plus-menu :global(.plugin-template) { color: #f08aa0; }
+</style>

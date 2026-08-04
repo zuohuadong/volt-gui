@@ -62,6 +62,16 @@ func TestStoreImportSearchStatusAndDelete(t *testing.T) {
 	if len(afterDelete) != 0 {
 		t.Fatalf("Search() after delete returned %d results", len(afterDelete))
 	}
+	afterStatus, err := store.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status() after delete error = %v", err)
+	}
+	if afterStatus.Documents != 0 || afterStatus.Chunks != 0 || afterStatus.Vectors != 0 {
+		t.Fatalf("Status() after delete = documents:%d chunks:%d vectors:%d", afterStatus.Documents, afterStatus.Chunks, afterStatus.Vectors)
+	}
+	if err := store.DeleteDocument(context.Background(), "doc-1"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("second DeleteDocument() error = %v, want not found", err)
+	}
 }
 
 func TestOpenReadOnlySearchesWithoutAllowingKnowledgeWrites(t *testing.T) {

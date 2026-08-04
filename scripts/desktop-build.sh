@@ -221,14 +221,20 @@ darwin)
 		dmgsrc=$(mktemp -d)
 		cp -R "$app" "$dmgsrc/${APPNAME}.app"
 		dmg="$ROOT/dist/${APPNAME}-darwin-universal.dmg"
-		create-dmg \
-			--volname "$APPNAME" \
-			--window-size 540 380 \
-			--icon-size 110 \
-			--icon "${APPNAME}.app" 150 190 \
-			--app-drop-link 390 190 \
-			--no-internet-enable \
-			"$dmg" "$dmgsrc" || true
+		dmg_args=(
+			--volname "$APPNAME"
+			--window-size 540 380
+			--icon-size 110
+			--icon "${APPNAME}.app" 150 190
+			--app-drop-link 390 190
+			--no-internet-enable
+		)
+		# Headless Finder layout must be opt-in via the dedicated env var, never
+		# inferred from CI=true — formal release CI still needs the Finder layout.
+		if [ "${VOLTUI_DMG_SKIP_FINDER:-0}" = "1" ]; then
+			dmg_args+=(--skip-jenkins)
+		fi
+		create-dmg "${dmg_args[@]}" "$dmg" "$dmgsrc" || true
 		[ -f "$dmg" ] || { echo "create-dmg did not produce $dmg" >&2; exit 1; }
 		# The .dmg is a separately-downloaded artifact, so sign + notarize + staple the
 		# disk image itself too — the stapled .app inside isn't enough for the image.

@@ -120,10 +120,30 @@ esac
     writeExecutable(
       join(bin, "wails"),
       `#!/usr/bin/env bash
-mkdir -p build/bin/西谷智灯暗涌系统.app/Contents/MacOS
-: > build/bin/西谷智灯暗涌系统.app/Contents/MacOS/voltui-desktop
+app="build/bin/voltui-desktop.app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+: > "$app/Contents/MacOS/voltui-desktop"
+printf '<?xml version="1.0"?>\\n<plist version="1.0"><dict><key>CFBundleExecutable</key><string>voltui-desktop</string><key>CFBundleIconFile</key><string>icon.icns</string></dict></plist>\\n' > "$app/Contents/Info.plist"
+printf 'icon\\n' > "$app/Contents/Resources/icon.icns"
 `
     );
+    writeExecutable(
+      join(bin, "go"),
+      `#!/usr/bin/env bash
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    mkdir -p "$(dirname "$2")"
+    : > "$2"
+    exit 0
+  fi
+  shift
+done
+if [ "$1" = "env" ]; then exit 0; fi
+`
+    );
+    writeExecutable(join(bin, "lipo"), "#!/usr/bin/env bash\nexit 0\n");
+    writeExecutable(join(bin, "xcrun"), "#!/usr/bin/env bash\nexit 0\n");
+    writeExecutable(join(bin, "security"), "#!/usr/bin/env bash\nprintf 'false\\n'\n");
     writeExecutable(join(bin, "codesign"), "#!/usr/bin/env bash\nexit 0\n");
     writeExecutable(
       join(bin, "ditto"),

@@ -32,6 +32,11 @@ WINDOWS_CLINAME="voltui-cli" # Windows cannot store VoltUI.exe and the CLI separ
 GUARDNAME="voltui-guard"
 LAUNCHERNAME="voltui-launcher"
 windows_resource_tool_dir=""
+COMPUTER_USE_MCP_VERSION="${COMPUTER_USE_MCP_VERSION:-6.2.0}"
+BUN_RUNTIME_VERSION="${BUN_RUNTIME_VERSION:-1.3.14}"
+COMPUTER_USE_MCP_TMP="$(mktemp -d)"
+COMPUTER_USE_MCP_RESOURCE="$COMPUTER_USE_MCP_TMP/computer-use-mcp"
+COMPUTER_USE_RUNTIME_RESOURCE="$COMPUTER_USE_MCP_TMP/computer-use-runtime"
 
 # desktop/ is a nested Go module, so the Go toolchain cannot discover the
 # repository VCS revision for the Wails binary. Link the same source identity
@@ -53,8 +58,21 @@ cleanup() {
 	if [ -n "$windows_resource_tool_dir" ]; then
 		rm -rf "$windows_resource_tool_dir"
 	fi
+	rm -rf "$COMPUTER_USE_MCP_TMP"
 }
 trap cleanup EXIT
+
+# Stage the bundled computer-use MCP plugin and its Bun runtime before Wails
+# copies build/ into the app bundle / NSIS payload. These were dropped during
+# the strip-legacy-subsystems refactor and restored here so NSIS, nfpm and the
+# macOS .app all ship the runtime they reference.
+echo "==> stage @zavora-ai/computer-use-mcp@$COMPUTER_USE_MCP_VERSION"
+node "$ROOT/scripts/stage-computer-use-mcp.mjs" "$COMPUTER_USE_MCP_RESOURCE" "$COMPUTER_USE_MCP_VERSION" "$PLATFORM"
+echo "==> stage Bun runtime $BUN_RUNTIME_VERSION"
+node "$ROOT/scripts/stage-bun-runtime.mjs" "$COMPUTER_USE_RUNTIME_RESOURCE" "$BUN_RUNTIME_VERSION" "$PLATFORM"
+mkdir -p "$ROOT/desktop/build"
+cp -R "$COMPUTER_USE_MCP_RESOURCE" "$ROOT/desktop/build/computer-use-mcp"
+cp -R "$COMPUTER_USE_RUNTIME_RESOURCE" "$ROOT/desktop/build/computer-use-runtime"
 
 cd "$ROOT/desktop"
 

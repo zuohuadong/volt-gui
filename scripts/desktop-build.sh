@@ -66,6 +66,13 @@ trap cleanup EXIT
 # copies build/ into the app bundle / NSIS payload. These were dropped during
 # the strip-legacy-subsystems refactor and restored here so NSIS, nfpm and the
 # macOS .app all ship the runtime they reference.
+#
+# Path expectations differ per packager:
+#   - nfpm (linux) reads ./build/computer-use-* relative to desktop/ (nfpm.yaml)
+#   - NSIS (windows) reads computer-use-* relative to the makensis cwd (desktop/)
+#   - macOS .app bundle copies from desktop/build/bin/
+# Stage into desktop/build/computer-use-* (covers nfpm + the .app path after
+# wails build), and additionally symlink/copy for NSIS when on windows.
 echo "==> stage @zavora-ai/computer-use-mcp@$COMPUTER_USE_MCP_VERSION"
 node "$ROOT/scripts/stage-computer-use-mcp.mjs" "$COMPUTER_USE_MCP_RESOURCE" "$COMPUTER_USE_MCP_VERSION" "$PLATFORM"
 echo "==> stage Bun runtime $BUN_RUNTIME_VERSION"
@@ -73,6 +80,10 @@ node "$ROOT/scripts/stage-bun-runtime.mjs" "$COMPUTER_USE_RUNTIME_RESOURCE" "$BU
 mkdir -p "$ROOT/desktop/build"
 cp -R "$COMPUTER_USE_MCP_RESOURCE" "$ROOT/desktop/build/computer-use-mcp"
 cp -R "$COMPUTER_USE_RUNTIME_RESOURCE" "$ROOT/desktop/build/computer-use-runtime"
+if [ "$os" = windows ]; then
+	cp -R "$COMPUTER_USE_MCP_RESOURCE" "$ROOT/desktop/computer-use-mcp"
+	cp -R "$COMPUTER_USE_RUNTIME_RESOURCE" "$ROOT/desktop/computer-use-runtime"
+fi
 
 cd "$ROOT/desktop"
 
@@ -142,10 +153,11 @@ if [ "$os" = windows ]; then
 	# Coreutils + Windows prerequisites (WebView2 bootstrapper) are required
 	# NSIS payloads. stage-coreutils.mjs writes voltui-coreutils-path.txt and
 	# coreutils-system-installer.exe; project.nsi hard-errors without them.
+	# NSIS !if /FileExists resolves relative to the makensis cwd (desktop/).
 	echo "==> stage Microsoft Coreutils for $PLATFORM"
-	node "$ROOT/scripts/stage-coreutils.mjs" "$ROOT/desktop/build/bin/coreutils" "$PLATFORM"
+	node "$ROOT/scripts/stage-coreutils.mjs" "$ROOT/desktop/coreutils" "$PLATFORM"
 	echo "==> stage Windows prerequisites for $PLATFORM"
-	node "$ROOT/scripts/stage-windows-prerequisites.mjs" "$ROOT/desktop/build/bin/windows-prerequisites" "$PLATFORM"
+	node "$ROOT/scripts/stage-windows-prerequisites.mjs" "$ROOT/desktop/windows-prerequisites" "$PLATFORM"
 	windows_resource_tool_dir=$(mktemp -d)
 	windows_resource_tool="$windows_resource_tool_dir/voltui-windows-resource.exe"
 	if [ -d "$ROOT/cmd/windows-resource" ]; then

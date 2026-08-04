@@ -337,6 +337,7 @@ interface WailsRuntime {
   EventsOn(name: string, cb: (...data: unknown[]) => void): () => void;
   OnFileDrop?(cb: (x: number, y: number, paths: string[]) => void, useDropTarget: boolean): void;
   OnFileDropOff?(): void;
+  BrowserOpenURL?(url: string): void;
 }
 
 declare global {
@@ -395,4 +396,15 @@ export function onFilesDropped(cb: (paths: string[]) => void): () => void {
     if (Array.isArray(paths) && paths.length > 0) cb(paths);
   }, true);
   return () => runtime.OnFileDropOff?.();
+}
+
+// openExternal opens a URL in the system browser (so links in the UI don't
+// navigate the webview away from the app). Falls back to window.open when the
+// Wails runtime is unavailable.
+export function openExternal(url: string): void {
+  if (typeof window !== "undefined" && window.runtime?.BrowserOpenURL) {
+    window.runtime.BrowserOpenURL(url);
+  } else if (typeof window !== "undefined") {
+    window.open(url, "_blank", "noopener");
+  }
 }

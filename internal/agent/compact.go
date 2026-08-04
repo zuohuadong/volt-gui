@@ -28,6 +28,9 @@ const (
 	defaultCompactForceRatio   = 0.9   // force compaction at this high-water mark even for low-value folds
 	defaultCompactTarget       = 0.5   // safety cap: the kept tail never exceeds this fraction of the window
 	defaultTailTokens          = 16384 // verbatim recent-tail budget, in tokens
+	defaultImageTokenEstimate  = 1024  // conservative fixed reserve when image dimensions are unavailable
+	minPreflightOutputReserve  = 128   // leave room for a useful answer even on small configured windows
+	maxPreflightOutputReserve  = 4096  // large windows already retain ample headroom through the force ratio
 	minRecentKeep              = 2     // never keep fewer recent messages than this
 	minCompactMessages         = 2     // skip compaction below this many compactable messages
 	fallbackTokPerChar         = 0.25  // ~4 chars/token, used before any usage is available to calibrate
@@ -169,8 +172,123 @@ func estimateMessagesTokens(msgs []provider.Message) int {
 			total += estimateTextTokens(tc.Name)
 			total += estimateTextTokens(tc.Arguments)
 		}
+		total += len(m.Images) * defaultImageTokenEstimate
 	}
 	return total
+}
+
+// preflightContext rejects a turn whose fixed prompt content — the system
+// prompt, the tool schemas, and the active user message with its images —
+// cannot fit in the configured window even with every foldable message
+// removed. Compaction can never shrink those, so starting the stream would
+// only fail deep inside the provider. History overflow is deliberately left
+// to usage-driven compaction (maybeCompact), which keeps the cache-stable
+// prefix instead of folding on a local estimate.
+func (a *Agent) preflightContext() error {
+	if a.contextWindow <= 0 {
+		return nil
+	}
+	schemas := []provider.ToolSchema(nil)
+	if a.tools != nil {
+		schemas = a.tools.Schemas()
+	}
+	fixed := estimatePreflightMessagesTokens(a.fixedPromptMessages())
+	if len(schemas) > 0 {
+		if encoded, err := json.Marshal(schemas); err == nil {
+			fixed += estimatePreflightTextTokens(string(encoded))
+		}
+	}
+	if fixed < a.preflightPromptBudget() {
+		return nil
+	}
+	return fmt.Errorf("the conversation exceeds the model context limit; compact the conversation or start a new session and retry")
+}
+
+// fixedPromptMessages returns the messages compaction cannot remove: the
+// system prompt and the user message that opened the active turn.
+func (a *Agent) fixedPromptMessages() []provider.Message {
+	msgs := a.session.Messages
+	var fixed []provider.Message
+	for _, m := range msgs {
+		if m.Role == provider.RoleSystem {
+			fixed = append(fixed, m)
+		}
+	}
+	if active := int(a.activeTurnStartIndex.Load()); active >= 0 && active < len(msgs) {
+		fixed = append(fixed, msgs[active])
+	}
+	return fixed
+}
+
+// estimatePreflightMessagesTokens mirrors estimateMessagesTokens but prices
+// text with estimatePreflightTextTokens, whose per-class split matches real
+// tokenizers more closely. It stays separate from estimateTextTokens so the
+// conservative calibration behind fold economics is untouched.
+func estimatePreflightMessagesTokens(msgs []provider.Message) int {
+	total := 0
+	for _, m := range msgs {
+		total += 4 // chat-message framing overhead
+		total += estimatePreflightTextTokens(m.Content)
+		total += estimatePreflightTextTokens(m.ReasoningContent)
+		total += estimatePreflightTextTokens(m.Name)
+		total += estimatePreflightTextTokens(m.ToolCallID)
+		for _, tc := range m.ToolCalls {
+			total += 8
+			total += estimatePreflightTextTokens(tc.ID)
+			total += estimatePreflightTextTokens(tc.Name)
+			total += estimatePreflightTextTokens(tc.Arguments)
+		}
+		total += len(m.Images) * defaultImageTokenEstimate
+	}
+	return total
+}
+
+// estimatePreflightTextTokens approximates tokens as ~4 bytes per token for
+// ASCII and ~1 rune per token for everything else, counting the two classes
+// independently so mixed CJK/ASCII text is not mispriced.
+func estimatePreflightTextTokens(s string) int {
+	if s == "" {
+		return 0
+	}
+	asciiBytes := 0
+	nonASCII := 0
+	for _, r := range s {
+		if r < utf8.RuneSelf {
+			asciiBytes++
+		} else {
+			nonASCII++
+		}
+	}
+	return (asciiBytes+3)/4 + nonASCII
+}
+
+func (a *Agent) preflightPromptBudget() int {
+	budget := a.contextWindow - preflightOutputReserve(a.contextWindow)
+	forceBudget := int(float64(a.contextWindow) * a.compactForceRatio)
+	if forceBudget > 0 && forceBudget < budget {
+		budget = forceBudget
+	}
+	if budget < 1 {
+		return 1
+	}
+	return budget
+}
+
+func preflightOutputReserve(contextWindow int) int {
+	reserve := contextWindow / 20
+	if reserve < minPreflightOutputReserve {
+		reserve = minPreflightOutputReserve
+	}
+	if reserve > maxPreflightOutputReserve {
+		reserve = maxPreflightOutputReserve
+	}
+	if reserve >= contextWindow {
+		reserve = contextWindow / 10
+		if reserve < 1 {
+			reserve = 1
+		}
+	}
+	return reserve
 }
 
 func estimateTextTokens(s string) int {
@@ -209,6 +327,15 @@ func (a *Agent) compact(ctx context.Context, trigger, instructions string, force
 	}
 	if !ok {
 		return nil // recent tail already covers everything worth keeping
+	}
+	// Keep the entire active turn outside the fold: a compaction rewrites message
+	// indexes, so in-progress tool call/result pairs would otherwise survive only
+	// as prose in a summary for later cancellation or crash recovery.
+	if active := int(a.activeTurnStartIndex.Load()); active >= head && active < start {
+		start = active
+		if start <= head {
+			return nil
+		}
 	}
 	region := msgs[head:start]
 
@@ -276,6 +403,11 @@ func (a *Agent) compact(ctx context.Context, trigger, instructions string, force
 	compacted = append(compacted, msgs[start:]...)
 	a.session.Replace(compacted)
 	a.session.IncrementRewrite()
+	// The fold replaced region [head:start) with kept + one summary message, so
+	// indexes at or beyond start shift left; keep the active-turn anchor aligned.
+	if active := int(a.activeTurnStartIndex.Load()); active >= start {
+		a.activeTurnStartIndex.Store(int64(head + len(kept) + 1 + (active - start)))
+	}
 
 	a.sink.Emit(event.Event{Kind: event.CompactionDone, Compaction: event.Compaction{
 		Trigger: trigger, Messages: len(fold), Summary: summary, Archive: archived,

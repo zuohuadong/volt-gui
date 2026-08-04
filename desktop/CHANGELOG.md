@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.15.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.14.0...desktop-v0.15.0) (2026-08-04)
+
+
+### Features
+
+* **desktop:** surface Windows startup failures with native dialog and WebView2 fallback ([57e1935](https://github.com/zuohuadong/volt-gui/commit/57e19352558e8daa50e715f631f4598727ebea05))
+
+
+### Bug Fixes
+
+* **agent,desktop:** preflight fixed context cost and sanitize user-facing output ([c062963](https://github.com/zuohuadong/volt-gui/commit/c062963f4de85471c843abc279414b20f1d4c679))
+* **desktop:** harden model and knowledge workflows ([b25f30b](https://github.com/zuohuadong/volt-gui/commit/b25f30b9e7eb81aaee1ae8b4c590be058275abc8))
+* **desktop:** harden model and knowledge workflows ([fddc383](https://github.com/zuohuadong/volt-gui/commit/fddc3837e9564bc043c2877fe3f6e5cdddee14af))
+* **desktop:** resolve reported workbench issues ([46a1992](https://github.com/zuohuadong/volt-gui/commit/46a19926137ade6ab87d19b154ced5133c34e937))
+* **desktop:** restore VOLTUI_DMG_SKIP_FINDER gate and harden prod-test mocks ([c984868](https://github.com/zuohuadong/volt-gui/commit/c984868f94a718f6d3c75ef8a7be7c66ed2a5a7a))
+* **desktop:** tolerate non-git ROOT and complete windows packaging mock ([7c456d5](https://github.com/zuohuadong/volt-gui/commit/7c456d575e0ab48044058368fc59d7bc04473801))
+* **desktop:** track frontend/dist/.gitkeep so go:embed finds the directory on CI ([630d5b7](https://github.com/zuohuadong/volt-gui/commit/630d5b7a71450fe5510fbfc8fcb21011ad0803df))
+* **desktop:** track live chat model availability ([3ffb918](https://github.com/zuohuadong/volt-gui/commit/3ffb9187d973185cb3609e23dff3927d881cdd34))
+* harden runtime secrets and tool previews ([ace5aa4](https://github.com/zuohuadong/volt-gui/commit/ace5aa4b2399b0b46d151be079c6deef4243ef28))
+
+
+### CI
+
+* **desktop:** make desktop packaging non-blocking until cmd layout is realigned ([6e681f9](https://github.com/zuohuadong/volt-gui/commit/6e681f902582ad58d40006fcc39bff13dadc3627))
+
+
+### Chores
+
+* **deps:** bump the actions group across 1 directory with 5 updates ([86797d0](https://github.com/zuohuadong/volt-gui/commit/86797d050e2943f03c1db3071ecf1f54ad85354e))
+* **deps:** bump the go group with 4 updates ([48ae22e](https://github.com/zuohuadong/volt-gui/commit/48ae22ec8cd38243cc7bc878e0057eacb55d1fc3))
+* **deps:** bump the npm group across 1 directory with 8 updates ([9921047](https://github.com/zuohuadong/volt-gui/commit/9921047bffcb6a7394d84c9db45b4a88d21d42f7))
+
 ## [0.14.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.13.0...desktop-v0.14.0) (2026-07-29)
 
 

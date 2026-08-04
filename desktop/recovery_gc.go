@@ -74,7 +74,6 @@ func (a *App) reclaimRecoveryBranchesIn(dirs []string, now time.Time) int {
 	}
 	if reclaimed > 0 {
 		slog.Info("desktop: moved redundant recovery branches to the session trash", "count", reclaimed)
-		a.emitProjectTreeChanged()
 	}
 	return reclaimed
 }

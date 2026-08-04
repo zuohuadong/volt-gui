@@ -871,36 +871,41 @@ temperature = 0.4
 	}
 }
 
-func TestApplyUserConfigUpgradesOnStartupRetiresBundledvoltGLM(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("REASONIX_HOME", filepath.Join(dir, "home"))
-	bundled := filepath.Join(dir, "bundled.env")
-	const baseURL = "http://gateway.internal.test:9010/v1"
+func useBundledvoltGateway(t *testing.T, baseURL string) {
+	t.Helper()
+	testRoot := t.TempDir()
+	t.Setenv("REASONIX_HOME", filepath.Join(testRoot, "home"))
+	bundled := filepath.Join(testRoot, "bundled.env")
 	if err := os.WriteFile(bundled, []byte("volt_MODEL_BASE_URL="+baseURL+"\nvolt_API_KEY=test-key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	previousPath := bundledEnvPath
 	bundledEnvPath = func() string { return bundled }
 	t.Cleanup(func() { bundledEnvPath = previousPath })
+}
+
+func TestApplyUserConfigUpgradesOnStartupRetiresBundledvoltStep(t *testing.T) {
+	const baseURL = "http://gateway.internal.test:9010/v1"
+	useBundledvoltGateway(t, baseURL)
 
 	path := UserConfigPath()
 	cfg := Default()
 	cfg.ConfigVersion = 5
-	cfg.DefaultModel = "glm-5.2"
-	cfg.Agent.PlannerModel = "glm-5.2/glm-primary/glm-5.2-nvfp4"
-	cfg.Agent.GuardianModel = "glm-5.2/glm-5.2"
-	cfg.Agent.RecoveryModel = "glm-5.2/glm-5.2"
-	cfg.Agent.SubagentModel = "glm-5.2"
-	cfg.Agent.SubagentModels = map[string]string{"review": "glm-5.2/glm-primary/glm-5.2-nvfp4", "custom": "custom/model"}
-	cfg.Bot.Model = "glm-5.2"
-	cfg.Bot.QQ.Model = "glm-5.2/glm-5.2"
-	cfg.Bot.Routes = []BotRouteConfig{{ConnectionID: "route", Model: "glm-5.2/glm-primary/glm-5.2-nvfp4"}}
-	cfg.Bot.Connections = []BotConnectionConfig{{ID: "connection", Model: "glm-5.2"}}
-	cfg.Desktop.ProviderAccess = []string{"glm-5.2", "qwen-thinking", "custom"}
-	cfg.Providers = append(cfg.Providers, ProviderEntry{
-		Name: retiredvoltGLMProvider, Kind: "openai", BaseURL: baseURL,
-		Model: retiredvoltGLMModel, APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, NoProxy: true,
-	})
+	cfg.DefaultModel = "qwen-thinking"
+	cfg.Agent.PlannerModel = "qwen-thinking/qwen-gpu4/step3p7-flash"
+	cfg.Agent.GuardianModel = "qwen-thinking/qwen-gpu4/step3p7-flash"
+	cfg.Agent.RecoveryModel = "qwen-thinking/qwen-gpu4/step3p7-flash"
+	cfg.Agent.SubagentModel = "qwen-thinking"
+	cfg.Agent.SubagentModels = map[string]string{"review": "qwen-thinking/qwen-gpu4/step3p7-flash", "custom": "custom/model"}
+	cfg.Bot.Model = "qwen-thinking"
+	cfg.Bot.QQ.Model = "qwen-thinking/qwen-gpu4/step3p7-flash"
+	cfg.Bot.Routes = []BotRouteConfig{{ConnectionID: "route", Model: "qwen-thinking/qwen-gpu4/step3p7-flash"}}
+	cfg.Bot.Connections = []BotConnectionConfig{{ID: "connection", Model: "qwen-thinking"}}
+	cfg.Desktop.ProviderAccess = []string{"qwen-thinking", "custom"}
+	cfg.Providers = []ProviderEntry{{
+		Name: retiredvoltStepProvider, Kind: "openai", BaseURL: baseURL,
+		Model: retiredvoltStepModel, APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, NoProxy: true,
+	}}
 	if err := cfg.SaveTo(path); err != nil {
 		t.Fatalf("SaveTo: %v", err)
 	}
@@ -909,17 +914,17 @@ func TestApplyUserConfigUpgradesOnStartupRetiresBundledvoltGLM(t *testing.T) {
 		t.Fatalf("ApplyUserConfigUpgradesOnStartup: %v", err)
 	}
 	if !changed {
-		t.Fatal("v5 OEM config should migrate to Step")
+		t.Fatal("v5 OEM config should migrate away from the unhealthy Step route")
 	}
 	got := LoadForEditWithoutCredentials(path)
 	if got.ConfigVersion != 5 {
 		t.Fatalf("config_version = %d, want 5", got.ConfigVersion)
 	}
-	if _, ok := got.Provider(retiredvoltGLMProvider); ok {
-		t.Fatalf("retired bundled GLM provider remains after migration: %+v", got.Providers)
+	if _, ok := got.Provider(retiredvoltStepProvider); ok {
+		t.Fatalf("retired bundled Step provider remains after migration: %+v", got.Providers)
 	}
-	if step, ok := got.Provider("qwen-thinking"); !ok || step.Model != "qwen-gpu4/step3p7-flash" {
-		t.Fatalf("Step replacement = %+v, ok=%v", step, ok)
+	if glm, ok := got.Provider("glm-5.2"); !ok || glm.Model != "glm-primary/glm-5.2-nvfp4" {
+		t.Fatalf("GLM replacement = %+v, ok=%v", glm, ok)
 	}
 	for field, ref := range map[string]string{
 		"default": got.DefaultModel, "planner": got.Agent.PlannerModel, "recovery": got.Agent.RecoveryModel,
@@ -927,14 +932,14 @@ func TestApplyUserConfigUpgradesOnStartupRetiresBundledvoltGLM(t *testing.T) {
 		"bot": got.Bot.Model, "qq": got.Bot.QQ.Model, "route": got.Bot.Routes[0].Model,
 		"connection": got.Bot.Connections[0].Model,
 	} {
-		if ref != "qwen-thinking" {
-			t.Errorf("%s model = %q, want qwen-thinking", field, ref)
+		if ref != "glm-5.2" {
+			t.Errorf("%s model = %q, want glm-5.2", field, ref)
 		}
 	}
 	if got.Agent.SubagentModels["custom"] != "custom/model" {
 		t.Fatalf("custom subagent ref changed: %q", got.Agent.SubagentModels["custom"])
 	}
-	if want := []string{"qwen-thinking", "custom"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
+	if want := []string{"glm-5.2", "custom"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
 		t.Fatalf("provider_access = %+v, want %+v", got.Desktop.ProviderAccess, want)
 	}
 
@@ -944,24 +949,55 @@ func TestApplyUserConfigUpgradesOnStartupRetiresBundledvoltGLM(t *testing.T) {
 	}
 }
 
-func TestApplyUserConfigUpgradesOnStartupPreservesCustomGLMProvider(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("REASONIX_HOME", filepath.Join(dir, "home"))
-	bundled := filepath.Join(dir, "bundled.env")
-	if err := os.WriteFile(bundled, []byte("volt_MODEL_BASE_URL=http://gateway.internal.test:9010/v1\nvolt_API_KEY=test-key\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	previousPath := bundledEnvPath
-	bundledEnvPath = func() string { return bundled }
-	t.Cleanup(func() { bundledEnvPath = previousPath })
+func TestApplyUserConfigUpgradesOnStartupReusesBundledGLM(t *testing.T) {
+	const baseURL = "http://gateway.internal.test:9010/v1"
+	useBundledvoltGateway(t, baseURL)
 
 	path := UserConfigPath()
 	cfg := Default()
 	cfg.ConfigVersion = 5
-	cfg.DefaultModel = retiredvoltGLMProvider
+	cfg.DefaultModel = retiredvoltStepProvider
+	cfg.Desktop.ProviderAccess = []string{retiredvoltStepProvider, "glm-5.2", "custom"}
 	cfg.Providers = append(cfg.Providers, ProviderEntry{
-		Name: retiredvoltGLMProvider, Kind: "openai", BaseURL: "https://custom.example/v1",
-		Model: retiredvoltGLMModel, APIKeyEnv: "CUSTOM_GLM_KEY", ContextWindow: 200_000,
+		Name: retiredvoltStepProvider, Kind: "openai", BaseURL: baseURL,
+		Model: retiredvoltStepModel, APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, NoProxy: true,
+	})
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	changed, err := ApplyUserConfigUpgradesOnStartup(path)
+	if err != nil || !changed {
+		t.Fatalf("existing replacement migration = changed:%v err:%v, want changed", changed, err)
+	}
+	got := LoadForEditWithoutCredentials(path)
+	if _, ok := got.Provider(retiredvoltStepProvider); ok {
+		t.Fatalf("retired bundled Step provider remains after migration: %+v", got.Providers)
+	}
+	replacementCount := 0
+	for _, entry := range got.Providers {
+		if entry.Name == "glm-5.2" {
+			replacementCount++
+		}
+	}
+	if replacementCount != 1 {
+		t.Fatalf("bundled GLM provider count = %d, want 1", replacementCount)
+	}
+	if want := []string{"glm-5.2", "custom"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
+		t.Fatalf("provider_access = %+v, want %+v", got.Desktop.ProviderAccess, want)
+	}
+}
+
+func TestApplyUserConfigUpgradesOnStartupPreservesCustomStepProvider(t *testing.T) {
+	useBundledvoltGateway(t, "http://gateway.internal.test:9010/v1")
+
+	path := UserConfigPath()
+	cfg := Default()
+	cfg.ConfigVersion = 5
+	cfg.DefaultModel = retiredvoltStepProvider
+	cfg.Providers = append(cfg.Providers, ProviderEntry{
+		Name: retiredvoltStepProvider, Kind: "openai", BaseURL: "https://custom.example/v1",
+		Model: retiredvoltStepModel, APIKeyEnv: "CUSTOM_STEP_KEY", ContextWindow: 200_000,
 	})
 	if err := cfg.SaveTo(path); err != nil {
 		t.Fatalf("SaveTo: %v", err)
@@ -972,12 +1008,42 @@ func TestApplyUserConfigUpgradesOnStartupPreservesCustomGLMProvider(t *testing.T
 		t.Fatalf("custom provider migration = changed:%v err:%v, want no-op", changed, err)
 	}
 	got := LoadForEditWithoutCredentials(path)
-	custom, ok := got.Provider(retiredvoltGLMProvider)
-	if !ok || custom.BaseURL != "https://custom.example/v1" || custom.APIKeyEnv != "CUSTOM_GLM_KEY" {
+	custom, ok := got.Provider(retiredvoltStepProvider)
+	if !ok || custom.BaseURL != "https://custom.example/v1" || custom.APIKeyEnv != "CUSTOM_STEP_KEY" {
+		t.Fatalf("custom Step provider changed: %+v, ok=%v", custom, ok)
+	}
+	if got.DefaultModel != retiredvoltStepProvider {
+		t.Fatalf("custom default model = %q, want preserved", got.DefaultModel)
+	}
+}
+
+func TestApplyUserConfigUpgradesOnStartupPreservesCustomGLMReplacement(t *testing.T) {
+	const baseURL = "http://gateway.internal.test:9010/v1"
+	useBundledvoltGateway(t, baseURL)
+
+	path := UserConfigPath()
+	cfg := Default()
+	cfg.ConfigVersion = 5
+	cfg.DefaultModel = retiredvoltStepProvider
+	cfg.Providers = []ProviderEntry{
+		{Name: "glm-5.2", Kind: "openai", BaseURL: "https://custom.example/v1", Model: "custom-glm", APIKeyEnv: "CUSTOM_GLM_KEY"},
+		{Name: retiredvoltStepProvider, Kind: "openai", BaseURL: baseURL, Model: retiredvoltStepModel, APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, NoProxy: true},
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	changed, err := ApplyUserConfigUpgradesOnStartup(path)
+	if err != nil || changed {
+		t.Fatalf("custom GLM replacement migration = changed:%v err:%v, want no-op", changed, err)
+	}
+	got := LoadForEditWithoutCredentials(path)
+	custom, ok := got.Provider("glm-5.2")
+	if !ok || custom.BaseURL != "https://custom.example/v1" || custom.Model != "custom-glm" || custom.APIKeyEnv != "CUSTOM_GLM_KEY" {
 		t.Fatalf("custom GLM provider changed: %+v, ok=%v", custom, ok)
 	}
-	if got.DefaultModel != retiredvoltGLMProvider {
-		t.Fatalf("custom default model = %q, want preserved", got.DefaultModel)
+	if _, ok := got.Provider(retiredvoltStepProvider); !ok {
+		t.Fatalf("custom GLM collision removed the bundled Step route: %+v", got.Providers)
 	}
 }
 

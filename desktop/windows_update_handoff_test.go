@@ -105,19 +105,69 @@ func TestDesktopBuildScriptCompilesAndPackagesWindowsUpdateHelper(t *testing.T) 
 	}
 	script := string(data)
 	for _, want := range []string{
+		`APPNAME="${DESKTOP_APP_NAME:-VoltUI}"`,
 		`BINNAME="voltui-desktop"`,
 		`app_bundle=$(find build/bin -maxdepth 1 -type d -name "*.app" -print -quit)`,
 		`cp -R "$app_bundle" "$app"`,
+		`stage-computer-use-mcp.mjs`,
+		`stage-bun-runtime.mjs`,
+		`stage-coreutils.mjs`,
+		`copy_resource_tree "$COMPUTER_USE_MCP_RESOURCE" "build/computer-use-mcp"`,
 		`UPDATE_HELPER="voltui-update-helper.exe"`,
 		`GOOS=windows GOARCH="$arch" go build`,
 		`./cmd/update-helper`,
 		`build/windows/installer/$UPDATE_HELPER`,
-		`cp "$helper" "$staging/$UPDATE_HELPER"`,
-		`command -v cygpath`,
-		`zip -q -r "$ROOT/dist/${APPNAME}-windows-${arch}.zip" .`,
+		`package-windows-desktop.sh" "$arch" "$payload_dir"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("desktop-build.sh missing %q", want)
+		}
+	}
+}
+
+func TestWindowsPackagerUsesCurrentRuntimeLayout(t *testing.T) {
+	packagerSourceBytes, err := os.ReadFile("../scripts/package-windows-desktop.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(packagerSourceBytes)
+	for _, want := range []string{
+		`APPNAME="${DESKTOP_APP_NAME:-VoltUI}"`,
+		`BINNAME="voltui-desktop"`,
+		`UPDATE_HELPER="voltui-update-helper.exe"`,
+		`CLINAME="voltui-cli"`,
+		`for resource in computer-use-mcp computer-use-runtime coreutils`,
+		`verify-windows-portable.sh" "$portable_staging"`,
+		`command -v powershell.exe`,
+		`zip -q -r "$dist_portable" .`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("package-windows-desktop.sh missing %q", want)
+		}
+	}
+	for _, removed := range []string{"Reasonix", "reasonix-guard", "reasonix-launcher", "ARG_REASONIX_SIGNED_UNINSTALLER"} {
+		if strings.Contains(script, removed) {
+			t.Fatalf("package-windows-desktop.sh retains removed layout %q", removed)
+		}
+	}
+}
+
+func TestWindowsPortableVerifierRequiresBundledRuntimes(t *testing.T) {
+	verifierSourceBytes, err := os.ReadFile("../scripts/verify-windows-portable.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(verifierSourceBytes)
+	for _, want := range []string{
+		`"voltui-desktop.exe"`,
+		`"voltui-update-helper.exe"`,
+		`"voltui-cli.exe"`,
+		`computer-use-mcp/node_modules/@zavora-ai/computer-use-mcp/dist/server.js`,
+		`computer-use-runtime`,
+		`coreutils/voltui-coreutils-path.txt`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("verify-windows-portable.sh missing %q", want)
 		}
 	}
 }

@@ -12,6 +12,10 @@ on:
       - "internal/**"
       - "prod_test"
       - "scripts/desktop-build.sh"
+      - "scripts/package-windows-desktop.sh"
+      - "scripts/package-windows-desktop.test.mjs"
+      - "scripts/verify-windows-portable.sh"
+      - "scripts/verify-windows-portable.test.mjs"
       - "scripts/check-runtime-mocks.mjs"
       - "scripts/check-runtime-mocks.test.mjs"
       - "scripts/prod-test.test.mjs"
@@ -35,6 +39,10 @@ on:
       - "internal/**"
       - "prod_test"
       - "scripts/desktop-build.sh"
+      - "scripts/package-windows-desktop.sh"
+      - "scripts/package-windows-desktop.test.mjs"
+      - "scripts/verify-windows-portable.sh"
+      - "scripts/verify-windows-portable.test.mjs"
       - "scripts/check-runtime-mocks.mjs"
       - "scripts/check-runtime-mocks.test.mjs"
       - "scripts/prod-test.test.mjs"
@@ -98,6 +106,10 @@ jobs:
 
       - name: Test Windows prerequisites staging contract
         run: node --test scripts/stage-windows-prerequisites.test.mjs
+
+      - name: Test Windows portable packaging contract
+        if: runner.os == 'Linux'
+        run: node --test scripts/package-windows-desktop.test.mjs scripts/verify-windows-portable.test.mjs
 
       - name: Test local production packaging contract
         if: runner.os == 'macOS'

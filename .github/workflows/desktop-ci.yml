@@ -129,13 +129,6 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 
       - name: Build desktop package
-        # desktop-build.sh still references cmd/voltui-guard, cmd/reasonix and
-        # other sidecar entrypoints that the strip-legacy-subsystems refactor
-        # removed from the repo. Treat packaging as non-blocking until the
-        # script is realigned with the current cmd/ layout; the upstream test
-        # gate above (runtime mocks, coreutils, windows prerequisites, prod
-        # contract) already guards regressions.
-        continue-on-error: true
         run: scripts/desktop-build.sh "${{ matrix.platform }}" "v0.0.0-ci.${{ github.run_number }}"
 
       - name: Upload desktop package
@@ -144,5 +137,5 @@ jobs:
         with:
           name: desktop-${{ matrix.name }}
           path: dist/*
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 1

@@ -1574,6 +1574,9 @@ func tabImageInputEnabled(tab *WorkspaceTab) bool {
 		return false
 	}
 	entry, ok := cfg.ResolveModel(ref)
+	if !ok {
+		entry, ok = cfg.ResolveExplicitProviderModel(ref)
+	}
 	return ok && config.EffectiveVision(entry)
 }
 
@@ -2870,26 +2873,28 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 
 	model := strings.TrimSpace(tabModel)
 	if sessionModel, ok := agent.LoadSessionModel(startupSessionPath); ok {
-		config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, sessionModel)
-		if _, ok := cfg.ResolveModel(sessionModel); ok {
-			model = sessionModel
+		if resolved, resolveErr := a.resolveDesktopModelForRebuild(tabWorkspaceRoot, sessionModel); resolveErr == nil && !resolved.fallback {
+			model = resolved.ref
 		}
 	}
-	if model == "" {
-		model = cfg.DefaultModel
-	}
-	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, model)
 	requestedModel := model
-	if resolved, fallback, ok := cfg.ResolveModelWithFallback(model); ok {
-		if fallback && strings.TrimSpace(tabModel) != "" {
-			a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", requestedModel, resolved))
+	modelResolution, modelErr := a.resolveDesktopModelForRebuild(tabWorkspaceRoot, model)
+	if modelErr != nil {
+		defaultModel := strings.TrimSpace(cfg.DefaultModel)
+		if defaultModel != "" && defaultModel != model {
+			if defaultResolution, defaultErr := a.resolveDesktopModelForRebuild(tabWorkspaceRoot, defaultModel); defaultErr == nil {
+				defaultResolution.fallback = true
+				modelResolution = defaultResolution
+				modelErr = nil
+			}
 		}
-		model = resolved
-	} else if defaultModel := strings.TrimSpace(cfg.DefaultModel); defaultModel != "" && defaultModel != requestedModel {
-		config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, defaultModel)
-		if resolved, _, ok := cfg.ResolveModelWithFallback(defaultModel); ok {
-			a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", requestedModel, resolved))
-			model = resolved
+	}
+	allowUnlistedModel := false
+	if modelErr == nil {
+		model = modelResolution.ref
+		allowUnlistedModel = modelResolution.allowUnlisted
+		if modelResolution.fallback && strings.TrimSpace(tabModel) != "" {
+			a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", requestedModel, model))
 		}
 	}
 	buildMemoryContext := defaultScopedMemoryContext(tabMemoryContext, tabWorkspaceRoot, topicID, startupSessionPath, tabID)
@@ -2949,6 +2954,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	ctrl, err := boot.Build(buildCtx, boot.Options{
 		Model:                    model,
 		RequireKey:               false,
+		AllowUnlistedModel:       allowUnlistedModel,
 		Sink:                     sink,
 		WorkspaceRoot:            root,
 		SessionDir:               sessionDir,

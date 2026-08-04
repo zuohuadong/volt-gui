@@ -100,6 +100,15 @@
   import type { ComposerToolApprovalMode } from "./lib/tool-approval-mode";
   import { modelCardsFromConfiguredProviders } from "./lib/model-catalog";
   import type { ModelCard } from "./lib/model-catalog";
+  import {
+    clearModelConnectionFailure,
+    decorateModelAvailability,
+    isModelConnectionError,
+    pendingModelSelectionUnavailableReason,
+    recordModelConnectionFailure,
+    shouldDeferNewTaskModelSelection,
+  } from "./lib/model-availability";
+  import type { ModelAvailabilityByRef } from "./lib/model-availability";
   import { mcpConfigurationEnabled, mcpStatusLabel, shouldShowMCPTrust } from "./lib/mcp-detail";
   import {
     filterModelProviders,
@@ -649,6 +658,8 @@
   let submittedDraftByTab = $state<Record<string, { display: string; submission: string }>>({});
   let lastSubmittedDraftByTab = $state<Record<string, { display: string; submission: string }>>({});
   let lastTurnErrorByTab = $state<Record<string, string>>({});
+  let modelAvailabilityByRef = $state<ModelAvailabilityByRef>({});
+  let pendingNewTaskModelRef = $state("");
   let newTaskConversationActive = $state(false);
   let restoreDraftOnTurnDoneByTab = $state<Record<string, boolean>>({});
   let draftConversationThread: TabMeta | undefined;
@@ -699,6 +710,7 @@
   const currentReviewWorkflowPending = $derived(reviewWorkflowPending?.tabId === composerTabId ? reviewWorkflowPending : undefined);
   const currentLastSubmittedDraft = $derived(lastSubmittedDraftByTab[composerTabId]);
   const currentLastTurnError = $derived(lastTurnErrorByTab[composerTabId] || "");
+  const composerModels = $derived(decorateModelAvailability(models, modelAvailabilityByRef));
   const pendingPromptTabId = $derived.by(() => {
     if (activityMode === "work" && workLayer === "newTask") return activeConversationTabId;
     if (activityMode === "code" && newTaskConversationActive) return activeConversationTabId || activeTab?.id || "";
@@ -3483,7 +3495,7 @@
     }
     syncActiveWorkspaceSelection();
     try {
-      models = await app().ModelsForTab(meta.id);
+      models = await app().RefreshModelsForTab(meta.id);
       selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]);
     } catch {
       // The controller may still be starting; refresh() will hydrate models later.
@@ -3491,6 +3503,18 @@
     await refreshContextPanelForTab(meta.id, true);
     syncSelectedAgentFromTab(tabs.find((tab) => tab.id === meta.id) ?? meta);
     await app().ReplayPendingPromptsForTab(meta.id);
+  }
+
+  async function applyPendingNewTaskModel(tabID: string) {
+    const ref = pendingNewTaskModelRef.trim();
+    if (!tabID || !ref) return;
+    const tabModels = await app().RefreshModelsForTab(tabID);
+    const unavailableReason = pendingModelSelectionUnavailableReason(tabModels, ref);
+    if (unavailableReason) throw new Error(unavailableReason);
+    const current = modelValue(tabModels.find((model) => model.current));
+    if (current !== ref) await app().SetModelForTab(tabID, ref);
+    pendingNewTaskModelRef = "";
+    modelAvailabilityByRef = clearModelConnectionFailure(modelAvailabilityByRef, ref);
   }
 
   async function createBackendConversationThread(project: SidebarProject | undefined, title: string) {
@@ -3600,6 +3624,7 @@
       draftConversationThread = undefined;
       draftConversationThreadRequest = undefined;
       if (draftThread) {
+        await applyPendingNewTaskModel(draftThread.id);
         updateSidebarConversationThread(projectId, conversation.id, draftThread);
         activeConversationTabId = draftThread.id;
         await syncActiveTabMeta(draftThread);
@@ -3608,6 +3633,7 @@
     }
     const meta = await bindSidebarConversationThread(projectId, conversation.id);
     if (meta) {
+      await applyPendingNewTaskModel(meta.id);
       activeConversationTabId = meta.id;
       await syncActiveTabMeta(meta);
     }
@@ -3745,6 +3771,7 @@
     agentSelectionContextKey = `work:${(project?.id ?? projectId) || "global"}:${conversationId || "draft"}`;
     agentSelectionDirty = Boolean(selectedAgentId);
     clearConversationRuntime();
+    pendingNewTaskModelRef = selectedModel || modelValue(models.find((model) => model.current)) || modelValue(models[0]);
     transcript = welcomeTranscript();
     if (!conversationId && !hasSavedDraft) setComposerInput("", draftKey);
     void tick().then(focusComposer);
@@ -3994,6 +4021,7 @@ function openGovernanceCenter() {
     syncSidebarProjectContext(project);
     activeSidebarConversationId = conversationId;
     activeConversationTabId = conversation?.tabId ?? "";
+    pendingNewTaskModelRef = "";
     const provisionalDraftKey = conversation?.tabId ?? `work:${projectId}:${conversationId}`;
     activateComposerDraft(provisionalDraftKey);
     activeTaskReceipt = conversation?.receipt;
@@ -7169,7 +7197,23 @@ function openGovernanceCenter() {
 
   function setLastTurnError(tabID: string, error: string) {
     if (!tabID) return;
-    lastTurnErrorByTab = { ...lastTurnErrorByTab, [tabID]: error.trim() };
+    const detail = error.trim();
+    if (detail && isModelConnectionError(detail)) {
+      const ref = currentModelRefForTab(tabID);
+      modelAvailabilityByRef = recordModelConnectionFailure(modelAvailabilityByRef, ref, detail);
+    }
+    lastTurnErrorByTab = { ...lastTurnErrorByTab, [tabID]: detail };
+  }
+
+  function currentModelRefForTab(tabID: string) {
+    if (!tabID || tabID !== composerTabId) return "";
+    return selectedModel || modelValue(models.find((model) => model.current)) || modelValue(models[0]);
+  }
+
+  function clearCurrentModelConnectionFailure(tabID: string) {
+    const ref = currentModelRefForTab(tabID);
+    if (!ref) return;
+    modelAvailabilityByRef = clearModelConnectionFailure(modelAvailabilityByRef, ref);
   }
 
   function setTabSending(tabID: string, value: boolean) {
@@ -7224,6 +7268,7 @@ function openGovernanceCenter() {
     if (event.kind === "turn_done" && queuedEventTabID) {
       setTabSending(queuedEventTabID, false);
       setLastTurnError(queuedEventTabID, event.err && !isCancellationError(event.err) ? event.err : "");
+      if (!event.err) clearCurrentModelConnectionFailure(queuedEventTabID);
       clearPendingPrompts(queuedEventTabID);
       settleTaskReceiptForTab(queuedEventTabID, event.err);
       const finishedTab = tabs.find((tab) => tab.id === queuedEventTabID);
@@ -7440,7 +7485,7 @@ function openGovernanceCenter() {
       await settleRefreshStep("recover sidebar", recoverSidebarTasksFromBackend());
       syncActiveWorkspaceSelection();
       const active = tabs.find((tab) => tab.active) ?? tabs[0];
-      models = active ? await settleRefreshStep("models", app().ModelsForTab(active.id)) ?? models : [];
+      models = active ? await settleRefreshStep("models", app().RefreshModelsForTab(active.id)) ?? models : [];
       selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]);
       commands = await settleRefreshStep("commands", app().Commands()) ?? commands;
       await settleRefreshStep("model settings", refreshModelSettings());
@@ -8354,6 +8399,13 @@ function openGovernanceCenter() {
       desktopBackendUnavailable("切换模型");
       return;
     }
+    if (shouldDeferNewTaskModelSelection(activityMode, workLayer, activeConversationTabId)) {
+      pendingNewTaskModelRef = next;
+      selectedModel = next;
+      select.value = next;
+      showWorkbenchNotice(`新任务将在发送时使用模型：${next}`);
+      return;
+    }
     const tabID = currentComposerTab?.id || activeTab?.id;
     if (!tabID || !next) {
       select.value = current;
@@ -8372,9 +8424,10 @@ function openGovernanceCenter() {
     try {
       await app().SetModelForTab(tabID, next);
       tabs = await app().ListTabs();
-      models = await app().ModelsForTab(tabID);
+      models = await app().RefreshModelsForTab(tabID);
       selectedModel = modelValue(models.find((model) => model.current)) || modelValue(models[0]) || next;
       select.value = selectedModel;
+      modelAvailabilityByRef = clearModelConnectionFailure(modelAvailabilityByRef, selectedModel);
       await refreshContextPanelForTab(tabID, true);
     } catch (error) {
       select.value = current;
@@ -8958,7 +9011,7 @@ function openGovernanceCenter() {
                 onSend={send}
                 onCancel={cancel}
                 onPreviewFile={previewFile}
-                {models}
+                models={composerModels}
                 {selectedModel}
                 imageInputEnabled={Boolean(currentComposerTab?.imageInputEnabled)}
                 onModelChange={switchModel}
@@ -9395,7 +9448,7 @@ function openGovernanceCenter() {
                       onSend={send}
                       onCancel={cancel}
                       onPreviewFile={previewFile}
-                      {models}
+                      models={composerModels}
                       {selectedModel}
                       imageInputEnabled={Boolean(currentComposerTab?.imageInputEnabled)}
                       onModelChange={switchModel}
@@ -10277,7 +10330,7 @@ function openGovernanceCenter() {
                   onSend={send}
                   onCancel={cancel}
                   onPreviewFile={previewFile}
-                  {models}
+                  models={composerModels}
                   {selectedModel}
                   imageInputEnabled={Boolean(currentComposerTab?.imageInputEnabled)}
                   onModelChange={switchModel}

@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -173,7 +176,12 @@ func TestSetAgentProfileForTabRebuildsSameSessionAndClearRestoresBaseModel(t *te
 	isolateDesktopUserDirs(t)
 	t.Setenv("AGENT_PROFILE_TEST_KEY", "sk-test")
 	root := t.TempDir()
-	configBody := `default_model = "base/base-model"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"base-ns/live-model"}]}`))
+	}))
+	defer server.Close()
+	configBody := fmt.Sprintf(`default_model = "base/base-ns/old-model"
 
 [agent]
 system_prompt = "BASE SYSTEM"
@@ -181,17 +189,17 @@ system_prompt = "BASE SYSTEM"
 [[providers]]
 name = "base"
 kind = "openai"
-base_url = "https://example.invalid/v1"
-model = "base-model"
+base_url = "%s/v1"
+model = "base-ns/old-model"
 api_key_env = "AGENT_PROFILE_TEST_KEY"
 
 [[providers]]
 name = "profile-provider"
 kind = "openai"
-base_url = "https://example.invalid/v1"
+base_url = "%s/v1"
 model = "profile-model"
 api_key_env = "AGENT_PROFILE_TEST_KEY"
-`
+`, server.URL, server.URL)
 	userConfig := config.UserConfigPath()
 	if err := os.MkdirAll(filepath.Dir(userConfig), 0o755); err != nil {
 		t.Fatal(err)
@@ -222,11 +230,11 @@ api_key_env = "AGENT_PROFILE_TEST_KEY"
 	if err := sess.Save(path); err != nil {
 		t.Fatal(err)
 	}
-	if err := agent.SaveBranchMeta(path, agent.BranchMeta{Scope: "project", WorkspaceRoot: root, Model: "base/base-model"}); err != nil {
+	if err := agent.SaveBranchMeta(path, agent.BranchMeta{Scope: "project", WorkspaceRoot: root, Model: "base/base-ns/live-model"}); err != nil {
 		t.Fatal(err)
 	}
 	oldExec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
-	oldCtrl := control.New(control.Options{Executor: oldExec, SessionDir: dir, SessionPath: path, Label: "base/base-model", Sink: event.Discard, WorkspaceRoot: root})
+	oldCtrl := control.New(control.Options{Executor: oldExec, SessionDir: dir, SessionPath: path, Label: "base/base-ns/live-model", Sink: event.Discard, WorkspaceRoot: root})
 
 	app := NewApp()
 	app.ctx = context.Background()
@@ -238,7 +246,7 @@ api_key_env = "AGENT_PROFILE_TEST_KEY"
 		SessionPath:   path,
 		Ctrl:          oldCtrl,
 		Ready:         true,
-		model:         "base/base-model",
+		model:         "base/base-ns/live-model",
 		disabledMCP:   map[string]ServerView{},
 	}
 	tab.sink = &tabEventSink{tabID: tab.ID, app: app}
@@ -262,7 +270,7 @@ api_key_env = "AGENT_PROFILE_TEST_KEY"
 	if selectedCtrl.SessionPath() != path {
 		t.Fatalf("session path = %q, want %q", selectedCtrl.SessionPath(), path)
 	}
-	if tab.model != "profile-provider/profile-model" || tab.AgentProfileBaseModel != "base/base-model" {
+	if tab.model != "profile-provider/profile-model" || tab.AgentProfileBaseModel != "base/base-ns/live-model" {
 		t.Fatalf("selected model/base = %q/%q", tab.model, tab.AgentProfileBaseModel)
 	}
 	history := selectedCtrl.History()
@@ -294,7 +302,7 @@ api_key_env = "AGENT_PROFILE_TEST_KEY"
 	if err := app.SetAgentProfileForTab(tab.ID, ""); err != nil {
 		t.Fatalf("clear profile: %v", err)
 	}
-	if tab.AgentProfileID != "" || tab.AgentProfileBaseModel != "" || tab.model != "base/base-model" {
+	if tab.AgentProfileID != "" || tab.AgentProfileBaseModel != "" || tab.model != "base/base-ns/live-model" {
 		t.Fatalf("cleared profile state = id:%q base:%q model:%q", tab.AgentProfileID, tab.AgentProfileBaseModel, tab.model)
 	}
 	meta, _, err = agent.LoadBranchMeta(path)

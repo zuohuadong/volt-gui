@@ -1825,6 +1825,13 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	// Snapshot the tab profile under a.mu: bound methods write these fields
 	// under the lock while this rebuild runs off-lock.
 	snap := a.tabRuntimeSnapshot(tab)
+	modelResolution, err := a.resolveDesktopModelForRebuild(snap.workspaceRoot, snap.model)
+	if err != nil {
+		return err
+	}
+	if modelResolution.fallback && strings.TrimSpace(snap.model) != "" {
+		a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", snap.model, modelResolution.ref))
+	}
 	agentProfile, err := runtimeAgentProfileForSnapshot(snap)
 	if err != nil {
 		return err
@@ -1859,8 +1866,9 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	newSink := &tabEventSink{tabID: tab.ID, app: a, ctx: a.ctx}
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:                    snap.model,
+		Model:                    modelResolution.ref,
 		RequireKey:               false,
+		AllowUnlistedModel:       modelResolution.allowUnlisted,
 		Sink:                     newSink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
@@ -1929,6 +1937,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	tab.Ctrl = newCtrl
 	tab.sink = newSink
 	tab.SessionPath = path
+	tab.model = modelResolution.ref
 	tab.Label = newCtrl.Label()
 	applyScopedMemoryRuntimeLocked(tab, memoryRuntime)
 	tab.Ready = true
@@ -5410,6 +5419,9 @@ func (a *App) imageInputEnabledForTab(tabID string) bool {
 		return false
 	}
 	entry, ok := cfg.ResolveModel(ref)
+	if !ok {
+		entry, ok = cfg.ResolveExplicitProviderModel(ref)
+	}
 	return ok && config.EffectiveVision(entry)
 }
 
@@ -7394,11 +7406,13 @@ func removeServerOrder(order []string, name string) []string {
 // ModelInfo is one (provider, model) the bottom switcher can pick. Ref ("provider/
 // model") is what SetModel takes; Provider/Model are for display.
 type ModelInfo struct {
-	Ref      string `json:"ref"`
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	Current  bool   `json:"current"`
-	Vision   bool   `json:"vision"`
+	Ref               string `json:"ref"`
+	Provider          string `json:"provider"`
+	Model             string `json:"model"`
+	Current           bool   `json:"current"`
+	Vision            bool   `json:"vision"`
+	Availability      string `json:"availability,omitempty"`
+	UnavailableReason string `json:"unavailableReason,omitempty"`
 }
 
 type EffortInfo struct {
@@ -7432,6 +7446,8 @@ func (a *App) ModelsForTab(tabID string) []ModelInfo {
 	}
 	if entry, ok := cfg.ResolveModel(curModel); ok {
 		curModel = entry.Name + "/" + entry.Model
+	} else if entry, ok := cfg.ResolveExplicitProviderModel(curModel); ok {
+		curModel = entry.Name + "/" + entry.Model
 	}
 	access := providerAccessSet(cfg.Desktop.ProviderAccess)
 	out := []ModelInfo{}
@@ -7447,6 +7463,27 @@ func (a *App) ModelsForTab(tabID string) []ModelInfo {
 				vision = config.EffectiveVision(entry)
 			}
 			out = append(out, ModelInfo{Ref: ref, Provider: p.Name, Model: m, Current: ref == curModel, Vision: vision})
+		}
+	}
+	if curModel != "" {
+		seenCurrent := false
+		for _, model := range out {
+			if model.Current {
+				seenCurrent = true
+				break
+			}
+		}
+		if !seenCurrent {
+			entry, ok := cfg.ResolveModel(curModel)
+			if !ok {
+				entry, ok = cfg.ResolveExplicitProviderModel(curModel)
+			}
+			if ok && modelProviderAccessAllowed(access, entry.Name) {
+				out = append(out, ModelInfo{
+					Ref: curModel, Provider: entry.Name, Model: entry.Model,
+					Current: true, Vision: config.EffectiveVision(entry),
+				})
+			}
 		}
 	}
 	return out
@@ -7643,8 +7680,16 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		return err
 	}
 	entry, ok := cfg.ResolveModel(name)
+	allowUnlistedModel := false
+	if !ok {
+		entry, ok = resolveModelCatalogSelection(cfg, name, a.RefreshModelsForTab(tabID))
+		allowUnlistedModel = ok
+	}
 	if !ok {
 		return fmt.Errorf("unknown model %q", name)
+	}
+	if !config.IsLikelyChatModel(entry.Model) {
+		return fmt.Errorf("model %q does not support chat conversations", name)
 	}
 	if !modelProviderAccessAllowed(providerAccessSet(cfg.Desktop.ProviderAccess), entry.Name) {
 		return fmt.Errorf("model %q is not available because provider %q is not added", name, entry.Name)
@@ -7691,6 +7736,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    name,
 		RequireKey:               false,
+		AllowUnlistedModel:       allowUnlistedModel,
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
@@ -7826,11 +7872,15 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		}
 	}
 	snap := a.tabRuntimeSnapshot(tab)
-	entry, err := a.currentProviderEntryForTab(tabID)
+	modelResolution, err := a.resolveDesktopModelForRebuild(snap.workspaceRoot, snap.model)
 	if err != nil {
 		return err
 	}
-	modelRef := entry.Name + "/" + entry.Model
+	if modelResolution.fallback && strings.TrimSpace(snap.model) != "" {
+		a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", snap.model, modelResolution.ref))
+	}
+	entry := modelResolution.entry
+	modelRef := modelResolution.ref
 	effort, err := config.NormalizeEffort(entry, level)
 	if err != nil {
 		return err
@@ -7862,6 +7912,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    modelRef,
 		RequireKey:               false,
+		AllowUnlistedModel:       modelResolution.allowUnlisted,
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
@@ -7966,7 +8017,7 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 			return rebuildControllerActiveWorkError("token mode")
 		}
 	}
-	modelRef, fallback, err := a.resolvedModelForTab(tab)
+	modelRef, fallback, allowUnlistedModel, err := a.resolvedModelForTab(tab)
 	if err != nil {
 		return err
 	}
@@ -8002,6 +8053,7 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    modelRef,
 		RequireKey:               false,
+		AllowUnlistedModel:       allowUnlistedModel,
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
@@ -8616,46 +8668,26 @@ func (a *App) currentProviderEntryForTab(tabID string) (*config.ProviderEntry, e
 		effortOverride = cloneStringPtr(tab.effort)
 	}
 	a.mu.RUnlock()
-	cfg, err := config.LoadForRoot(workspaceRoot)
+	resolution, err := a.resolveDesktopModelForRebuild(workspaceRoot, ref)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(ref) == "" {
-		ref = cfg.DefaultModel
-	}
-	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, ref)
-	resolved, _, ok := cfg.ResolveModelWithFallback(ref)
-	if !ok {
-		return nil, fmt.Errorf("unknown model %q", ref)
-	}
-	entry, ok := cfg.ResolveModel(resolved)
-	if !ok {
-		return nil, fmt.Errorf("unknown model %q", resolved)
-	}
+	entry := resolution.entry
 	if effortOverride != nil {
 		entry.Effort = *effortOverride
 	}
 	return entry, nil
 }
 
-func (a *App) resolvedModelForTab(tab *WorkspaceTab) (string, bool, error) {
+func (a *App) resolvedModelForTab(tab *WorkspaceTab) (string, bool, bool, error) {
 	if tab == nil {
-		return "", false, fmt.Errorf("no active tab")
+		return "", false, false, fmt.Errorf("no active tab")
 	}
-	cfg, err := config.LoadForRoot(tab.WorkspaceRoot)
+	resolution, err := a.resolveDesktopModelForRebuild(tab.WorkspaceRoot, tab.model)
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
-	ref := strings.TrimSpace(tab.model)
-	if ref == "" {
-		ref = cfg.DefaultModel
-	}
-	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, ref)
-	resolved, fallback, ok := cfg.ResolveModelWithFallback(ref)
-	if !ok {
-		return "", false, fmt.Errorf("unknown model %q", ref)
-	}
-	return resolved, fallback, nil
+	return resolution.ref, resolution.fallback, resolution.allowUnlisted, nil
 }
 
 func (a *App) withActiveWorkspaceDo(fn func() error) error {

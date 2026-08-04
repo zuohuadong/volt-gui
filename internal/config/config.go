@@ -1837,10 +1837,8 @@ func Default() *Config {
 			Weixin:             WeixinBotConfig{AccountID: "default", TokenEnv: "WEIXIN_BOT_TOKEN", APIBase: "https://ilinkai.weixin.qq.com"},
 		},
 		Providers: []ProviderEntry{
-			{Name: "qwen-thinking", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "qwen-gpu4/qwen36-opus-prisma8-gpu4", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, SupportedEfforts: []string{"high", "max"}, DefaultEffort: "high"},
+			{Name: "qwen-thinking", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "qwen-gpu4/step3p7-flash", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, SupportedEfforts: []string{"high", "max"}, DefaultEffort: "high"},
 			{Name: "glm-5.2", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "glm-primary/glm-5.2-nvfp4", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072},
-			{Name: "qwen-fast", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "qwen-gpu5/qwen36-opus-prisma8-gpu5", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, SupportedEfforts: []string{"high", "max"}, DefaultEffort: "high"},
-			{Name: "image-gen", Kind: "openai", BaseURL: "http://192.168.1.47:9010/v1", Model: "image-gpu5/image-gpu5", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072},
 			{Name: "deepseek-flash", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: deepSeekV4FlashPrice()},
 			{Name: "deepseek-pro", Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY", BalanceURL: "https://api.deepseek.com/user/balance", ContextWindow: 1_000_000, Price: deepSeekV4ProPrice()},
 			{Name: "mimo-pro", Kind: "openai", BaseURL: "https://token-plan-cn.xiaomimimo.com/v1", Model: "mimo-v2.5-pro", APIKeyEnv: "MIMO_API_KEY", ContextWindow: 1_000_000, Price: mimoV25ProPrice(), NoProxy: true, Priority: 10},
@@ -1907,6 +1905,40 @@ func (c *Config) ResolveModel(ref string) (*ProviderEntry, bool) {
 		return e, true
 	}
 	return nil, false
+}
+
+// ResolveExplicitProviderModel resolves an explicit provider/model reference
+// without requiring the model to be present in the provider's static list.
+// Callers must first validate the model against a trusted live catalog. The
+// provider endpoint and credentials still come exclusively from local config.
+func (c *Config) ResolveExplicitProviderModel(ref string) (*ProviderEntry, bool) {
+	providerName, model, ok := splitExplicitProviderModel(ref)
+	if !ok {
+		return nil, false
+	}
+	if access := desktopProviderAccessMap(c.Desktop.ProviderAccess); len(access) > 0 {
+		ref = retargetDesktopOfficialRef(providerName+"/"+model, access)
+		providerName, model, ok = splitExplicitProviderModel(ref)
+		if !ok {
+			return nil, false
+		}
+	}
+	e, found := c.Provider(providerName)
+	if !found {
+		return nil, false
+	}
+	cp := *e
+	cp.Model = model
+	cp.applyModelPrice()
+	cp.applyModelOverride()
+	return &cp, true
+}
+
+func splitExplicitProviderModel(ref string) (providerName, model string, ok bool) {
+	providerName, model, ok = strings.Cut(strings.TrimSpace(ref), "/")
+	providerName = strings.TrimSpace(providerName)
+	model = strings.TrimSpace(model)
+	return providerName, model, ok && providerName != "" && model != ""
 }
 
 func (c *Config) resolveBareModel(ref string) (*ProviderEntry, []string) {

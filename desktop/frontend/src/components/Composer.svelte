@@ -120,6 +120,9 @@
   const atDir = $derived(splitAtToken(input)?.dir ?? "");
   const canSubmit = $derived(!disabled && (input.trim() !== "" || attachments.length > 0) && pendingAttachmentWrites === 0);
   const selectedModelInfo = $derived(models.find((model) => modelValue(model) === selectedModel) ?? models.find((model) => model.current));
+  const selectedModelUnavailableReason = $derived(
+    selectedModelInfo?.availability !== "available" ? selectedModelInfo?.unavailableReason || "" : "",
+  );
   const selectedModelSupportsImages = $derived(selectedModelInfo?.vision ?? imageInputEnabled);
   const hasImageAttachments = $derived(attachments.some((attachment) => Boolean(attachment.previewUrl)));
   const imageAttachmentNote = $derived(
@@ -130,7 +133,7 @@
       : "",
   );
   const currentModelCapabilityTitle = $derived(
-    selectedModelSupportsImages ? t.composer.imageModelAvailable : t.composer.textModelOnly,
+    selectedModelUnavailableReason || (selectedModelSupportsImages ? t.composer.imageModelAvailable : t.composer.textModelOnly),
   );
   const remainingContextPercent = $derived(contextRemainingPercent(contextInfo));
   const sessionCostLabel = $derived(formatSessionCost(contextInfo?.sessionCost, contextInfo?.sessionCurrency));
@@ -174,7 +177,9 @@
   }
 
   function modelLabel(model: ModelInfo, index: number) {
-    const label = model.label || model.model || model.name || model.ref || `模型 ${index + 1}`;
+    let label = model.label || model.model || model.name || model.ref || `模型 ${index + 1}`;
+    if (model.availability === "unavailable") label = `${label} · unavailable`;
+    if (model.availability === "unknown") label = `${label} · status unknown`;
     return model.vision ? `${label} (${t.composer.imageInputShort})` : label;
   }
 
@@ -730,7 +735,7 @@
         {#if models.length}
           {#each models as model, index (modelKey(model, index))}
             {@const value = modelValue(model)}
-            <option value={value}>{modelLabel(model, index)}</option>
+            <option value={value} disabled={model.availability === "unavailable"}>{modelLabel(model, index)}</option>
           {/each}
         {:else}
           <option value="">选择模型</option>

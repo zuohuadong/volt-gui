@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AtSign, Check, FileText, FileType, Folder, FolderKanban, Image, ListChecks, Paperclip, Plus, Presentation, Search, Send, ShieldCheck, Square, Table, Target, WandSparkles, X } from "@lucide/svelte";
+  import { AtSign, Check, FileText, FileType, Folder, FolderKanban, Image, Paperclip, Plus, Presentation, Search, Send, ShieldCheck, Square, Table, WandSparkles, X } from "@lucide/svelte";
   import { t } from "../lib/i18n";
   import { app, onFilesDropped, openExternal } from "../lib/bridge";
   import { contextRemainingPercent, formatSessionCost } from "../lib/thread-ux";
@@ -326,16 +326,6 @@
     projectMenuOpen = false;
   }
 
-  function openGoalEditor() {
-    plusMenuOpen = false;
-    runtimeMenuOpen = true;
-  }
-
-  function activatePlanMode() {
-    plusMenuOpen = false;
-    void onCollaborationModeChange?.("plan");
-  }
-
   async function attachDroppedPaths(paths: string[]) {
     dragOver = false;
     for (const path of paths) {
@@ -650,14 +640,6 @@
           <button type="button" role="menuitem" onclick={() => openFilePicker("image/*")}>
             <Image size={14} />
             <span><strong>附加 微信</strong></span>
-          </button>
-          <button type="button" role="menuitem" onclick={openGoalEditor}>
-            <Target size={15} />
-            <span><strong>目标</strong></span>
-          </button>
-          <button type="button" role="menuitem" onclick={activatePlanMode}>
-            <ListChecks size={15} />
-            <span><strong>计划模式</strong></span>
           </button>
           <span class="composer-plus-menu__title">插件</span>
           <button type="button" role="menuitem" onclick={() => openFilePicker()}>

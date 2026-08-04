@@ -190,7 +190,8 @@ const en = {
     tokens: "tokens",
     welcome: "Ready. Ask me anything about this project.",
     draftRestored: "Draft restored after cancellation.",
-    rewound: "Rewound to turn {turn} ({scope}).",
+    rewoundInitial: "Restored to the initial state.",
+    rewoundCheckpoint: "Restored to the checkpoint after turn {turn}.",
   },
   common: {
     model: "Model",
@@ -381,7 +382,8 @@ const zh: typeof en = {
     tokens: "tokens",
     welcome: "就绪。问我关于这个项目的任何问题。",
     draftRestored: "取消后已恢复草稿。",
-    rewound: "已回退到第 {turn} 轮 ({scope})。",
+    rewoundInitial: "已成功恢复至初始状态。",
+    rewoundCheckpoint: "已成功恢复至第 {turn} 轮检查点。",
   },
   common: {
     model: "模型",

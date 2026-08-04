@@ -116,6 +116,9 @@ describe("data governance presentation", () => {
     expect(normalizeTrustCopy("browser_\u200Bcontrol")).toBe("browserControl");
     expect(normalizeTrustCopy("MCP/工具联网")).toBe("MCP 或工具联网");
     expect(normalizeTrustCopy("工具参数/本地文件引用")).toBe("工具参数或本地文件引用");
+    expect(normalizeTrustCopy("transport stdio / runtime local subprocess")).toBe("transport 标准输入输出（stdio） / runtime 本地子进程");
+    expect(normalizeTrustCopy("office / computer-use / web_fetch")).toBe("办公工具（office） / 电脑操作（computer-use） / 网络抓取（web_fetch）");
+    expect(normalizeTrustCopy("local -> user specified URL")).toBe("本机 → 用户指定 URL");
   });
 
   test("formats knowledge timestamps for Chinese readers without raw ISO syntax", () => {

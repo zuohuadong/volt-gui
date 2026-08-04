@@ -847,6 +847,86 @@ func TestKnowledgeDocumentPreviewReturnsStoredDocumentBody(t *testing.T) {
 	}
 }
 
+func TestKnowledgeBaseMergesDuplicateProjectMaterialContentAcrossCategories(t *testing.T) {
+	home := isolateDesktopUserDirs(t)
+	firstPath := filepath.Join(home, "first.md")
+	secondPath := filepath.Join(home, "second.md")
+	content := []byte("同一份项目资料内容应只在知识库中计为一个文档。")
+	if err := os.WriteFile(firstPath, content, 0o644); err != nil {
+		t.Fatalf("write first material: %v", err)
+	}
+	if err := os.WriteFile(secondPath, content, 0o644); err != nil {
+		t.Fatalf("write second material: %v", err)
+	}
+
+	app := &App{}
+	first, err := app.SaveProjectMaterial(WorkbenchProjectMaterialInput{
+		ProjectID: "project", Title: "重复内容资料", Category: "说明", FileName: "first.md", FilePath: firstPath, FileSize: int64(len(content)), MimeType: "text/markdown",
+	})
+	if err != nil {
+		t.Fatalf("save first material: %v", err)
+	}
+	second, err := app.SaveProjectMaterial(WorkbenchProjectMaterialInput{
+		ProjectID: "project", Title: "重复内容资料", Category: "业务资料", FileName: "second.md", FilePath: secondPath, FileSize: int64(len(content)), MimeType: "text/markdown",
+	})
+	if err != nil {
+		t.Fatalf("save second material: %v", err)
+	}
+
+	base, err := app.KnowledgeBase()
+	if err != nil {
+		t.Fatalf("KnowledgeBase: %v", err)
+	}
+	var matches []WorkbenchKnowledgeDocumentView
+	for _, document := range base.Documents {
+		if document.Title == "重复内容资料" {
+			matches = append(matches, document)
+		}
+	}
+	if len(matches) != 1 {
+		t.Fatalf("duplicate content returned %d cards: %+v", len(matches), matches)
+	}
+	if matches[0].Count != 1 || len(matches[0].MaterialIDs) != 2 {
+		t.Fatalf("merged document count/materials = %d/%v, want 1/two materials", matches[0].Count, matches[0].MaterialIDs)
+	}
+	if !strings.Contains(matches[0].Type, "说明") || !strings.Contains(matches[0].Type, "业务资料") {
+		t.Fatalf("merged categories = %q, want both categories", matches[0].Type)
+	}
+	if !containsString(matches[0].MaterialIDs, first.ID) || !containsString(matches[0].MaterialIDs, second.ID) {
+		t.Fatalf("merged material ids = %v, want %q and %q", matches[0].MaterialIDs, first.ID, second.ID)
+	}
+}
+
+func TestKnowledgeBasePreservesTemplateMaterialCount(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := &App{}
+	template, err := app.SaveKnowledgeDocument(WorkbenchKnowledgeDocumentInput{
+		Title:       "交付模板",
+		Type:        "模板",
+		Content:     "项目 {{project}} 的交付模板。",
+		MaterialIDs: []string{"material-a", "material-b"},
+	})
+	if err != nil {
+		t.Fatalf("SaveKnowledgeDocument: %v", err)
+	}
+
+	base, err := app.KnowledgeBase()
+	if err != nil {
+		t.Fatalf("KnowledgeBase: %v", err)
+	}
+	for _, document := range base.Documents {
+		if document.ID != template.ID {
+			continue
+		}
+		if document.Count != 2 || len(document.MaterialIDs) != 2 {
+			t.Fatalf("template count/materials = %d/%v, want 2/two materials", document.Count, document.MaterialIDs)
+		}
+		return
+	}
+	t.Fatalf("template %q missing from knowledge base", template.ID)
+}
+
 func TestRegulationContentPersistsRendersAndDeletes(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	app := &App{}

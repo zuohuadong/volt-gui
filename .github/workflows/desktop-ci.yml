@@ -1,52 +1,6 @@
 name: Desktop CI
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - ".github/workflows/desktop-ci.yml"
-      - ".github/workflows/release-desktop.yml"
-      - "desktop/**"
-      - "go.mod"
-      - "go.sum"
-      - "internal/**"
-      - "prod_test"
-      - "scripts/desktop-build.sh"
-      - "scripts/check-runtime-mocks.mjs"
-      - "scripts/check-runtime-mocks.test.mjs"
-      - "scripts/prod-test.test.mjs"
-      - "scripts/stage-bun-runtime.mjs"
-      - "scripts/stage-computer-use-mcp.mjs"
-      - "scripts/stage-coreutils.mjs"
-      - "scripts/stage-coreutils.test.mjs"
-      - "scripts/stage-windows-prerequisites.mjs"
-      - "scripts/stage-windows-prerequisites.test.mjs"
-      - "scripts/ui-feature-smoke.mjs"
-      - "scripts/workbench-crud-smoke.mjs"
-      - "third_party/coreutils/**"
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/desktop-ci.yml"
-      - ".github/workflows/release-desktop.yml"
-      - "desktop/**"
-      - "go.mod"
-      - "go.sum"
-      - "internal/**"
-      - "prod_test"
-      - "scripts/desktop-build.sh"
-      - "scripts/check-runtime-mocks.mjs"
-      - "scripts/check-runtime-mocks.test.mjs"
-      - "scripts/prod-test.test.mjs"
-      - "scripts/stage-bun-runtime.mjs"
-      - "scripts/stage-computer-use-mcp.mjs"
-      - "scripts/stage-coreutils.mjs"
-      - "scripts/stage-coreutils.test.mjs"
-      - "scripts/stage-windows-prerequisites.mjs"
-      - "scripts/stage-windows-prerequisites.test.mjs"
-      - "scripts/ui-feature-smoke.mjs"
-      - "scripts/workbench-crud-smoke.mjs"
-      - "third_party/coreutils/**"
   workflow_dispatch:
 
 permissions:

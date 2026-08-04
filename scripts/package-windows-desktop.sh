@@ -23,41 +23,35 @@ DESKTOP="$ROOT/desktop"
 INSTALLER_DIR="$DESKTOP/build/windows/installer"
 BIN_DIR="$DESKTOP/build/bin"
 DIST="$ROOT/dist"
-APPNAME="Reasonix"
-BINNAME="reasonix-desktop"
-GUARDNAME="reasonix-guard"
-LAUNCHERNAME="reasonix-launcher"
-UPDATE_HELPER="reasonix-update-helper.exe"
-WINDOWS_CLINAME="reasonix-cli"
+APPNAME="${DESKTOP_APP_NAME:-VoltUI}"
+BINNAME="voltui-desktop"
+UPDATE_HELPER="voltui-update-helper.exe"
+CLINAME="voltui-cli"
 
 [ -d "$payload_input" ] || { echo "Windows payload directory is missing: $payload_input" >&2; exit 1; }
 PAYLOAD="$(cd "$payload_input" && pwd)"
 
 required_payload=(
 	"$BINNAME.exe"
-	"$GUARDNAME.exe"
-	"$LAUNCHERNAME.exe"
 	"$UPDATE_HELPER"
-	"$WINDOWS_CLINAME.exe"
-	"reasonix-uninstall.exe"
 )
 for name in "${required_payload[@]}"; do
 	[ -s "$PAYLOAD/$name" ] || { echo "Windows payload file is missing or empty: $name" >&2; exit 1; }
 done
 
+payload_files=("${required_payload[@]}")
+[ ! -s "$PAYLOAD/$CLINAME.exe" ] || payload_files+=("$CLINAME.exe")
+
 payload_exe_count=$(find "$PAYLOAD" -maxdepth 1 -type f -iname '*.exe' | wc -l | tr -d '[:space:]')
-[ "$payload_exe_count" = "${#required_payload[@]}" ] || {
-	echo "Windows payload must contain exactly ${#required_payload[@]} executables, found $payload_exe_count" >&2
+[ "$payload_exe_count" = "${#payload_files[@]}" ] || {
+	echo "Windows payload contains an unexpected executable: found $payload_exe_count, want ${#payload_files[@]}" >&2
 	exit 1
 }
 
 # Replace every source consumed by project.nsi before compiling the installer.
 # Copying preserves the Authenticode certificate table returned by SignPath.
 cp "$PAYLOAD/$BINNAME.exe" "$BIN_DIR/$BINNAME.exe"
-cp "$PAYLOAD/$GUARDNAME.exe" "$INSTALLER_DIR/$GUARDNAME.exe"
-cp "$PAYLOAD/$LAUNCHERNAME.exe" "$INSTALLER_DIR/$LAUNCHERNAME.exe"
 cp "$PAYLOAD/$UPDATE_HELPER" "$INSTALLER_DIR/$UPDATE_HELPER"
-cp "$PAYLOAD/$WINDOWS_CLINAME.exe" "$INSTALLER_DIR/$WINDOWS_CLINAME.exe"
 
 [ -s "$INSTALLER_DIR/wails_tools.nsh" ] || {
 	echo "wails_tools.nsh is missing; run the initial Wails -nsis build first" >&2
@@ -78,16 +72,9 @@ if command -v cygpath >/dev/null 2>&1; then
 fi
 binary_define="ARG_WAILS_AMD64_BINARY"
 [ "$arch" = arm64 ] && binary_define="ARG_WAILS_ARM64_BINARY"
-uninstaller_path="$PAYLOAD/reasonix-uninstall.exe"
-if command -v cygpath >/dev/null 2>&1; then
-	uninstaller_path="$(cygpath -w "$uninstaller_path")"
-fi
 (
 	cd "$INSTALLER_DIR"
-	makensis \
-		"-D${binary_define}=${binary_path}" \
-		"-DARG_REASONIX_SIGNED_UNINSTALLER=${uninstaller_path}" \
-		project.nsi
+	makensis "-D${binary_define}=${binary_path}" project.nsi
 )
 
 installer=$(find "$BIN_DIR" -maxdepth 1 -type f -name '*installer*.exe' -print -quit)
@@ -99,30 +86,38 @@ dist_portable="$DIST/${APPNAME}-windows-${arch}.zip"
 cp "$installer" "$dist_installer"
 
 portable_staging=$(mktemp -d)
+portable_staging_root="${TMPDIR:-/tmp}"
+portable_staging_root="${portable_staging_root%/}"
 cleanup() {
 	case "$portable_staging" in
-	"${TMPDIR:-/tmp}"/* | /tmp/*) rm -rf -- "$portable_staging" ;;
+	"$portable_staging_root"/* | /tmp/*) rm -rf -- "$portable_staging" ;;
 	*) echo "refusing to clean unexpected portable staging directory: $portable_staging" >&2 ;;
 	esac
 }
 trap cleanup EXIT
 
-cp "$PAYLOAD/$BINNAME.exe" "$portable_staging/$BINNAME.exe"
-cp "$PAYLOAD/$GUARDNAME.exe" "$portable_staging/$GUARDNAME.exe"
-cp "$PAYLOAD/$LAUNCHERNAME.exe" "$portable_staging/$LAUNCHERNAME.exe"
-cp "$PAYLOAD/$LAUNCHERNAME.exe" "$portable_staging/$APPNAME.exe"
-cp "$PAYLOAD/$UPDATE_HELPER" "$portable_staging/$UPDATE_HELPER"
-cp "$PAYLOAD/$WINDOWS_CLINAME.exe" "$portable_staging/$WINDOWS_CLINAME.exe"
+for name in "${payload_files[@]}"; do
+	cp "$PAYLOAD/$name" "$portable_staging/$name"
+done
+for resource in computer-use-mcp computer-use-runtime coreutils; do
+	[ -d "$INSTALLER_DIR/$resource" ] || { echo "Windows runtime resource is missing: $resource" >&2; exit 1; }
+	cp -R "$INSTALLER_DIR/$resource" "$portable_staging/$resource"
+done
 "$ROOT/scripts/verify-windows-portable.sh" "$portable_staging"
 
-portable_staging_win="$portable_staging"
-dist_portable_win="$dist_portable"
-if command -v cygpath >/dev/null 2>&1; then
+rm -f -- "$dist_portable"
+if command -v cygpath >/dev/null 2>&1 && command -v powershell.exe >/dev/null 2>&1; then
 	portable_staging_win="$(cygpath -w "$portable_staging")"
 	dist_portable_win="$(cygpath -w "$dist_portable")"
+	powershell.exe -NoProfile -Command \
+		"Compress-Archive -Force -Path '$portable_staging_win\\*' -DestinationPath '$dist_portable_win'"
+else
+	command -v zip >/dev/null 2>&1 || { echo "zip is required for Windows portable packaging" >&2; exit 1; }
+	(
+		cd "$portable_staging"
+		zip -q -r "$dist_portable" .
+	)
 fi
-powershell.exe -NoProfile -Command \
-	"Compress-Archive -Force -Path '$portable_staging_win\\*' -DestinationPath '$dist_portable_win'"
 
 # The second SignPath request signs the outer installer only after verifying
 # these already-signed payload files. Keeping one flat, exact bundle makes the
@@ -132,7 +127,7 @@ installer_bundle="$DESKTOP/build/windows/installer-signing-bundle"
 rm -rf -- "$installer_bundle"
 mkdir -p "$installer_bundle"
 cp "$dist_installer" "$installer_bundle/"
-for name in "${required_payload[@]}"; do
+for name in "${payload_files[@]}"; do
 	cp "$PAYLOAD/$name" "$installer_bundle/$name"
 done
 

@@ -170,10 +170,14 @@ type App struct {
 
 	forceQuit           atomic.Bool
 	backgroundMaximised atomic.Bool
-	trayReady           bool
-	tray                *desktopTray
-	hangWatchdogMu      sync.Mutex
-	hangWatchdogCancel  context.CancelFunc
+	// startupReady becomes true once OnDomReady has reached the point where the
+	// hidden Wails window can be shown. It suppresses the Windows WebView2
+	// visibility watchdog after a successful frontend startup.
+	startupReady       atomic.Bool
+	trayReady          bool
+	tray               *desktopTray
+	hangWatchdogMu     sync.Mutex
+	hangWatchdogCancel context.CancelFunc
 
 	mediaTokens *mediaTokenStore
 	botInstalls map[string]*botInstallSession
@@ -405,6 +409,7 @@ func (a *App) Platform() string {
 // off the initialization in a background goroutine so the webview loads immediately.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.startWindowsWebView2StartupFallback(ctx)
 	installSystemQuitHook()
 	a.startTray()
 	a.enableDeferredRebuildRetry()
@@ -850,6 +855,9 @@ func (a *App) domReady(_ context.Context) {
 		runtime.WindowMaximise(a.ctx)
 	}
 
+	// Mark readiness before exposing the window so the Windows startup watchdog
+	// cannot race domReady and report a false WebView2 failure.
+	a.startupReady.Store(true)
 	runtime.WindowShow(a.ctx)
 }
 

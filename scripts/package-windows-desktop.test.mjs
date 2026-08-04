@@ -38,14 +38,21 @@ function copyPackagingScripts(root) {
 }
 
 function writePackagingInputs(root, installer, payload, commands) {
-  for (const name of ['voltui-desktop.exe', 'voltui-update-helper.exe', 'voltui-cli.exe']) {
+  for (const name of ['voltui-desktop.exe', 'voltui-update-helper.exe', 'voltui-cli.exe', 'voltui-uninstall.exe']) {
     writeFileSync(join(payload, name), name);
   }
   writeFileSync(join(installer, 'wails_tools.nsh'), 'tools');
   writeFileSync(join(installer, 'tmp', 'MicrosoftEdgeWebview2Setup.exe'), 'webview');
   writeFileSync(join(installer, 'project.nsi'), 'project');
   writeRuntimeResources(installer);
-  writeExecutable(join(commands, 'makensis'), '#!/usr/bin/env bash\nmkdir -p ../../bin\nprintf installer > ../../bin/voltui-desktop-amd64-installer.exe\n');
+  writeExecutable(join(commands, 'makensis'), `#!/usr/bin/env bash
+case "$*" in
+  *ARG_VOLTUI_SIGNED_UNINSTALLER=*) ;;
+  *) echo "signed uninstaller define is missing" >&2; exit 1 ;;
+esac
+mkdir -p ../../bin
+printf installer > ../../bin/voltui-desktop-amd64-installer.exe
+`);
 }
 
 function createPackagingFixture() {
@@ -69,12 +76,16 @@ function assertPackagingOutputs(root) {
   assert.equal(existsSync(portable), true);
   const entries = execFileSync('unzip', ['-Z1', portable], { encoding: 'utf8' });
   assert.match(entries, /voltui-desktop\.exe/);
+  assert.match(entries, /voltui-cli\.exe/);
+  assert.doesNotMatch(entries, /voltui-uninstall\.exe/);
   assert.match(entries, /computer-use-mcp\/node_modules\/@zavora-ai\/computer-use-mcp\/dist\/server\.js/);
   assert.match(entries, /coreutils\/coreutils-system-installer\.exe/);
+  assert.equal(readFileSync(join(root, 'desktop', 'build', 'windows', 'installer', 'voltui-cli.exe'), 'utf8'), 'voltui-cli.exe');
   assert.deepEqual(readdirSync(join(root, 'desktop', 'build', 'windows', 'installer-signing-bundle')).sort(), [
     'VoltUI-windows-amd64-installer.exe',
     'voltui-cli.exe',
     'voltui-desktop.exe',
+    'voltui-uninstall.exe',
     'voltui-update-helper.exe',
   ]);
 }
@@ -82,6 +93,21 @@ function assertPackagingOutputs(root) {
 function signPathEntries(relativePath) {
   const source = readFileSync(join(repoRoot, relativePath), 'utf8');
   return [...source.matchAll(/<pe-file path="([^"]+)">/g)].map((match) => match[1]);
+}
+
+function assertMissingPayloadRejected(missingName) {
+  const fixture = createPackagingFixture();
+  try {
+    rmSync(join(fixture.payload, missingName));
+    const packaging = spawnSync(join(fixture.root, 'scripts', 'package-windows-desktop.sh'), ['amd64', fixture.payload], {
+      env: { ...process.env, PATH: `${fixture.commands}:${process.env.PATH}`, DESKTOP_APP_NAME: 'VoltUI' },
+      encoding: 'utf8',
+    });
+    assert.notEqual(packaging.status, 0);
+    assert.match(packaging.stderr, new RegExp(`payload file is missing or empty: ${missingName.replaceAll('.', '\\.')}\\b`));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
 }
 
 test('rebuilds the current Windows installer and portable runtime layout', () => {
@@ -99,7 +125,7 @@ test('rebuilds the current Windows installer and portable runtime layout', () =>
 });
 
 test('keeps SignPath and release verification aligned with the signed payload', () => {
-  const signedPayload = ['voltui-desktop.exe', 'voltui-update-helper.exe', 'voltui-cli.exe'];
+  const signedPayload = ['voltui-desktop.exe', 'voltui-update-helper.exe', 'voltui-cli.exe', 'voltui-uninstall.exe'];
   assert.deepEqual(signPathEntries('.signpath/artifact-configurations/windows-payload.xml'), signedPayload);
   assert.deepEqual(signPathEntries('.signpath/artifact-configurations/windows-installer-v2.xml'), [
     '*installer*.exe',
@@ -110,7 +136,25 @@ test('keeps SignPath and release verification aligned with the signed payload', 
     assert.match(verifierSource, new RegExp(name.replaceAll('.', '\\.')));
   }
   assert.doesNotMatch(verifierSource, /reasonix-(desktop|guard|launcher|update-helper|cli|uninstall)\.exe/i);
+  const signingContract = readFileSync(join(repoRoot, '.signpath', 'contracts', 'release-signing.yml'), 'utf8');
+  for (const path of [
+    'desktop/build/windows/installer/project.nsi',
+    'scripts/desktop-build.sh',
+    'scripts/package-windows-desktop.sh',
+    'scripts/verify-windows-authenticode.ps1',
+    'scripts/verify-windows-portable.sh',
+  ]) {
+    assert.match(signingContract, new RegExp(`^  - ${path.replaceAll('.', '\\.')}\\s*$`, 'm'));
+  }
   const workflow = readFileSync(join(repoRoot, '.github', 'workflows', 'release-desktop.yml'), 'utf8');
   assert.match(workflow, /dist\/VoltUI-windows-\$arch-installer\.exe/);
   assert.match(workflow, /dist\/VoltUI-windows-\$arch\.zip/);
+});
+
+test('rejects a signing payload without the required CLI sidecar', () => {
+  assertMissingPayloadRejected('voltui-cli.exe');
+});
+
+test('rejects a signing payload without the generated uninstaller', () => {
+  assertMissingPayloadRejected('voltui-uninstall.exe');
 });

@@ -10,8 +10,9 @@ staging="${1:?usage: verify-windows-portable.sh STAGING_DIR}"
 required=(
 	"voltui-desktop.exe"
 	"voltui-update-helper.exe"
+	"voltui-cli.exe"
 )
-allowed=("${required[@]}" "voltui-cli.exe")
+allowed=("${required[@]}")
 
 actual=()
 for path in "$staging"/*.exe; do

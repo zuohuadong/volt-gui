@@ -73,8 +73,13 @@ ManifestDPIAware true
 
 !insertmacro MUI_LANGUAGE "English" # Set the Language of the installer
 
-## The following two statements can be used to sign the installer and the uninstaller. The path to the binaries are provided in %1
-#!uninstfinalize 'signtool --file "%1"'
+## Preserve the generated uninstaller from the first pass so the release
+## workflow can Authenticode-sign it with every other installed executable.
+## The second pass supplies ARG_VOLTUI_SIGNED_UNINSTALLER and embeds those
+## signed bytes instead of generating a new unsigned uninstaller.
+!ifndef ARG_VOLTUI_SIGNED_UNINSTALLER
+!uninstfinalize 'cp "%1" "voltui-uninstall.exe"'
+!endif
 #!finalize 'signtool --file "%1"'
 
 Name "${INFO_PRODUCTNAME}"
@@ -83,6 +88,7 @@ Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\voltui-desktop-${ARCH}-installer.exe" # Name of the installer's file.
 !define VOLTUI_DEFAULT_INSTALLDIR "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
 !define VOLTUI_UPDATE_HELPER "voltui-update-helper.exe"
+!define VOLTUI_CLI "voltui-cli.exe"
 !define VOLTUI_BUNDLED_ENV "bundled.env"
 !define VOLTUI_COMPUTER_USE_MCP_DIR "computer-use-mcp"
 !define VOLTUI_COMPUTER_USE_RUNTIME_DIR "computer-use-runtime"
@@ -99,7 +105,11 @@ ShowInstDetails show # This will always show the installation details.
 ## wails.deleteUninstaller, which write HKLM and would fail without admin rights.
 ####
 !macro voltui.writeUninstaller
+    !ifdef ARG_VOLTUI_SIGNED_UNINSTALLER
+    File "/oname=uninstall.exe" "${ARG_VOLTUI_SIGNED_UNINSTALLER}"
+    !else
     WriteUninstaller "$INSTDIR\uninstall.exe"
+    !endif
 
     WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "${INFO_COMPANYNAME}"
     WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${INFO_PRODUCTNAME}"
@@ -250,6 +260,11 @@ Section
     !else
     !warning "${VOLTUI_UPDATE_HELPER} was not found; Windows auto-update will fall back to installer-side waiting only."
     !endif
+    !if /FileExists "${VOLTUI_CLI}"
+    File "/oname=${VOLTUI_CLI}" "${VOLTUI_CLI}"
+    !else
+    !error "${VOLTUI_CLI} was not found; the release payload is incomplete."
+    !endif
     !if /FileExists "${VOLTUI_BUNDLED_ENV}"
     File "/oname=${VOLTUI_BUNDLED_ENV}" "${VOLTUI_BUNDLED_ENV}"
     !endif
@@ -303,6 +318,7 @@ Section "uninstall"
     ; Precision uninstall: delete main application files
     Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
     Delete "$INSTDIR\${VOLTUI_UPDATE_HELPER}"
+    Delete "$INSTDIR\${VOLTUI_CLI}"
     Delete "$INSTDIR\${VOLTUI_BUNDLED_ENV}"
     RMDir /r "$INSTDIR\${VOLTUI_COMPUTER_USE_MCP_DIR}"
     RMDir /r "$INSTDIR\${VOLTUI_COMPUTER_USE_RUNTIME_DIR}"

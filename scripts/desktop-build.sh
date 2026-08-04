@@ -30,6 +30,7 @@ APPNAME="${DESKTOP_APP_NAME:-VoltUI}"
 BINNAME="voltui-desktop"
 CLINAME="voltui-cli"
 UPDATE_HELPER="voltui-update-helper.exe"
+UNINSTALLER="voltui-uninstall.exe"
 COMPUTER_USE_MCP_VERSION="${COMPUTER_USE_MCP_VERSION:-6.2.0}"
 BUN_RUNTIME_VERSION="${BUN_RUNTIME_VERSION:-1.3.14}"
 RUNTIME_STAGE="$(mktemp -d)"
@@ -55,10 +56,6 @@ copy_resource_tree() {
 }
 
 build_cli() {
-	if [ ! -d "$ROOT/cmd/voltui" ]; then
-		echo "==> skip VoltUI CLI sidecar (cmd/voltui not present)"
-		return 0
-	fi
 	echo "==> go build VoltUI CLI sidecar"
 	mkdir -p "$(dirname "$cli_out")"
 	if [ "$arch" = universal ]; then
@@ -103,6 +100,9 @@ if [ "$os" = windows ]; then
 	copy_resource_tree "$COREUTILS_RESOURCE" "build/windows/installer/coreutils"
 	cli_out="$ROOT/desktop/build/windows/installer/$CLINAME.exe"
 	build_cli
+	# The first NSIS pass must generate this release's uninstaller. Removing a
+	# previous copy prevents stale bytes from entering the signing payload.
+	rm -f -- "build/windows/installer/$UNINSTALLER"
 fi
 build_args=()
 [ "${DESKTOP_BUILD_CLEAN:-1}" != "0" ] && build_args+=(-clean)
@@ -132,7 +132,7 @@ darwin)
 	TEMP_DIRS+=("$staging")
 	app="$staging/${APPNAME}.app"
 	cp -R "$app_bundle" "$app"
-	[ -f "$cli_out" ] && cp "$cli_out" "$app/Contents/MacOS/$CLINAME"
+	cp "$cli_out" "$app/Contents/MacOS/$CLINAME"
 	copy_resource_tree "$COMPUTER_USE_MCP_RESOURCE" "$app/Contents/Resources/computer-use-mcp"
 	copy_resource_tree "$COMPUTER_USE_RUNTIME_RESOURCE" "$app/Contents/Resources/computer-use-runtime"
 	bundle_executable=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$app/Contents/Info.plist")
@@ -229,7 +229,8 @@ windows)
 	mkdir -p "$payload_dir"
 	cp "build/bin/$BINNAME.exe" "$payload_dir/$BINNAME.exe"
 	cp "build/windows/installer/$UPDATE_HELPER" "$payload_dir/$UPDATE_HELPER"
-	[ -f "build/windows/installer/$CLINAME.exe" ] && cp "build/windows/installer/$CLINAME.exe" "$payload_dir/$CLINAME.exe"
+	cp "build/windows/installer/$CLINAME.exe" "$payload_dir/$CLINAME.exe"
+	cp "build/windows/installer/$UNINSTALLER" "$payload_dir/$UNINSTALLER"
 	"$ROOT/scripts/package-windows-desktop.sh" "$arch" "$payload_dir"
 	;;
 linux)
@@ -244,7 +245,7 @@ linux)
 	linux_staging="$(mktemp -d)"
 	TEMP_DIRS+=("$linux_staging")
 	cp "build/bin/$BINNAME" "$linux_staging/$BINNAME"
-	[ -f "build/bin/$CLINAME" ] && cp "build/bin/$CLINAME" "$linux_staging/$CLINAME"
+	cp "build/bin/$CLINAME" "$linux_staging/$CLINAME"
 	copy_resource_tree "$COMPUTER_USE_MCP_RESOURCE" "$linux_staging/computer-use-mcp"
 	copy_resource_tree "$COMPUTER_USE_RUNTIME_RESOURCE" "$linux_staging/computer-use-runtime"
 	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C "$linux_staging" .

@@ -12,5 +12,8 @@
     <pe-file path="voltui-cli.exe">
       <authenticode-sign />
     </pe-file>
+    <pe-file path="voltui-uninstall.exe">
+      <authenticode-sign />
+    </pe-file>
   </zip-file>
 </artifact-configuration>

@@ -16,6 +16,13 @@ $ErrorActionPreference = "Stop"
 $expectedPayload = @(
     "voltui-desktop.exe",
     "voltui-update-helper.exe",
+    "voltui-cli.exe",
+    "voltui-uninstall.exe"
+)
+
+$expectedPortable = @(
+    "voltui-desktop.exe",
+    "voltui-update-helper.exe",
     "voltui-cli.exe"
 )
 
@@ -51,11 +58,11 @@ $extractRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("voltui-authenticode
 try {
     Expand-Archive -LiteralPath $PortableArchivePath -DestinationPath $extractRoot
     $portableFiles = @(Get-ChildItem -LiteralPath $extractRoot -File -Filter "*.exe")
-    if ($portableFiles.Count -ne $expectedPayload.Count) {
-        throw "Portable archive must contain exactly $($expectedPayload.Count) executables, found $($portableFiles.Count)"
+    if ($portableFiles.Count -ne $expectedPortable.Count) {
+        throw "Portable archive must contain exactly $($expectedPortable.Count) executables, found $($portableFiles.Count)"
     }
-    foreach ($file in $portableFiles) {
-        Assert-AuthenticodeSignature -Path $file.FullName
+    foreach ($portableName in $expectedPortable) {
+        Assert-AuthenticodeSignature -Path (Join-Path $extractRoot $portableName)
     }
 
     $portableSources = @{

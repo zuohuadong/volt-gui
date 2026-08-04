@@ -137,6 +137,18 @@ test('full mocked desktop build does not stage or emit prerequisites assets', {
     mkdirSync(bin, { recursive: true });
     copyFileSync(new URL('./desktop-build.sh', import.meta.url), script);
     chmodSync(script, 0o755);
+    const packageScript = join(fixture, 'scripts', 'package-windows-desktop.sh');
+    writeExecutable(packageScript, [
+      '#!/usr/bin/env bash',
+      'arch="$1"',
+      'payload="$2"',
+      'app="${DESKTOP_APP_NAME:-VoltUI}"',
+      'root="$(cd "$(dirname "$0")/.." && pwd)"',
+      'mkdir -p "$root/dist"',
+      ': > "$root/dist/${app}-windows-${arch}.zip"',
+      'cp "build/bin/voltui-desktop-amd64-installer.exe" "$root/dist/${app}-windows-${arch}-installer.exe"',
+      '',
+    ].join('\n'));
     writeFileSync(join(fixture, 'desktop', 'wails.json'), '{}\n');
 
     writeExecutable(join(bin, 'node'), String.raw`#!/usr/bin/env bash
@@ -164,16 +176,18 @@ esac
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "-o" ]; then
     mkdir -p "$(dirname "$2")"
-    : > "$2"
+    printf '#!/usr/bin/env bash\n' > "$2"
+    chmod +x "$2"
     exit 0
   fi
   shift
 done
 `);
     writeExecutable(join(bin, 'wails'), String.raw`#!/usr/bin/env bash
-mkdir -p build/bin
+mkdir -p build/bin build/windows/installer
 : > build/bin/voltui-desktop-amd64-installer.exe
 : > build/bin/voltui-desktop.exe
+: > build/windows/installer/voltui-uninstall.exe
 `);
     writeExecutable(join(bin, 'zip'), String.raw`#!/usr/bin/env bash
 mkdir -p "$(dirname "$3")"

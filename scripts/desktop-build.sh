@@ -36,10 +36,14 @@ windows_resource_tool_dir=""
 # desktop/ is a nested Go module, so the Go toolchain cannot discover the
 # repository VCS revision for the Wails binary. Link the same source identity
 # into both Desktop and its CLI sidecar before this script mutates packaging
-# metadata such as wails.json.
-SOURCE_REVISION="$(git -C "$ROOT" rev-parse --verify HEAD)"
-if ! git -C "$ROOT" diff-index --quiet HEAD --; then
-	SOURCE_REVISION="$SOURCE_REVISION+dirty"
+# metadata such as wails.json. Gracefully degrade when $ROOT is not a git
+# working tree (e.g. the mocked desktop build test runs from a tmpdir fixture).
+if SOURCE_REVISION="$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null)"; then
+	if ! git -C "$ROOT" diff-index --quiet HEAD --; then
+		SOURCE_REVISION="$SOURCE_REVISION+dirty"
+	fi
+else
+	SOURCE_REVISION="unknown"
 fi
 source_revision_ldflag="-X reasonix/internal/remote/protocol.linkedSourceRevision=$SOURCE_REVISION"
 

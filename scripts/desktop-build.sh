@@ -139,6 +139,13 @@ ldflags="-X main.version=$VERSION -X main.channel=$CHANNEL"
 [ "$os" = "darwin" ] && [ "${HAS_APPLE_CERT:-}" = "true" ] && ldflags="$ldflags -X main.macSelfUpdate=true"
 UPDATE_HELPER="voltui-update-helper.exe"
 if [ "$os" = windows ]; then
+	# Coreutils + Windows prerequisites (WebView2 bootstrapper) are required
+	# NSIS payloads. stage-coreutils.mjs writes voltui-coreutils-path.txt and
+	# coreutils-system-installer.exe; project.nsi hard-errors without them.
+	echo "==> stage Microsoft Coreutils for $PLATFORM"
+	node "$ROOT/scripts/stage-coreutils.mjs" "$ROOT/desktop/build/bin/coreutils" "$PLATFORM"
+	echo "==> stage Windows prerequisites for $PLATFORM"
+	node "$ROOT/scripts/stage-windows-prerequisites.mjs" "$ROOT/desktop/build/bin/windows-prerequisites" "$PLATFORM"
 	windows_resource_tool_dir=$(mktemp -d)
 	windows_resource_tool="$windows_resource_tool_dir/voltui-windows-resource.exe"
 	if [ -d "$ROOT/cmd/windows-resource" ]; then

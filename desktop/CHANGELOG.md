@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.4](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.15.3...desktop-v0.15.4) (2026-08-04)
+
+
+### Bug Fixes
+
+* **ci:** restore cross-platform desktop packaging and signing ([810943a](https://github.com/zuohuadong/volt-gui/commit/810943a907ce6a34ac4f58f86678aa8319eb64ae))
+
 ## [0.15.3](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.15.2...desktop-v0.15.3) (2026-08-04)
 
 

@@ -199,11 +199,15 @@ mkdir -p "$ROOT/dist"
 
 case "$os" in
 darwin)
-	# Wails names the bundle after outputfilename (voltui-desktop.app); repackage
-	# it as VoltUI.app for a clean user-facing name.
+	# Wails names the .app bundle after the wails.json "name" field (e.g.
+	# 西谷智灯暗涌系统.app), not after outputfilename. Read that name so the
+	# cp below finds the bundle regardless of brand locale.
+	wails_app_name="$(node -e 'const j=JSON.parse(require("fs").readFileSync("wails.json","utf8"));process.stdout.write(j.name||"voltui-desktop")')"
+	built_app="build/bin/${wails_app_name}.app"
+	# Repackage it as VoltUI.app for a clean user-facing name.
 	staging=$(mktemp -d)
 	app="$staging/${APPNAME}.app"
-	cp -R "build/bin/voltui-desktop.app" "$app"
+	cp -R "$built_app" "$app"
 	[ -f "$guard_out" ] && cp "$guard_out" "$app/Contents/MacOS/$GUARDNAME"
 	[ -f "$cli_out" ] && cp "$cli_out" "$app/Contents/MacOS/$CLINAME"
 	bundle_executable=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$app/Contents/Info.plist")

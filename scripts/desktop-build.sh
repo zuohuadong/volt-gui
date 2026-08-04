@@ -27,8 +27,8 @@ arch="${PLATFORM#*/}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APPNAME="VoltUI"            # wails.json productName -> VoltUI.app
 BINNAME="voltui-desktop"    # wails.json outputfilename -> linux binary name
-CLINAME="reasonix"            # bundled CLI sidecar used for remote serve upload
-WINDOWS_CLINAME="voltui-cli" # Windows cannot store VoltUI.exe and reasonix.exe separately
+CLINAME="voltui-cli"            # bundled CLI sidecar used for remote serve upload
+WINDOWS_CLINAME="voltui-cli" # Windows cannot store VoltUI.exe and the CLI separately
 GUARDNAME="voltui-guard"
 LAUNCHERNAME="voltui-launcher"
 windows_resource_tool_dir=""
@@ -45,7 +45,9 @@ if SOURCE_REVISION="$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null)"; then
 else
 	SOURCE_REVISION="unknown"
 fi
-source_revision_ldflag="-X reasonix/internal/remote/protocol.linkedSourceRevision=$SOURCE_REVISION"
+# Note: the previous -X reasonix/internal/remote/protocol.linkedSourceRevision
+# ldflag targeted a package removed by the strip-legacy-subsystems refactor.
+# If a replacement source-revision symbol is introduced, re-add it here.
 
 cleanup() {
 	if [ -n "$windows_resource_tool_dir" ]; then
@@ -57,6 +59,10 @@ trap cleanup EXIT
 cd "$ROOT/desktop"
 
 build_guard() {
+	if [ ! -d "$ROOT/cmd/voltui-guard" ]; then
+		echo "==> skip VoltUI Guard (cmd/voltui-guard not present)"
+		return 0
+	fi
 	echo "==> go build VoltUI Guard"
 	mkdir -p "$(dirname "$guard_out")"
 	if [ "$arch" = universal ]; then
@@ -71,16 +77,20 @@ build_guard() {
 }
 
 build_cli() {
+	if [ ! -d "$ROOT/cmd/voltui" ]; then
+		echo "==> skip VoltUI CLI sidecar (cmd/voltui not present)"
+		return 0
+	fi
 	echo "==> go build VoltUI CLI sidecar"
 	mkdir -p "$(dirname "$cli_out")"
 	if [ "$arch" = universal ]; then
 		cli_tmp=$(mktemp -d)
-		(cd "$ROOT" && GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION $source_revision_ldflag" -o "$cli_tmp/amd64" ./cmd/reasonix)
-		(cd "$ROOT" && GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION $source_revision_ldflag" -o "$cli_tmp/arm64" ./cmd/reasonix)
+		(cd "$ROOT" && GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$cli_tmp/amd64" ./cmd/voltui)
+		(cd "$ROOT" && GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$cli_tmp/arm64" ./cmd/voltui)
 		lipo -create "$cli_tmp/amd64" "$cli_tmp/arm64" -output "$cli_out"
 		rm -rf "$cli_tmp"
 	else
-		(cd "$ROOT" && GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION $source_revision_ldflag" -o "$cli_out" ./cmd/reasonix)
+		(cd "$ROOT" && GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$cli_out" ./cmd/voltui)
 	fi
 }
 
@@ -107,29 +117,45 @@ numver="${VERSION#v}"; numver="${numver%%-*}"
 node -e 'const fs=require("fs"),f="wails.json",j=JSON.parse(fs.readFileSync(f,"utf8"));j.info.productVersion=process.argv[1];fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n")' "$numver"
 
 # NSIS installer is Windows-only (Wails requires a single windows target for -nsis).
-ldflags="-X main.version=$VERSION -X main.channel=$CHANNEL $source_revision_ldflag"
+ldflags="-X main.version=$VERSION -X main.channel=$CHANNEL"
 [ "$os" = "darwin" ] && [ "${HAS_APPLE_CERT:-}" = "true" ] && ldflags="$ldflags -X main.macSelfUpdate=true"
 UPDATE_HELPER="voltui-update-helper.exe"
 if [ "$os" = windows ]; then
 	windows_resource_tool_dir=$(mktemp -d)
 	windows_resource_tool="$windows_resource_tool_dir/voltui-windows-resource.exe"
-	echo "==> build Windows resource stamper"
-	go build -trimpath -o "$windows_resource_tool" ./cmd/windows-resource
+	if [ -d "$ROOT/cmd/windows-resource" ]; then
+		echo "==> build Windows resource stamper"
+		go build -trimpath -o "$windows_resource_tool" ./cmd/windows-resource
+	else
+		echo "==> skip Windows resource stamper (cmd/windows-resource not present)"
+	fi
 	guard_out="$ROOT/desktop/build/windows/installer/$GUARDNAME.exe"
 	build_guard
-	stamp_windows_executable "$guard_out" "VoltUI Guard" "$GUARDNAME" "$GUARDNAME.exe"
+	[ -f "$guard_out" ] && [ -x "$windows_resource_tool" ] && \
+		stamp_windows_executable "$guard_out" "VoltUI Guard" "$GUARDNAME" "$GUARDNAME.exe"
 	launcher_out="$ROOT/desktop/build/windows/installer/$LAUNCHERNAME.exe"
-	echo "==> go build Windows GUI launcher"
-	(cd "$ROOT" && GOOS=windows GOARCH="$arch" CGO_ENABLED=0 go build -trimpath \
-		-ldflags="-s -w -H windowsgui -X main.version=$VERSION" -o "$launcher_out" ./cmd/voltui-guard)
-	stamp_windows_executable "$launcher_out" "VoltUI Launcher" "$LAUNCHERNAME" "$LAUNCHERNAME.exe"
-	echo "==> go build Windows update helper"
-	GOOS=windows GOARCH="$arch" go build -trimpath -ldflags="-s -w" \
-		-o "build/windows/installer/$UPDATE_HELPER" ./cmd/update-helper
-	stamp_windows_executable "build/windows/installer/$UPDATE_HELPER" "VoltUI Update Helper" "voltui-update-helper" "$UPDATE_HELPER"
+	if [ -d "$ROOT/cmd/voltui-guard" ]; then
+		echo "==> go build Windows GUI launcher"
+		(cd "$ROOT" && GOOS=windows GOARCH="$arch" CGO_ENABLED=0 go build -trimpath \
+			-ldflags="-s -w -H windowsgui -X main.version=$VERSION" -o "$launcher_out" ./cmd/voltui-guard)
+		[ -x "$windows_resource_tool" ] && \
+			stamp_windows_executable "$launcher_out" "VoltUI Launcher" "$LAUNCHERNAME" "$LAUNCHERNAME.exe"
+	else
+		echo "==> skip Windows GUI launcher (cmd/voltui-guard not present)"
+	fi
+	if [ -d "$ROOT/cmd/update-helper" ]; then
+		echo "==> go build Windows update helper"
+		GOOS=windows GOARCH="$arch" go build -trimpath -ldflags="-s -w" \
+			-o "build/windows/installer/$UPDATE_HELPER" ./cmd/update-helper
+		[ -x "$windows_resource_tool" ] && \
+			stamp_windows_executable "build/windows/installer/$UPDATE_HELPER" "VoltUI Update Helper" "voltui-update-helper" "$UPDATE_HELPER"
+	else
+		echo "==> skip Windows update helper (cmd/update-helper not present)"
+	fi
 	cli_out="$ROOT/desktop/build/windows/installer/$WINDOWS_CLINAME.exe"
 	build_cli
-	stamp_windows_executable "$cli_out" "VoltUI CLI" "$WINDOWS_CLINAME" "$WINDOWS_CLINAME.exe"
+	[ -f "$cli_out" ] && [ -x "$windows_resource_tool" ] && \
+		stamp_windows_executable "$cli_out" "VoltUI CLI" "$WINDOWS_CLINAME" "$WINDOWS_CLINAME.exe"
 	# The first NSIS pass must regenerate this release's uninstaller; a stale
 	# preserved file must never enter the signing payload.
 	rm -f "build/windows/installer/voltui-uninstall.exe"
@@ -160,8 +186,8 @@ darwin)
 	staging=$(mktemp -d)
 	app="$staging/${APPNAME}.app"
 	cp -R "build/bin/voltui-desktop.app" "$app"
-	cp "$guard_out" "$app/Contents/MacOS/$GUARDNAME"
-	cp "$cli_out" "$app/Contents/MacOS/$CLINAME"
+	[ -f "$guard_out" ] && cp "$guard_out" "$app/Contents/MacOS/$GUARDNAME"
+	[ -f "$cli_out" ] && cp "$cli_out" "$app/Contents/MacOS/$CLINAME"
 	bundle_executable=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$app/Contents/Info.plist")
 	# LaunchServices must own the Wails/AppKit process directly. Making Guard the
 	# bundle executable leaves the Dock attached to a non-UI parent process, so
@@ -258,26 +284,33 @@ windows)
 	rm -rf -- "$payload_dir"
 	mkdir -p "$payload_dir"
 	cp "build/bin/$BINNAME.exe" "$payload_dir/$BINNAME.exe"
-	cp "build/windows/installer/$UPDATE_HELPER" "$payload_dir/$UPDATE_HELPER"
-	cp "$launcher_out" "$payload_dir/$LAUNCHERNAME.exe"
-	cp "$guard_out" "$payload_dir/$GUARDNAME.exe"
-	cp "build/windows/installer/$WINDOWS_CLINAME.exe" "$payload_dir/$WINDOWS_CLINAME.exe"
-	cp "build/windows/installer/voltui-uninstall.exe" "$payload_dir/voltui-uninstall.exe"
+	[ -f "build/windows/installer/$UPDATE_HELPER" ] && cp "build/windows/installer/$UPDATE_HELPER" "$payload_dir/$UPDATE_HELPER"
+	[ -f "$launcher_out" ] && cp "$launcher_out" "$payload_dir/$LAUNCHERNAME.exe"
+	[ -f "$guard_out" ] && cp "$guard_out" "$payload_dir/$GUARDNAME.exe"
+	[ -f "build/windows/installer/$WINDOWS_CLINAME.exe" ] && cp "build/windows/installer/$WINDOWS_CLINAME.exe" "$payload_dir/$WINDOWS_CLINAME.exe"
+	[ -f "build/windows/installer/voltui-uninstall.exe" ] && cp "build/windows/installer/voltui-uninstall.exe" "$payload_dir/voltui-uninstall.exe"
 	"$ROOT/scripts/package-windows-desktop.sh" "$arch" "$payload_dir"
 	;;
 linux)
 	for desktop_contract in \
-		'Exec=voltui-guard launch --detach' \
+		'Exec=voltui-desktop' \
 		'Icon=voltui-desktop' \
 		'StartupWMClass=voltui-desktop'; do
-		grep -F -x -q "$desktop_contract" build/linux/reasonix.desktop || { echo "Linux desktop entry missing: $desktop_contract" >&2; exit 1; }
+		grep -F -x -q "$desktop_contract" build/linux/voltui.desktop || { echo "Linux desktop entry missing: $desktop_contract" >&2; exit 1; }
 	done
-	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C build/bin "$BINNAME" "$GUARDNAME" "$CLINAME"
+	tar_payload=("$BINNAME")
+	[ -f "build/bin/$GUARDNAME" ] && tar_payload+=("$GUARDNAME")
+	[ -f "build/bin/$CLINAME" ] && tar_payload+=("$CLINAME")
+	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C build/bin "${tar_payload[@]}"
 	# Build the privileged update helper shipped inside the .deb. Portable tarball
 	# installs do not need it; only the dpkg package installs helper + Polkit policy.
-	echo "==> go build voltui-update-helper"
-	GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" \
-		-o "build/bin/voltui-update-helper" ./cmd/update-helper
+	if [ -d "$ROOT/cmd/update-helper" ]; then
+		echo "==> go build voltui-update-helper"
+		GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" \
+			-o "build/bin/voltui-update-helper" ./cmd/update-helper
+	else
+		echo "==> skip voltui-update-helper (cmd/update-helper not present)"
+	fi
 	# .deb for Debian/Ubuntu. Portable updater still uses the tarball under
 	# platforms[]; .deb is published under native_packages. Debian versions use
 	# "~" for prereleases so 1.18.0~rc.1 < 1.18.0 (policy version ordering).
@@ -294,13 +327,16 @@ linux)
 	DEB_VERSION="$deb_version" DEB_ARCH="$arch" \
 		nfpm package --config build/linux/nfpm.yaml --packager deb \
 		--target "$ROOT/dist/${APPNAME}-linux-${arch}.deb"
-	# Contract smoke: helper, policy, package identity, and pkexec dependency.
+	# Contract smoke: package identity and version always; helper + polkit only
+	# when cmd/update-helper is present (the privileged update subsystem is optional).
 	deb_path="$ROOT/dist/${APPNAME}-linux-${arch}.deb"
 	dpkg-deb --field "$deb_path" Package | grep -x 'voltui-desktop' >/dev/null
 	dpkg-deb --field "$deb_path" Version | grep -x "$deb_version" >/dev/null
-	dpkg-deb --field "$deb_path" Depends | grep -F 'pkexec' >/dev/null
-	dpkg-deb --contents "$deb_path" | grep -E 'usr/lib/reasonix/voltui-update-helper' >/dev/null
-	dpkg-deb --contents "$deb_path" | grep -E 'usr/share/polkit-1/actions/io.reasonix.desktop.update.policy' >/dev/null
+	if [ -d "$ROOT/cmd/update-helper" ]; then
+		dpkg-deb --field "$deb_path" Depends | grep -F 'pkexec' >/dev/null
+		dpkg-deb --contents "$deb_path" | grep -E 'usr/lib/voltui/voltui-update-helper' >/dev/null
+		dpkg-deb --contents "$deb_path" | grep -E 'usr/share/polkit-1/actions/io.voltui.desktop.update.policy' >/dev/null
+	fi
 	;;
 *)
 	echo "unsupported os: $os" >&2

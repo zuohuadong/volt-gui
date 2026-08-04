@@ -43,13 +43,19 @@ func TestWindowsInstallerScriptWaitsBeforeCopyingExecutable(t *testing.T) {
 	script := string(data)
 	for _, want := range []string{
 		`!define VOLTUI_UPDATE_HELPER "voltui-update-helper.exe"`,
+		`!define VOLTUI_CLI "voltui-cli.exe"`,
 		"Function voltui.waitForExecutableUnlock",
 		`FileOpen $1 "$INSTDIR\${PRODUCT_EXECUTABLE}" a`,
 		`OutFile "..\..\bin\voltui-desktop-${ARCH}-installer.exe"`,
+		`!uninstfinalize 'cp "%1" "voltui-uninstall.exe"'`,
+		`!ifdef ARG_VOLTUI_SIGNED_UNINSTALLER`,
+		`File "/oname=uninstall.exe" "${ARG_VOLTUI_SIGNED_UNINSTALLER}"`,
 		"SetErrorLevel 1618",
 		"Call voltui.waitForExecutableUnlock",
 		`File "/oname=${VOLTUI_UPDATE_HELPER}" "${VOLTUI_UPDATE_HELPER}"`,
+		`File "/oname=${VOLTUI_CLI}" "${VOLTUI_CLI}"`,
 		`Delete "$INSTDIR\${VOLTUI_UPDATE_HELPER}"`,
+		`Delete "$INSTDIR\${VOLTUI_CLI}"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("project.nsi missing %q", want)
@@ -117,6 +123,8 @@ func TestDesktopBuildScriptCompilesAndPackagesWindowsUpdateHelper(t *testing.T) 
 		`GOOS=windows GOARCH="$arch" go build`,
 		`./cmd/update-helper`,
 		`build/windows/installer/$UPDATE_HELPER`,
+		`UNINSTALLER="voltui-uninstall.exe"`,
+		`build/windows/installer/$UNINSTALLER`,
 		`package-windows-desktop.sh" "$arch" "$payload_dir"`,
 	} {
 		if !strings.Contains(script, want) {
@@ -136,6 +144,9 @@ func TestWindowsPackagerUsesCurrentRuntimeLayout(t *testing.T) {
 		`BINNAME="voltui-desktop"`,
 		`UPDATE_HELPER="voltui-update-helper.exe"`,
 		`CLINAME="voltui-cli"`,
+		`UNINSTALLER="voltui-uninstall.exe"`,
+		`ARG_VOLTUI_SIGNED_UNINSTALLER`,
+		`cp "$PAYLOAD/$CLINAME.exe" "$INSTALLER_DIR/$CLINAME.exe"`,
 		`for resource in computer-use-mcp computer-use-runtime coreutils`,
 		`verify-windows-portable.sh" "$portable_staging"`,
 		`command -v powershell.exe`,

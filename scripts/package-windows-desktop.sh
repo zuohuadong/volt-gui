@@ -27,6 +27,7 @@ APPNAME="${DESKTOP_APP_NAME:-VoltUI}"
 BINNAME="voltui-desktop"
 UPDATE_HELPER="voltui-update-helper.exe"
 CLINAME="voltui-cli"
+UNINSTALLER="voltui-uninstall.exe"
 
 [ -d "$payload_input" ] || { echo "Windows payload directory is missing: $payload_input" >&2; exit 1; }
 PAYLOAD="$(cd "$payload_input" && pwd)"
@@ -34,17 +35,16 @@ PAYLOAD="$(cd "$payload_input" && pwd)"
 required_payload=(
 	"$BINNAME.exe"
 	"$UPDATE_HELPER"
+	"$CLINAME.exe"
+	"$UNINSTALLER"
 )
 for name in "${required_payload[@]}"; do
 	[ -s "$PAYLOAD/$name" ] || { echo "Windows payload file is missing or empty: $name" >&2; exit 1; }
 done
 
-payload_files=("${required_payload[@]}")
-[ ! -s "$PAYLOAD/$CLINAME.exe" ] || payload_files+=("$CLINAME.exe")
-
 payload_exe_count=$(find "$PAYLOAD" -maxdepth 1 -type f -iname '*.exe' | wc -l | tr -d '[:space:]')
-[ "$payload_exe_count" = "${#payload_files[@]}" ] || {
-	echo "Windows payload contains an unexpected executable: found $payload_exe_count, want ${#payload_files[@]}" >&2
+[ "$payload_exe_count" = "${#required_payload[@]}" ] || {
+	echo "Windows payload must contain exactly ${#required_payload[@]} executables, found $payload_exe_count" >&2
 	exit 1
 }
 
@@ -52,6 +52,7 @@ payload_exe_count=$(find "$PAYLOAD" -maxdepth 1 -type f -iname '*.exe' | wc -l |
 # Copying preserves the Authenticode certificate table returned by SignPath.
 cp "$PAYLOAD/$BINNAME.exe" "$BIN_DIR/$BINNAME.exe"
 cp "$PAYLOAD/$UPDATE_HELPER" "$INSTALLER_DIR/$UPDATE_HELPER"
+cp "$PAYLOAD/$CLINAME.exe" "$INSTALLER_DIR/$CLINAME.exe"
 
 [ -s "$INSTALLER_DIR/wails_tools.nsh" ] || {
 	echo "wails_tools.nsh is missing; run the initial Wails -nsis build first" >&2
@@ -72,9 +73,16 @@ if command -v cygpath >/dev/null 2>&1; then
 fi
 binary_define="ARG_WAILS_AMD64_BINARY"
 [ "$arch" = arm64 ] && binary_define="ARG_WAILS_ARM64_BINARY"
+uninstaller_path="$PAYLOAD/$UNINSTALLER"
+if command -v cygpath >/dev/null 2>&1; then
+	uninstaller_path="$(cygpath -w "$uninstaller_path")"
+fi
 (
 	cd "$INSTALLER_DIR"
-	makensis "-D${binary_define}=${binary_path}" project.nsi
+	makensis \
+		"-D${binary_define}=${binary_path}" \
+		"-DARG_VOLTUI_SIGNED_UNINSTALLER=${uninstaller_path}" \
+		project.nsi
 )
 
 installer=$(find "$BIN_DIR" -maxdepth 1 -type f -name '*installer*.exe' -print -quit)
@@ -96,8 +104,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for name in "${payload_files[@]}"; do
-	cp "$PAYLOAD/$name" "$portable_staging/$name"
+portable_payload=("$BINNAME.exe" "$UPDATE_HELPER" "$CLINAME.exe")
+for portable_name in "${portable_payload[@]}"; do
+	cp "$PAYLOAD/$portable_name" "$portable_staging/$portable_name"
 done
 for resource in computer-use-mcp computer-use-runtime coreutils; do
 	[ -d "$INSTALLER_DIR/$resource" ] || { echo "Windows runtime resource is missing: $resource" >&2; exit 1; }
@@ -127,7 +136,7 @@ installer_bundle="$DESKTOP/build/windows/installer-signing-bundle"
 rm -rf -- "$installer_bundle"
 mkdir -p "$installer_bundle"
 cp "$dist_installer" "$installer_bundle/"
-for name in "${payload_files[@]}"; do
+for name in "${required_payload[@]}"; do
 	cp "$PAYLOAD/$name" "$installer_bundle/$name"
 done
 

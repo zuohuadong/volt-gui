@@ -53,6 +53,18 @@ test('rejects an executable from the removed Guard layout', () => {
   }
 });
 
+test('rejects a portable package without the required CLI sidecar', () => {
+  const root = createPortableFixture();
+  try {
+    rmSync(join(root, 'voltui-cli.exe'));
+    const verification = verifyFixture(root);
+    assert.notEqual(verification.status, 0);
+    assert.match(verification.stderr, /entry is missing or has wrong case: voltui-cli\.exe/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('rejects a portable package without the pinned Coreutils installer', () => {
   const root = createPortableFixture();
   try {

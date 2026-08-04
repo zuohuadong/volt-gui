@@ -71,7 +71,7 @@ type ExternalFolderRefEntry struct {
 
 var pathLocationSuffixRe = regexp.MustCompile(`:\d+(?::\d+)?:?$`)
 
-const externalFolderRefPrefix = "__reasonix_external_folder"
+const externalFolderRefPrefix = "__voltui_external_folder"
 
 // parseRefTokens extracts the deduped, punctuation-trimmed tokens following '@'
 // in a line. A token is a run of non-whitespace bytes, except that a

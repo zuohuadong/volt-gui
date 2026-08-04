@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"voltui/internal/event"
+	"voltui/internal/instruction"
 	"voltui/internal/provider"
 	"voltui/internal/tool"
 )
@@ -198,7 +199,7 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 
 			// Ordinary parallel_tasks (no profile) keep the concise read-only
 			// default system prompt — profile-aware batches use fleet instead.
-			sess := NewSession(DefaultReadOnlyTaskSystemPrompt)
+			sess := NewSession(instruction.WithCalculationPolicy(DefaultReadOnlyTaskSystemPrompt))
 			opts := p.taskTool.subagentOptions(ctx, max, pricing, ctxWin, childDepth, "subagent:"+subID)
 			// Same contract as runSubSession: capture the pristine task before
 			// host framing is prepended so delivery intent classification judges

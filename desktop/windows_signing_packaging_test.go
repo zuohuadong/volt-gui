@@ -117,7 +117,7 @@ func TestWindowsReleaseSignsPayloadBeforeRepackaging(t *testing.T) {
 		`cp "$PAYLOAD/$UPDATE_HELPER" "$INSTALLER_DIR/$UPDATE_HELPER"`,
 		`cp "$PAYLOAD/$WINDOWS_CLINAME.exe" "$INSTALLER_DIR/$WINDOWS_CLINAME.exe"`,
 		`"-DARG_REASONIX_SIGNED_UNINSTALLER=${uninstaller_path}"`,
-		`cp "$PAYLOAD/$LAUNCHERNAME.exe" "$portable_staging/$APPNAME.exe"`,
+		`cp "$PAYLOAD/$BINNAME.exe" "$portable_staging/$APPNAME.exe"`,
 		`"$ROOT/scripts/verify-windows-portable.sh" "$portable_staging"`,
 	} {
 		if !strings.Contains(packager, want) {

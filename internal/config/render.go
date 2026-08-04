@@ -61,6 +61,29 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	}
 	b.WriteString("\n")
 
+	if c.AuthProvider() != "" || c.Auth.Issuer != "" || c.Auth.ClientID != "" {
+		b.WriteString("[auth]\n")
+		providerName := c.AuthProvider()
+		if providerName == "" {
+			providerName = "oidc"
+		}
+		fmt.Fprintf(&b, "provider = %q   # oidc enables desktop sign-in gate\n", providerName)
+		if c.Auth.Issuer != "" {
+			fmt.Fprintf(&b, "issuer = %q\n", strings.TrimRight(c.Auth.Issuer, "/"))
+		}
+		if c.Auth.ClientID != "" {
+			fmt.Fprintf(&b, "client_id = %q\n", c.Auth.ClientID)
+		}
+		if c.Auth.Scope != "" {
+			fmt.Fprintf(&b, "scope = %q\n", c.Auth.Scope)
+		} else {
+			b.WriteString("# scope = \"openid profile email\"\n")
+		}
+		minPort, maxPort := c.AuthCallbackPorts()
+		fmt.Fprintf(&b, "callback_port_min = %d\n", minPort)
+		fmt.Fprintf(&b, "callback_port_max = %d\n\n", maxPort)
+	}
+
 	if shouldRenderUI(c, defaults, scope) {
 		b.WriteString("[ui]\n")
 		fmt.Fprintf(&b, "theme = %q   # auto|dark|light; CLI colors only; REASONIX_THEME can override per run\n", c.UITheme())
@@ -137,6 +160,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		b.WriteString("[desktop]\n")
 		fmt.Fprintf(&b, "provider_access = %s   # providers available to this workspace in the desktop model switcher\n\n", renderStringArray(c.Desktop.ProviderAccess))
 	}
+	if scope != RenderScopeProject {
+		renderWorkbenchConfig(&b, c.Workbench)
+	}
 
 	if scope != RenderScopeProject {
 		b.WriteString("[notifications]\n")
@@ -187,6 +213,17 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			b.WriteString("# password = \"${REASONIX_PROXY_PASSWORD}\"   # optional; supports ${VAR} expansion\n")
 		}
 		b.WriteString("\n")
+		if scope != RenderScopeProject && (c.Network.TrustedIntranet.Enabled || len(c.Network.TrustedIntranet.Sites) > 0) {
+			b.WriteString("[network.trusted_intranet]\n")
+			fmt.Fprintf(&b, "enabled = %v   # user-approved private web_fetch targets\n", c.Network.TrustedIntranet.Enabled)
+			for _, site := range c.TrustedIntranetSites() {
+				b.WriteString("\n[[network.trusted_intranet.sites]]\n")
+				fmt.Fprintf(&b, "host = %q\n", site.Host)
+				fmt.Fprintf(&b, "cidrs = %s\n", renderStringArray(site.CIDRs))
+				fmt.Fprintf(&b, "ports = %s\n", renderIntArray(site.Ports))
+			}
+			b.WriteString("\n")
+		}
 	}
 	if shouldRenderEnvironment(c, defaults, scope) {
 		renderEnvironmentConfig(&b, c.Environment)
@@ -294,6 +331,12 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			fmt.Fprintf(&b, "base_url    = %q\n", p.BaseURL)
 			if p.ChatURL != "" {
 				fmt.Fprintf(&b, "chat_url    = %q   # optional full chat completions URL; disables automatic /chat/completions suffix\n", p.ChatURL)
+			}
+			if p.APISurface != "" {
+				fmt.Fprintf(&b, "api_surface = %q   # chat_completions | responses\n", p.APISurface)
+			}
+			if p.ResponsesURL != "" {
+				fmt.Fprintf(&b, "responses_url = %q   # optional full Responses API URL\n", p.ResponsesURL)
 			}
 			if len(p.Models) > 0 {
 				fmt.Fprintf(&b, "models      = %s\n", renderStringArray(p.Models))
@@ -943,6 +986,12 @@ func RenderTOMLProjectDelta(c *Config) string {
 			if p.ChatURL != "" {
 				fmt.Fprintf(&b, "chat_url    = %q\n", p.ChatURL)
 			}
+			if p.APISurface != "" {
+				fmt.Fprintf(&b, "api_surface = %q\n", p.APISurface)
+			}
+			if p.ResponsesURL != "" {
+				fmt.Fprintf(&b, "responses_url = %q\n", p.ResponsesURL)
+			}
 			if len(p.Models) > 0 {
 				fmt.Fprintf(&b, "models      = %s\n", renderStringArray(p.Models))
 				if p.Default != "" {
@@ -1378,6 +1427,19 @@ func renderStringArray(ss []string) string {
 	return b.String()
 }
 
+func renderIntArray(values []int) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, value := range values {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%d", value)
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
 // renderStringMap renders a map[string]string as a TOML inline table with keys
 // in sorted order so output is deterministic (round-trips cleanly).
 func renderStringMap(m map[string]string) string {
@@ -1681,6 +1743,64 @@ func renderBotDesktopWatcher(b *strings.Builder, watcher BotDesktopWatcherConfig
 	}
 	if strings.TrimSpace(watcher.ChatID) != "" {
 		fmt.Fprintf(b, "chat_id = %q\n", strings.TrimSpace(watcher.ChatID))
+	}
+}
+
+func renderWorkbenchConfig(b *strings.Builder, cfg WorkbenchConfig) {
+	for _, entry := range cfg.Plugins {
+		renderWorkbenchPlugin(b, entry)
+	}
+	for _, entry := range cfg.Providers {
+		renderWorkbenchProvider(b, entry)
+	}
+}
+
+func renderWorkbenchPlugin(b *strings.Builder, entry WorkbenchPluginEntry) {
+	b.WriteString("[[workbench.plugins]]\n")
+	renderTOMLStringField(b, "id", entry.ID)
+	renderTOMLStringField(b, "name", entry.Name)
+	renderTOMLStringField(b, "kind", entry.Kind)
+	renderTOMLStringField(b, "entry", entry.Entry)
+	renderTOMLStringField(b, "version", entry.Version)
+	renderTOMLStringSliceField(b, "capabilities", entry.Capabilities)
+	renderTOMLStringSliceField(b, "provider_ids", entry.ProviderIDs)
+	renderTOMLStringMapField(b, "config", entry.Config)
+	if entry.Enabled != nil {
+		fmt.Fprintf(b, "enabled = %v\n", *entry.Enabled)
+	}
+	b.WriteString("\n")
+}
+
+func renderWorkbenchProvider(b *strings.Builder, entry WorkbenchProviderEntry) {
+	b.WriteString("[[workbench.providers]]\n")
+	renderTOMLStringField(b, "id", entry.ID)
+	renderTOMLStringField(b, "type", entry.Type)
+	renderTOMLStringField(b, "server", entry.Server)
+	renderTOMLStringField(b, "url", entry.URL)
+	renderTOMLStringField(b, "command", entry.Command)
+	renderTOMLStringSliceField(b, "args", entry.Args)
+	renderTOMLStringSliceField(b, "capabilities", entry.Capabilities)
+	renderTOMLStringMapField(b, "headers", entry.Headers)
+	renderTOMLStringMapField(b, "env", entry.Env)
+	renderTOMLStringMapField(b, "config", entry.Config)
+	b.WriteString("\n")
+}
+
+func renderTOMLStringField(b *strings.Builder, key, value string) {
+	if strings.TrimSpace(value) != "" {
+		fmt.Fprintf(b, "%s = %q\n", key, value)
+	}
+}
+
+func renderTOMLStringSliceField(b *strings.Builder, key string, values []string) {
+	if len(values) > 0 {
+		fmt.Fprintf(b, "%s = %s\n", key, renderStringArray(values))
+	}
+}
+
+func renderTOMLStringMapField(b *strings.Builder, key string, values map[string]string) {
+	if len(values) > 0 {
+		fmt.Fprintf(b, "%s = %s\n", key, renderStringMap(values))
 	}
 }
 

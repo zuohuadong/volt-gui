@@ -236,9 +236,9 @@ func redactSessionBundlePath(path string) string {
 		if rootErr == nil && pathErr == nil {
 			if rel, err := filepath.Rel(absRoot, absPath); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 				if rel == "." {
-					return "<VOLTUI_HOME>"
+					return "<REASONIX_HOME>"
 				}
-				return filepath.ToSlash(filepath.Join("<VOLTUI_HOME>", rel))
+				return filepath.ToSlash(filepath.Join("<REASONIX_HOME>", rel))
 			}
 		}
 	}
@@ -257,9 +257,9 @@ func redactSessionBundleText(text string) string {
 		return text
 	}
 	if root := strings.TrimSpace(config.MemoryUserDir()); root != "" {
-		text = replacePathPrefix(text, root, "<VOLTUI_HOME>")
+		text = replacePathPrefix(text, root, "<REASONIX_HOME>")
 		if absRoot, err := filepath.Abs(root); err == nil {
-			text = replacePathPrefix(text, absRoot, "<VOLTUI_HOME>")
+			text = replacePathPrefix(text, absRoot, "<REASONIX_HOME>")
 		}
 	}
 	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
@@ -343,6 +343,7 @@ func sessionBundleArtifacts(sessionPath string) []sessionArtifact {
 		{role: "meta", path: store.SessionMeta(sessionPath)},
 		{role: "goal_state", path: store.SessionGoalState(sessionPath)},
 		{role: "events", path: store.SessionEventLog(sessionPath)},
+		{role: "events_damaged", path: store.SessionEventLogDamaged(sessionPath)},
 		{role: "event_index", path: store.SessionEventIndex(sessionPath)},
 		{role: "conflicts", path: store.SessionConflictLog(sessionPath)},
 		{role: "lease", path: store.SessionLeaseInfo(sessionPath)},

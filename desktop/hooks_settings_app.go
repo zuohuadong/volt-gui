@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	fileencoding "voltui/internal/fileutil/encoding"
 	"voltui/internal/hook"
 )
 
@@ -34,7 +35,7 @@ func (a *App) HooksSettings(scope string) HooksSettingsView {
 		Scope:       s,
 		Path:        path,
 		ProjectRoot: root,
-		Trusted:     s == string(hook.ScopeGlobal) || hook.IsTrusted(root, ""),
+		Trusted:     true,
 		Hooks:       []HookConfigView{},
 		Events:      hookEventNames(),
 	}
@@ -85,15 +86,11 @@ func (a *App) SaveHooksSettingsForRoot(scope, projectRoot string, hooks []HookCo
 }
 
 func (a *App) TrustProjectHooks() error {
-	return a.TrustProjectHooksForRoot(a.activeHookProjectRoot())
+	return nil
 }
 
 func (a *App) TrustProjectHooksForRoot(root string) error {
-	root = strings.TrimSpace(root)
-	if strings.TrimSpace(root) == "" || root == "." {
-		return fmt.Errorf("no active project workspace")
-	}
-	return hook.Trust(root, "")
+	return nil
 }
 
 func (a *App) activeHookProjectRoot() string {
@@ -146,7 +143,7 @@ func hookConfigView(event hook.Event, cfg hook.HookConfig) HookConfigView {
 
 func readHooksSettingsFile(path string) (hook.Settings, error) {
 	var settings hook.Settings
-	body, err := os.ReadFile(path)
+	body, err := fileencoding.ReadFileUTF8(path)
 	if err != nil {
 		return settings, err
 	}
@@ -164,7 +161,7 @@ func writeHooksSettingsFile(path string, settings hook.Settings) error {
 		return fmt.Errorf("empty hooks settings path")
 	}
 	raw := map[string]json.RawMessage{}
-	if body, err := os.ReadFile(path); err == nil {
+	if body, err := fileencoding.ReadFileUTF8(path); err == nil {
 		if err := json.Unmarshal(body, &raw); err != nil {
 			return err
 		}

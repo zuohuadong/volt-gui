@@ -168,6 +168,7 @@ type WorkspaceTab struct {
 	StartupErrLeaseHeld   bool                 // true when StartupErr can be retried after a session lease releases
 	sessionLease          *agent.SessionLease
 	sessionLeaseMu        sync.Mutex
+	sessionLeaseView      atomic.Pointer[agent.SessionLease]
 	sink                  *tabEventSink      // routes events with this tab's ID
 	buildCancel           context.CancelFunc // cancels in-flight boot for tabs removed before Ready
 	buildGeneration       uint64             // identifies the current in-flight build
@@ -359,6 +360,14 @@ func (t *WorkspaceTab) currentSessionPath() string {
 	return strings.TrimSpace(t.SessionPath)
 }
 
+func (t *WorkspaceTab) persistedSessionPath() string {
+	path := canonicalTabSessionPath(t.SessionPath)
+	if path != "" && t.sessionLeaseRuntimeKey() == sessionRuntimeKey(path) {
+		return path
+	}
+	return t.currentSessionPath()
+}
+
 func (t *WorkspaceTab) hasActiveRuntimeWork() bool {
 	if t == nil || t.Ctrl == nil {
 		return false
@@ -402,6 +411,7 @@ func (t *WorkspaceTab) ensureSessionLease(path string) error {
 	}
 	old := t.sessionLease
 	t.sessionLease = lease
+	t.sessionLeaseView.Store(lease)
 	t.sessionLeaseMu.Unlock()
 	if old != nil {
 		old.Release()
@@ -416,6 +426,7 @@ func (t *WorkspaceTab) releaseSessionLease() {
 	t.sessionLeaseMu.Lock()
 	lease := t.sessionLease
 	t.sessionLease = nil
+	t.sessionLeaseView.Store(nil)
 	t.sessionLeaseMu.Unlock()
 	if lease != nil {
 		lease.Release()
@@ -433,6 +444,7 @@ func (t *WorkspaceTab) takeSessionLease() *agent.SessionLease {
 	t.sessionLeaseMu.Lock()
 	lease := t.sessionLease
 	t.sessionLease = nil
+	t.sessionLeaseView.Store(nil)
 	t.sessionLeaseMu.Unlock()
 	return lease
 }
@@ -450,6 +462,7 @@ func (t *WorkspaceTab) adoptSessionLease(lease *agent.SessionLease) {
 	t.sessionLeaseMu.Lock()
 	old := t.sessionLease
 	t.sessionLease = lease
+	t.sessionLeaseView.Store(lease)
 	t.sessionLeaseMu.Unlock()
 	if old != nil && old != lease {
 		old.Release()
@@ -457,19 +470,17 @@ func (t *WorkspaceTab) adoptSessionLease(lease *agent.SessionLease) {
 }
 
 // sessionLeaseRuntimeKey reports the runtime key of the currently held lease,
-// or "" when no lease is held. Safe to call while holding App.mu: the lock
-// order App.mu → sessionLeaseMu has no reverse path (the lease helpers never
-// touch App state while holding sessionLeaseMu).
+// or "" when no lease is held. The atomic view keeps App.mu snapshots from
+// waiting behind a lease acquisition that can outlive the App critical section.
 func (t *WorkspaceTab) sessionLeaseRuntimeKey() string {
 	if t == nil {
 		return ""
 	}
-	t.sessionLeaseMu.Lock()
-	defer t.sessionLeaseMu.Unlock()
-	if t.sessionLease == nil {
+	lease := t.sessionLeaseView.Load()
+	if lease == nil {
 		return ""
 	}
-	return sessionRuntimeKey(t.sessionLease.Path())
+	return sessionRuntimeKey(lease.Path())
 }
 
 // releaseSessionLeaseForKey releases the tab's lease only when it is bound to
@@ -489,6 +500,7 @@ func (t *WorkspaceTab) releaseSessionLeaseForKey(key string) {
 		return
 	}
 	t.sessionLease = nil
+	t.sessionLeaseView.Store(nil)
 	t.sessionLeaseMu.Unlock()
 	lease.Release()
 }
@@ -707,6 +719,9 @@ func applyRuntimeTab(target, source *WorkspaceTab, path string, wailsCtx context
 	target.readTelemetry = readTelemetry
 	target.usageTelemetry = usageTelemetry
 	target.telemetrySessionKey = telemetrySessionKey
+	if !app.transferSessionRuntimeLocked(target, source) {
+		app.advanceSessionRuntimeEpochLocked(target)
+	}
 }
 
 func (a *App) attachExistingSessionRuntime(tab *WorkspaceTab, path string, wailsCtx context.Context) bool {
@@ -721,7 +736,7 @@ func (a *App) attachExistingSessionRuntime(tab *WorkspaceTab, path string, wails
 		return false
 	}
 	detached := a.detachedSessions[key]
-	if detached != nil {
+	if a.runtimeTabAttachableLocked(detached) {
 		delete(a.detachedSessions, key)
 		applyRuntimeTab(tab, detached, path, wailsCtx, a)
 		if current := a.tabs[tab.ID]; current == tab {
@@ -740,7 +755,7 @@ func (a *App) attachExistingSessionRuntime(tab *WorkspaceTab, path string, wails
 		if candidate == nil || candidate == tab {
 			continue
 		}
-		if sessionRuntimeKey(candidate.currentSessionPath()) == key {
+		if sessionRuntimeKey(candidate.currentSessionPath()) == key && a.runtimeTabAttachableLocked(candidate) {
 			source = candidate
 			break
 		}
@@ -763,6 +778,14 @@ func (a *App) attachExistingSessionRuntime(tab *WorkspaceTab, path string, wails
 		attachedCtrl.ReplayPendingPrompts()
 	}
 	return true
+}
+
+func (a *App) runtimeTabAttachableLocked(tab *WorkspaceTab) bool {
+	if tab == nil || tab.Ctrl == nil || !tab.Ready {
+		return false
+	}
+	runtime := a.runtimeForTabLocked(tab)
+	return runtime == nil || runtime.Phase == sessionRuntimeReady
 }
 
 func (t *WorkspaceTab) recordReadFile(rec readFileRecord) {
@@ -1438,6 +1461,9 @@ func topicActivityStatusFromEvent(e event.Event) (string, bool) {
 	case event.ApprovalRequest, event.AskRequest:
 		return topicStatusWaitingConfirmation, true
 	case event.TurnDone:
+		if e.Outcome == event.TurnOutcomeFinalReadiness || e.Outcome == event.TurnOutcomeRecoveryPaused {
+			return topicStatusPaused, true
+		}
 		if e.Err != nil {
 			return topicStatusError, true
 		}
@@ -1501,13 +1527,14 @@ func (a *App) emitReady(ctx context.Context, tabID ...string) {
 		hook()
 		return
 	}
-	if ctx != nil {
-		if len(tabID) > 0 && strings.TrimSpace(tabID[0]) != "" {
-			runtime.EventsEmit(ctx, "agent:ready", strings.TrimSpace(tabID[0]))
-			return
-		}
-		runtime.EventsEmit(ctx, "agent:ready")
+	if ctx == nil {
+		return
 	}
+	if len(tabID) > 0 && strings.TrimSpace(tabID[0]) != "" {
+		a.runtimeEvents.Emit(ctx, "agent:ready", strings.TrimSpace(tabID[0]))
+		return
+	}
+	a.runtimeEvents.Emit(ctx, "agent:ready")
 }
 
 func (s *tabEventSink) recordReadTelemetry(e event.Event) {
@@ -1803,7 +1830,7 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 		WorkspacePath:         tab.WorkspaceRoot,
 		TopicID:               tab.TopicID,
 		TopicTitle:            tab.TopicTitle,
-		SessionPath:           tab.currentSessionPath(),
+		SessionPath:           tab.persistedSessionPath(),
 		AgentProfileID:        tab.AgentProfileID,
 		AgentProfileName:      tab.AgentProfileName,
 		AgentProfileBaseModel: tab.AgentProfileBaseModel,
@@ -3034,6 +3061,16 @@ func setTabStartupError(tab *WorkspaceTab, err error) bool {
 	return tab.StartupErrLeaseHeld
 }
 
+func (a *App) setTabStartupErrorLocked(tab *WorkspaceTab, err error) bool {
+	leaseHeld := setTabStartupError(tab, err)
+	phase := sessionRuntimeFailed
+	if leaseHeld {
+		phase = sessionRuntimeLeaseBlocked
+	}
+	a.setSessionRuntimePhaseLocked(tab, phase, err)
+	return leaseHeld
+}
+
 func clearTabStartupError(tab *WorkspaceTab) {
 	if tab == nil {
 		return
@@ -3087,7 +3124,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 			a.mu.Unlock()
 			return
 		}
-		leaseHeld = setTabStartupError(tab, err)
+		leaseHeld = a.setTabStartupErrorLocked(tab, err)
 		tab.Ready = true
 		tab.releaseSessionLease()
 		a.mu.Unlock()
@@ -3105,7 +3142,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 			a.mu.Unlock()
 			return
 		}
-		leaseHeld = setTabStartupError(tab, err)
+		leaseHeld = a.setTabStartupErrorLocked(tab, err)
 		tab.Ready = true
 		tab.releaseSessionLease()
 		a.mu.Unlock()
@@ -3199,7 +3236,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 			a.mu.Unlock()
 			return
 		}
-		leaseHeld = setTabStartupError(tab, err)
+		leaseHeld = a.setTabStartupErrorLocked(tab, err)
 		tab.Ready = true
 		tab.releaseSessionLease()
 		a.mu.Unlock()
@@ -3269,7 +3306,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 			a.abandonSupersededBuild(tab, nil, rootKey, "")
 			return
 		}
-		leaseHeld = setTabStartupError(tab, err)
+		leaseHeld = a.setTabStartupErrorLocked(tab, err)
 		tab.Ready = true
 		hostKey := takeTabSharedHostKey(tab)
 		tab.releaseSessionLease()
@@ -3358,7 +3395,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 					a.abandonSupersededBuild(tab, ctrl, rootKey, "")
 					return
 				}
-				leaseHeld = setTabStartupError(tab, err)
+				leaseHeld = a.setTabStartupErrorLocked(tab, err)
 				tab.Ready = true
 				hostKey := takeTabSharedHostKey(tab)
 				// Release only a lease bound to THIS build's session: a failed
@@ -3435,6 +3472,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	tab.Label = ctrl.Label()
 	tab.Ready = true
 	clearTabStartupError(tab)
+	a.advanceSessionRuntimeEpochLocked(tab)
 	keepBuildContext = true
 	a.mu.Unlock()
 	a.emitReady(wailsCtx, tab.ID)
@@ -4036,6 +4074,9 @@ func topicTitleUserTurnsFromSession(path string) []string {
 	}
 	var users []string
 	for _, msg := range msgs {
+		if !agent.IsUserAuthoredTurn(msg.Text) {
+			continue
+		}
 		content := control.StripComposePrefixes(agent.HandoffTask(msg.Text))
 		content = control.StripReferencedContextPrefix(content)
 		if strings.TrimSpace(content) != "" {
@@ -4215,7 +4256,7 @@ func (a *App) saveTabsCollectLocked() (string, []desktopTabEntry, string, uint64
 				Scope:                 tab.Scope,
 				WorkspaceRoot:         tab.WorkspaceRoot,
 				TopicID:               tab.TopicID,
-				SessionPath:           tab.currentSessionPath(),
+				SessionPath:           tab.persistedSessionPath(),
 				AgentProfileID:        tab.AgentProfileID,
 				AgentProfileName:      tab.AgentProfileName,
 				AgentProfileBaseModel: tab.AgentProfileBaseModel,
@@ -4241,6 +4282,9 @@ func (a *App) saveTabsCollectLocked() (string, []desktopTabEntry, string, uint64
 // writes must be serialized because every save uses the same destination and
 // fixed .tmp path.
 func (a *App) saveTabsWrite(dir string, entries []desktopTabEntry, activeID string, version uint64) {
+	if config.SafeModeRequested() {
+		return
+	}
 	a.tabsSaveMu.Lock()
 	defer a.tabsSaveMu.Unlock()
 	if version < a.tabsLastWrittenVersion {

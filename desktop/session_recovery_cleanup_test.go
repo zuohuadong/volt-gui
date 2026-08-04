@@ -131,14 +131,14 @@ func TestSessionMetaSeparatesRecoveryProvenanceFromCleanupCopy(t *testing.T) {
 		Path:      coveredBranch,
 		Recovered: true,
 	}
-	meta := sessionMetaFromInfo(info, "", false, false, 0, dir)
+	meta := sessionMetaFromInfo(info, sessionMetaOptions{parentDir: dir})
 	if !meta.Recovered || !meta.RecoveryCopy {
 		t.Fatalf("covered recovery meta = %+v, want provenance and cleanup-copy flags", meta)
 	}
 
 	_, divergedBranch, _ := forkDesktopRecoveryBranch(t, dir, "meta-diverged")
 	info.Path = divergedBranch
-	meta = sessionMetaFromInfo(info, "", false, false, 0, dir)
+	meta = sessionMetaFromInfo(info, sessionMetaOptions{parentDir: dir})
 	if !meta.Recovered || meta.RecoveryCopy {
 		t.Fatalf("diverged recovery meta = %+v, want provenance without cleanup-copy flag", meta)
 	}

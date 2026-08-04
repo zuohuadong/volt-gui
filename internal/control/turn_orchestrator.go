@@ -51,7 +51,7 @@ func (o *turnOrchestrator) runSyntheticTurnWithRawDisplay(ctx context.Context, i
 func (o *turnOrchestrator) runComposedSyntheticTurn(ctx context.Context, text string) error {
 	c := o.c
 	ctx = c.withPlannerTurnMetadata(ctx, text, true, c.messageCount())
-	return c.runner.Run(ctx, c.ComposeSynthetic(text))
+	return c.runner.Run(agent.WithMemoryCompilerSkip(ctx), c.ComposeSynthetic(text))
 }
 
 // runSubagentSkillGoalLoop executes a slash-invoked runAs=subagent skill as a
@@ -161,6 +161,11 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	ctx = jobs.WithSession(ctx, parentSession)
 	userImages := c.inputImages(turn.input)
 	ctx = agent.WithUserImages(ctx, userImages)
+	if turn.synthetic || IsSyntheticUserMessage(turn.raw) {
+		ctx = agent.WithMemoryCompilerSkip(ctx)
+	} else {
+		ctx = agent.WithMemoryCompilerSourceInput(ctx, turn.raw)
+	}
 	input := c.compose(turn.input, turn.raw, !turn.synthetic)
 	startMessages := c.messageCount()
 	defer c.snapshotActivityIfChanged(startMessages)

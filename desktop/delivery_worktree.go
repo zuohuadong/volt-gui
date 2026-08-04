@@ -54,6 +54,11 @@ func (a *App) CreateDeliveryWorktree(workspaceRoot string) (DeliveryWorktreeOpen
 	if err != nil {
 		return DeliveryWorktreeOpenResult{}, fmt.Errorf("isolated worktree was created at %s but Reasonix could not open it: %w", created.WorktreeRoot, err)
 	}
+	a.mu.RLock()
+	if current := a.tabs[tab.ID]; current != nil {
+		tab = a.tabMeta(current, current.ID == a.activeTabID)
+	}
+	a.mu.RUnlock()
 	return DeliveryWorktreeOpenResult{
 		WorkspaceRoot: created.WorkspaceRoot,
 		WorktreeRoot:  created.WorktreeRoot,

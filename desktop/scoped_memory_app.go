@@ -313,15 +313,14 @@ func (a *App) applyScopedMemoryRuntimeRebuild(plan scopedMemoryRuntimeRebuildPla
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
 	newCtrl.EnableInteractiveApproval()
-	applyTabModeToController(newCtrl, snap.mode)
-	applyTabToolApprovalModeToController(newCtrl, snap.toolApprovalMode)
-	newCtrl.SetGoal(snap.goal)
+	applyTabRebuildAxes(newCtrl, snap)
 	path := agent.ContinueSessionPath(plan.prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if err := a.ensureTabSessionLeaseForRebuild(tab, path, reason); err != nil {
 		newCtrl.Close()
 		return err
 	}
 	resumeWithFreshSystemPrompt(newCtrl, plan.carried, path)
+	reconcileTabRebuildGoal(newCtrl, snap)
 
 	a.mu.Lock()
 	if current := a.tabs[tab.ID]; current != tab {

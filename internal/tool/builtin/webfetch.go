@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -26,7 +28,21 @@ import (
 func init() { tool.RegisterBuiltin(webFetch{}) }
 
 type webFetch struct {
-	proxySpec netclient.ProxySpec
+	proxySpec       netclient.ProxySpec
+	trustedIntranet TrustedIntranetPolicy
+	lookupIP        func(context.Context, string) ([]net.IPAddr, error)
+	dialContext     func(context.Context, string, string) (net.Conn, error)
+}
+
+type TrustedIntranetPolicy struct {
+	Enabled bool
+	Sites   []TrustedIntranetSite
+}
+
+type TrustedIntranetSite struct {
+	Host  string
+	CIDRs []string
+	Ports []int
 }
 
 const (
@@ -189,22 +205,183 @@ func ssrfGuardedTransport(proxyURL string) *http.Transport {
 }
 
 type webFetchRoundTripper struct {
-	proxyURLFor func(*http.Request) (string, error)
+	wf     webFetch
+	grants *webFetchCallGrants
 }
 
 func (rt webFetchRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	proxyURL, err := rt.proxyURLFor(req)
+	proxyURL, err := rt.wf.proxyURLFor(req)
 	if err != nil {
 		return nil, fmt.Errorf("resolve proxy: %w", err)
+	}
+	ips, err := rt.wf.resolveTarget(req.Context(), req.URL.Hostname())
+	if err != nil {
+		if proxyURL != "" && net.ParseIP(req.URL.Hostname()) == nil {
+			return ssrfGuardedTransport(proxyURL).RoundTrip(req)
+		}
+		return nil, err
+	}
+	port, err := webFetchURLPort(req.URL)
+	if err != nil {
+		return nil, err
+	}
+	for _, resolved := range ips {
+		if hardBlockedFetchIP(resolved.IP) {
+			return nil, fmt.Errorf("refusing to fetch internal address %s (resolves to %s)", req.URL.Hostname(), resolved.IP)
+		}
+	}
+	privateIPs := make([]net.IPAddr, 0, len(ips))
+	for _, resolved := range ips {
+		if !authorizablePrivateFetchIP(resolved.IP) {
+			continue
+		}
+		privateIPs = append(privateIPs, resolved)
+		if err := rt.authorizePrivateTarget(req, resolved.IP, port); err != nil {
+			return nil, err
+		}
+	}
+	if len(privateIPs) > 0 {
+		return rt.wf.pinnedDirectTransport(privateIPs).RoundTrip(req)
 	}
 	return ssrfGuardedTransport(proxyURL).RoundTrip(req)
 }
 
-func ssrfGuardedClient(proxyURLFor func(*http.Request) (string, error)) *http.Client {
+func (rt webFetchRoundTripper) authorizePrivateTarget(req *http.Request, ip net.IP, port int) error {
+	host := normalizeTrustedIntranetHost(req.URL.Hostname())
+	grantKey := trustedIntranetGrantKey(host, ip.String(), port)
+	if rt.wf.trustedIntranet.Allows(host, ip, port) || rt.grants.allowed(grantKey) {
+		return nil
+	}
+	approvalReq := tool.TrustedIntranetRequest{URL: req.URL.String(), Host: host, IP: ip.String(), Port: port}
+	approver, ok := tool.TrustedIntranetApproverFrom(req.Context())
+	if !ok {
+		return fmt.Errorf("refusing to fetch internal address %s (resolves to %s): trusted intranet access requires user approval", host, ip)
+	}
+	if approver.TrustedIntranetSessionAllowed(req.Context(), approvalReq) {
+		rt.grants.grant(grantKey)
+		return nil
+	}
+	allow, reason, err := approver.ApproveTrustedIntranet(req.Context(), approvalReq)
+	if err != nil {
+		return fmt.Errorf("trusted intranet approval for %s: %w", host, err)
+	}
+	if !allow {
+		if strings.TrimSpace(reason) == "" {
+			reason = "user declined trusted intranet access"
+		}
+		return fmt.Errorf("trusted intranet access to %s declined: %s", host, reason)
+	}
+	rt.grants.grant(grantKey)
+	return nil
+}
+
+func ssrfGuardedClient(wf webFetch) *http.Client {
 	return &http.Client{
 		Timeout:   webFetchTimeout,
-		Transport: webFetchRoundTripper{proxyURLFor: proxyURLFor},
+		Transport: webFetchRoundTripper{wf: wf, grants: &webFetchCallGrants{allowedKeys: map[string]bool{}}},
 	}
+}
+
+type webFetchCallGrants struct {
+	mu          sync.Mutex
+	allowedKeys map[string]bool
+}
+
+func (g *webFetchCallGrants) allowed(key string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.allowedKeys[key]
+}
+
+func (g *webFetchCallGrants) grant(key string) {
+	g.mu.Lock()
+	g.allowedKeys[key] = true
+	g.mu.Unlock()
+}
+
+func trustedIntranetGrantKey(host, ip string, port int) string {
+	return fmt.Sprintf("%s|%s|%d", normalizeTrustedIntranetHost(host), ip, port)
+}
+
+func normalizeTrustedIntranetHost(host string) string {
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(strings.Trim(host, "[]")), "."))
+}
+
+func (p TrustedIntranetPolicy) Allows(host string, ip net.IP, port int) bool {
+	if !p.Enabled || !authorizablePrivateFetchIP(ip) {
+		return false
+	}
+	host = normalizeTrustedIntranetHost(host)
+	for _, site := range p.Sites {
+		if normalizeTrustedIntranetHost(site.Host) != host || !intListContains(site.Ports, port) {
+			continue
+		}
+		for _, rawCIDR := range site.CIDRs {
+			_, network, err := net.ParseCIDR(strings.TrimSpace(rawCIDR))
+			if err == nil && network.Contains(ip) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func intListContains(values []int, want int) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func webFetchURLPort(target *url.URL) (int, error) {
+	if rawPort := target.Port(); rawPort != "" {
+		port, err := strconv.Atoi(rawPort)
+		if err != nil || port < 1 || port > 65535 {
+			return 0, fmt.Errorf("invalid URL port %q", rawPort)
+		}
+		return port, nil
+	}
+	if target.Scheme == "https" {
+		return 443, nil
+	}
+	return 80, nil
+}
+
+func (wf webFetch) resolveTarget(ctx context.Context, host string) ([]net.IPAddr, error) {
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		return []net.IPAddr{{IP: ip}}, nil
+	}
+	lookup := wf.lookupIP
+	if lookup == nil {
+		lookup = net.DefaultResolver.LookupIPAddr
+	}
+	ips, err := lookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("host %s resolved to no addresses", host)
+	}
+	return ips, nil
+}
+
+func (wf webFetch) pinnedDirectTransport(ips []net.IPAddr) *http.Transport {
+	dial := wf.dialContext
+	if dial == nil {
+		dial = (&net.Dialer{Timeout: webFetchTimeout}).DialContext
+	}
+	return &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		_, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		if len(ips) == 0 {
+			return nil, fmt.Errorf("no vetted address available")
+		}
+		return dial(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+	}}
 }
 
 // cgnatRange is RFC 6598 shared address space (100.64.0.0/10). Go's IsPrivate
@@ -227,6 +404,14 @@ func blockedFetchIP(ip net.IP) bool {
 		ip.IsLinkLocalMulticast() ||
 		ip.IsUnspecified() || // 0.0.0.0 / ::
 		cgnatRange.Contains(ip) // 100.64.0.0/10 (incl. Alibaba Cloud metadata)
+}
+
+func authorizablePrivateFetchIP(ip net.IP) bool {
+	return netclient.IsPrivateAddress(ip)
+}
+
+func hardBlockedFetchIP(ip net.IP) bool {
+	return netclient.IsHardBlockedAddress(ip, true)
 }
 
 func (wf webFetch) proxyURLFor(req *http.Request) (string, error) {
@@ -270,7 +455,7 @@ func (wf webFetch) Execute(ctx context.Context, args json.RawMessage) (string, e
 	req.Header.Set("User-Agent", "reasonix-web-fetch/1.0")
 	req.Header.Set("Accept", "text/html,text/plain,text/markdown,application/json,*/*;q=0.5")
 
-	resp, err := ssrfGuardedClient(wf.proxyURLFor).Do(req)
+	resp, err := ssrfGuardedClient(wf).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: %w", p.URL, err)
 	}

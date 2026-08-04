@@ -2,7 +2,7 @@
 
 export const REMOTE_SCHEMA_FORMAT = "reasonix.remote.schema.v1" as const;
 export const REMOTE_PROTOCOL_VERSION = "1" as const;
-export const REMOTE_SCHEMA_HASH = "sha256:ef4cff089227390b500fdcff8b576829f1340ab25fd6244f6e007ade0f8bb388" as const;
+export const REMOTE_SCHEMA_HASH = "sha256:f4b41feb2e9d64aacbb2b8bf65116d09a2fa4f4e5ea68493876f9a4486229598" as const;
 
 export const REMOTE_FIXED_RESOURCES = {
   "protocol": {
@@ -133,7 +133,7 @@ export type RemoteCapabilitiesHydrated = {
   };
 };
 
-export const REMOTE_EVENT_KINDS = ["approval_request", "ask_request", "compaction_done", "compaction_started", "guardian_assessment", "mcp_surface_ready", "message", "notice", "phase", "reasoning", "retrying", "steer", "text", "tool_dispatch", "tool_progress", "tool_result", "turn_done", "turn_started", "usage"] as const;
+export const REMOTE_EVENT_KINDS = ["approval_request", "ask_request", "browser_credential_request", "browser_verification_request", "compaction_done", "compaction_started", "guardian_assessment", "mcp_surface_ready", "memory_compiler_stats", "message", "notice", "phase", "reasoning", "retrying", "steer", "text", "tool_dispatch", "tool_progress", "tool_result", "turn_done", "turn_started", "usage"] as const;
 export const REMOTE_EVENT_EXTERNALIZABLE_JSON_POINTERS = ["/approval/reason", "/approval/subject", "/ask/questions/*/options/*/description", "/ask/questions/*/prompt", "/compaction/archive", "/compaction/summary", "/detail", "/err", "/guardian/rationale", "/reasoning", "/text", "/tool/args", "/tool/diff", "/tool/err", "/tool/output"] as const;
 export type RemoteEventKind = (typeof REMOTE_EVENT_KINDS)[number];
 export type RemoteEventRaw = {
@@ -217,7 +217,7 @@ export type RemoteEventRaw = {
     };
     "user_authorization"?: string;
   };
-  "kind": "approval_request" | "ask_request" | "compaction_done" | "compaction_started" | "guardian_assessment" | "mcp_surface_ready" | "message" | "notice" | "phase" | "reasoning" | "retrying" | "steer" | "text" | "tool_dispatch" | "tool_progress" | "tool_result" | "turn_done" | "turn_started" | "usage";
+  "kind": "approval_request" | "ask_request" | "browser_credential_request" | "browser_verification_request" | "compaction_done" | "compaction_started" | "guardian_assessment" | "mcp_surface_ready" | "memory_compiler_stats" | "message" | "notice" | "phase" | "reasoning" | "retrying" | "steer" | "text" | "tool_dispatch" | "tool_progress" | "tool_result" | "turn_done" | "turn_started" | "usage";
   "level"?: string;
   "memoryCitations"?: Array<{
     "id"?: string;
@@ -366,7 +366,7 @@ export type RemoteEventHydrated = {
     };
     "user_authorization"?: string;
   };
-  "kind": "approval_request" | "ask_request" | "compaction_done" | "compaction_started" | "guardian_assessment" | "mcp_surface_ready" | "message" | "notice" | "phase" | "reasoning" | "retrying" | "steer" | "text" | "tool_dispatch" | "tool_progress" | "tool_result" | "turn_done" | "turn_started" | "usage";
+  "kind": "approval_request" | "ask_request" | "browser_credential_request" | "browser_verification_request" | "compaction_done" | "compaction_started" | "guardian_assessment" | "mcp_surface_ready" | "memory_compiler_stats" | "message" | "notice" | "phase" | "reasoning" | "retrying" | "steer" | "text" | "tool_dispatch" | "tool_progress" | "tool_result" | "turn_done" | "turn_started" | "usage";
   "level"?: string;
   "memoryCitations"?: Array<{
     "id"?: string;

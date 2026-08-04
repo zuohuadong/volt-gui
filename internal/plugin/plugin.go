@@ -133,6 +133,10 @@ type Spec struct {
 	// agent command sandbox.
 	Sandbox  sandbox.Spec
 	StateDir string
+	// ReadOnlyToolNames marks trusted server-local tool names as read-only.
+	ReadOnlyToolNames map[string]bool
+	// ReadOnlyModelToolNames marks trusted model-visible MCP tool names as read-only.
+	ReadOnlyModelToolNames map[string]bool
 	// StripRawPrefix, when non-empty, removes this prefix from each MCP tool's
 	// raw name before namespacing. For example, StripRawPrefix="server_" turns
 	// "server_search" into "search", yielding "mcp__search__search" instead of
@@ -1613,6 +1617,14 @@ type mcpTool struct {
 	} `json:"annotations"`
 }
 
+func (s Spec) toolReadOnly(rawName, visibleName string, hinted bool) bool {
+	return hinted || s.toolReadOnlyTrusted(rawName, visibleName)
+}
+
+func (s Spec) toolReadOnlyTrusted(rawName, visibleName string) bool {
+	return s.ReadOnlyToolNames[rawName] || s.ReadOnlyModelToolNames[toolName(s.Name, visibleName)]
+}
+
 func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 	c.toolsMu.Lock()
 	defer c.toolsMu.Unlock()
@@ -1654,7 +1666,7 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 		if c.spec.StripRawPrefix != "" {
 			visibleName = strings.TrimPrefix(visibleName, c.spec.StripRawPrefix)
 		}
-		readOnly := readOnlyHint
+		readOnlyTrusted := c.spec.toolReadOnlyTrusted(t.Name, visibleName)
 		toolInfos = append(toolInfos, info)
 		tools = append(tools, &remoteTool{
 			client:           c,
@@ -1665,7 +1677,8 @@ func (c *Client) listTools(ctx context.Context) ([]tool.Tool, error) {
 			schema:           schema,
 			outputSchema:     t.OutputSchema,
 			declaredReadOnly: readOnlyHint,
-			readOnly:         readOnly,
+			readOnly:         c.spec.toolReadOnly(t.Name, visibleName, readOnlyHint),
+			readOnlyTrusted:  readOnlyTrusted,
 			destructive:      destructiveHint,
 		})
 	}
@@ -1859,6 +1872,7 @@ type remoteTool struct {
 	outputSchema     json.RawMessage
 	declaredReadOnly bool // server hint, independent of server authorization
 	readOnly         bool // effective reader classification for this live snapshot
+	readOnlyTrusted  bool // true only for a host-configured override
 	// destructive is the MCP destructiveHint. It takes precedence over a
 	// conflicting readOnlyHint in Plan and strict read-only execution.
 	destructive bool
@@ -1900,6 +1914,11 @@ func (t *remoteTool) securitySnapshot() (declaredReadOnly, readOnly, destructive
 func (t *remoteTool) ReadOnly() bool {
 	_, readOnly, _ := t.securitySnapshot()
 	return readOnly
+}
+
+func (t *remoteTool) PlanModeUntrustedReadOnly() bool {
+	_, readOnly, _ := t.securitySnapshot()
+	return readOnly && !t.readOnlyTrusted
 }
 
 func (t *remoteTool) MCPDestructiveHint() bool {

@@ -109,7 +109,6 @@ export interface TrustFlow {
   transport?: string;
   runtime?: string;
   autoStart?: boolean;
-  trustedReadOnlyTools?: number;
   dataCategories: string[];
 }
 
@@ -365,7 +364,6 @@ export interface ServerView {
   authStatus?: string;
   authUrl?: string;
   authConfigured?: boolean;
-  trustedReadOnlyTools?: string[];
   headerKeys?: string[];
 }
 
@@ -1104,7 +1102,6 @@ export interface MCPServerInput {
   url: string;
   env?: Record<string, string> | null;
   headers?: Record<string, string> | null;
-  trustedReadOnlyTools?: string[];
   tier: string;
   enabled?: boolean;
 }
@@ -1507,6 +1504,7 @@ export interface WireEvent {
   memoryCitations?: MemoryCitation[];
   memoryCompiler?: MemoryCompilerStats;
   err?: string;
+  outcome?: "final_readiness" | "recovery_paused";
   level?: "info" | "warn";
   tabId?: string;
   tool?: {

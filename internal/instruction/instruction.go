@@ -2,6 +2,7 @@ package instruction
 
 import (
 	"context"
+	"regexp"
 	"strings"
 
 	"voltui/internal/memory"
@@ -11,6 +12,24 @@ import (
 // planner, and sub-agent prompts. It is conditional because explicit tool
 // allowlists may intentionally remove calculate from a specialized agent.
 const CalculationPolicy = `Calculation policy: when the calculate tool is available, you MUST call it whenever an answer depends on a computed numeric result. This includes arithmetic, percentages, ratios, totals, formula evaluation, estimates that should be reproducible, and verification of numeric reasoning. For money, billing, tax, discounts, interest, exchange rates, allocation, or settlement, always use mode=finance with explicit scale and rounding; never rely on mental arithmetic or binary floating point. Symbolic explanation and proofs may be reasoned about normally, but verify every final numeric value with calculate. If calculate is unavailable, do not invent a precision-sensitive result; state the limitation or hand the calculation to an agent that has the tool.`
+
+var (
+	directCalculationPattern = regexp.MustCompile(`^[[:space:][:digit:].,()+*/%×÷％-]+[=?？。！![:space:]]*$`)
+	numericDatePattern       = regexp.MustCompile(`^[[:space:]]*[[:digit:]]{4}[-/][[:digit:]]{1,2}[-/][[:digit:]]{1,2}[?？。！![:space:]]*$`)
+	numericDateInTextPattern = regexp.MustCompile(`[[:digit:]]{4}[-/][[:digit:]]{1,2}[-/][[:digit:]]{1,2}`)
+)
+
+var calculationRequestTerms = []string{
+	"计算", "算一下", "算出", "求值", "等于多少", "是多少", "多少钱", "合计", "总计", "总额", "总和", "百分比", "占比", "比例", "税额", "折扣", "利息", "汇率", "分摊",
+	"calculate", "compute", "what is", "how much", "total", "sum", "percentage", "ratio", "tax", "discount", "interest", "exchange rate",
+}
+
+var calculationCueTerms = []string{
+	"+", "-", "*", "/", "%", "×", "÷", "％", "加", "减", "乘", "除", "一半", "翻倍", "倍", "次方", "平方", "立方", "平均", "均值", "百分", "比例", "占比", "税", "折扣", "利息", "利率", "汇率", "分摊", "总价", "总额", "总和", "合计", "总计", "元", "金额",
+	"plus", "minus", "times", "divided", "half", "double", "average", "percent", "ratio", "tax", "discount", "interest", "exchange rate", "total", "sum",
+}
+
+var dateQuestionTerms = []string{"日期", "星期", "周几", "几号", "date", "day of week"}
 
 // WithCalculationPolicy appends the standing policy without duplicating it on
 // prompts that pass through more than one construction layer.
@@ -23,6 +42,43 @@ func WithCalculationPolicy(prompt string) string {
 		return CalculationPolicy
 	}
 	return prompt + "\n\n" + CalculationPolicy
+}
+
+// ClearlyRequiresCalculation identifies explicit arithmetic requests for the
+// host-side final-answer gate. Ambiguous numeric prose stays under prompt policy
+// instead of forcing a calculator call for dates, versions, or line numbers.
+func ClearlyRequiresCalculation(input string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(input))
+	if normalized == "" || !containsASCIIDigit(normalized) {
+		return false
+	}
+	if directCalculationPattern.MatchString(normalized) {
+		return !numericDatePattern.MatchString(normalized) && containsCalculationOperator(normalized)
+	}
+	if numericDateInTextPattern.MatchString(normalized) && containsAnyTerm(normalized, dateQuestionTerms) {
+		return false
+	}
+	return containsAnyTerm(normalized, calculationRequestTerms) && containsAnyTerm(normalized, calculationCueTerms)
+}
+
+func containsASCIIDigit(s string) bool {
+	return strings.IndexFunc(s, func(r rune) bool { return r >= '0' && r <= '9' }) >= 0
+}
+
+func containsCalculationOperator(s string) bool {
+	if strings.ContainsAny(s, "+*/%×÷％") {
+		return true
+	}
+	return strings.Contains(s, "-") && !numericDatePattern.MatchString(s)
+}
+
+func containsAnyTerm(s string, terms []string) bool {
+	for _, term := range terms {
+		if strings.Contains(s, term) {
+			return true
+		}
+	}
+	return false
 }
 
 // VerifyCheck is a host-observable project check extracted from structured
@@ -61,7 +117,7 @@ func ExtractHostChecks(docs []memory.Source) []VerifyCheck {
 		for i, raw := range strings.Split(doc.Body, "\n") {
 			line := strings.TrimRight(raw, "\r")
 			if heading, ok := markdownHeading(line); ok {
-				inSection = strings.EqualFold(heading, "VoltUI host checks")
+				inSection = isHostChecksHeading(heading)
 				continue
 			}
 			if !inSection {
@@ -80,6 +136,15 @@ func ExtractHostChecks(docs []memory.Source) []VerifyCheck {
 		}
 	}
 	return checks
+}
+
+func isHostChecksHeading(heading string) bool {
+	switch strings.ToLower(strings.TrimSpace(heading)) {
+	case "reasonix host checks", "voltui host checks":
+		return true
+	default:
+		return false
+	}
 }
 
 func markdownHeading(line string) (string, bool) {

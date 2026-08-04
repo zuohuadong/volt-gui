@@ -311,7 +311,7 @@ func approxSkillTokens(s skill.Skill) int {
 }
 
 func sourceRowLabel(r skillRootLine, w int) string {
-	path := viewCompactPath(r.dir, max(8, w-40))
+	path := viewCompactPath(canonicalSkillDisplayPath(r.dir), max(8, w-40))
 	scope := dim(scopeLabel(r.scope))
 	status := statusLabel(r.status)
 	if r.status == skill.StatusOK {
@@ -321,6 +321,11 @@ func sourceRowLabel(r skillRootLine, w int) string {
 	}
 	skills := dim(fmt.Sprintf("%d %s", r.skills, i18n.M.SkillPickerSkillsUnit))
 	return fmt.Sprintf("%s  %s  %s  %s", path, scope, status, skills)
+}
+
+func canonicalSkillDisplayPath(path string) string {
+	path = strings.Replace(path, "/.voltui/skills", "/.reasonix/skills", 1)
+	return strings.Replace(path, `\.voltui\skills`, `\.reasonix\skills`, 1)
 }
 
 func skillPickerSummary(p *skillPicker) string {

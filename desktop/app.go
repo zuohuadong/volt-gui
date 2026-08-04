@@ -1141,6 +1141,9 @@ func (a *App) SubmitDisplayToTabMode(tabID, display, input string) (string, erro
 	if ctrl == nil {
 		return "", a.workspaceNotReadyErr(tab)
 	}
+	if !a.sessionRuntimeAllowsControllerUse(tab) {
+		return "", a.workspaceNotReadyErr(tab)
+	}
 	if err := a.ensureTabControllerWorkspace(tab); err != nil {
 		return "", err
 	}
@@ -1703,6 +1706,28 @@ func applyTabToolApprovalModeToController(ctrl control.SessionAPI, mode string) 
 	ctrl.SetToolApprovalMode(normalizeToolApprovalMode(mode))
 }
 
+func applyTabRebuildAxes(ctrl control.SessionAPI, snap tabRuntimeSnapshot) {
+	applyTabModeToController(ctrl, snap.currentMode())
+	applyTabToolApprovalModeToController(ctrl, snap.currentToolApprovalMode())
+}
+
+func reconcileTabRebuildGoal(ctrl control.SessionAPI, snap tabRuntimeSnapshot) {
+	if ctrl == nil {
+		return
+	}
+	goal := strings.TrimSpace(snap.currentGoal())
+	status := snap.currentGoalStatus()
+	if tabModeHasPlan(snap.currentMode()) {
+		if status == control.GoalStatusRunning {
+			ctrl.ClearGoal()
+		}
+		return
+	}
+	if status == control.GoalStatusRunning && (strings.TrimSpace(ctrl.Goal()) != goal || ctrl.GoalStatus() != status) {
+		ctrl.SetGoal(goal)
+	}
+}
+
 func (a *App) currentModeForTab(tabID string) string {
 	a.mu.RLock()
 	tab := a.tabByIDLocked(tabID)
@@ -1755,7 +1780,7 @@ func (a *App) SetCollaborationModeForTab(tabID, mode string) {
 	a.mu.Unlock()
 	if ctrl != nil {
 		ctrl.SetPlanMode(plan)
-		ctrl.SetGoal(goal)
+		setControllerGoalIfChanged(ctrl, goal)
 	}
 	a.mu.Lock()
 	if a.tabs[tabIDForSave] == tab {
@@ -1822,13 +1847,20 @@ func (a *App) CompactForTab(tabID string) error {
 // lock. Callers must not hold a.mu.
 func (a *App) workspaceNotReadyErr(tab *WorkspaceTab) error {
 	startupErr := ""
+	runtimeErr := ""
 	if tab != nil {
 		a.mu.RLock()
 		startupErr = tab.StartupErr
+		if runtime := a.runtimeForTabLocked(tab); runtime != nil && runtime.Phase != sessionRuntimeStarting && runtime.Phase != sessionRuntimeReady && runtime.Issue != nil {
+			runtimeErr = runtime.Issue.Message
+		}
 		a.mu.RUnlock()
 	}
 	if strings.TrimSpace(startupErr) != "" {
 		return fmt.Errorf("workspace failed to start: %s", startupErr)
+	}
+	if strings.TrimSpace(runtimeErr) != "" {
+		return fmt.Errorf("workspace failed to start: %s", runtimeErr)
 	}
 	return fmt.Errorf("workspace is still starting")
 }
@@ -2115,8 +2147,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
 	newCtrl.EnableInteractiveApproval()
-	applyTabModeToController(newCtrl, snap.mode)
-	applyTabToolApprovalModeToController(newCtrl, snap.toolApprovalMode)
+	applyTabRebuildAxes(newCtrl, snap)
 	// Clearing the session clears the active goal too (same contract as
 	// Controller.ClearSession): the snapshot's goal belongs to the destroyed
 	// conversation and must not seed the replacement.
@@ -2583,6 +2614,9 @@ func (a *App) activeSessionDir() string {
 // marking the one the current conversation is writing to and attaching any
 // user-chosen titles.
 func (a *App) ListSessions() []SessionMeta {
+	if a.activeWorkbenchTargetIsRemote() {
+		return []SessionMeta{}
+	}
 	dir := a.activeSessionDir()
 	infos, err := agent.ListSessions(dir)
 	if err != nil {
@@ -2606,7 +2640,9 @@ func (a *App) ListSessions() []SessionMeta {
 		if title == "" {
 			title = titles[filepath.Base(s.Path)]
 		}
-		meta := sessionMetaFromInfo(s, title, s.Path == active, isOpen, 0, dir)
+		meta := sessionMetaFromInfo(s, sessionMetaOptions{
+			title: title, current: s.Path == active, open: isOpen, parentDir: dir,
+		})
 		if route, ok := channelRoutes[sessionRuntimeKey(s.Path)]; ok {
 			applyChannelSessionRoute(&meta, route)
 		}
@@ -2619,6 +2655,9 @@ func (a *App) ListSessions() []SessionMeta {
 // newest-deleted first. These can be previewed, restored, or permanently purged.
 func (a *App) ListTrashedSessions() []SessionMeta {
 	out := []SessionMeta{}
+	if a.activeWorkbenchTargetIsRemote() {
+		return out
+	}
 	for _, dir := range a.knownSessionDirs() {
 		paths, err := listTrashedSessionFiles(dir)
 		if err != nil {
@@ -2635,7 +2674,9 @@ func (a *App) ListTrashedSessions() []SessionMeta {
 			if title == "" {
 				title = titles[filepath.Base(path)]
 			}
-			out = append(out, sessionMetaFromInfo(infos[0], title, false, false, deletedAt, dir))
+			out = append(out, sessionMetaFromInfo(infos[0], sessionMetaOptions{
+				title: title, deletedAt: deletedAt, parentDir: dir,
+			}))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -2666,24 +2707,32 @@ func (a *App) sessionDirForPath(path string) (string, string, error) {
 	return "", "", fmt.Errorf("session path outside known session dirs: %s", path)
 }
 
-func sessionMetaFromInfo(s agent.SessionInfo, title string, current, open bool, deletedAt int64, parentDir string) SessionMeta {
+type sessionMetaOptions struct {
+	title     string
+	parentDir string
+	current   bool
+	open      bool
+	deletedAt int64
+}
+
+func sessionMetaFromInfo(s agent.SessionInfo, options sessionMetaOptions) SessionMeta {
 	return SessionMeta{
 		Path:           s.Path,
 		Preview:        s.Preview,
-		Title:          title,
+		Title:          options.title,
 		Turns:          s.Turns,
 		CreatedAt:      s.CreatedAt.UnixMilli(),
 		LastActivityAt: s.LastActivityAt.UnixMilli(),
 		ModTime:        s.LastActivityAt.UnixMilli(),
-		DeletedAt:      deletedAt,
-		Current:        current,
-		Open:           open,
+		DeletedAt:      options.deletedAt,
+		Current:        options.current,
+		Open:           options.open,
 		Scope:          s.Scope,
 		WorkspaceRoot:  s.WorkspaceRoot,
 		TopicID:        s.TopicID,
 		TopicTitle:     s.TopicTitle,
 		Recovered:      sessionInfoIsAutomaticRecovery(s),
-		RecoveryCopy:   sessionInfoIsUnmodifiedRecoveryCopy(s, parentDir),
+		RecoveryCopy:   sessionInfoIsUnmodifiedRecoveryCopy(s, options.parentDir),
 	}
 }
 
@@ -2786,6 +2835,9 @@ func channelDisplayName(provider, domain string) string {
 // has an in-process runtime, the runtime is cancelled and removed first so
 // autosave cannot recreate or append to the deleted file later.
 func (a *App) DeleteSession(path string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteSavedSessionManagementErr()
+	}
 	return friendlySessionFileError(a.deleteSession(path, false))
 }
 
@@ -2793,10 +2845,27 @@ func (a *App) DeleteSession(path string) error {
 // marker is only a hint; the backend re-reads the branch and parent immediately
 // before changing runtime state or moving any files.
 func (a *App) DeleteRecoveryCopy(path string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteSavedSessionManagementErr()
+	}
 	return friendlySessionFileError(a.deleteSession(path, true))
 }
 
 var errRecoveryCopyNotRedundant = errors.New("recovery session contains content not preserved by its parent")
+
+func acquireRecoveryCleanupGuard(path, parentDir string) (*agent.SessionRemovalGuard, error) {
+	guard, err := agent.TryAcquireRecoveryParentGuard(path, parentDir)
+	switch {
+	case errors.Is(err, agent.ErrSessionLeaseHeld):
+		return nil, errSessionBusyElsewhere
+	case errors.Is(err, agent.ErrRecoveryBranchNotCovered):
+		return nil, errRecoveryCopyNotRedundant
+	case err != nil:
+		return nil, err
+	default:
+		return guard, nil
+	}
+}
 
 func (a *App) deleteSession(path string, requireRedundantRecovery bool) error {
 	dir := a.activeSessionDir()
@@ -2815,9 +2884,18 @@ func (a *App) deleteSession(path string, requireRedundantRecovery bool) error {
 	if err := func() error {
 		a.sessionRemovalMu.Lock()
 		defer a.sessionRemovalMu.Unlock()
-		if requireRedundantRecovery && !agent.RecoveryBranchCoveredByParent(sessionPath, dir) {
-			return errRecoveryCopyNotRedundant
+		var recoveryGuard *agent.SessionRemovalGuard
+		if requireRedundantRecovery {
+			recoveryGuard, err = acquireRecoveryCleanupGuard(sessionPath, dir)
+			if err != nil {
+				return err
+			}
 		}
+		defer func() {
+			if recoveryGuard != nil {
+				recoveryGuard.Release()
+			}
+		}()
 
 		removed, nextFallback := a.removeSessionRuntimeBindings(dir, sessionPath)
 		fallback = nextFallback
@@ -2834,7 +2912,16 @@ func (a *App) deleteSession(path string, requireRedundantRecovery bool) error {
 				a.closeRemainingRemovedSessionRuntimesAfterDestroy(removed, closedRemoved)
 				return err
 			}
-			go delayedDesktopSessionTrash(dir, sessionPath, key, destroys)
+			if recoveryGuard == nil {
+				go delayedDesktopSessionTrash(dir, sessionPath, key, destroys)
+			} else {
+				parentGuard := recoveryGuard
+				recoveryGuard = nil
+				go func() {
+					defer parentGuard.Release()
+					delayedDesktopSessionTrash(dir, sessionPath, key, destroys)
+				}()
+			}
 		} else {
 			err = trashSessionArtifacts(dir, sessionPath, key)
 			finishDestroyHandles(destroys)
@@ -3283,6 +3370,9 @@ func (a *App) activeSessionPath(dir string) string {
 
 // RestoreSession moves a trashed session back into the saved-session list.
 func (a *App) RestoreSession(path string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteSavedSessionManagementErr()
+	}
 	return friendlySessionFileError(a.restoreSession(path))
 }
 
@@ -3345,12 +3435,18 @@ func (a *App) sessionOpen(dir, sessionPath string) bool {
 // PurgeTrashedSession permanently removes a trashed session and its title/display
 // sidecars.
 func (a *App) PurgeTrashedSession(path string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteSavedSessionManagementErr()
+	}
 	return friendlySessionFileError(a.purgeTrashedSession(path, false))
 }
 
 // PurgeRecoveryCopy is the guarded permanent-cleanup path. A trashed branch is
 // rechecked against its live parent; missing, stale, or divergent data is kept.
 func (a *App) PurgeRecoveryCopy(path string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteSavedSessionManagementErr()
+	}
 	return friendlySessionFileError(a.purgeTrashedSession(path, true))
 }
 
@@ -3361,8 +3457,12 @@ func (a *App) purgeTrashedSession(path string, requireRedundantRecovery bool) er
 	}
 	a.sessionRemovalMu.Lock()
 	defer a.sessionRemovalMu.Unlock()
-	if requireRedundantRecovery && !agent.RecoveryBranchCoveredByParent(path, dir) {
-		return errRecoveryCopyNotRedundant
+	if requireRedundantRecovery {
+		guard, err := acquireRecoveryCleanupGuard(path, dir)
+		if err != nil {
+			return err
+		}
+		defer guard.Release()
 	}
 	if err := purgeTrashedSessionFile(dir, path); err != nil {
 		return err
@@ -3376,6 +3476,9 @@ func (a *App) purgeTrashedSession(path string, requireRedundantRecovery bool) er
 // the branch meta sidecar, with the legacy .titles.json map kept as a
 // compatibility write-through for older desktop data paths.
 func (a *App) RenameSession(path, title string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteSavedSessionManagementErr()
+	}
 	dir := a.activeSessionDir()
 	sessionPath, _, err := validateSessionPath(dir, path)
 	if err != nil {
@@ -3405,6 +3508,9 @@ func (a *App) ResumeSessionPage(path string, limit int) (HistoryPage, error) {
 }
 
 func (a *App) ResumeSessionPageForTab(tabID, path string, limit int) (HistoryPage, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return HistoryPage{}, remoteSavedSessionManagementErr()
+	}
 	tab, ctrl := a.tabAndCtrlByID(tabID)
 	if tab == nil || ctrl == nil {
 		return HistoryPage{}, fmt.Errorf("tab is not ready")
@@ -3430,6 +3536,9 @@ func (a *App) ResumeSessionPageForTab(tabID, path string, limit int) (HistoryPag
 // path is a runtime identity, so changing to a different path must replace the
 // tab's controller binding rather than mutating the current controller in place.
 func (a *App) ResumeSessionForTab(tabID, path string) ([]HistoryMessage, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return []HistoryMessage{}, remoteSavedSessionManagementErr()
+	}
 	tab, ctrl := a.tabAndCtrlByID(tabID)
 	if tab == nil || ctrl == nil {
 		return []HistoryMessage{}, fmt.Errorf("tab is not ready")
@@ -3455,6 +3564,9 @@ func (a *App) ResumeSessionForTab(tabID, path string) ([]HistoryMessage, error) 
 }
 
 func (a *App) OpenChannelSessionForTab(tabID, path string) ([]HistoryMessage, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return []HistoryMessage{}, remoteSavedSessionManagementErr()
+	}
 	tab, ctrl := a.tabAndCtrlByID(tabID)
 	if tab == nil || ctrl == nil {
 		return []HistoryMessage{}, fmt.Errorf("tab is not ready")
@@ -3477,6 +3589,9 @@ func (a *App) OpenChannelSessionForTab(tabID, path string) ([]HistoryMessage, er
 }
 
 func (a *App) OpenChannelSessionPageForTab(tabID, path string, limit int) (HistoryPage, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return HistoryPage{}, remoteSavedSessionManagementErr()
+	}
 	tab, ctrl := a.tabAndCtrlByID(tabID)
 	if tab == nil || ctrl == nil {
 		return HistoryPage{}, fmt.Errorf("tab is not ready")
@@ -3660,6 +3775,9 @@ func loadResumableSession(sessionPath string) (*agent.Session, error) {
 // PreviewSession reads a saved session for display only. It does not snapshot or
 // swap the active controller, so the history drawer can call it while a turn runs.
 func (a *App) PreviewSession(path string) ([]HistoryMessage, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return []HistoryMessage{}, remoteSavedSessionManagementErr()
+	}
 	sessionDir, sessionPath, err := a.sessionDirForPath(path)
 	if err != nil {
 		return nil, err
@@ -3709,6 +3827,9 @@ type promptHistoryTape struct {
 // carry a cursor and page limit. Older clients may still pass a bare nonce; that
 // path keeps the old cache-hit behavior.
 func (a *App) ScanPromptHistory(rawRequest string) (PromptHistoryResult, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return PromptHistoryResult{}, remoteSavedSessionManagementErr()
+	}
 	req := parsePromptHistoryRequest(rawRequest)
 	dir := a.activeSessionDir()
 	sessionPath := a.activeSessionPath(dir)
@@ -5144,7 +5265,7 @@ func historyTodoArgsWithCompleteSteps(msgs []provider.Message) map[string]string
 				if len(rec.Todos) == 0 {
 					continue
 				}
-				todos = append([]evidence.TodoItem(nil), rec.Todos...)
+				todos = evidence.NormalizeSerialTodos(rec.Todos)
 				latestTodoID = tc.ID
 				if args, ok := todoArgsJSON(todos); ok {
 					out[latestTodoID] = args
@@ -5155,11 +5276,9 @@ func historyTodoArgsWithCompleteSteps(msgs []provider.Message) map[string]string
 				}
 				rec := evidence.ReceiptFromToolCall(tc.Name, json.RawMessage(tc.Arguments), true, true)
 				match, ok := evidence.MatchStep(rec.Step, todos)
-				if !ok || match.Index < 1 || match.Index > len(todos) || todoStatusForHistory(todos[match.Index-1].Status) == "completed" {
+				if !ok || !evidence.AdvanceSerialTodo(todos, match.Index-1) {
 					continue
 				}
-				todos[match.Index-1].Status = "completed"
-				promoteNextHistoryTodo(todos)
 				if args, ok := todoArgsJSON(todos); ok {
 					out[latestTodoID] = args
 				}
@@ -5196,28 +5315,6 @@ func todoArgsJSON(todos []evidence.TodoItem) (string, bool) {
 		return "", false
 	}
 	return string(b), true
-}
-
-func promoteNextHistoryTodo(todos []evidence.TodoItem) {
-	for _, todo := range todos {
-		if todoStatusForHistory(todo.Status) == "in_progress" {
-			return
-		}
-	}
-	for i := range todos {
-		if todoStatusForHistory(todos[i].Status) == "pending" {
-			todos[i].Status = "in_progress"
-			return
-		}
-	}
-}
-
-func todoStatusForHistory(status string) string {
-	status = strings.TrimSpace(status)
-	if status == "" {
-		return "pending"
-	}
-	return status
 }
 
 func previewSessionMessages(sessionDir, path string) ([]HistoryMessage, error) {
@@ -5790,6 +5887,9 @@ func (a *App) AutoResearchCurrent() AutoResearchStatusView {
 }
 
 func (a *App) AutoResearchStatus(tabID string) AutoResearchStatusView {
+	if a.activeWorkbenchTargetIsRemote() {
+		return AutoResearchStatusView{OpenCriteria: []AutoResearchCriterionView{}}
+	}
 	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
 		return AutoResearchStatusView{OpenCriteria: []AutoResearchCriterionView{}}
@@ -5802,6 +5902,9 @@ func (a *App) AutoResearchStatus(tabID string) AutoResearchStatusView {
 }
 
 func (a *App) AutoResearchList(tabID string) []AutoResearchStatusView {
+	if a.activeWorkbenchTargetIsRemote() {
+		return []AutoResearchStatusView{}
+	}
 	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
 		return []AutoResearchStatusView{}
@@ -5818,6 +5921,9 @@ func (a *App) AutoResearchList(tabID string) []AutoResearchStatusView {
 }
 
 func (a *App) AutoResearchFindings(tabID string, limit int) []AutoResearchFindingView {
+	if a.activeWorkbenchTargetIsRemote() {
+		return []AutoResearchFindingView{}
+	}
 	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
 		return []AutoResearchFindingView{}
@@ -5843,6 +5949,9 @@ func (a *App) AutoResearchFindings(tabID string, limit int) []AutoResearchFindin
 }
 
 func (a *App) AutoResearchOpenTask(tabID string) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteAutoResearchUnavailableErr()
+	}
 	status := a.AutoResearchStatus(tabID)
 	if strings.TrimSpace(status.TaskPath) == "" {
 		return os.ErrInvalid
@@ -5851,6 +5960,9 @@ func (a *App) AutoResearchOpenTask(tabID string) error {
 }
 
 func (a *App) AutoResearchRecordEvidence(tabID, criterionID string, input AutoResearchEvidenceView) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteAutoResearchUnavailableErr()
+	}
 	ctrl := a.ctrlByTabID(tabID)
 	if ctrl == nil {
 		return os.ErrInvalid
@@ -5888,13 +6000,24 @@ func (a *App) SetGoalForTab(tabID, goal string) {
 	a.mu.Unlock()
 	if ctrl != nil {
 		ctrl.SetPlanMode(plan)
-		ctrl.SetGoal(goal)
+		setControllerGoalIfChanged(ctrl, goal)
 	}
 	a.mu.Lock()
 	if a.tabs[tabIDForSave] == tab {
 		a.saveTabsLocked()
 	}
 	a.mu.Unlock()
+}
+
+func setControllerGoalIfChanged(ctrl control.SessionAPI, goal string) {
+	if ctrl == nil {
+		return
+	}
+	goal = strings.TrimSpace(goal)
+	if strings.TrimSpace(ctrl.Goal()) == goal {
+		return
+	}
+	ctrl.SetGoal(goal)
 }
 
 func (a *App) ClearGoal() {
@@ -6110,30 +6233,29 @@ type SkillsSettingsView struct {
 // the connection error), "initializing" (background startup in progress), or
 // "disabled".
 type ServerView struct {
-	Name                 string     `json:"name"`
-	Transport            string     `json:"transport"`
-	Status               string     `json:"status"`
-	StartIntent          string     `json:"startIntent,omitempty"`
-	RuntimeState         string     `json:"runtimeState,omitempty"`
-	BuiltIn              bool       `json:"builtIn,omitempty"`
-	Configured           bool       `json:"configured,omitempty"`
-	AutoStart            bool       `json:"autoStart"`
-	Tier                 string     `json:"tier,omitempty"`
-	Command              string     `json:"command,omitempty"`
-	Args                 []string   `json:"args,omitempty"`
-	URL                  string     `json:"url,omitempty"`
-	EnvKeys              []string   `json:"envKeys,omitempty"`
-	HeaderKeys           []string   `json:"headerKeys,omitempty"`
-	Tools                int        `json:"tools"`
-	Prompts              int        `json:"prompts"`
-	Resources            int        `json:"resources"`
-	HasTools             bool       `json:"hasTools,omitempty"`
-	Error                string     `json:"error,omitempty"`
-	ToolList             []ToolView `json:"toolList,omitempty"`
-	TrustedReadOnlyTools []string   `json:"trustedReadOnlyTools,omitempty"`
-	AuthStatus           string     `json:"authStatus,omitempty"`
-	AuthURL              string     `json:"authUrl,omitempty"`
-	AuthConfigured       bool       `json:"authConfigured,omitempty"`
+	Name           string     `json:"name"`
+	Transport      string     `json:"transport"`
+	Status         string     `json:"status"`
+	StartIntent    string     `json:"startIntent,omitempty"`
+	RuntimeState   string     `json:"runtimeState,omitempty"`
+	BuiltIn        bool       `json:"builtIn,omitempty"`
+	Configured     bool       `json:"configured,omitempty"`
+	AutoStart      bool       `json:"autoStart"`
+	Tier           string     `json:"tier,omitempty"`
+	Command        string     `json:"command,omitempty"`
+	Args           []string   `json:"args,omitempty"`
+	URL            string     `json:"url,omitempty"`
+	EnvKeys        []string   `json:"envKeys,omitempty"`
+	HeaderKeys     []string   `json:"headerKeys,omitempty"`
+	Tools          int        `json:"tools"`
+	Prompts        int        `json:"prompts"`
+	Resources      int        `json:"resources"`
+	HasTools       bool       `json:"hasTools,omitempty"`
+	Error          string     `json:"error,omitempty"`
+	ToolList       []ToolView `json:"toolList,omitempty"`
+	AuthStatus     string     `json:"authStatus,omitempty"`
+	AuthURL        string     `json:"authUrl,omitempty"`
+	AuthConfigured bool       `json:"authConfigured,omitempty"`
 }
 
 type ToolView struct {
@@ -6529,7 +6651,6 @@ func withPluginConfig(v ServerView, p config.PluginEntry) ServerView {
 	v.Command = p.Command
 	v.Args = append([]string(nil), p.Args...)
 	v.URL = p.URL
-	v.TrustedReadOnlyTools = uniqueStrings(p.TrustedReadOnlyTools)
 	v.AuthConfigured = mcpdiag.HasAuthConfig(p.Headers, p.Env, p.URL)
 	v.EnvKeys = nil
 	v.HeaderKeys = nil
@@ -6952,16 +7073,15 @@ func skillDisplayRoot(sk skill.Skill, roots []skill.Root) string {
 // MCPServerInput is the drawer's "add server" form. Transport is "stdio" (Command
 // + Args + Env) or "http"/"sse" (URL). Mirrors config.PluginEntry's writable shape.
 type MCPServerInput struct {
-	Name                 string            `json:"name"`
-	Transport            string            `json:"transport"`
-	Command              string            `json:"command"`
-	Args                 []string          `json:"args"`
-	URL                  string            `json:"url"`
-	Env                  map[string]string `json:"env"`
-	Headers              map[string]string `json:"headers"`
-	Tier                 string            `json:"tier"`
-	Enabled              *bool             `json:"enabled"`
-	TrustedReadOnlyTools []string          `json:"trustedReadOnlyTools"`
+	Name      string            `json:"name"`
+	Transport string            `json:"transport"`
+	Command   string            `json:"command"`
+	Args      []string          `json:"args"`
+	URL       string            `json:"url"`
+	Env       map[string]string `json:"env"`
+	Headers   map[string]string `json:"headers"`
+	Tier      string            `json:"tier"`
+	Enabled   *bool             `json:"enabled"`
 }
 
 // AddMCPServer connects a server live and persists it to config (Customize → MCP →
@@ -6972,15 +7092,14 @@ func (a *App) AddMCPServer(in MCPServerInput) (int, error) {
 		return 0, rebuildControllerActiveWorkError("MCP server")
 	}
 	entry := config.PluginEntry{
-		Name:                 in.Name,
-		Type:                 normalizeMCPTransport(in.Transport),
-		Command:              in.Command,
-		Args:                 in.Args,
-		URL:                  in.URL,
-		Env:                  in.Env,
-		Headers:              in.Headers,
-		Tier:                 normalizeMCPTier(in.Tier),
-		TrustedReadOnlyTools: uniqueStrings(in.TrustedReadOnlyTools),
+		Name:    in.Name,
+		Type:    normalizeMCPTransport(in.Transport),
+		Command: in.Command,
+		Args:    in.Args,
+		URL:     in.URL,
+		Env:     in.Env,
+		Headers: in.Headers,
+		Tier:    normalizeMCPTier(in.Tier),
 	}
 	if in.Enabled != nil {
 		entry.AutoStart = in.Enabled
@@ -7030,9 +7149,6 @@ func (a *App) UpdateMCPServer(name string, in MCPServerInput) error {
 	}
 	if in.Headers != nil {
 		updated.Headers = in.Headers
-	}
-	if in.TrustedReadOnlyTools != nil {
-		updated.TrustedReadOnlyTools = uniqueStrings(in.TrustedReadOnlyTools)
 	}
 	if in.Enabled != nil {
 		updated.AutoStart = in.Enabled
@@ -7145,7 +7261,7 @@ func (a *App) ClearMCPServerAuthentication(name string) error {
 	if controllerHasActiveRuntimeWork(ctrl) {
 		return rebuildControllerActiveWorkError("MCP server")
 	}
-	if _, _, _, err := config.ClearPluginAuthenticationInSource(name); err != nil {
+	if _, _, _, err := config.ClearPluginAuthenticationInSourceForRoot(a.activeWorkspaceRoot(), name); err != nil {
 		return err
 	}
 	ctrl.DisconnectMCPServer(name)
@@ -7155,131 +7271,23 @@ func (a *App) ClearMCPServerAuthentication(name string) error {
 	return nil
 }
 
-func (a *App) updateMCPServerTrustedReadOnlyTools(name string, update func([]string) []string) error {
-	ctrl := a.activeCtrl()
-	if ctrl == nil {
-		return fmt.Errorf("no active session")
-	}
-	if controllerHasActiveRuntimeWork(ctrl) {
-		return rebuildControllerActiveWorkError("MCP server")
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return fmt.Errorf("MCP server name is required")
-	}
-	updated, found, err := a.desktopMCPServerForEdit(name)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return fmt.Errorf("no configured MCP server named %q", name)
-	}
-	trusted := uniqueStrings(updated.TrustedReadOnlyTools)
-	next := uniqueStrings(update(trusted))
-	if sameStringList(trusted, next) {
-		updated.TrustedReadOnlyTools = trusted
-		return nil
-	}
-	updated.TrustedReadOnlyTools = next
-	if err := a.saveDesktopMCPServer(updated); err != nil {
-		return err
-	}
+var errMCPToolTrustRetired = errors.New("manual MCP read-only trust has been retired; use server annotations or a built-in known-server override")
 
-	a.mu.RLock()
-	tab := a.activeTabLocked()
-	sessionDisabled := false
-	if tab != nil {
-		_, sessionDisabled = tab.disabledMCP[name]
-	}
-	a.mu.RUnlock()
-	if !mcpConnected(ctrl, name) {
-		return nil
-	}
-	ctrl.DisconnectMCPServer(name)
-	if h := ctrl.Host(); h != nil {
-		h.ClearFailure(name)
-	}
-	if !sessionDisabled {
-		if _, err := ctrl.ConnectMCPServer(updated); err != nil {
-			recordMCPFailure(ctrl, updated, err)
-			return nil
-		}
-	}
-	return nil
-}
-
-func (a *App) validateTrustedReadOnlyMCPTools(name string, toolNames []string) error {
-	ctrl := a.activeCtrl()
-	if ctrl == nil || ctrl.Host() == nil {
-		return fmt.Errorf("MCP server %q must be connected before trusting tools", name)
-	}
-	name = strings.TrimSpace(name)
-	trusted := make(map[string]bool, len(toolNames))
-	for _, toolName := range uniqueStrings(toolNames) {
-		trusted[toolName] = false
-	}
-	if len(trusted) == 0 {
-		return fmt.Errorf("at least one MCP tool name is required")
-	}
-
-	found := false
-	for _, server := range ctrl.Host().Servers() {
-		if server.Name != name {
-			continue
-		}
-		found = true
-		for _, tool := range server.ToolList {
-			if tool.ReadOnlyHint {
-				if _, requested := trusted[tool.Name]; requested {
-					trusted[tool.Name] = true
-				}
-			}
-		}
-		break
-	}
-	if !found {
-		return fmt.Errorf("MCP server %q must be connected before trusting tools", name)
-	}
-	for toolName, allowed := range trusted {
-		if !allowed {
-			return fmt.Errorf("MCP tool %q is not currently advertised as read-only by server %q", toolName, name)
-		}
-	}
-	return nil
-}
-
-// TrustMCPServerTool marks one raw MCP tool name as trusted read-only and
-// refreshes the live connection so plan mode can use the updated trust boundary.
+// TrustMCPServerTool remains as a compatibility binding for older desktop
+// frontends. Manual trust is intentionally rejected by the current MCP policy.
 func (a *App) TrustMCPServerTool(name, toolName string) error {
-	return a.TrustMCPServerTools(name, []string{toolName})
+	return errMCPToolTrustRetired
 }
 
-// TrustMCPServerTools marks multiple raw MCP tool names as trusted read-only in
-// one config write and one live reconnect.
+// TrustMCPServerTools is the batch compatibility binding for retired clients.
 func (a *App) TrustMCPServerTools(name string, toolNames []string) error {
-	name = strings.TrimSpace(name)
-	toolNames = uniqueStrings(toolNames)
-	if len(toolNames) == 0 {
-		return fmt.Errorf("at least one MCP tool name is required")
-	}
-	if err := a.validateTrustedReadOnlyMCPTools(name, toolNames); err != nil {
-		return err
-	}
-	return a.updateMCPServerTrustedReadOnlyTools(name, func(trusted []string) []string {
-		return append(trusted, toolNames...)
-	})
+	return errMCPToolTrustRetired
 }
 
-// UntrustMCPServerTool removes one raw MCP tool name from the trusted read-only
-// list and refreshes the live connection.
+// UntrustMCPServerTool is retained only so an older frontend gets an explicit
+// migration error instead of a missing-method failure.
 func (a *App) UntrustMCPServerTool(name, toolName string) error {
-	toolName = strings.TrimSpace(toolName)
-	if toolName == "" {
-		return fmt.Errorf("MCP tool name is required")
-	}
-	return a.updateMCPServerTrustedReadOnlyTools(name, func(trusted []string) []string {
-		return removeString(trusted, toolName)
-	})
+	return errMCPToolTrustRetired
 }
 
 // SetMCPServerEnabled is the connector toggle: on reconnects a configured server
@@ -8091,9 +8099,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
 	newCtrl.EnableInteractiveApproval()
-	applyTabModeToController(newCtrl, snap.mode)
-	applyTabToolApprovalModeToController(newCtrl, snap.toolApprovalMode)
-	newCtrl.SetGoal(snap.goal)
+	applyTabRebuildAxes(newCtrl, snap)
 
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if err := a.ensureTabSessionLeaseForRebuild(tab, path, "model"); err != nil {
@@ -8101,6 +8107,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		return err
 	}
 	resumeWithFreshSystemPrompt(newCtrl, carried, path)
+	reconcileTabRebuildGoal(newCtrl, snap)
 	a.mu.Lock()
 	if current := a.tabs[tab.ID]; current != tab {
 		// The tab was closed/replaced while we built the new controller off-lock;
@@ -8267,15 +8274,14 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
 	newCtrl.EnableInteractiveApproval()
-	applyTabModeToController(newCtrl, snap.mode)
-	applyTabToolApprovalModeToController(newCtrl, snap.toolApprovalMode)
-	newCtrl.SetGoal(snap.goal)
+	applyTabRebuildAxes(newCtrl, snap)
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if err := a.ensureTabSessionLeaseForRebuild(tab, path, "effort"); err != nil {
 		newCtrl.Close()
 		return err
 	}
 	resumeWithFreshSystemPrompt(newCtrl, carried, path)
+	reconcileTabRebuildGoal(newCtrl, snap)
 	a.mu.Lock()
 	if current := a.tabs[tab.ID]; current != tab {
 		a.mu.Unlock()
@@ -8408,15 +8414,14 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
 	newCtrl.EnableInteractiveApproval()
-	applyTabModeToController(newCtrl, snap.mode)
-	applyTabToolApprovalModeToController(newCtrl, snap.toolApprovalMode)
-	newCtrl.SetGoal(snap.goal)
+	applyTabRebuildAxes(newCtrl, snap)
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if err := a.ensureTabSessionLeaseForRebuild(tab, path, "token mode"); err != nil {
 		newCtrl.Close()
 		return err
 	}
 	resumeWithFreshSystemPrompt(newCtrl, carried, path)
+	reconcileTabRebuildGoal(newCtrl, snap)
 	a.mu.Lock()
 	if current := a.tabs[tab.ID]; current != tab {
 		a.mu.Unlock()
@@ -9658,6 +9663,9 @@ func (a *App) MemoryForTab(tabID string) MemoryView {
 
 func (a *App) memoryForCtrl(ctrl control.SessionAPI, fallback bool) MemoryView {
 	view := MemoryView{Docs: []MemoryDoc{}, Facts: []MemoryFact{}, Archives: []MemoryArchive{}, Scopes: []MemoryScope{}}
+	if a.activeWorkbenchTargetIsRemote() {
+		return view
+	}
 	if ctrl == nil {
 		if !fallback {
 			return view
@@ -9717,6 +9725,9 @@ func (a *App) RememberForTab(tabID, scope, note string) (string, error) {
 }
 
 func (a *App) rememberForCtrl(ctrl control.SessionAPI, scope, note string, fallback bool) (string, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return "", remoteMemoryUnavailableErr()
+	}
 	if ctrl == nil {
 		if !fallback {
 			return "", nil
@@ -9745,6 +9756,9 @@ func (a *App) ForgetForTab(tabID, name string) error {
 }
 
 func (a *App) forgetForCtrl(ctrl control.SessionAPI, name string, fallback bool) error {
+	if a.activeWorkbenchTargetIsRemote() {
+		return remoteMemoryUnavailableErr()
+	}
 	if ctrl == nil {
 		if !fallback {
 			return nil
@@ -9773,6 +9787,9 @@ func (a *App) SaveDocForTab(tabID, path, body string) (string, error) {
 }
 
 func (a *App) saveDocForCtrl(ctrl control.SessionAPI, path, body string, fallback bool) (string, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return "", remoteMemoryUnavailableErr()
+	}
 	if ctrl == nil {
 		if !fallback {
 			return "", nil

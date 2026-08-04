@@ -17,6 +17,7 @@ const (
 // startup behavior.
 func ApplyKnownOverrides(s Spec, workspaceRoot string) Spec {
 	if isCodeGraphSpecName(s.Name) {
+		s.ReadOnlyToolNames = mergeReadOnlyToolNames(s.ReadOnlyToolNames, codeGraphReadOnlyToolNames())
 		if isStdioSpecType(s.Type) {
 			if s.Dir == "" {
 				s.Dir = strings.TrimSpace(workspaceRoot)
@@ -40,6 +41,29 @@ func ApplyKnownOverrides(s Spec, workspaceRoot string) Spec {
 		s.LowPriority = true
 	}
 	return s
+}
+
+func mergeReadOnlyToolNames(existing, extra map[string]bool) map[string]bool {
+	merged := make(map[string]bool, len(existing)+len(extra))
+	for name, readOnly := range existing {
+		merged[name] = readOnly
+	}
+	for name, readOnly := range extra {
+		if readOnly {
+			merged[name] = true
+		}
+	}
+	return merged
+}
+
+func codeGraphReadOnlyToolNames() map[string]bool {
+	names := []string{"callees", "callers", "context", "explore", "files", "impact", "node", "search", "status", "trace"}
+	readOnly := make(map[string]bool, len(names)*2)
+	for _, name := range names {
+		readOnly[name] = true
+		readOnly["codegraph_"+name] = true
+	}
+	return readOnly
 }
 
 func isCodeGraphSpecName(name string) bool {

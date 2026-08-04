@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"voltui/internal/event"
 	"strings"
 	"testing"
 
+	"voltui/internal/event"
+	"voltui/internal/instruction"
 	"voltui/internal/provider"
 	"voltui/internal/tool"
 )
@@ -759,6 +760,9 @@ func TestCoordinatorPlannerUsesReadOnlyResearchTools(t *testing.T) {
 	}
 	if got := plannerSess.Messages[0].Content; !strings.Contains(got, "Rule: keep changes narrow.") {
 		t.Errorf("planner system prompt missing planning context: %q", got)
+	}
+	if got := plannerSess.Messages[0].Content; !strings.Contains(got, instruction.CalculationPolicy) {
+		t.Errorf("planner system prompt missing calculation policy: %q", got)
 	}
 }
 

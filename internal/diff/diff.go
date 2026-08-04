@@ -38,6 +38,22 @@ type Change struct {
 	Removed int    `json:"removed"` // lines present in old but not new
 	Diff    string `json:"diff"`    // unified diff; "" when Binary
 	Binary  bool   `json:"binary"`
+	Mode    string `json:"mode,omitempty"`
+	Hunks   int    `json:"hunks,omitempty"`
+}
+
+type OutputMode string
+
+const (
+	OutputModePatch   OutputMode = "patch"
+	OutputModePreview OutputMode = "preview"
+)
+
+type BuildOptions struct {
+	ContextLines int
+	OldLabel     string
+	NewLabel     string
+	Mode         OutputMode
 }
 
 // defaultContext is how many unchanged lines surround each change in the
@@ -49,7 +65,16 @@ const defaultContext = 3
 // line tallies. When either side contains a NUL byte the file is treated as
 // binary: the tallies are left zero and Diff is empty.
 func Build(path, oldText, newText string, kind Kind) Change {
+	return BuildWithOptions(path, oldText, newText, kind, BuildOptions{ContextLines: -1})
+}
+
+// BuildWithOptions computes a Change with caller-selected labels and context.
+func BuildWithOptions(path, oldText, newText string, kind Kind, opts BuildOptions) Change {
+	opts = normalizeBuildOptions(path, opts)
 	c := Change{Path: path, Kind: kind, OldText: oldText, NewText: newText}
+	if opts.Mode != OutputModePatch {
+		c.Mode = string(opts.Mode)
+	}
 	if isBinary(oldText) || isBinary(newText) {
 		c.Binary = true
 		return c
@@ -60,12 +85,17 @@ func Build(path, oldText, newText string, kind Kind) Change {
 
 	oldLines, oldEOL := splitLines(oldText)
 	newLines, newEOL := splitLines(newText)
+	if exactDiffTooLarge(oldLines, newLines) {
+		c.Added, c.Removed = approxTally(oldLines, newLines)
+		c.Diff = omittedDiff(c.Added, c.Removed)
+		return c
+	}
 	ops, ok := myers(oldLines, newLines)
 	if !ok {
 		// Change too large for an O(N²) line diff (a big rewrite). Give cheap,
 		// order-insensitive tallies and omit the unreadable diff.
 		c.Added, c.Removed = approxTally(oldLines, newLines)
-		c.Diff = "(diff omitted: change too large to render — +" + itoa(c.Added) + " / -" + itoa(c.Removed) + " lines)"
+		c.Diff = omittedDiff(c.Added, c.Removed)
 		return c
 	}
 
@@ -77,8 +107,58 @@ func Build(path, oldText, newText string, kind Kind) Change {
 			c.Removed++
 		}
 	}
-	c.Diff = unified(path, ops, oldEOL, newEOL, defaultContext)
+	c.Diff = unified(opts.OldLabel, opts.NewLabel, ops, oldEOL, newEOL, opts.ContextLines)
+	c.Hunks = countUnifiedHunks(c.Diff)
 	return c
+}
+
+func normalizeBuildOptions(path string, opts BuildOptions) BuildOptions {
+	if opts.ContextLines < 0 {
+		opts.ContextLines = defaultContext
+	}
+	if opts.Mode == "" {
+		opts.Mode = OutputModePatch
+	}
+	if opts.OldLabel == "" {
+		prefix := "a/"
+		if opts.Mode == OutputModePreview {
+			prefix = "before/"
+		}
+		opts.OldLabel = prefix + path
+	}
+	if opts.NewLabel == "" {
+		prefix := "b/"
+		if opts.Mode == OutputModePreview {
+			prefix = "after/"
+		}
+		opts.NewLabel = prefix + path
+	}
+	return opts
+}
+
+func omittedDiff(added, removed int) string {
+	return "(diff omitted: change too large to render — +" + itoa(added) + " / -" + itoa(removed) + " lines)"
+}
+
+func countUnifiedHunks(rendered string) int {
+	return strings.Count(rendered, "\n@@ ")
+}
+
+func exactDiffTooLarge(oldLines, newLines []string) bool {
+	return changedWindowSize(oldLines, newLines) > maxDiffEdits
+}
+
+func changedWindowSize(oldLines, newLines []string) int {
+	start := 0
+	for start < len(oldLines) && start < len(newLines) && oldLines[start] == newLines[start] {
+		start++
+	}
+	oldEnd, newEnd := len(oldLines), len(newLines)
+	for oldEnd > start && newEnd > start && oldLines[oldEnd-1] == newLines[newEnd-1] {
+		oldEnd--
+		newEnd--
+	}
+	return oldEnd - start + newEnd - start
 }
 
 // approxTally counts added/removed lines by multiset difference — order-
@@ -242,7 +322,7 @@ type lineRef struct {
 // unified renders ops as a unified diff with the given context. It returns ""
 // when there is nothing to show. oldEOL/newEOL report whether each side ended
 // with a newline, used to emit the "\ No newline at end of file" marker.
-func unified(path string, ops []op, oldEOL, newEOL bool, context int) string {
+func unified(oldLabel, newLabel string, ops []op, oldEOL, newEOL bool, context int) string {
 	refs := number(ops)
 	hunks := group(refs, context)
 	if len(hunks) == 0 {
@@ -250,8 +330,8 @@ func unified(path string, ops []op, oldEOL, newEOL bool, context int) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("--- a/" + path + "\n")
-	b.WriteString("+++ b/" + path + "\n")
+	b.WriteString("--- " + oldLabel + "\n")
+	b.WriteString("+++ " + newLabel + "\n")
 
 	lastOldNo, lastNewNo := lastLineNumbers(refs)
 	for _, h := range hunks {

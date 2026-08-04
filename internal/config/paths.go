@@ -47,6 +47,9 @@ func reasonixHomeDir() string {
 	if dir := cleanEnvDir("REASONIX_HOME"); dir != "" {
 		return dir
 	}
+	if dir := cleanEnvDir("VOLTUI_HOME"); dir != "" {
+		return dir
+	}
 	if runtimeGOOS == "windows" {
 		if dir := osUserConfigDir(); dir != "" {
 			return filepath.Join(dir, "reasonix")
@@ -498,6 +501,20 @@ func ProjectSessionDir(workspaceRoot string) string {
 		root = abs
 	}
 	return filepath.Join(base, "projects", WorkspaceSlug(root), "sessions")
+}
+
+// MemoryCompilerDir is the project-scoped state directory used when a running
+// client explicitly enables the legacy Memory v5 compatibility surface.
+func MemoryCompilerDir(workspaceRoot string) string {
+	base := MemoryUserDir()
+	root := strings.TrimSpace(workspaceRoot)
+	if base == "" || root == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	return filepath.Join(base, "projects", WorkspaceSlug(root), "memory", "compiler")
 }
 
 // WorkspaceSlug flattens an absolute workspace path into the directory name

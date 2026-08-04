@@ -108,6 +108,7 @@ type Goals interface {
 	ResetPlannerSession()
 	PlanMode() bool
 	SetPlanMode(v bool)
+	SetAutoPlan(mode string)
 }
 
 // SessionHistory covers checkpoint/rewind, branch/fork, and the log-restructuring
@@ -139,6 +140,8 @@ type MemoryControl interface {
 	SaveMemory(m memory.Memory) (string, error)
 	ForgetMemory(name string) error
 	QueueMemory(note string)
+	SetMemoryCompilerEnabled(enabled bool)
+	SetMemoryCompilerVerbosity(verbosity string)
 }
 
 // Capabilities covers the session's pluggable surface — MCP servers, skills,

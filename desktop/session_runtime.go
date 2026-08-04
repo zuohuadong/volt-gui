@@ -145,6 +145,23 @@ func (a *App) runtimeForTabLocked(tab *WorkspaceTab) *desktopSessionRuntime {
 	return rt
 }
 
+func (a *App) transferSessionRuntimeLocked(target, source *WorkspaceTab) bool {
+	sourceRuntime := a.runtimeForTabLocked(source)
+	if sourceRuntime == nil {
+		return false
+	}
+	if targetRuntime := a.runtimeForTabLocked(target); targetRuntime != nil && targetRuntime != sourceRuntime {
+		a.removeSessionRuntimeMappingsLocked(targetRuntime)
+	}
+	sourceRuntime.Owner = target
+	target.runtimeID = sourceRuntime.ID
+	source.runtimeID = ""
+	if target.sink != nil {
+		target.sink.setRuntimeEpoch(sourceRuntime.Epoch)
+	}
+	return true
+}
+
 func (a *App) runtimeOwnerLiveLocked(rt *desktopSessionRuntime) bool {
 	if rt == nil || rt.Owner == nil {
 		return false
@@ -248,6 +265,16 @@ func (a *App) sessionRuntimeViewLocked(tab *WorkspaceTab) SessionRuntimeView {
 		view.Issue = &SessionRuntimeIssue{Code: "startup_failed", Message: tab.StartupErr}
 	}
 	return view
+}
+
+func (a *App) sessionRuntimeAllowsControllerUse(tab *WorkspaceTab) bool {
+	if tab == nil {
+		return false
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	runtime := a.runtimeForTabLocked(tab)
+	return runtime == nil || runtime.Phase == sessionRuntimeReady
 }
 
 func (a *App) bindSessionRuntimeKeyLocked(tab *WorkspaceTab, path string) bool {

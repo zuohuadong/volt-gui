@@ -57,7 +57,7 @@ func TestDataTrustCenterForTabSanitizesDestinationsAndProjectsRealCapabilities(t
 	}
 	autoStart := false
 	cfg.Plugins = []config.PluginEntry{
-		{Name: "local-tools", Type: "stdio", Command: "/usr/local/bin/local-mcp", Args: []string{"--token", "stdio-arg-secret"}, Env: map[string]string{"LOCAL_MCP_TOKEN": "stdio-env-secret"}, TrustedReadOnlyTools: []string{"read_status"}},
+		{Name: "local-tools", Type: "stdio", Command: "/usr/local/bin/local-mcp", Args: []string{"--token", "stdio-arg-secret"}, Env: map[string]string{"LOCAL_MCP_TOKEN": "stdio-env-secret"}},
 		{Name: "remote-tools", Type: "http", URL: "${TRUST_MCP_URL}", Headers: map[string]string{"Authorization": "Bearer ${TRUST_MCP_HEADER}"}, AutoStart: &autoStart},
 	}
 	cfg.Network.ProxyMode = "custom"
@@ -131,7 +131,7 @@ func TestDataTrustCenterForTabSanitizesDestinationsAndProjectsRealCapabilities(t
 	}
 
 	stdio := trustFlowByID(t, view.Network, "mcp:local-tools")
-	if stdio.Transport != "stdio" || stdio.Classification != "local" || stdio.Runtime != "local subprocess" || stdio.TrustedReadOnlyTools != 1 {
+	if stdio.Transport != "stdio" || stdio.Classification != "local" || stdio.Runtime != "local subprocess" {
 		t.Fatalf("stdio MCP = %+v", stdio)
 	}
 	remote := trustFlowByID(t, view.Network, "mcp:remote-tools")

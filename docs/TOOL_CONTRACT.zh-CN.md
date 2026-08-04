@@ -8,14 +8,21 @@
 | --- | --- | --- |
 | `bash` | false | 执行 shell 命令并返回 stdout/stderr。构建、测试、git、包管理器等使用它；读写查找文件优先使用专用工具。 |
 | `bash_output` | true | 读取后台 `bash` 或 `task` job 自上次读取后的新增输出和状态。 |
+| `browser_control` | false | 控制已有浏览器会话；即使单次动作只读取页面，也继续经过普通权限与网络边界检查。 |
+| `browser_navigate` | true | 使用受约束的 Chromium 会话打开网页并返回页面内容。 |
+| `calculate` | true | 使用确定性算术引擎计算表达式；财务模式要求显式精度与舍入规则。 |
 | `code_index` | true | 轻量内置代码符号索引；优先使用 `lsp_*` 或代码图 MCP，缺失时用它兜底。 |
 | `complete_step` | true | 用证据记录已批准计划中一个步骤的完成情况。 |
 | `delete_range` | false | 用精确 start/end 文本锚点删除文件中的连续范围。 |
 | `delete_symbol` | false | 用 Go AST 删除 Go 源文件中的命名符号。 |
+| `desktop_keyboard` | false | 向桌面会话发送键盘输入。 |
+| `desktop_mouse` | false | 控制桌面会话的鼠标移动、点击与滚动。 |
+| `desktop_screenshot` | false | 将桌面截图写入受工作区约束的 PNG 文件。 |
 | `edit_file` | false | 将文件中的唯一精确字符串替换为另一个字符串。 |
 | `glob` | true | 查找匹配 glob pattern 的文件。 |
 | `grep` | true | 在文件或目录下按正则搜索文本。 |
 | `kill_shell` | false | 终止后台 `bash` 或 `task` job。 |
+| `knowledge_search` | true | 检索本地知识库并返回可引用的文档元数据与片段；空库不能作为政策证据。 |
 | `ls` | true | 列出目录条目，可递归。 |
 | `move_file` | false | 移动或重命名文件。 |
 | `multi_edit` | false | 对单个文件原子应用多个编辑。 |
@@ -88,10 +95,10 @@ Executor 刻意保留直接 `mcp__*` 工具，因此安装、连接或刷新这�
 
 ## Token Economy Boot Surface
 
-token economy 模式只带 9 个初始工具：4 个直接编码工具、3 个后台 shell 生命周期工具、
+token economy 模式只带 10 个初始工具：`calculate`、4 个直接编码工具、3 个后台 shell 生命周期工具、
 `ask`，以及按需启用来源的 connector：
 
-`ask`, `bash`, `bash_output`, `connect_tool_source`, `edit_file`, `kill_shell`,
+`ask`, `bash`, `bash_output`, `calculate`, `connect_tool_source`, `edit_file`, `kill_shell`,
 `read_file`, `wait`, `write_file`。
 
 其余能力都显式按需加载。`connect_tool_source` 支持 `search`（`code_index`、

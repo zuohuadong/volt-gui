@@ -21,6 +21,7 @@ import (
 	"voltui/internal/instruction"
 	"voltui/internal/jobs"
 	"voltui/internal/memory"
+	"voltui/internal/memorycompiler"
 	"voltui/internal/nilutil"
 	"voltui/internal/planmode"
 	"voltui/internal/provider"
@@ -44,9 +45,17 @@ const maxFinalReadinessBlocks = 3
 // mutation) deserves more nudges than a stuck one; a turn that stalls with no
 // new receipts still fails at maxFinalReadinessBlocks.
 const maxFinalReadinessBlocksWithProgress = 6
+const maxCalculationBlocks = 3
 const maxEmptyFinalBlocks = 3
 const maxStreamRecoveries = 3
 const maxExecutorHandoffNudges = 1
+const memoryCompilerInjectionMax = 5
+const memoryCompilerInjectionCooldown = 30 * time.Second
+
+const (
+	MemoryCompilerVerbosityObserve = "observe"
+	MemoryCompilerVerbosityCompact = "compact"
+)
 
 // DeliveryRuntimeMarker is the delivery-mode contract block appended to user
 // turns (withTurnPreferences). Exported as the single source of truth for the
@@ -359,6 +368,8 @@ type Agent struct {
 	// may write a VoltUI-managed config file outside the workspace roots.
 	configWriteApprover tool.ConfigWriteApprover
 
+	trustedIntranetApprover tool.TrustedIntranetApprover
+
 	// hooks, when non-nil, fires PreToolUse / PostToolUse shell hooks around each
 	// tool call. nil disables hook firing.
 	hooks ToolHooks
@@ -411,6 +422,10 @@ type Agent struct {
 	// evidence is a per-user-turn ledger of host-observed tool receipts. It lets
 	// complete_step validate that cited evidence happened before the claim.
 	evidence *evidence.Ledger
+
+	// browserInteractionProvider supplies credentials and verification prompts
+	// through the tool-call context. nil keeps browser login fail-closed.
+	browserInteractionProvider tool.BrowserInteractionProvider
 
 	// todoState is the host's canonical task list: the latest successful
 	// todo_write with completions applied by complete_step. Unlike the per-turn
@@ -475,6 +490,16 @@ type Agent struct {
 	// about a just-made memory change into the next turn, so it applies this
 	// session without touching the cache-stable prefix. Set via SetMemoryQueue.
 	memQueue memory.Queue
+
+	memoryCompilerMu        sync.RWMutex
+	memoryCompiler          *memorycompiler.Runtime
+	memoryCompilerVerbosity string
+	compilerTurn            *memorycompiler.Turn
+	lastCompilerOutcome     *memorycompiler.OutcomeRef
+	compilerInjectionMu     sync.Mutex
+	compilerInjectionCount  int
+	lastCompilerInjectedAt  time.Time
+	classifier              TaskClassifier
 
 	// subagentDepth tracks the current agent's nesting depth. maxSubagentDepth
 	// caps delegation; when reached, recursive agent/skill tools are excluded.
@@ -588,6 +613,174 @@ func (a *Agent) SetResponseLanguage(lang string) {
 		return
 	}
 	a.responseLanguage.Store(NormalizeResponseLanguage(lang))
+}
+
+// SetMemoryCompiler updates the Memory v5 runtime for subsequent turns.
+func (a *Agent) SetMemoryCompiler(rt *memorycompiler.Runtime) {
+	if a == nil {
+		return
+	}
+	a.memoryCompilerMu.Lock()
+	a.memoryCompiler = rt
+	a.memoryCompilerMu.Unlock()
+	a.resetMemoryCompilerInjectionGate()
+}
+
+func (a *Agent) SetMemoryCompilerVerbosity(verbosity string) {
+	if a == nil {
+		return
+	}
+	a.memoryCompilerMu.Lock()
+	a.memoryCompilerVerbosity = normalizeMemoryCompilerVerbosity(verbosity)
+	a.memoryCompilerMu.Unlock()
+	a.resetMemoryCompilerInjectionGate()
+}
+
+func (a *Agent) memoryCompilerRuntime() *memorycompiler.Runtime {
+	if a == nil {
+		return nil
+	}
+	a.memoryCompilerMu.RLock()
+	defer a.memoryCompilerMu.RUnlock()
+	return a.memoryCompiler
+}
+
+func (a *Agent) memoryCompilerShouldInject() bool {
+	if a == nil {
+		return false
+	}
+	a.memoryCompilerMu.RLock()
+	defer a.memoryCompilerMu.RUnlock()
+	return normalizeMemoryCompilerVerbosity(a.memoryCompilerVerbosity) == MemoryCompilerVerbosityCompact
+}
+
+func normalizeMemoryCompilerVerbosity(verbosity string) string {
+	switch strings.ToLower(strings.TrimSpace(verbosity)) {
+	case "compact", "inject", "injected", "contract", "on":
+		return MemoryCompilerVerbosityCompact
+	default:
+		return MemoryCompilerVerbosityObserve
+	}
+}
+
+func (a *Agent) clearClassifierCache() {
+	if a == nil || a.classifier == nil {
+		return
+	}
+	if classifier, ok := a.classifier.(*llmClassifier); ok && classifier.cache != nil {
+		classifier.cache.Clear()
+	}
+}
+
+func (a *Agent) reviseMemoryCompilerOutcomeForFeedback(rt *memorycompiler.Runtime, input string) {
+	a.memoryCompilerMu.Lock()
+	ref := a.lastCompilerOutcome
+	a.lastCompilerOutcome = nil
+	a.memoryCompilerMu.Unlock()
+	if ref != nil && rt != nil && memorycompiler.IsCorrectiveFeedback(input) {
+		rt.ReviseOutcomeFromFeedback(*ref, input)
+	}
+}
+
+func shouldStartMemoryCompiler(input string) bool {
+	trimmed := strings.TrimSpace(input)
+	return trimmed != "" && !strings.HasPrefix(trimmed, "<")
+}
+
+func shouldInjectMemoryCompilerContractForInput(input string) bool {
+	classifier := newHeuristicClassifier()
+	isTask, _ := classifier.IsTask(context.Background(), input)
+	return isTask
+}
+
+func (a *Agent) tryMarkMemoryCompilerInjected(now time.Time) bool {
+	if a == nil {
+		return false
+	}
+	a.compilerInjectionMu.Lock()
+	defer a.compilerInjectionMu.Unlock()
+	if a.compilerInjectionCount >= memoryCompilerInjectionMax {
+		return false
+	}
+	if !a.lastCompilerInjectedAt.IsZero() && now.Sub(a.lastCompilerInjectedAt) < memoryCompilerInjectionCooldown {
+		return false
+	}
+	a.compilerInjectionCount++
+	a.lastCompilerInjectedAt = now
+	return true
+}
+
+func (a *Agent) resetMemoryCompilerInjectionGate() {
+	if a == nil {
+		return
+	}
+	a.compilerInjectionMu.Lock()
+	a.compilerInjectionCount = 0
+	a.lastCompilerInjectedAt = time.Time{}
+	a.compilerInjectionMu.Unlock()
+}
+
+func (a *Agent) beginMemoryCompilerTurn(ctx context.Context, rt *memorycompiler.Runtime, input string) (string, *memorycompiler.Turn) {
+	compiled, turn := rt.StartTurn(ctx, input, a.session.Snapshot())
+	if turn == nil {
+		return "", nil
+	}
+	injected := strings.TrimSpace(compiled) != "" && a.memoryCompilerShouldInject() && a.tryMarkMemoryCompilerInjected(time.Now())
+	if !injected {
+		turn.SuppressInjection()
+		compiled = ""
+	}
+	a.compilerTurn = turn
+	a.emitMemoryCompilerStats(turn)
+	return compiled, turn
+}
+
+func (a *Agent) finishMemoryCompilerTurn(turn *memorycompiler.Turn, runErr *error) {
+	turn.Finish(*runErr)
+	ref := turn.OutcomeRef()
+	a.memoryCompilerMu.Lock()
+	a.lastCompilerOutcome = &ref
+	a.memoryCompilerMu.Unlock()
+	if a.compilerTurn == turn {
+		a.compilerTurn = nil
+	}
+}
+
+func (a *Agent) emitMemoryCompilerStats(turn *memorycompiler.Turn) {
+	if a == nil || turn == nil {
+		return
+	}
+	metrics := turn.Metrics()
+	a.sink.Emit(event.Event{Kind: event.MemoryCompilerStatsEvent, MemoryCompiler: &event.MemoryCompilerStats{
+		Injected: metrics.Injected, UsefulIR: metrics.UsefulIR,
+		CompiledTokens: metrics.CompiledTokens, IROverheadTokens: metrics.IROverheadTokens,
+		MemoryReferences: metrics.MemoryReferences, Constraints: metrics.Constraints,
+		RiskNotes: metrics.RiskNotes, ExecutionSteps: metrics.ExecutionSteps,
+		TotalNodes: metrics.TotalNodes, HighSignalNodes: metrics.HighSignalNodes,
+		ToolResultNodes: metrics.ToolResultNodes, DecisionNodes: metrics.DecisionNodes,
+		StrategyCount: metrics.StrategyCount, LearningCount: metrics.LearningCount,
+	}})
+}
+
+func (a *Agent) memoryCitations() []provider.MemoryCitation {
+	if a.compilerTurn == nil {
+		return nil
+	}
+	return a.compilerTurn.MemoryCitations()
+}
+
+func (a *Agent) SetBrowserInteractionProvider(provider tool.BrowserInteractionProvider) {
+	if nilutil.IsNil(provider) {
+		provider = nil
+	}
+	a.browserInteractionProvider = provider
+}
+
+func (a *Agent) SetTrustedIntranetApprover(approver tool.TrustedIntranetApprover) {
+	if nilutil.IsNil(approver) {
+		approver = nil
+	}
+	a.trustedIntranetApprover = approver
 }
 
 // SetGate installs the per-call permission gate. Used by interactive CLI sessions to swap the
@@ -719,6 +912,11 @@ func (a *Agent) SetSession(s *Session) {
 	if s != nil {
 		a.rebuildTodoState(s.Snapshot())
 	}
+	a.resetMemoryCompilerInjectionGate()
+	a.memoryCompilerMu.Lock()
+	a.lastCompilerOutcome = nil
+	a.memoryCompilerMu.Unlock()
+	a.clearClassifierCache()
 }
 
 // LastUsage returns the most recent per-turn token telemetry the provider
@@ -904,6 +1102,8 @@ type Options struct {
 	// files outside the workspace roots. nil keeps fail-closed behavior.
 	ConfigWriteApprover tool.ConfigWriteApprover
 
+	TrustedIntranetApprover tool.TrustedIntranetApprover
+
 	// Context management. ContextWindow <= 0 disables compaction. Ratios and
 	// RecentKeep fall back to defaults when unset.
 	ContextWindow       int
@@ -921,6 +1121,10 @@ type Options struct {
 
 	// Jobs is the session's background-job manager (nil disables background tools).
 	Jobs *jobs.Manager
+
+	// BrowserInteractionProvider supplies credentials and verification prompts
+	// through a secure host channel. nil keeps browser login fail-closed.
+	BrowserInteractionProvider tool.BrowserInteractionProvider
 
 	// WriteScheduler is the session-scoped subagent concurrency/write-claim
 	// controller. When set on the parent executor, write-capable tools reserve
@@ -986,6 +1190,10 @@ type Options struct {
 	// depth 0; child subagents are depth 1. MaxSubagentDepth caps delegation.
 	SubagentDepth    int
 	MaxSubagentDepth int
+
+	MemoryCompiler                     *memorycompiler.Runtime
+	MemoryCompilerVerbosity            string
+	UseMemoryCompilerLLMClassification bool
 }
 
 // New constructs an Agent. MaxSteps <= 0 means no cap — the run loop continues
@@ -1030,6 +1238,14 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if nilutil.IsNil(configWriteApprover) {
 		configWriteApprover = nil
 	}
+	trustedIntranetApprover := opts.TrustedIntranetApprover
+	if nilutil.IsNil(trustedIntranetApprover) {
+		trustedIntranetApprover = nil
+	}
+	browserInteractionProvider := opts.BrowserInteractionProvider
+	if nilutil.IsNil(browserInteractionProvider) {
+		browserInteractionProvider = nil
+	}
 	hooks := opts.Hooks
 	if nilutil.IsNil(hooks) {
 		hooks = nil
@@ -1049,45 +1265,54 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		subagentDepth = 0
 	}
 	a := &Agent{
-		prov:                  prov,
-		tools:                 tools,
-		session:               session,
-		maxSteps:              opts.MaxSteps,
-		maxStepsKey:           maxStepsKey,
-		temperature:           opts.Temperature,
-		pricing:               opts.Pricing,
-		usageSource:           usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
-		sink:                  sink,
-		gate:                  gate,
-		recoveryGate:          opts.RecoveryGate,
-		recoveryAgentID:       strings.TrimSpace(opts.RecoveryAgentID),
-		recoveryTaskID:        strings.TrimSpace(opts.RecoveryTaskID),
-		readOnlyExecution:     opts.ReadOnlyExecution,
-		plannerMCPExecution:   opts.PlannerMCPExecution,
-		planModeReadOnlyTrust: planModeReadOnlyTrust,
-		sandboxEscapeApprover: sandboxEscapeApprover,
-		configWriteApprover:   configWriteApprover,
-		hooks:                 hooks,
-		jobs:                  opts.Jobs,
-		writeScheduler:        opts.WriteScheduler,
-		writeWorkspaceRoot:    strings.TrimSpace(opts.WriteWorkspaceRoot),
-		workspaceLease:        opts.WorkspaceLease,
-		evidence:              evidence.NewLedger(),
-		projectChecks:         append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
-		deliveryProfile:       opts.DeliveryProfile,
-		classifierTaskText:    opts.ClassifierTaskText,
-		capabilityLedger:      opts.CapabilityLedger,
-		capabilityAudit:       opts.CapabilityAudit,
-		contextWindow:         opts.ContextWindow,
-		softCompactRatio:      opts.SoftCompactRatio,
-		toolResultSnipRatio:   opts.ToolResultSnipRatio,
-		compactRatio:          opts.CompactRatio,
-		compactForceRatio:     opts.CompactForceRatio,
-		recentKeep:            opts.RecentKeep,
-		archiveDir:            opts.ArchiveDir,
-		keepPolicy:            opts.KeepPolicy,
-		subagentDepth:         subagentDepth,
-		maxSubagentDepth:      maxSubagentDepth,
+		prov:                       prov,
+		tools:                      tools,
+		session:                    session,
+		maxSteps:                   opts.MaxSteps,
+		maxStepsKey:                maxStepsKey,
+		temperature:                opts.Temperature,
+		pricing:                    opts.Pricing,
+		usageSource:                usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
+		sink:                       sink,
+		gate:                       gate,
+		recoveryGate:               opts.RecoveryGate,
+		recoveryAgentID:            strings.TrimSpace(opts.RecoveryAgentID),
+		recoveryTaskID:             strings.TrimSpace(opts.RecoveryTaskID),
+		readOnlyExecution:          opts.ReadOnlyExecution,
+		plannerMCPExecution:        opts.PlannerMCPExecution,
+		planModeReadOnlyTrust:      planModeReadOnlyTrust,
+		sandboxEscapeApprover:      sandboxEscapeApprover,
+		configWriteApprover:        configWriteApprover,
+		trustedIntranetApprover:    trustedIntranetApprover,
+		browserInteractionProvider: browserInteractionProvider,
+		hooks:                      hooks,
+		jobs:                       opts.Jobs,
+		writeScheduler:             opts.WriteScheduler,
+		writeWorkspaceRoot:         strings.TrimSpace(opts.WriteWorkspaceRoot),
+		workspaceLease:             opts.WorkspaceLease,
+		evidence:                   evidence.NewLedger(),
+		projectChecks:              append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
+		deliveryProfile:            opts.DeliveryProfile,
+		classifierTaskText:         opts.ClassifierTaskText,
+		capabilityLedger:           opts.CapabilityLedger,
+		capabilityAudit:            opts.CapabilityAudit,
+		contextWindow:              opts.ContextWindow,
+		softCompactRatio:           opts.SoftCompactRatio,
+		toolResultSnipRatio:        opts.ToolResultSnipRatio,
+		compactRatio:               opts.CompactRatio,
+		compactForceRatio:          opts.CompactForceRatio,
+		recentKeep:                 opts.RecentKeep,
+		archiveDir:                 opts.ArchiveDir,
+		keepPolicy:                 opts.KeepPolicy,
+		subagentDepth:              subagentDepth,
+		maxSubagentDepth:           maxSubagentDepth,
+		memoryCompiler:             opts.MemoryCompiler,
+		memoryCompilerVerbosity:    normalizeMemoryCompilerVerbosity(opts.MemoryCompilerVerbosity),
+	}
+	if opts.UseMemoryCompilerLLMClassification && prov != nil {
+		a.classifier = newLLMClassifier(prov, newHeuristicClassifier())
+	} else {
+		a.classifier = newHeuristicClassifier()
 	}
 	a.SetResponseLanguage(opts.ResponseLanguage)
 	a.SetReasoningLanguage(opts.ReasoningLanguage)
@@ -1236,11 +1461,37 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	if scoped && strings.TrimSpace(scope.TaskText) != "" {
 		classifierInput = scope.TaskText
 	} else if strings.TrimSpace(classifierInput) == "" {
-		classifierInput = rawInput
+		if sourceInput, ok := MemoryCompilerSourceInputFromContext(ctx); ok {
+			classifierInput = sourceInput
+		} else {
+			classifierInput = rawInput
+		}
 	}
 	a.deliveryTaskExpected = deliveryTaskNeedsEvidence(classifierInput)
 	a.deliveryMutationExpected = deliveryTaskNeedsMutation(classifierInput) && registryHasWriterTools(a.tools)
+	calculationRequired := a.calculationToolRequired(classifierInput)
 	a.recoveryTaskSummary = boundedRecoveryTaskSummary(classifierInput)
+	memoryCompilerInput := rawInput
+	if sourceInput, ok := MemoryCompilerSourceInputFromContext(ctx); ok {
+		memoryCompilerInput = sourceInput
+	}
+	if !MemoryCompilerSkipFromContext(ctx) {
+		a.reviseMemoryCompilerOutcomeForFeedback(a.memoryCompilerRuntime(), memoryCompilerInput)
+	}
+	compiledInput := ""
+	if rt := a.memoryCompilerRuntime(); rt != nil && !MemoryCompilerSkipFromContext(ctx) && shouldStartMemoryCompiler(memoryCompilerInput) {
+		isTask, classifyErr := a.classifier.IsTask(ctx, memoryCompilerInput)
+		if classifyErr != nil {
+			isTask = shouldInjectMemoryCompilerContractForInput(memoryCompilerInput)
+		}
+		if isTask {
+			var compilerTurn *memorycompiler.Turn
+			compiledInput, compilerTurn = a.beginMemoryCompilerTurn(ctx, rt, memoryCompilerInput)
+			if compilerTurn != nil {
+				defer a.finishMemoryCompilerTurn(compilerTurn, &runErr)
+			}
+		}
+	}
 	// A cancelled/error turn leaves a provider-excluded recovery record at the
 	// transcript tail. Fold its bounded facts into this new user turn exactly
 	// once; the user's raw text remains the classifier source above.
@@ -1251,6 +1502,9 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	a.loopGuardReceiptMark = 0
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
 	input = a.withTurnPreferences(rawInput)
+	if compiledInput != "" {
+		input = a.withTurnPreferences(compiledInput)
+	}
 	userCreatedAt := time.Now().UnixMilli()
 	a.activeTurnCreatedAt.Store(userCreatedAt)
 	defer a.activeTurnCreatedAt.Store(0)
@@ -1258,6 +1512,8 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input, Images: userImages(ctx), CreatedAt: userCreatedAt})
 
 	finalReadinessBlocks := 0
+	calculationBlocks := 0
+	calculationSucceeded := !calculationRequired
 	seenReadinessStates := make(map[string]struct{})
 	emptyFinalBlocks := 0
 	handoffNudges := 0
@@ -1341,6 +1597,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			ReasoningSignature: signature,
 			ToolCalls:          calls,
 			WorkDurationMs:     workDurationMs(),
+			MemoryCitations:    a.memoryCitations(),
 		})
 
 		if len(calls) == 0 {
@@ -1357,6 +1614,19 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 					Message:    "Automatic retries paused. VoltUI stopped repeated attempts and kept completed work. Send \"continue\" to start a fresh attempt, or add instructions to change direction.",
 					StopReason: reason,
 				}
+			}
+			if !calculationSucceeded {
+				if graceRound {
+					return &maxStepsPause{steps: runMaxSteps, key: runMaxStepsKey}
+				}
+				calculationBlocks++
+				if calculationBlocks >= maxCalculationBlocks {
+					return fmt.Errorf("model answered a clear arithmetic request without a successful calculate call after %d attempts", calculationBlocks)
+				}
+				a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: calculationGateNoticeText(), Detail: "the final numeric answer is unverified because calculate has not succeeded in this turn"})
+				a.session.Add(provider.Message{Role: provider.RoleUser, Content: a.withTurnPreferences(calculationGateRetryMessage())})
+				a.maybeCompact(ctx, usage)
+				continue
 			}
 			finalizeTask := !a.deliveryScopeActive || deliveryDisposition(text) == deliveryGoalFinal
 			readiness := a.finalReadinessCheckFor(finalizeTask)
@@ -1466,6 +1736,9 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			receiptMark = a.evidence.Len()
 		}
 		batch := a.executeBatch(ctx, calls)
+		if batch.toolSucceeded(calls, "calculate") {
+			calculationSucceeded = true
+		}
 		results, images := batch.results, batch.images
 		for i, call := range calls {
 			a.session.Add(provider.Message{
@@ -2025,25 +2298,28 @@ func registryHasWriterTools(reg *tool.Registry) bool {
 	return false
 }
 
+func (a *Agent) calculationToolRequired(input string) bool {
+	if a == nil || a.tools == nil || !instruction.ClearlyRequiresCalculation(input) {
+		return false
+	}
+	_, ok := a.tools.Get("calculate")
+	return ok
+}
+
 func deliveryTaskNeedsEvidence(input string) bool {
 	// A document draft can be a valid final answer without touching the
 	// workspace. Do not make the delivery gate invent a host-observable write
 	// for a prose-only request; persistence/export wording keeps the normal
 	// evidence contract in place.
-	if proseOnlyDocumentDraft(input) {
-		return false
+	normalized := strings.ToLower(strings.TrimSpace(input))
+	if containsAnySubstring(normalized, proseDocumentDraftTerms) {
+		return containsAnySubstring(normalized, proseDocumentPersistenceTerms)
 	}
 	return heuristicInputIsTask(input)
 }
 
 var proseDocumentDraftTerms = []string{"起草", "撰写", "写一份", "写一个", "生成一份", "拟定", "draft", "write a document", "compose"}
 var proseDocumentPersistenceTerms = []string{"保存", "写入", "导出", "下载", "附件", "文件", "路径", ".docx", ".md", ".txt", ".pdf", "save", "export", "download", "file", "path"}
-
-func proseOnlyDocumentDraft(input string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(input))
-	return normalized != "" && containsAnySubstring(normalized, proseDocumentDraftTerms) &&
-		!containsAnySubstring(normalized, proseDocumentPersistenceTerms)
-}
 
 func deliveryTaskNeedsMutation(input string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(input))
@@ -2401,6 +2677,14 @@ func toolBudgetNoticeText() string {
 	return "Tool round limit reached; asking the assistant to summarize progress."
 }
 
+func calculationGateNoticeText() string {
+	return "The numeric answer needs calculator verification; asking the assistant to use calculate."
+}
+
+func calculationGateRetryMessage() string {
+	return "Host calculation check failed: this request clearly requires arithmetic, but no successful calculate call was observed. Ignore the previous unverified numeric answer. Call calculate with the complete expression now, then base the final answer on its returned value."
+}
+
 func streamRecoveryMessage(hasPartialText, hadPartialTool bool) string {
 	switch {
 	case hadPartialTool:
@@ -2480,9 +2764,10 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 				stored, display := finishReasoning()
 				if text.Len() > 0 || display != "" {
 					a.sink.Emit(event.Event{
-						Kind:      event.Message,
-						Text:      StripGoalMarkers(text.String()),
-						Reasoning: display,
+						Kind:            event.Message,
+						Text:            StripGoalMarkers(text.String()),
+						Reasoning:       display,
+						MemoryCitations: a.memoryCitations(),
 					})
 				}
 				return text.String(), stored, signature, calls, usage, false, false, partialCalls, nil
@@ -2614,8 +2899,18 @@ func (a *Agent) systemPrompt() string {
 type batchExecution struct {
 	results            []string
 	images             [][]string
+	succeeded          []bool
 	recoveryStopTurn   bool
 	recoveryStopReason string
+}
+
+func (b batchExecution) toolSucceeded(calls []provider.ToolCall, name string) bool {
+	for i, call := range calls {
+		if i < len(b.succeeded) && b.succeeded[i] && call.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // executeBatch dispatches one model turn's tool calls. A ToolDispatch event is
@@ -2827,12 +3122,31 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: o.truncMsg})
 		}
 	}
+	if a.compilerTurn != nil {
+		records := make([]memorycompiler.ToolRecord, 0, len(calls))
+		for i, call := range calls {
+			target, _, ambiguous := a.tools.ResolveCall(call.Name)
+			readOnly := target != nil && len(ambiguous) == 0 && target.ReadOnly()
+			if call.ResolvedReadOnly != nil {
+				readOnly = *call.ResolvedReadOnly
+			}
+			records = append(records, memorycompiler.ToolRecord{
+				ID: call.ID, Name: call.Name, Args: call.Arguments,
+				Output: outcomes[i].output, Error: outcomes[i].errMsg,
+				ReadOnly: readOnly, Blocked: outcomes[i].blocked,
+				DurationMs: durations[i], Truncated: outcomes[i].truncated,
+			})
+		}
+		a.compilerTurn.RecordToolResults(records)
+	}
 	if !cancelled {
 		a.applyStormBreaker(calls, outcomes, results, receiptMark)
 	}
 	images := make([][]string, len(calls))
+	succeeded := make([]bool, len(calls))
 	for i := range outcomes {
 		images[i] = outcomes[i].images
+		succeeded[i] = outcomes[i].errMsg == "" && !outcomes[i].blocked
 		if outcomes[i].recoveryStopTurn {
 			recoveryBatchStop = true
 			if outcomes[i].recoveryStopReason != "" {
@@ -2843,6 +3157,7 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 	return batchExecution{
 		results:            results,
 		images:             images,
+		succeeded:          succeeded,
 		recoveryStopTurn:   recoveryBatchStop,
 		recoveryStopReason: recoveryStopReason,
 	}
@@ -3271,7 +3586,13 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) (out too
 				safety = planmode.PlanSafetyUnsafe
 			}
 		}
-		if decision := a.planModeDecision(canonicalName, t.ReadOnly(), safety, json.RawMessage(call.Arguments)); decision.Blocked {
+		if decision := (planmode.Policy{}).Decide(planmode.Call{
+			Name:      canonicalName,
+			ReadOnly:  t.ReadOnly(),
+			Untrusted: planModeUntrustedReadOnly(t),
+			Safety:    safety,
+			Args:      json.RawMessage(call.Arguments),
+		}); decision.Blocked {
 			return toolOutcome{
 				output:  decision.Message,
 				blocked: true,
@@ -3359,7 +3680,13 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) (out too
 				safety = planmode.PlanSafetyUnsafe
 			}
 		}
-		if decision := a.planModeDecision(permName, resolved.ReadOnly, safety, permArgs); decision.Blocked {
+		if decision := (planmode.Policy{}).Decide(planmode.Call{
+			Name:      permName,
+			ReadOnly:  resolved.ReadOnly,
+			Untrusted: planModeUntrustedReadOnly(execTool),
+			Safety:    safety,
+			Args:      permArgs,
+		}); decision.Blocked {
 			return toolOutcome{
 				output:  decision.Message,
 				blocked: true,
@@ -3598,6 +3925,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) (out too
 	}
 	cctx := withCallContext(ctx, call.ID, a.sink, a.asker, a.planMode.Load())
 	cctx = WithSubagentDepth(cctx, a.subagentDepth)
+	if a.browserInteractionProvider != nil {
+		cctx = tool.WithBrowserInteractionProvider(cctx, a.browserInteractionProvider)
+	}
 	if a.evidence != nil {
 		cctx = evidence.WithLedger(cctx, a.evidence)
 		cctx = evidence.WithSessionMessages(cctx, a.session.Snapshot())
@@ -3622,6 +3952,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) (out too
 	}
 	if a.configWriteApprover != nil {
 		cctx = tool.WithConfigWriteApprover(cctx, a.configWriteApprover)
+	}
+	if a.trustedIntranetApprover != nil {
+		cctx = tool.WithTrustedIntranetApprover(cctx, a.trustedIntranetApprover)
 	}
 	if v := a.responseLanguage.Load(); v != nil {
 		if lang, ok := v.(string); ok {
@@ -3967,13 +4300,9 @@ func mcpDestructiveHint(t tool.Tool) bool {
 	return ok && annotations.MCPDestructiveHint()
 }
 
-func (a *Agent) planModeDecision(toolName string, readOnly bool, safety planmode.PlanSafety, args json.RawMessage) planmode.Decision {
-	return (planmode.Policy{}).Decide(planmode.Call{
-		Name:     toolName,
-		ReadOnly: readOnly,
-		Safety:   safety,
-		Args:     args,
-	})
+func planModeUntrustedReadOnly(target tool.Tool) bool {
+	untrusted, ok := target.(tool.PlanModeUntrustedReadOnly)
+	return ok && untrusted.PlanModeUntrustedReadOnly()
 }
 
 func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (string, bool) {

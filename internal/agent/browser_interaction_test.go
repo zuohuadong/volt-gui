@@ -14,6 +14,16 @@ type browserInteractionContextProbe struct {
 	seen bool
 }
 
+type coordinatorBrowserInteractionStub struct{}
+
+func (*coordinatorBrowserInteractionStub) RequestBrowserCredential(context.Context, tool.BrowserCredentialRequest) (tool.BrowserCredential, error) {
+	return tool.BrowserCredential{}, nil
+}
+
+func (*coordinatorBrowserInteractionStub) WaitBrowserVerification(context.Context, tool.BrowserVerificationRequest) (bool, error) {
+	return true, nil
+}
+
 func (*browserInteractionContextProbe) Name() string        { return "browser_interaction_context_probe" }
 func (*browserInteractionContextProbe) Description() string { return "" }
 func (*browserInteractionContextProbe) Schema() json.RawMessage {

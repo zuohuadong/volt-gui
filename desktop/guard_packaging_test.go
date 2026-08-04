@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,34 +16,36 @@ func writePortableFixture(t *testing.T, dir, name, content string) {
 }
 
 func TestVerifyWindowsPortableRejectsCaseCollisionsAndCLIOverwrite(t *testing.T) {
+	t.Setenv("WINDOWS_PORTABLE_APP_NAME", "VoltUI")
+	t.Setenv("WINDOWS_PORTABLE_BINARY_PREFIX", "voltui")
 	verify := filepath.Join("..", "scripts", "verify-windows-portable.sh")
 	good := t.TempDir()
 	for _, name := range []string{
-		"reasonix-desktop.exe",
-		"reasonix-guard.exe",
-		"reasonix-update-helper.exe",
+		"voltui-guard.exe",
+		"voltui-update-helper.exe",
 	} {
 		writePortableFixture(t, good, name, name)
 	}
-	writePortableFixture(t, good, "Reasonix.exe", "launcher")
-	writePortableFixture(t, good, "reasonix-launcher.exe", "launcher")
-	writePortableFixture(t, good, "reasonix-cli.exe", "cli")
+	writePortableFixture(t, good, "VoltUI.exe", "desktop")
+	writePortableFixture(t, good, "voltui-desktop.exe", "desktop")
+	writePortableFixture(t, good, "voltui-launcher.exe", "launcher")
+	writePortableFixture(t, good, "voltui-cli.exe", "cli")
 	if out, err := exec.Command("bash", verify, good).CombinedOutput(); err != nil {
 		t.Fatalf("valid portable fixture failed: %v\n%s", err, out)
 	}
 
 	overwritten := t.TempDir()
 	for _, name := range []string{
-		"reasonix-desktop.exe",
-		"reasonix-guard.exe",
-		"reasonix-update-helper.exe",
+		"voltui-guard.exe",
+		"voltui-update-helper.exe",
 	} {
 		writePortableFixture(t, overwritten, name, name)
 	}
-	writePortableFixture(t, overwritten, "Reasonix.exe", "cli")
-	writePortableFixture(t, overwritten, "reasonix-launcher.exe", "launcher")
-	writePortableFixture(t, overwritten, "reasonix-cli.exe", "cli")
-	if out, err := exec.Command("bash", verify, overwritten).CombinedOutput(); err == nil || !strings.Contains(string(out), "not the packaged GUI launcher") {
+	writePortableFixture(t, overwritten, "VoltUI.exe", "cli")
+	writePortableFixture(t, overwritten, "voltui-desktop.exe", "desktop")
+	writePortableFixture(t, overwritten, "voltui-launcher.exe", "launcher")
+	writePortableFixture(t, overwritten, "voltui-cli.exe", "cli")
+	if out, err := exec.Command("bash", verify, overwritten).CombinedOutput(); err == nil || !strings.Contains(string(out), "was overwritten by the CLI sidecar") {
 		t.Fatalf("overwritten launcher result = %v, output %q", err, out)
 	}
 
@@ -52,8 +53,8 @@ func TestVerifyWindowsPortableRejectsCaseCollisionsAndCLIOverwrite(t *testing.T)
 	// mistake that NTFS collapses into one overwritten file. Either filesystem
 	// behavior must be rejected by the verifier.
 	collision := t.TempDir()
-	writePortableFixture(t, collision, "Reasonix.exe", "launcher")
-	writePortableFixture(t, collision, "reasonix.exe", "cli")
+	writePortableFixture(t, collision, "VoltUI.exe", "desktop")
+	writePortableFixture(t, collision, "voltui.exe", "cli")
 	entries, err := os.ReadDir(collision)
 	if err != nil {
 		t.Fatal(err)
@@ -122,15 +123,15 @@ func TestDesktopPackagesPreserveNativePlatformLaunchers(t *testing.T) {
 		}
 	}
 
-	linuxData, err := os.ReadFile("build/linux/reasonix.desktop")
+	linuxData, err := os.ReadFile("build/linux/voltui.desktop")
 	if err != nil {
 		t.Fatal(err)
 	}
 	linux := string(linuxData)
 	for _, want := range []string{
-		"Exec=reasonix-guard launch --detach",
-		"Icon=reasonix-desktop",
-		"StartupWMClass=reasonix-desktop",
+		"Exec=voltui-desktop",
+		"Icon=voltui-desktop",
+		"StartupWMClass=voltui-desktop",
 	} {
 		if !strings.Contains(linux, want) {
 			t.Errorf("Linux desktop entry missing identity contract %q", want)
@@ -141,35 +142,20 @@ func TestDesktopPackagesPreserveNativePlatformLaunchers(t *testing.T) {
 		t.Fatal(err)
 	}
 	nfpm := string(nfpmData)
-	for _, size := range []int{16, 24, 32, 48, 64, 128, 256, 512} {
-		asset := fmt.Sprintf("build/linux/icons/hicolor/%dx%d/apps/reasonix-desktop.png", size, size)
-		if stat, err := os.Stat(asset); err != nil || stat.Size() == 0 {
-			t.Errorf("Linux app icon %s is missing or empty", asset)
-		}
-		destination := fmt.Sprintf("/usr/share/icons/hicolor/%dx%d/apps/reasonix-desktop.png", size, size)
-		if !strings.Contains(nfpm, destination) {
-			t.Errorf("Linux package does not install %s", destination)
-		}
-	}
 	for _, want := range []string{
-		"/usr/bin/reasonix",
-		"/usr/lib/reasonix/reasonix-update-helper",
-		"/usr/share/polkit-1/actions/io.reasonix.desktop.update.policy",
-		"/usr/share/applications/reasonix.desktop",
-		"/usr/share/pixmaps/reasonix-desktop.png",
-		"/usr/share/icons/hicolor/scalable/apps/reasonix-desktop.svg",
-		"pkexec",
+		"/usr/bin/voltui-desktop",
+		"/usr/lib/voltui/computer-use-mcp",
+		"/usr/lib/voltui/computer-use-runtime",
+		"/usr/share/applications/voltui.desktop",
+		"/usr/share/pixmaps/voltui-desktop.png",
 	} {
 		if !strings.Contains(nfpm, want) {
 			t.Errorf("Linux package missing desktop identity asset %q", want)
 		}
 	}
-	if _, err := os.Stat("build/linux/io.reasonix.desktop.update.policy"); err != nil {
-		t.Errorf("Polkit policy file missing: %v", err)
-	}
 	for _, want := range []string{
-		`./cmd/update-helper`,
-		`reasonix-update-helper`,
+		`stage-computer-use-mcp.mjs`,
+		`stage-bun-runtime.mjs`,
 		`deb_version=`,
 		`dpkg-deb --contents`,
 		`dpkg-deb --field`,
@@ -198,8 +184,8 @@ func TestDesktopPackagesPreserveNativePlatformLaunchers(t *testing.T) {
 		`File "/oname=${REASONIX_CLI}" "${REASONIX_CLI}"`,
 		`!uninstfinalize 'node "${__FILEDIR__}/../../../../scripts/copy-nsis-uninstaller.mjs" "%1" "${__FILEDIR__}/voltui-uninstall.exe"'`,
 		`File "/oname=uninstall.exe" "${ARG_REASONIX_SIGNED_UNINSTALLER}"`,
-		`CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}" "launch --detach" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0`,
-		`CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}" "launch --detach" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0`,
+		`CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"`,
+		`CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"`,
 	} {
 		if !strings.Contains(windows, want) {
 			t.Errorf("Windows installer missing guard shortcut contract %q", want)

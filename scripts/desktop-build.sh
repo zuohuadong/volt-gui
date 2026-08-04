@@ -81,8 +81,12 @@ mkdir -p "$ROOT/desktop/build"
 cp -R "$COMPUTER_USE_MCP_RESOURCE" "$ROOT/desktop/build/computer-use-mcp"
 cp -R "$COMPUTER_USE_RUNTIME_RESOURCE" "$ROOT/desktop/build/computer-use-runtime"
 if [ "$os" = windows ]; then
-	cp -R "$COMPUTER_USE_MCP_RESOURCE" "$ROOT/desktop/computer-use-mcp"
-	cp -R "$COMPUTER_USE_RUNTIME_RESOURCE" "$ROOT/desktop/computer-use-runtime"
+	# NSIS (project.nsi) runs from desktop/build/windows/installer/, so
+	# !if /FileExists "coreutils\..." resolves there. Copy the already-staged
+	# payloads into the installer dir so makensis finds them at compile time.
+	mkdir -p "$ROOT/desktop/build/windows/installer"
+	cp -R "$ROOT/desktop/build/computer-use-mcp" "$ROOT/desktop/build/windows/installer/computer-use-mcp"
+	cp -R "$ROOT/desktop/build/computer-use-runtime" "$ROOT/desktop/build/windows/installer/computer-use-runtime"
 fi
 
 cd "$ROOT/desktop"
@@ -153,11 +157,12 @@ if [ "$os" = windows ]; then
 	# Coreutils + Windows prerequisites (WebView2 bootstrapper) are required
 	# NSIS payloads. stage-coreutils.mjs writes voltui-coreutils-path.txt and
 	# coreutils-system-installer.exe; project.nsi hard-errors without them.
-	# NSIS !if /FileExists resolves relative to the makensis cwd (desktop/).
+	# NSIS (project.nsi) runs from desktop/build/windows/installer/, so the
+	# !if /FileExists "coreutils\..." check resolves there.
 	echo "==> stage Microsoft Coreutils for $PLATFORM"
-	node "$ROOT/scripts/stage-coreutils.mjs" "$ROOT/desktop/coreutils" "$PLATFORM"
+	node "$ROOT/scripts/stage-coreutils.mjs" "$ROOT/desktop/build/windows/installer/coreutils" "$PLATFORM"
 	echo "==> stage Windows prerequisites for $PLATFORM"
-	node "$ROOT/scripts/stage-windows-prerequisites.mjs" "$ROOT/desktop/windows-prerequisites" "$PLATFORM"
+	node "$ROOT/scripts/stage-windows-prerequisites.mjs" "$ROOT/desktop/build/windows/installer/windows-prerequisites" "$PLATFORM"
 	windows_resource_tool_dir=$(mktemp -d)
 	windows_resource_tool="$windows_resource_tool_dir/voltui-windows-resource.exe"
 	if [ -d "$ROOT/cmd/windows-resource" ]; then

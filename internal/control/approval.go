@@ -34,6 +34,7 @@ type approvalManager struct {
 	approvals                map[string]pendingApproval
 	asks                     map[string]pendingAsk
 	granted                  map[string]bool
+	exactGranted             map[string]bool
 	planModeReadOnlyCommands map[string]bool
 	nextID                   int
 	// toolApprovalMode is the runtime approval posture: "ask" prompts, "auto"
@@ -65,6 +66,7 @@ func newApprovalManager(policy permission.Policy, mode string, timeout time.Dura
 		approvals:                map[string]pendingApproval{},
 		asks:                     map[string]pendingAsk{},
 		granted:                  map[string]bool{},
+		exactGranted:             map[string]bool{},
 		planModeReadOnlyCommands: map[string]bool{},
 		toolApprovalMode:         mode,
 		approvalTimeout:          timeout,
@@ -228,6 +230,10 @@ func (a *approvalManager) registerDecisionKind(tool, subject, reason string, fre
 func (a *approvalManager) grantSession(tool, subject string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if tool == TrustedIntranetApprovalTool {
+		a.exactGranted[tool+"\x00"+subject] = true
+		return
+	}
 	a.granted[permission.SessionGrantRuleForScope(tool, subject)] = true
 }
 
@@ -453,6 +459,9 @@ func (a *approvalManager) sessionGrantAllowsLocked(tool, subject string) bool {
 	if requiresFreshApprovalTool(tool) && !allowsFreshSessionGrantTool(tool) {
 		return false
 	}
+	if a.exactGranted[tool+"\x00"+subject] {
+		return true
+	}
 	for rule := range a.granted {
 		if permission.RuleMatchesString(rule, tool, subject) {
 			return true
@@ -506,7 +515,7 @@ func normalizeToolApprovalMode(mode string) string {
 // approver. A small subset may still opt into explicit session grants.
 func RequiresFreshHumanApprovalTool(tool string) bool {
 	switch tool {
-	case planApprovalTool, memoryRememberTool, memoryForgetTool, SandboxEscapeApprovalTool, ManagedConfigWriteApprovalTool:
+	case planApprovalTool, memoryRememberTool, memoryForgetTool, SandboxEscapeApprovalTool, ManagedConfigWriteApprovalTool, TrustedIntranetApprovalTool:
 		return true
 	default:
 		return false
@@ -519,7 +528,7 @@ func requiresFreshApprovalTool(tool string) bool {
 
 func allowsFreshSessionGrantTool(tool string) bool {
 	switch tool {
-	case SandboxEscapeApprovalTool, ManagedConfigWriteApprovalTool:
+	case SandboxEscapeApprovalTool, ManagedConfigWriteApprovalTool, TrustedIntranetApprovalTool:
 		return true
 	default:
 		return false

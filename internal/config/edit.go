@@ -866,10 +866,7 @@ func ClearPluginAuthenticationInSourceForRoot(root, name string) (PluginEntry, b
 }
 
 func pluginTOMLSourcePathForRoot(root, name string) string {
-	projectTOML := "reasonix.toml"
-	if resolved := resolveRoot(root); resolved != "." {
-		projectTOML = filepath.Join(resolved, "reasonix.toml")
-	}
+	projectTOML := projectConfigLoadPath(root)
 	paths := append([]string{projectTOML}, userConfigCandidatePaths()...)
 	for _, path := range paths {
 		if strings.TrimSpace(path) == "" {
@@ -891,10 +888,9 @@ func pluginTOMLSourcePathForRoot(root, name string) string {
 // the highest priority.
 func MCPConfigPathForEntry(root string, entry PluginEntry) string {
 	resolvedRoot := resolveRoot(root)
-	projectTOML := "reasonix.toml"
+	projectTOML := projectConfigLoadPath(root)
 	projectMCPJSON := mcpJSONFile
 	if resolvedRoot != "." {
-		projectTOML = filepath.Join(resolvedRoot, "reasonix.toml")
 		projectMCPJSON = filepath.Join(resolvedRoot, mcpJSONFile)
 	}
 	switch entry.Source {
@@ -1200,10 +1196,7 @@ func RemovePluginFromSourcesForRoot(root, name string) (bool, error) {
 	}
 
 	resolvedRoot := resolveRoot(root)
-	projectTOML := "reasonix.toml"
-	if resolvedRoot != "." {
-		projectTOML = filepath.Join(resolvedRoot, "reasonix.toml")
-	}
+	projectTOML := projectConfigLoadPath(root)
 	isUserPath := false
 	for _, path := range userPaths {
 		if samePath(path, projectTOML) {

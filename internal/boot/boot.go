@@ -382,6 +382,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	sysPrompt += "\n\n" + config.UserDecisionPolicy
 	sysPrompt += "\n\n" + config.LanguagePolicy
+	sysPrompt = instruction.WithCalculationPolicy(sysPrompt)
 	if workspaceLine := currentWorkspacePromptLine(root); workspaceLine != "" {
 		sysPrompt += "\n\n" + workspaceLine
 	}
@@ -494,7 +495,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// startup built-ins. Do not pass that filtered empty slice to addBuiltins,
 	// where an empty list intentionally means "all built-ins".
 	if !tokenEconomy || len(cfg.Tools.Enabled) == 0 || len(enabledBuiltins) > 0 {
-		addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner)
+		addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner, trustedIntranetPolicy(cfg))
 	}
 	for _, extraTool := range opts.ExtraTools {
 		if extraTool != nil {
@@ -1028,6 +1029,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		if sysPrompt == "" {
 			sysPrompt = agent.DefaultReadOnlyTaskSystemPrompt
 		}
+		sysPrompt = instruction.WithCalculationPolicy(sysPrompt)
 		runOptions := subagentSkillOptions(sctx, steps, price, ctxWin, childDepth)
 		// Delivery risk gates consume typed reports; outside Delivery a casual
 		// /review run may finish with prose only.
@@ -1097,6 +1099,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		continueFrom := strings.TrimSpace(runOpts.ContinueFrom)
 		legacyForkFrom := strings.TrimSpace(runOpts.ForkFrom)
+		skillPrompt := instruction.WithCalculationPolicy(sk.Body)
 		if continueFrom != "" && legacyForkFrom != "" {
 			return "", fmt.Errorf("continue_from and fork_from are mutually exclusive; pass only continue_from")
 		}
@@ -1114,7 +1117,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			if continueFrom != "" || legacyForkFrom != "" {
 				return "", fmt.Errorf("subagent continuation requires a persisted session; none is active in this run")
 			}
-			run = agent.EphemeralSubagentRun(sk.Body)
+			run = agent.EphemeralSubagentRun(skillPrompt)
 		} else {
 			identityModel, identityEffort := subagentIdentity(modelRef, effortRef)
 			spec := agent.SubagentSpec{
@@ -1123,7 +1126,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				WorkspaceRoot:    root,
 				ParentSession:    parentSession,
 				ParentToolCallID: parentID,
-				SystemPrompt:     sk.Body,
+				SystemPrompt:     skillPrompt,
 				Registry:         subReg,
 				Model:            identityModel,
 				Effort:           identityEffort,
@@ -1690,8 +1693,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		OnRememberPlanModeReadOnlyCommand: func(prefix string) control.PlanModeReadOnlyCommandTrustResult {
 			return rememberPlanModeReadOnlyCommand(root, prefix)
 		},
-		SessionRecoveryMeta: opts.SessionRecoveryMeta,
-		OnSessionRecovered:  opts.OnSessionRecovered,
+		OnRememberTrustedIntranet: rememberTrustedIntranet,
+		SessionRecoveryMeta:       opts.SessionRecoveryMeta,
+		OnSessionRecovered:        opts.OnSessionRecovered,
 	}
 	// Guardian: when guardian_model is configured, spawn an LLM safety reviewer
 	// that can auto-allow safe Ask decisions and annotate risky ones before
@@ -1814,6 +1818,46 @@ func rememberPermissionRule(workspaceRoot, rule string) control.RememberResult {
 	}
 	result.Saved = true
 	return result
+}
+
+func trustedIntranetPolicy(cfg *config.Config) builtin.TrustedIntranetPolicy {
+	policy := builtin.TrustedIntranetPolicy{}
+	if cfg == nil || !cfg.Network.TrustedIntranet.Enabled {
+		return policy
+	}
+	policy.Enabled = true
+	for _, site := range cfg.TrustedIntranetSites() {
+		policy.Sites = append(policy.Sites, builtin.TrustedIntranetSite{
+			Host: site.Host, CIDRs: append([]string(nil), site.CIDRs...), Ports: append([]int(nil), site.Ports...),
+		})
+	}
+	return policy
+}
+
+func rememberTrustedIntranet(req tool.TrustedIntranetRequest) control.TrustedIntranetRememberResult {
+	remembered := control.TrustedIntranetRememberResult{Request: req, Path: config.UserConfigPath()}
+	if strings.TrimSpace(remembered.Path) == "" {
+		remembered.Err = fmt.Errorf("cannot resolve user config path")
+		return remembered
+	}
+	unlock := config.LockUserConfigEdits()
+	defer unlock()
+	edit := config.LoadForEditWithoutCredentials(remembered.Path)
+	changed, err := edit.AddTrustedIntranetSite(req.Host, req.IP, req.Port)
+	if err != nil {
+		remembered.Err = err
+		return remembered
+	}
+	if !changed {
+		remembered.CoveredBy = fmt.Sprintf("%s (%s:%d)", strings.TrimSpace(req.Host), strings.TrimSpace(req.IP), req.Port)
+		return remembered
+	}
+	if err := edit.SaveTo(remembered.Path); err != nil {
+		remembered.Err = err
+		return remembered
+	}
+	remembered.Saved = true
+	return remembered
 }
 
 func rememberPermissionConfigPath(workspaceRoot string) string {
@@ -2218,12 +2262,16 @@ func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (p
 // and makes bash warn when a command references them. managedConfig names the
 // VoltUI-owned config files writable outside writeRoots after a fresh
 // per-write human approval.
-func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sandbox.Spec, bashTimeout time.Duration, searchSpec builtin.SearchSpec, stderr io.Writer, workDir string, proxySpec netclient.ProxySpec, forbidReadRoots []string, readPathResolver *builtin.PathResolver, sessionGuard builtin.SessionDataGuard, managedConfig builtin.ManagedConfigPaths, overlay builtin.FileOverlay, terminal builtin.TerminalRunner) {
+func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sandbox.Spec, bashTimeout time.Duration, searchSpec builtin.SearchSpec, stderr io.Writer, workDir string, proxySpec netclient.ProxySpec, forbidReadRoots []string, readPathResolver *builtin.PathResolver, sessionGuard builtin.SessionDataGuard, managedConfig builtin.ManagedConfigPaths, overlay builtin.FileOverlay, terminal builtin.TerminalRunner, trustedIntranet ...builtin.TrustedIntranetPolicy) {
+	intranetPolicy := builtin.TrustedIntranetPolicy{}
+	if len(trustedIntranet) > 0 {
+		intranetPolicy = trustedIntranet[0]
+	}
 	// If a workspace directory is set, use workspace-bound tools that resolve
 	// paths relative to that directory. Otherwise fall back to the process-cwd
 	// compile-time builtins.
 	if workDir != "" {
-		ws := builtin.Workspace{Dir: workDir, WriteRoots: writeRoots, ForbidReadRoots: forbidReadRoots, Bash: bashSpec, BashTimeout: bashTimeout, Search: searchSpec, ProxySpec: proxySpec, ReadPaths: readPathResolver, SessionGuard: sessionGuard, ManagedConfig: managedConfig, FileOverlay: overlay, Terminal: terminal}
+		ws := builtin.Workspace{Dir: workDir, WriteRoots: writeRoots, ForbidReadRoots: forbidReadRoots, Bash: bashSpec, BashTimeout: bashTimeout, Search: searchSpec, ProxySpec: proxySpec, TrustedIntranet: intranetPolicy, ReadPaths: readPathResolver, SessionGuard: sessionGuard, ManagedConfig: managedConfig, FileOverlay: overlay, Terminal: terminal}
 		for _, t := range ws.Tools(enabled...) {
 			reg.Add(t)
 		}
@@ -2250,7 +2298,7 @@ func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sand
 	confined := append(builtin.ConfineWriters(writeRoots, sessionGuard, managedConfig),
 		builtin.ConfineBash(bashSpec, sessionGuard, bashTimeout),
 		builtin.ConfineSearch(searchSpec, bashSpec, forbidReadRoots),
-		builtin.ConfineWebFetch(proxySpec))
+		builtin.ConfineWebFetch(proxySpec, intranetPolicy))
 	confined = append(confined, builtin.ConfineReaders(forbidReadRoots)...)
 	for _, t := range confined {
 		if _, ok := reg.Get(t.Name()); ok {

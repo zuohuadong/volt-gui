@@ -101,9 +101,9 @@ func TestObserveSettingsSnapshotUsesSafeBuckets(t *testing.T) {
 	if err := cfg.SetDesktopDisplayMode("compact"); err != nil {
 		t.Fatalf("SetDesktopDisplayMode: %v", err)
 	}
-	if err := cfg.SetAutoPlan("on"); err != nil {
-		t.Fatalf("SetAutoPlan: %v", err)
-	}
+	// Exercise telemetry normalization for a legacy snapshot without reviving
+	// the retired setting through its public mutation API.
+	cfg.Agent.AutoPlan = "on"
 	if err := cfg.SetDesktopStatusBarStyle("icon"); err != nil {
 		t.Fatalf("SetDesktopStatusBarStyle: %v", err)
 	}

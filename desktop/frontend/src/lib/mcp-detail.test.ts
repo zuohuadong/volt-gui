@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mcpConfigurationEnabled, mcpConnectionPresentation, mcpStatusLabel, shouldShowMCPTrust } from "./mcp-detail";
+import { mcpConfigurationEnabled, mcpConnectionPresentation, mcpStatusLabel } from "./mcp-detail";
 
 describe("MCP detail presentation", () => {
   it("turns a missing bundled computer-use module into an actionable product message", () => {
@@ -19,12 +19,6 @@ describe("MCP detail presentation", () => {
     expect(mcpStatusLabel("deferred")).toBe("待连接");
     expect(mcpStatusLabel("initializing")).toBe("连接中");
     expect(mcpStatusLabel("disabled")).toBe("已停用");
-  });
-
-  it("keeps read-only trust out of the primary failure flow", () => {
-    expect(shouldShowMCPTrust("failed", [])).toBe(false);
-    expect(shouldShowMCPTrust("connected", [])).toBe(true);
-    expect(shouldShowMCPTrust("failed", ["screenshot"])).toBe(true);
   });
 
   it("keeps configured state separate from runtime health", () => {

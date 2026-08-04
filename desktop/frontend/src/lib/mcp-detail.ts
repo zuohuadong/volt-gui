@@ -76,10 +76,6 @@ export function mcpConnectionPresentation(status: string, error = ""): MCPConnec
   };
 }
 
-export function shouldShowMCPTrust(status: string, trustedTools: string[]): boolean {
-  return status.trim().toLowerCase() === "connected" || trustedTools.length > 0;
-}
-
 export function mcpConfigurationEnabled(status: string): boolean {
   return status.trim().toLowerCase() !== "disabled";
 }

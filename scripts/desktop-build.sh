@@ -31,6 +31,8 @@ CLINAME="reasonix"            # bundled CLI sidecar used for remote serve upload
 WINDOWS_CLINAME="voltui-cli" # Windows cannot store VoltUI.exe and reasonix.exe separately
 GUARDNAME="voltui-guard"
 LAUNCHERNAME="voltui-launcher"
+COMPUTER_USE_MCP_VERSION="6.2.0"
+BUN_RUNTIME_VERSION="1.3.14"
 windows_resource_tool_dir=""
 
 # desktop/ is a nested Go module, so the Go toolchain cannot discover the
@@ -309,19 +311,23 @@ windows)
 	;;
 linux)
 	for desktop_contract in \
-		'Exec=voltui-guard launch --detach' \
+		'Exec=voltui-desktop' \
 		'Icon=voltui-desktop' \
 		'StartupWMClass=voltui-desktop'; do
-		grep -F -x -q "$desktop_contract" build/linux/reasonix.desktop || { echo "Linux desktop entry missing: $desktop_contract" >&2; exit 1; }
+		grep -F -x -q "$desktop_contract" build/linux/voltui.desktop || { echo "Linux desktop entry missing: $desktop_contract" >&2; exit 1; }
 	done
-	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C build/bin "$BINNAME" "$GUARDNAME" "$CLINAME"
-	# Build the privileged update helper shipped inside the .deb. Portable tarball
-	# installs do not need it; only the dpkg package installs helper + Polkit policy.
-	echo "==> go build voltui-update-helper"
-	GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" \
-		-o "build/bin/voltui-update-helper" ./cmd/update-helper
+	echo "==> stage @zavora-ai/computer-use-mcp@$COMPUTER_USE_MCP_VERSION"
+	node "$ROOT/scripts/stage-computer-use-mcp.mjs" "build/computer-use-mcp" "$COMPUTER_USE_MCP_VERSION" "$PLATFORM"
+	echo "==> stage Bun runtime $BUN_RUNTIME_VERSION"
+	node "$ROOT/scripts/stage-bun-runtime.mjs" "build/computer-use-runtime" "$BUN_RUNTIME_VERSION" "$PLATFORM"
+	linux_staging=$(mktemp -d)
+	cp "build/bin/$BINNAME" "build/bin/$GUARDNAME" "build/bin/$CLINAME" "$linux_staging/"
+	cp -R build/computer-use-mcp build/computer-use-runtime "$linux_staging/"
+	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C "$linux_staging" \
+		"$BINNAME" "$GUARDNAME" "$CLINAME" computer-use-mcp computer-use-runtime
+	rm -rf "$linux_staging"
 	# .deb for Debian/Ubuntu. Portable updater still uses the tarball under
-	# platforms[]; .deb is published under native_packages. Debian versions use
+	# platforms[]; .deb remains a human-download artifact. Debian versions use
 	# "~" for prereleases so 1.18.0~rc.1 < 1.18.0 (policy version ordering).
 	# Extra "-" inside the prerelease label becomes "." (Debian policy).
 	ver_body="${VERSION#v}"
@@ -336,13 +342,14 @@ linux)
 	DEB_VERSION="$deb_version" DEB_ARCH="$arch" \
 		nfpm package --config build/linux/nfpm.yaml --packager deb \
 		--target "$ROOT/dist/${APPNAME}-linux-${arch}.deb"
-	# Contract smoke: helper, policy, package identity, and pkexec dependency.
+	# Contract smoke: package identity, native entry point, and bundled MCP runtime.
 	deb_path="$ROOT/dist/${APPNAME}-linux-${arch}.deb"
 	dpkg-deb --field "$deb_path" Package | grep -x 'voltui-desktop' >/dev/null
 	dpkg-deb --field "$deb_path" Version | grep -x "$deb_version" >/dev/null
-	dpkg-deb --field "$deb_path" Depends | grep -F 'pkexec' >/dev/null
-	dpkg-deb --contents "$deb_path" | grep -E 'usr/lib/reasonix/voltui-update-helper' >/dev/null
-	dpkg-deb --contents "$deb_path" | grep -E 'usr/share/polkit-1/actions/io.reasonix.desktop.update.policy' >/dev/null
+	dpkg-deb --contents "$deb_path" | grep -E 'usr/bin/voltui-desktop' >/dev/null
+	dpkg-deb --contents "$deb_path" | grep -E 'usr/lib/voltui/computer-use-mcp' >/dev/null
+	dpkg-deb --contents "$deb_path" | grep -E 'usr/lib/voltui/computer-use-runtime' >/dev/null
+	dpkg-deb --contents "$deb_path" | grep -E 'usr/share/applications/voltui.desktop' >/dev/null
 	;;
 *)
 	echo "unsupported os: $os" >&2

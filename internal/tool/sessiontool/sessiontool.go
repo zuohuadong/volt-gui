@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rivo/uniseg"
+
 	"voltui/internal/agent"
 	"voltui/internal/provider"
 )
@@ -199,15 +201,20 @@ loop:
 
 // ---- helpers ----------------------------------------------------------------
 
-// truncateRunes truncates a string to at most max runes, matching the
-// history.Searcher.renderMessage truncation policy.
+// truncateRunes preserves user-visible grapheme clusters so joined emoji and
+// combining marks are never split at the truncation boundary. Empty and
+// within-limit strings remain intact; overflow keeps max complete clusters.
 func truncateRunes(s string, max int) string {
 	s = strings.TrimSpace(s)
-	runes := []rune(s)
-	if len(runes) <= max {
-		return s
+	graphemes := uniseg.NewGraphemes(s)
+	var prefix strings.Builder
+	for count := 0; graphemes.Next(); count++ {
+		if count == max {
+			return prefix.String() + "..."
+		}
+		prefix.WriteString(graphemes.Str())
 	}
-	return string(runes[:max]) + "..."
+	return s
 }
 
 // modelFromPath extracts the model name from a session file path.

@@ -262,9 +262,7 @@ func (a *App) SetAgentProfileForTab(tabID, profileID string) error {
 	}
 	a.bindControllerDisplayRecorder(newCtrl)
 	newCtrl.EnableInteractiveApproval()
-	applyTabModeToController(newCtrl, snap.mode)
-	applyTabToolApprovalModeToController(newCtrl, snap.toolApprovalMode)
-	newCtrl.SetGoal(snap.goal)
+	applyTabRebuildAxes(newCtrl, snap)
 
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if err := a.ensureTabSessionLeaseForRebuild(tab, path, "agent profile"); err != nil {
@@ -272,6 +270,7 @@ func (a *App) SetAgentProfileForTab(tabID, profileID string) error {
 		return err
 	}
 	resumeWithFreshSystemPrompt(newCtrl, carried, path)
+	reconcileTabRebuildGoal(newCtrl, snap)
 
 	a.mu.Lock()
 	if current := a.tabs[tab.ID]; current != tab {

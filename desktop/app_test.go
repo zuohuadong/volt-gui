@@ -649,6 +649,25 @@ func TestEmitReadyInvokesReadyHook(t *testing.T) {
 	}
 }
 
+func TestEmitReadyUsesAsyncRuntimeEmitter(t *testing.T) {
+	events := make(chan runtimeEventEnvelope, 1)
+	app := NewApp()
+	app.runtimeEvents.emit = func(ctx context.Context, name string, payload ...interface{}) {
+		events <- runtimeEventEnvelope{ctx: ctx, name: name, payload: payload}
+	}
+
+	app.emitReady(context.Background(), "tab-ready")
+
+	select {
+	case event := <-events:
+		if event.name != "agent:ready" || len(event.payload) != 1 || event.payload[0] != "tab-ready" {
+			t.Fatalf("ready event = %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for agent:ready")
+	}
+}
+
 func TestSetEffortPersistsAndAutoClears(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
@@ -6501,8 +6520,8 @@ func TestMCPServersIncludesConfiguredServerWhenActiveTabHasNoController(t *testi
 }
 
 func TestCapabilitiesIncludesInstalledPlugins(t *testing.T) {
-	home := isolateDesktopUserDirs(t)
-	voltuiHome := filepath.Join(home, ".voltui")
+	isolateDesktopUserDirs(t)
+	voltuiHome := config.ReasonixHomeDir()
 	root := filepath.Join(voltuiHome, "plugins", "superpowers")
 	if err := os.MkdirAll(filepath.Join(root, "skills"), 0o755); err != nil {
 		t.Fatal(err)
@@ -6944,7 +6963,7 @@ func TestUpdateMCPServerEditsProjectMCPJSONEntry(t *testing.T) {
 	}
 }
 
-func TestTrustMCPServerToolPersistsTrustedReadOnlyTools(t *testing.T) {
+func TestTrustMCPServerToolRejectsRetiredPolicy(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -6961,17 +6980,8 @@ func TestTrustMCPServerToolPersistsTrustedReadOnlyTools(t *testing.T) {
 		t.Fatalf("AddMCPServer(github): %v", err)
 	}
 
-	if err := app.TrustMCPServerTool(" github ", " issue_read "); err != nil {
-		t.Fatalf("TrustMCPServerTool(github, issue_read): %v", err)
-	}
-	if err := app.TrustMCPServerTool("github", "issue_read"); err != nil {
-		t.Fatalf("TrustMCPServerTool duplicate: %v", err)
-	}
-	if err := app.TrustMCPServerTool("github", "issue_write"); err == nil || !strings.Contains(err.Error(), "not currently advertised as read-only") {
-		t.Fatalf("TrustMCPServerTool(github, issue_write) error = %v, want read-only rejection", err)
-	}
-	if err := app.TrustMCPServerTools("github", []string{"issue_read", "unknown"}); err == nil || !strings.Contains(err.Error(), "not currently advertised as read-only") {
-		t.Fatalf("TrustMCPServerTools(github, unknown) error = %v, want read-only rejection", err)
+	if err := app.TrustMCPServerTool(" github ", " issue_read "); err == nil || !strings.Contains(err.Error(), "retired") {
+		t.Fatalf("TrustMCPServerTool error = %v, want retired-policy rejection", err)
 	}
 	cfg, err := config.LoadForRoot(dir)
 	if err != nil {
@@ -6981,21 +6991,12 @@ func TestTrustMCPServerToolPersistsTrustedReadOnlyTools(t *testing.T) {
 	if !ok {
 		t.Fatalf("github plugin missing: %+v", cfg.Plugins)
 	}
-	if !reflect.DeepEqual(updated.TrustedReadOnlyTools, []string{"issue_read"}) {
-		t.Fatalf("trusted read-only tools = %+v", updated.TrustedReadOnlyTools)
+	if len(updated.TrustedReadOnlyTools) != 0 {
+		t.Fatalf("retired trusted read-only tools persisted: %+v", updated.TrustedReadOnlyTools)
 	}
-	for _, s := range app.MCPServers() {
-		if s.Name == "github" {
-			if !reflect.DeepEqual(s.TrustedReadOnlyTools, []string{"issue_read"}) {
-				t.Fatalf("view trusted read-only tools = %+v", s.TrustedReadOnlyTools)
-			}
-			return
-		}
-	}
-	t.Fatalf("github MCP missing from view")
 }
 
-func TestTrustMCPServerToolPersistsProjectMCPJSONEntry(t *testing.T) {
+func TestTrustMCPServerToolDoesNotReviveProjectMCPJSONPolicy(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -7021,8 +7022,8 @@ func TestTrustMCPServerToolPersistsProjectMCPJSONEntry(t *testing.T) {
 		t.Fatalf("ReconnectMCPServer(codegraph): %v", err)
 	}
 
-	if err := app.TrustMCPServerTool("codegraph", "codegraph_context"); err != nil {
-		t.Fatalf("TrustMCPServerTool(.mcp.json codegraph): %v", err)
+	if err := app.TrustMCPServerTool("codegraph", "codegraph_context"); err == nil || !strings.Contains(err.Error(), "retired") {
+		t.Fatalf("TrustMCPServerTool error = %v, want retired-policy rejection", err)
 	}
 
 	raw, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
@@ -7030,23 +7031,21 @@ func TestTrustMCPServerToolPersistsProjectMCPJSONEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	var doc struct {
-		MCPServers map[string]struct {
-			TrustedReadOnlyTools []string `json:"trusted_read_only_tools"`
-		} `json:"mcpServers"`
+		MCPServers map[string]map[string]json.RawMessage `json:"mcpServers"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(doc.MCPServers["codegraph"].TrustedReadOnlyTools, []string{"codegraph_context"}) {
-		t.Fatalf(".mcp.json trusted_read_only_tools = %+v", doc.MCPServers["codegraph"].TrustedReadOnlyTools)
+	if _, ok := doc.MCPServers["codegraph"]["trusted_read_only_tools"]; ok {
+		t.Fatalf(".mcp.json revived retired trusted_read_only_tools: %s", raw)
 	}
 	cfg, err := config.LoadForRoot(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	updated, ok := findPluginEntry(cfg.Plugins, "codegraph")
-	if !ok || !reflect.DeepEqual(updated.TrustedReadOnlyTools, []string{"codegraph_context"}) {
-		t.Fatalf("merged codegraph trusted_read_only_tools = %+v, found=%v", updated.TrustedReadOnlyTools, ok)
+	if !ok || len(updated.TrustedReadOnlyTools) != 0 {
+		t.Fatalf("merged codegraph retained trusted_read_only_tools = %+v, found=%v", updated.TrustedReadOnlyTools, ok)
 	}
 }
 

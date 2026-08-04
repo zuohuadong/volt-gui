@@ -157,7 +157,7 @@ func TestClassifyRef(t *testing.T) {
 
 func TestResolveRefsAttachmentKinds(t *testing.T) {
 	temp := t.TempDir()
-	attachmentsDir := filepath.Join(temp, ".reasonix", "attachments")
+	attachmentsDir := filepath.Join(temp, ".voltui", "attachments")
 	if err := os.MkdirAll(attachmentsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -805,7 +805,7 @@ func TestWorkspaceImageRefsAlsoAttachAsModelImages(t *testing.T) {
 	if err := os.WriteFile(diagram, []byte("\x89PNG\r\n\x1a\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	attachment := filepath.Join(workspace, ".reasonix", "attachments", "shot.png")
+	attachment := filepath.Join(workspace, ".voltui", "attachments", "shot.png")
 	if err := os.MkdirAll(filepath.Dir(attachment), 0o755); err != nil {
 		t.Fatal(err)
 	}

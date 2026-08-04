@@ -15,6 +15,7 @@ import (
 
 	"voltui/internal/event"
 	"voltui/internal/evidence"
+	"voltui/internal/instruction"
 	"voltui/internal/jobs"
 	"voltui/internal/permission"
 	"voltui/internal/planmode"
@@ -286,6 +287,7 @@ func NewTaskTool(prov provider.Provider, pricing *provider.Pricing, parentReg *t
 	if sysPrompt == "" {
 		sysPrompt = DefaultTaskSystemPrompt
 	}
+	sysPrompt = instruction.WithCalculationPolicy(sysPrompt)
 	return &TaskTool{
 		prov:                prov,
 		pricing:             pricing,
@@ -552,7 +554,8 @@ func (r *ReadOnlyTaskTool) Execute(ctx context.Context, args json.RawMessage) (s
 	if err != nil {
 		return "", fmt.Errorf("read-only sub-agent profile: %w", err)
 	}
-	answer, err := r.task.runReadOnlySubSession(ctx, p.Prompt, subReg, subSink(ctx), maxSteps, prov, pricing, ctxWin, NewSession(DefaultReadOnlyTaskSystemPrompt), childDepth, subagentRecoveryTaskID(ctx, ""))
+	readOnlyPrompt := instruction.WithCalculationPolicy(DefaultReadOnlyTaskSystemPrompt)
+	answer, err := r.task.runReadOnlySubSession(ctx, p.Prompt, subReg, subSink(ctx), maxSteps, prov, pricing, ctxWin, NewSession(readOnlyPrompt), childDepth, subagentRecoveryTaskID(ctx, ""))
 	if err != nil {
 		return "", err
 	}
@@ -722,6 +725,7 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (st
 		}
 		spec.SystemPrompt = t.sysPrompt
 	}
+	spec.SystemPrompt = instruction.WithCalculationPolicy(spec.SystemPrompt)
 
 	maxSteps := t.childMaxSteps(spec.MaxSteps)
 	childDepth, err := t.nextSubagentDepth(ctx)

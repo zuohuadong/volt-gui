@@ -85,6 +85,12 @@ type PlanModeClassifier interface {
 	PlanModeSafe() bool
 }
 
+// PlanModeUntrustedReadOnly identifies an external tool whose read-only claim
+// came only from the server rather than a host-trusted override.
+type PlanModeUntrustedReadOnly interface {
+	PlanModeUntrustedReadOnly() bool
+}
+
 // ReadOnlyExecutionHostMutation marks a target that is logically read-only but
 // must first mutate host state to become executable, such as starting an
 // on-demand MCP process. Strict read-only agents reject these targets even when

@@ -11,6 +11,7 @@ import (
 	"voltui/internal/boot"
 	"voltui/internal/config"
 	"voltui/internal/event"
+	"voltui/internal/instruction"
 	"voltui/internal/sandbox"
 	"voltui/internal/skill"
 	"voltui/internal/tool"
@@ -91,11 +92,12 @@ func reviewCommand(args []string) int {
 	// through TaskTool.subagentOptions / boot's subagentSkillOptions. If a new
 	// Options field becomes load-bearing for sub-agents, decide explicitly
 	// whether this path needs it too.
-	result, err := agent.RunReadOnlySubAgentWithSession(ctx, prov, reg, agent.NewSession(reviewSk.Body), task, agent.Options{
-		MaxSteps:      12,
-		Temperature:   cfg.Agent.Temperature,
-		Pricing:       entry.Price,
-		ContextWindow: entry.ContextWindow,
+	result, err := agent.RunReadOnlySubAgentWithSession(ctx, prov, reg, agent.NewSession(reviewSystemPrompt(reviewSk.Body)), task, agent.Options{
+		MaxSteps:           12,
+		Temperature:        cfg.Agent.Temperature,
+		Pricing:            entry.Price,
+		ContextWindow:      entry.ContextWindow,
+		ClassifierTaskText: "Review the supplied code diff. " + *instructions,
 	}, event.Discard)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error: review failed:", err)
@@ -106,12 +108,19 @@ func reviewCommand(args []string) int {
 	return 0
 }
 
+func reviewSystemPrompt(body string) string {
+	return instruction.WithCalculationPolicy(body)
+}
+
 func buildReviewSubagentRegistry(reviewSk skill.Skill, cfg *config.Config, root string) *tool.Registry {
 	// The shared helper strips subagent-unavailable background capabilities while
 	// preserving foreground bash. This direct CLI path does not go through boot,
 	// so it first builds the small parent set from the review skill allow-list.
 	parentReg := tool.NewRegistry()
 	for _, name := range reviewSk.AllowedTools {
+		if !reviewToolEnabled(cfg, name) {
+			continue
+		}
 		if tl, ok := tool.LookupBuiltin(name); ok {
 			parentReg.Add(tl)
 		}
@@ -148,6 +157,18 @@ func buildReviewSubagentRegistry(reviewSk skill.Skill, cfg *config.Config, root 
 		return agent.ReadOnlySubagentToolRegistry(parentReg, reviewSk.AllowedTools)
 	}
 	return agent.SubagentToolRegistry(parentReg, reviewSk.AllowedTools)
+}
+
+func reviewToolEnabled(cfg *config.Config, name string) bool {
+	if cfg == nil || len(cfg.Tools.Enabled) == 0 {
+		return true
+	}
+	for _, enabled := range cfg.Tools.Enabled {
+		if strings.TrimSpace(enabled) == name {
+			return true
+		}
+	}
+	return false
 }
 
 // getReviewDiff runs the appropriate git diff command and returns its output.

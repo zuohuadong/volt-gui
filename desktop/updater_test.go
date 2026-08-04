@@ -225,17 +225,22 @@ func TestManualUpdateBoundariesNeverFetchOrInstall(t *testing.T) {
 	}
 }
 
-func TestWindowsInstallerRecreatesDesktopShortcutWithLauncher(t *testing.T) {
+func TestWindowsInstallerRecreatesDesktopShortcutWithDesktopBinary(t *testing.T) {
 	installer, err := os.ReadFile("build/windows/installer/project.nsi")
 	if err != nil {
 		t.Fatal(err)
 	}
-	shortcut := `CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}"`
+	shortcut := `CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"`
 	if !strings.Contains(string(installer), shortcut) {
-		t.Fatalf("desktop shortcut must target the launcher: %q", shortcut)
+		t.Fatalf("desktop shortcut must target the Wails desktop binary: %q", shortcut)
 	}
-	if strings.Contains(string(installer), `CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_UPDATE_HELPER}"`) {
-		t.Fatal("desktop shortcut must not target the update helper")
+	for _, forbidden := range []string{
+		`CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_LAUNCHER}"`,
+		`CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${REASONIX_UPDATE_HELPER}"`,
+	} {
+		if strings.Contains(string(installer), forbidden) {
+			t.Fatalf("desktop shortcut must not target a helper: %q", forbidden)
+		}
 	}
 }
 

@@ -243,6 +243,15 @@ func sessionHintNeedles(rawRoot, realRoot string, allowRoots []string) []string 
 	}
 	addPrefix(rawRoot)
 	addPrefix(realRoot)
+	for _, root := range []string{rawRoot, realRoot} {
+		cleanRoot := filepath.Clean(root)
+		switch strings.ToLower(filepath.Base(cleanRoot)) {
+		case ".reasonix":
+			addPrefix(filepath.Join(filepath.Dir(cleanRoot), ".voltui"))
+		case "reasonix":
+			addPrefix(filepath.Join(filepath.Dir(cleanRoot), "voltui"))
+		}
+	}
 	home, _ := os.UserHomeDir()
 	cfgDir, _ := os.UserConfigDir()
 

@@ -289,6 +289,7 @@ func (a *App) rebuildStartupTabLocked(tab *WorkspaceTab) error {
 	tab.buildCancel = cancel
 	tab.Ready = false
 	clearTabStartupError(tab)
+	a.setSessionRuntimePhaseLocked(tab, sessionRuntimeStarting, nil)
 	tab.ActivityStatus = ""
 	if tab.sink == nil {
 		tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: a.ctx}

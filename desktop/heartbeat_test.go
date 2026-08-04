@@ -93,6 +93,7 @@ func (s *heartbeatExecuteTaskCtrlStub) SubmitUserTurnChecked(input, display stri
 		return s.submitErr
 	}
 	s.submitted = append(s.submitted, input)
+	s.status.Submitting = true
 	return nil
 }
 
@@ -140,6 +141,12 @@ func TestHeartbeatControllerBusyIncludesPendingPrompt(t *testing.T) {
 	}
 	if !heartbeatControllerBusy(heartbeatStatusStub{status: control.RuntimeStatus{Submitting: true}}) {
 		t.Fatal("checked submission reservation should keep controller busy")
+	}
+	if !heartbeatControllerBusy(heartbeatStatusStub{status: control.RuntimeStatus{Rotating: true}}) {
+		t.Fatal("session rotation should keep controller busy")
+	}
+	if !heartbeatControllerBusy(heartbeatStatusStub{status: control.RuntimeStatus{BackgroundJobs: 1}}) {
+		t.Fatal("background jobs should keep controller busy")
 	}
 }
 

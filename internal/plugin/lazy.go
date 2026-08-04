@@ -200,6 +200,8 @@ type lazyTool struct {
 	// readOnly is guarded by shared.mu because a live handshake can demote a
 	// stale cached reader before asking the model to retry.
 	readOnly bool
+	// readOnlyTrusted is derived from the immutable host Spec override.
+	readOnlyTrusted bool
 	// destructive is guarded by shared.mu because a live handshake may promote
 	// a stale cached false value before asking the model to retry.
 	destructive bool
@@ -220,6 +222,9 @@ func (lt *lazyTool) ReadOnly() bool {
 	lt.shared.mu.Lock()
 	defer lt.shared.mu.Unlock()
 	return lt.readOnly
+}
+func (lt *lazyTool) PlanModeUntrustedReadOnly() bool {
+	return lt.ReadOnly() && !lt.readOnlyTrusted
 }
 func (lt *lazyTool) MCPServerName() string {
 	if lt.shared == nil {
@@ -463,15 +468,16 @@ func LazyToolset(spec Spec, cs *CachedSchema, host *Host, reg *tool.Registry, se
 				visibleName = strings.TrimPrefix(visibleName, spec.StripRawPrefix)
 			}
 			out = append(out, &lazyTool{
-				shared:      shared,
-				name:        toolName(spec.Name, visibleName),
-				rawName:     ct.Name,
-				visibleName: visibleName,
-				desc:        ct.Description,
-				schema:      ct.Schema,
-				readOnly:    ct.ReadOnly,
-				destructive: ct.Destructive,
-				hasCache:    true,
+				shared:          shared,
+				name:            toolName(spec.Name, visibleName),
+				rawName:         ct.Name,
+				visibleName:     visibleName,
+				desc:            ct.Description,
+				schema:          ct.Schema,
+				readOnly:        spec.toolReadOnly(ct.Name, visibleName, ct.ReadOnly),
+				readOnlyTrusted: spec.toolReadOnlyTrusted(ct.Name, visibleName),
+				destructive:     ct.Destructive,
+				hasCache:        true,
 			})
 		}
 	}

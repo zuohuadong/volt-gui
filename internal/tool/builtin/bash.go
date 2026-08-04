@@ -17,6 +17,7 @@ import (
 
 	"mvdan.cc/sh/v3/syntax"
 
+	fileenc "voltui/internal/fileutil/encoding"
 	"voltui/internal/i18n"
 	"voltui/internal/jobs"
 	"voltui/internal/proc"
@@ -308,7 +309,7 @@ func (b bash) runForeground(ctx context.Context, p bashParams, sh sandbox.Shell,
 		reapShellProcess(cmd, tracked)
 	}
 	err = normalizeBashRunError(runCtx, err, p.PreserveBackgroundProcesses)
-	out := buf.String()
+	out := decodeShellOutput(buf.String())
 
 	if errors.Is(context.Cause(runCtx), errBashTimeout) {
 		return out, fmt.Errorf("command timed out (> %s)", timeout)
@@ -318,6 +319,13 @@ func (b bash) runForeground(ctx context.Context, p bashParams, sh sandbox.Shell,
 		return out, fmt.Errorf("command exited: %w", err)
 	}
 	return out, nil
+}
+
+func decodeShellOutput(out string) string {
+	if out == "" {
+		return out
+	}
+	return string(fileenc.DecodeToUTF8([]byte(out)))
 }
 
 func normalizeBashRunError(ctx context.Context, err error, preserveBackgroundProcesses bool) error {

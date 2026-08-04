@@ -196,7 +196,7 @@ func TestImageDataURLRejectsSymlinkFile(t *testing.T) {
 	if err := os.WriteFile("secret.png", []byte("secret"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(".reasonix", "attachments", "link.png")
+	link := filepath.Join(".voltui", "attachments", "link.png")
 	if err := os.Symlink(filepath.Join("..", "..", "secret.png"), link); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
@@ -207,13 +207,13 @@ func TestImageDataURLRejectsSymlinkFile(t *testing.T) {
 
 func TestImageDataURLRejectsSymlinkAttachmentDir(t *testing.T) {
 	t.Chdir(t.TempDir())
-	if err := os.Mkdir(".reasonix", 0o755); err != nil {
+	if err := os.Mkdir(".voltui", 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir("elsewhere", 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("../elsewhere", filepath.Join(".reasonix", "attachments")); err != nil {
+	if err := os.Symlink("../elsewhere", filepath.Join(".voltui", "attachments")); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
 	if _, err := ImageDataURL(".voltui/attachments/x.png"); err == nil {
@@ -232,7 +232,7 @@ func TestImageDataURLRejectsSymlinkSubdirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join("outside", "x.png"), mustBase64(t, tinyPNG), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(".reasonix", "attachments", "link")
+	link := filepath.Join(".voltui", "attachments", "link")
 	if err := os.Symlink(filepath.Join("..", "..", "outside"), link); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}

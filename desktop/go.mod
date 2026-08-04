@@ -86,3 +86,5 @@ require (
 )
 
 replace voltui => ../
+
+replace github.com/wailsapp/go-webview2 => ./third_party/go-webview2

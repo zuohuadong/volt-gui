@@ -281,7 +281,7 @@ func appendUniqueToolNames(base []string, extra ...string) []string {
 // builtinSkills returns the shipped skills. A fresh slice each call so callers
 // can't mutate the shared set.
 func builtinSkills() []Skill {
-	readCodeTools := []string{"read_file", "ls", "glob", "grep", "code_index"}
+	readCodeTools := []string{"calculate", "read_file", "ls", "glob", "grep", "code_index"}
 	// use_capability is the stable MCP proxy for strict review children: they
 	// never inherit direct mcp__* schemas, so the proxy must be allowlisted or
 	// review/security-review cannot discover authorized read-only MCP readers.

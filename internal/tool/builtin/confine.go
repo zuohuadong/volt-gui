@@ -60,8 +60,12 @@ func RebindBashWriteRoots(tl tool.Tool, roots []string) (tool.Tool, bool) {
 
 // ConfineWebFetch returns the web_fetch built-in bound to VoltUI proxy
 // settings while preserving its SSRF-guarded dialer.
-func ConfineWebFetch(proxySpec netclient.ProxySpec) tool.Tool {
-	return webFetch{proxySpec: proxySpec}
+func ConfineWebFetch(proxySpec netclient.ProxySpec, trustedIntranet ...TrustedIntranetPolicy) tool.Tool {
+	policy := TrustedIntranetPolicy{}
+	if len(trustedIntranet) > 0 {
+		policy = trustedIntranet[0]
+	}
+	return webFetch{proxySpec: proxySpec, trustedIntranet: policy}
 }
 
 // ConfineWriters returns the file-writing built-ins (write_file, edit_file,

@@ -52,11 +52,7 @@ for expected in "${required[@]}"; do
 done
 
 # The branded entry point is the backward-compatible desktop entry point. It must launch
-# the real Wails application rather than the retired self-update launcher.
-cmp -s "$staging/$portable_app_name.exe" "$staging/$portable_binary_prefix-desktop.exe" || {
-	echo "$portable_app_name.exe is not the packaged desktop application" >&2
-	exit 1
-}
+# the real Wails application rather than a sidecar with a case-colliding name.
 if cmp -s "$staging/$portable_app_name.exe" "$staging/$portable_binary_prefix-launcher.exe"; then
 	echo "$portable_app_name.exe incorrectly points to the self-update launcher" >&2
 	exit 1
@@ -65,3 +61,7 @@ if cmp -s "$staging/$portable_app_name.exe" "$staging/$portable_binary_prefix-cl
 	echo "$portable_app_name.exe was overwritten by the CLI sidecar" >&2
 	exit 1
 fi
+cmp -s "$staging/$portable_app_name.exe" "$staging/$portable_binary_prefix-desktop.exe" || {
+	echo "$portable_app_name.exe is not the packaged desktop application" >&2
+	exit 1
+}

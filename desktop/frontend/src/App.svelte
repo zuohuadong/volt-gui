@@ -75,7 +75,6 @@
   import AboutDialog from "./components/AboutDialog.svelte";
   import GovernanceNavigation from "./components/GovernanceNavigation.svelte";
   import ManagedWorktreePanel from "./components/ManagedWorktreePanel.svelte";
-  import MCPTrustEditor from "./components/MCPTrustEditor.svelte";
   import MCPRuntimeActions from "./components/MCPRuntimeActions.svelte";
   import ScopedMemoryManager from "./components/ScopedMemoryManager.svelte";
   import TaskContextBar from "./components/TaskContextBar.svelte";
@@ -108,7 +107,7 @@
     shouldDeferNewTaskModelSelection,
   } from "./lib/model-availability";
   import type { ModelAvailabilityByRef } from "./lib/model-availability";
-  import { mcpConfigurationEnabled, mcpStatusLabel, shouldShowMCPTrust } from "./lib/mcp-detail";
+  import { mcpConfigurationEnabled, mcpStatusLabel } from "./lib/mcp-detail";
   import {
     filterModelProviders,
     modelCandidatesForProvider,
@@ -544,7 +543,6 @@
   let capabilityTag = $state("");
   let selectedCapabilityId = $state("git-panel");
   let capabilityDetailOpen = $state(false);
-  let mcpTrustBusy = $state(false);
   let mcpRuntimeBusy = $state(false);
 	let cloudflareDropPreflight = $state<CloudflareDropPreflight | undefined>();
 	let cloudflareDropJob = $state<WorkbenchJob | undefined>();
@@ -1212,8 +1210,6 @@
     enabled: boolean;
     readOnly?: boolean;
     executionReadOnly?: boolean;
-    trustedReadOnlyTools?: string[];
-    toolList?: { name: string; description: string; readOnlyHint?: boolean }[];
     startIntent?: string;
     runtimeState?: string;
     authStatus?: string;
@@ -6228,8 +6224,6 @@ function openGovernanceCenter() {
       path: server.command || server.url || server.name,
       permission: server.envKeys?.length ? `环境变量：${server.envKeys.join(" / ")}` : server.authConfigured ? "已配置授权" : "按 MCP 配置",
       enabled,
-      trustedReadOnlyTools: server.trustedReadOnlyTools ?? [],
-      toolList: server.toolList ?? [],
       startIntent: server.startIntent,
       runtimeState: server.runtimeState,
       authStatus: server.authStatus,
@@ -6437,33 +6431,6 @@ function openGovernanceCenter() {
       showWorkbenchNotice("更新能力状态失败，请检查配置或当前会话状态。");
     }
   }
-  async function trustMCPTool(item: CapabilityItem, toolName: string) {
-    if (!toolName || mcpTrustBusy) return;
-    mcpTrustBusy = true;
-    try {
-      await app().TrustMCPServerTool(item.id, toolName);
-      await refreshCapabilities();
-      showWorkbenchNotice(`${item.name} / ${toolName} 已标记为只读信任工具。`);
-    } catch (error) {
-      showWorkbenchNotice(`MCP 工具信任失败：${formatErrorMessage(error)}`);
-    } finally {
-      mcpTrustBusy = false;
-    }
-  }
-  async function untrustMCPTool(item: CapabilityItem, toolName: string) {
-    if (mcpTrustBusy) return;
-    mcpTrustBusy = true;
-    try {
-      await app().UntrustMCPServerTool(item.id, toolName);
-      await refreshCapabilities();
-      showWorkbenchNotice(`${item.name} / ${toolName} 的只读信任已撤销。`);
-    } catch (error) {
-      showWorkbenchNotice(`撤销 MCP 工具信任失败：${formatErrorMessage(error)}`);
-    } finally {
-      mcpTrustBusy = false;
-    }
-  }
-
   async function reverifyMCPServer(item: CapabilityItem) {
     if (mcpRuntimeBusy) return;
     mcpRuntimeBusy = true;
@@ -6641,7 +6608,6 @@ function openGovernanceCenter() {
         url: String(item.url ?? ""),
         env: stringRecord(item.env),
         headers: stringRecord(item.headers),
-        trustedReadOnlyTools: stringList(item.trusted_read_only_tools ?? item.trustedReadOnlyTools),
         tier: String(item.tier ?? item.scope ?? "workspace"),
         enabled,
       };
@@ -6731,7 +6697,6 @@ function openGovernanceCenter() {
         url,
         env: stringRecord(spec.env),
         headers: stringRecord(spec.headers),
-        trustedReadOnlyTools: stringList(spec.trusted_read_only_tools ?? spec.trustedReadOnlyTools),
         tier: "workspace",
       };
     }).filter((entry) => entry.name);
@@ -6795,7 +6760,6 @@ function openGovernanceCenter() {
           url: capabilityCreateTransport === "stdio" ? "" : entry,
           env: parseCapabilityMCPEnv(capabilityCreateMcpEnv),
           headers: {},
-          trustedReadOnlyTools: [],
           tier: "background",
           enabled,
         });
@@ -11062,16 +11026,6 @@ function openGovernanceCenter() {
                   onReconnect={() => reverifyMCPServer(selectedCapability)}
                   onClearAuthentication={() => clearMCPAuthentication(selectedCapability)}
                 />
-                {#if shouldShowMCPTrust(selectedCapability.mcpRawStatus ?? "", selectedCapability.trustedReadOnlyTools ?? [])}
-                  <MCPTrustEditor
-                    serverName={selectedCapability.name}
-                    trustedTools={selectedCapability.trustedReadOnlyTools ?? []}
-                    availableTools={selectedCapability.toolList ?? []}
-                    busy={mcpTrustBusy}
-                    onTrust={(toolName) => trustMCPTool(selectedCapability, toolName)}
-                    onUntrust={(toolName) => untrustMCPTool(selectedCapability, toolName)}
-                  />
-                {/if}
               {/if}
               {#if capabilityTab !== "mcp"}
                 <section class="capability-install-flow">

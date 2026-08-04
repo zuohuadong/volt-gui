@@ -53,8 +53,9 @@ func TestUserConfigDisplayPathCollapsesHome(t *testing.T) {
 	if !strings.HasPrefix(got, "~/") {
 		t.Fatalf("display path = %q, want ~/ prefix", got)
 	}
-	if !strings.HasSuffix(got, "voltui/config.toml") {
-		t.Fatalf("display path = %q, want voltui/config.toml suffix", got)
+	wantSuffix := filepath.ToSlash(filepath.Join(filepath.Base(expectedDefaultVoltUIHome(home)), "config.toml"))
+	if !strings.HasSuffix(got, wantSuffix) {
+		t.Fatalf("display path = %q, want %s suffix", got, wantSuffix)
 	}
 	if strings.Contains(got, home) {
 		t.Fatalf("display path %q must not embed the absolute home", got)
@@ -581,6 +582,35 @@ approval_mode = "prompt"
 	var got Config
 	if _, err := toml.Decode(rendered, &got); err != nil {
 		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
+	}
+}
+
+func TestRenderTOMLPreservesUserWorkbenchConfiguration(t *testing.T) {
+	cfg := Default()
+	enabled := true
+	cfg.Workbench = WorkbenchConfig{
+		Plugins: []WorkbenchPluginEntry{{
+			ID: "cloudflare-drop-publish", Name: "Cloudflare Drop Publish", Kind: "native",
+			Entry: "cloudflare-drop-publish", Version: "v1.0", Capabilities: []string{"local-preflight"},
+			ProviderIDs: []string{"cloudflare"}, Config: map[string]string{"scope": "local"}, Enabled: &enabled,
+		}},
+		Providers: []WorkbenchProviderEntry{{
+			ID: "cloudflare", Type: "http", Server: "drop", URL: "https://example.invalid",
+			Command: "drop-client", Args: []string{"serve"}, Capabilities: []string{"publish"},
+			Headers: map[string]string{"X-Org": "team"}, Env: map[string]string{"DEBUG": "1"}, Config: map[string]string{"mode": "preview"},
+		}},
+	}
+
+	rendered := RenderTOMLForScope(cfg, RenderScopeUser)
+	var got Config
+	if _, err := toml.Decode(rendered, &got); err != nil {
+		t.Fatalf("rendered TOML does not parse: %v\n%s", err, rendered)
+	}
+	if !reflect.DeepEqual(got.Workbench, cfg.Workbench) {
+		t.Fatalf("workbench round trip = %+v, want %+v", got.Workbench, cfg.Workbench)
+	}
+	if project := RenderTOMLForScope(cfg, RenderScopeProject); strings.Contains(project, "workbench") {
+		t.Fatalf("project config retained user-global workbench settings:\n%s", project)
 	}
 }
 

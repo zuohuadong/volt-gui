@@ -45,6 +45,7 @@ import (
 	"voltui/internal/i18n"
 	"voltui/internal/jobs"
 	"voltui/internal/memory"
+	"voltui/internal/memorycompiler"
 	"voltui/internal/nilutil"
 	"voltui/internal/permission"
 	"voltui/internal/plugin"
@@ -124,6 +125,7 @@ type Controller struct {
 	closeOnce                         sync.Once                        // makes close idempotent under racing teardown paths
 	onRemember                        func(rule string) RememberResult // set via Options; invoked when user picks "always allow"
 	onRememberPlanModeReadOnlyCommand func(prefix string) PlanModeReadOnlyCommandTrustResult
+	onRememberTrustedIntranet         func(req tool.TrustedIntranetRequest) TrustedIntranetRememberResult
 	sessionRecoveryMeta               func(SessionRecoveryRequest) agent.BranchMeta
 	onSessionRecovered                func(SessionRecoveryInfo) error
 
@@ -217,6 +219,10 @@ type Controller struct {
 	// was in flight — would park again and then start against freed resources
 	// when the window closed.
 	closed bool
+	// submitting closes the frontend check-to-dispatch window. Checked desktop
+	// submissions set it while parsing a local command or admitting a turn, so a
+	// second checked submission gets a deterministic busy result.
+	submitting bool
 	// parkedTurns holds turn bodies that arrived during the finishing window,
 	// FIFO. finishGuardedTurn starts the oldest one as it closes the window
 	// (see runGuarded/finishGuardedTurn); close() discards any remainder.
@@ -338,6 +344,14 @@ type PlanModeReadOnlyCommandTrustResult struct {
 	Err       error
 }
 
+type TrustedIntranetRememberResult struct {
+	Request   tool.TrustedIntranetRequest
+	Path      string
+	Saved     bool
+	CoveredBy string
+	Err       error
+}
+
 type SessionRecoveryRequest struct {
 	OriginalPath string
 	Reason       string
@@ -448,6 +462,8 @@ type Options struct {
 	// read-only when the user chooses "always allow" from the plan-mode trust
 	// prompt.
 	OnRememberPlanModeReadOnlyCommand func(prefix string) PlanModeReadOnlyCommandTrustResult
+	// OnRememberTrustedIntranet persists one exact host/IP/port grant globally.
+	OnRememberTrustedIntranet func(req tool.TrustedIntranetRequest) TrustedIntranetRememberResult
 	// SessionRecoveryMeta lets a frontend attach scope/topic/profile metadata to
 	// an automatic recovery branch before it is written.
 	SessionRecoveryMeta func(SessionRecoveryRequest) agent.BranchMeta
@@ -511,6 +527,7 @@ func New(opts Options) *Controller {
 		shell:                             opts.Shell,
 		onRemember:                        opts.OnRemember,
 		onRememberPlanModeReadOnlyCommand: opts.OnRememberPlanModeReadOnlyCommand,
+		onRememberTrustedIntranet:         opts.OnRememberTrustedIntranet,
 		sessionRecoveryMeta:               opts.SessionRecoveryMeta,
 		onSessionRecovered:                opts.OnSessionRecovered,
 		balanceURL:                        opts.BalanceURL,
@@ -865,6 +882,9 @@ const SandboxEscapeApprovalTool = "sandbox_escape"
 // so YOLO/auto approval must never answer it.
 const ManagedConfigWriteApprovalTool = "config_write"
 
+// TrustedIntranetApprovalTool gates direct access to private network targets.
+const TrustedIntranetApprovalTool = "trusted_intranet_access"
+
 // planApprovedMessage is the follow-up turn sent once the user approves a plan —
 // the in-context nudge to execute and keep the (already-seeded) task list honest.
 const planApprovedMessage = "Plan approved — plan mode is off. Implement the plan now. The ordinary writer fallback is approved for this execution turn; explicit ask/deny rules and forced fresh reviews still apply. Use this serial workflow: 1) mark the first sub-step in_progress with todo_write (this establishes the task list); 2) execute the sub-step; 3) call complete_step with evidence — the host then marks that sub-step completed and moves the next one to in_progress for you. Repeat 2–3 for each remaining sub-step. You don’t need another todo_write to mark steps completed; each complete_step advances the list. Sign off one sub-step at a time — never batch multiple completions."
@@ -1007,6 +1027,17 @@ func (c *Controller) SubmitDisplay(display, input string) {
 	c.submit(input, display, "")
 }
 
+// SubmitDisplayChecked reports a busy runtime instead of silently discarding a
+// rich-frontend submission that races another dispatch.
+func (c *Controller) SubmitDisplayChecked(display, input string) error {
+	if err := c.beginCheckedSubmission(); err != nil {
+		return err
+	}
+	defer c.endCheckedSubmission()
+	c.submit(input, display, "")
+	return nil
+}
+
 // SubmitDeliveryRecovery runs the same visible prompt path as SubmitDisplay but
 // first authorizes the executor to retain the immediately preceding exhausted
 // delivery ledger. The agent consumes that authorization once; if the card came
@@ -1092,11 +1123,99 @@ func (c *Controller) SubmitEditedDisplay(display, input, original string) {
 	c.submit(input, display, original)
 }
 
+func (c *Controller) SubmitEditedDisplayChecked(display, input, original string) error {
+	if err := c.beginCheckedSubmission(); err != nil {
+		return err
+	}
+	defer c.endCheckedSubmission()
+	c.submit(input, display, original)
+	return nil
+}
+
 // SubmitUserTurn starts a normal model turn without interpreting shell or slash
 // commands. It still resolves references, so callers can submit trusted
 // user-authored prompt text without expanding the command surface.
 func (c *Controller) SubmitUserTurn(input, display string) {
 	c.runRefTurn(input, display)
+}
+
+// SubmitUserTurnChecked atomically admits a plain user turn. Scheduled prompts
+// use this path so a busy controller is retried instead of losing the prompt.
+func (c *Controller) SubmitUserTurnChecked(input, display string) error {
+	admission := c.runGuarded(func(ctx context.Context) error {
+		return c.runRefTurnWithResolverSync(ctx, input, input, display, "", c.ResolveRefs)
+	})
+	if admission == turnStarted || admission == turnParked {
+		return nil
+	}
+	return ErrTurnRunning
+}
+
+// RecordLocalTurn records a completed local answer without invoking a model.
+// It emits the normal turn lifecycle and persists the same user/assistant pair
+// that rich frontends render in live history.
+func (c *Controller) RecordLocalTurn(input, response string) (err error) {
+	input = strings.TrimSpace(input)
+	response = strings.TrimSpace(response)
+	if input == "" {
+		return errors.New("local turn input is empty")
+	}
+	if response == "" {
+		return errors.New("local turn response is empty")
+	}
+
+	c.mu.Lock()
+	if c.running || c.finishing || c.rotating || c.submitting || c.closed {
+		c.mu.Unlock()
+		return ErrTurnRunning
+	}
+	if c.executor == nil {
+		c.mu.Unlock()
+		return errors.New("local turn requires an active session")
+	}
+	c.running = true
+	c.canceling = false
+	session := c.executor.Session()
+	c.mu.Unlock()
+	c.sink.Emit(event.Event{Kind: event.TurnStarted})
+	defer func() { c.finishLocalTurn(err) }()
+	if session == nil {
+		return errors.New("local turn session is unavailable")
+	}
+
+	session.Add(provider.Message{Role: provider.RoleUser, Content: input})
+	session.Add(provider.Message{Role: provider.RoleAssistant, Content: response})
+	if err := c.SnapshotActivity(); err != nil {
+		return err
+	}
+	c.sink.Emit(event.Event{Kind: event.Text, Text: response})
+	c.sink.Emit(event.Event{Kind: event.Message, Text: response})
+	return nil
+}
+
+func (c *Controller) beginCheckedSubmission() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.running || c.finishing || c.rotating || c.submitting || c.closed {
+		return ErrTurnRunning
+	}
+	c.submitting = true
+	return nil
+}
+
+func (c *Controller) endCheckedSubmission() {
+	c.mu.Lock()
+	c.submitting = false
+	c.mu.Unlock()
+}
+
+func (c *Controller) finishLocalTurn(err error) {
+	c.mu.Lock()
+	c.running = false
+	c.cancel = nil
+	c.canceling = false
+	c.mu.Unlock()
+	c.sink.Emit(event.Event{Kind: event.TurnDone, Err: explainError(err)})
 }
 
 func (c *Controller) submit(input, display, editedOriginal string) {
@@ -1172,21 +1291,9 @@ func (c *Controller) submitCommandOrTurn(trimmed, input, display string, scopedR
 			}
 		}()
 	case trimmed == "/new":
-		go func() {
-			if err := c.NewSession(); err != nil {
-				c.notice("new session failed: " + err.Error())
-			} else {
-				c.notice("new session")
-			}
-		}()
+		c.startAsyncRotation("new session", "new session", c.newSessionUnderRotation)
 	case trimmed == "/clear":
-		go func() {
-			if err := c.ClearSession(); err != nil {
-				c.notice("clear context failed: " + err.Error())
-			} else {
-				c.notice("context cleared")
-			}
-		}()
+		c.startAsyncRotation("clear context", "context cleared", c.clearSessionUnderRotation)
 	case strings.HasPrefix(trimmed, "/mcp__"):
 		c.runGuarded(func(ctx context.Context) error {
 			sent, found, err := c.MCPPrompt(ctx, trimmed)
@@ -1638,6 +1745,7 @@ func (c *Controller) Run(ctx context.Context, input string) (err error) {
 	ctx = agent.WithUserImages(ctx, c.inputImages(input))
 	rawInput := input
 	input = c.Compose(input)
+	ctx = agent.WithMemoryCompilerSourceInput(ctx, rawInput)
 	startMessages := c.messageCount()
 	defer c.snapshotActivityIfChanged(startMessages)
 	if c.guardianSess != nil {
@@ -1757,6 +1865,21 @@ func (c *Controller) endRotation() {
 	c.mu.Unlock()
 }
 
+func (c *Controller) startAsyncRotation(operationLabel, successNotice string, operation func() error) {
+	if err := c.beginRotation(); err != nil {
+		c.notice(operationLabel + " failed: " + err.Error())
+		return
+	}
+	go func() {
+		defer c.endRotation()
+		if err := operation(); err != nil {
+			c.notice(operationLabel + " failed: " + err.Error())
+			return
+		}
+		c.notice(successNotice)
+	}()
+}
+
 // CancelRequested reports whether Cancel has been requested for the active turn.
 func (c *Controller) CancelRequested() bool {
 	c.mu.Lock()
@@ -1776,6 +1899,7 @@ func (c *Controller) RuntimeStatus() RuntimeStatus {
 	running := c.running
 	active := running || c.finishing
 	rotating := c.rotating
+	submitting := c.submitting
 	canceling := c.canceling
 	c.mu.Unlock()
 	pending := c.approval.hasPending() || c.browserPrompts.hasPending()
@@ -1783,6 +1907,7 @@ func (c *Controller) RuntimeStatus() RuntimeStatus {
 	return RuntimeStatus{
 		Running:         active,
 		Rotating:        rotating,
+		Submitting:      submitting,
 		PendingPrompt:   pending,
 		BackgroundJobs:  backgroundJobs,
 		CancelRequested: canceling,
@@ -1835,11 +1960,13 @@ func (c *Controller) EnableInteractiveApproval() {
 	trustGate := planModeReadOnlyTrustApprover{c}
 	escapeApprover := sandboxEscapeApprover{c}
 	configApprover := managedConfigWriteApprover{c}
+	intranetApprover := trustedIntranetApprover{c}
 	if c.executor != nil {
 		c.executor.SetGate(c.newInteractiveGate())
 		c.executor.SetPlanModeReadOnlyTrustGate(trustGate)
 		c.executor.SetSandboxEscapeApprover(escapeApprover)
 		c.executor.SetConfigWriteApprover(configApprover)
+		c.executor.SetTrustedIntranetApprover(intranetApprover)
 		c.executor.SetAsker(c)
 	}
 	if setter, ok := c.runner.(interface {
@@ -1856,6 +1983,11 @@ func (c *Controller) EnableInteractiveApproval() {
 		SetConfigWriteApprover(tool.ConfigWriteApprover)
 	}); ok {
 		setter.SetConfigWriteApprover(configApprover)
+	}
+	if setter, ok := c.runner.(interface {
+		SetTrustedIntranetApprover(tool.TrustedIntranetApprover)
+	}); ok {
+		setter.SetTrustedIntranetApprover(intranetApprover)
 	}
 	if setter, ok := c.runner.(interface {
 		SetPlannerPlanApprover(agent.PlannerPlanApprover)
@@ -2121,9 +2253,9 @@ func (c *Controller) AnswerQuestion(id string, answers []event.AskAnswer) {
 	}
 }
 
-// ReplayPendingPrompts re-emits the ApprovalRequest / AskRequest event for every
-// prompt currently blocking the run loop. A frontend that reconnected or reloaded
-// after the original event has no way to rebuild its approval/ask modal otherwise,
+// ReplayPendingPrompts re-emits every interactive request currently blocking the
+// run loop. A frontend that reconnected or reloaded after the original event has
+// no way to rebuild its approval, ask, or browser modal otherwise,
 // so the blocked gate goroutine stays stuck forever while the session shows a
 // "waiting" status with no actionable prompt. promptMu serialises Ask and
 // requestApproval, so in practice at most one prompt is outstanding; the loops
@@ -2135,6 +2267,13 @@ func (c *Controller) ReplayPendingPrompts() {
 	}
 	for _, a := range asks {
 		c.sink.Emit(event.Event{Kind: event.AskRequest, Ask: a})
+	}
+	credentials, verifications := c.browserPrompts.snapshot()
+	for _, prompt := range credentials {
+		c.sink.Emit(event.Event{Kind: event.BrowserCredentialRequest, BrowserPrompt: prompt})
+	}
+	for _, prompt := range verifications {
+		c.sink.Emit(event.Event{Kind: event.BrowserVerificationRequest, BrowserPrompt: prompt})
 	}
 	// Retained compatibility hook; live Auto Guard cards are ordinary approvals.
 	if len(approvals) == 0 {
@@ -2148,6 +2287,11 @@ func (c *Controller) ReplayPendingPrompts() {
 func (c *Controller) SetPlanMode(v bool) {
 	c.applyPlanMode(v)
 }
+
+// SetAutoPlan preserves the released frontend interface after automatic plan
+// detection was retired. Config only permits "off", so there is no runtime
+// state to update here; explicit SetPlanMode remains the supported control.
+func (c *Controller) SetAutoPlan(_ string) {}
 
 func (c *Controller) applyPlanMode(v bool) {
 	c.mu.Lock()
@@ -2188,6 +2332,26 @@ func (c *Controller) SetReasoningLanguage(lang string) {
 	} else if c.executor != nil {
 		c.executor.SetReasoningLanguage(mode)
 	}
+}
+
+// SetMemoryCompilerEnabled updates the compatibility runtime for subsequent
+// turns without rebuilding the controller or changing the stable tool prefix.
+func (c *Controller) SetMemoryCompilerEnabled(enabled bool) {
+	if c == nil || c.executor == nil {
+		return
+	}
+	var rt *memorycompiler.Runtime
+	if enabled {
+		rt = memorycompiler.New(config.MemoryCompilerDir(c.workspaceRoot))
+	}
+	c.executor.SetMemoryCompiler(rt)
+}
+
+func (c *Controller) SetMemoryCompilerVerbosity(verbosity string) {
+	if c == nil || c.executor == nil {
+		return
+	}
+	c.executor.SetMemoryCompilerVerbosity(verbosity)
 }
 
 // PlanMode reports whether outgoing turns currently receive the plan-mode
@@ -2639,6 +2803,13 @@ func (c *Controller) NewSession() error {
 		return err
 	}
 	defer c.endRotation()
+	return c.newSessionUnderRotation()
+}
+
+func (c *Controller) newSessionUnderRotation() error {
+	if c.executor == nil {
+		return nil
+	}
 	// Retire asynchronous recovery writes before Snapshot publishes the final
 	// old-session checkpoint. Otherwise an earlier write can outlive the path
 	// rotation (or process teardown) and race cleanup of the old session.
@@ -2697,6 +2868,13 @@ func (c *Controller) ClearSession() error {
 		return err
 	}
 	defer c.endRotation()
+	return c.clearSessionUnderRotation()
+}
+
+func (c *Controller) clearSessionUnderRotation() error {
+	if c.executor == nil {
+		return nil
+	}
 	c.mu.Lock()
 	oldPath := c.sessionPath
 	c.mu.Unlock()
@@ -2974,7 +3152,7 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 		return "", c.rewindFail(err)
 	}
 	forkPreview, forkTurns := agent.SessionPreviewFromMessages(forked)
-	if err := agent.SaveBranchMeta(newPath, agent.BranchMeta{
+	forkMeta := agent.BranchMeta{
 		Name:             strings.TrimSpace(name),
 		ParentID:         parentID,
 		ForkTurn:         turn,
@@ -2982,7 +3160,11 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 		Preview:          forkPreview,
 		Turns:            forkTurns,
 		SchemaVersion:    agent.BranchMetaCountsVersion,
-	}); err != nil {
+	}
+	if err := inheritBranchAgentProfile(&forkMeta, parentPath); err != nil {
+		return "", c.rewindFail(err)
+	}
+	if err := agent.SaveBranchMeta(newPath, forkMeta); err != nil {
 		return "", c.rewindFail(err)
 	}
 	if switchToFork {
@@ -3057,7 +3239,7 @@ func (c *Controller) Branch(name string) (string, error) {
 		return "", c.rewindFail(err)
 	}
 	branchPreview, branchTurns := agent.SessionPreviewFromMessages(branched)
-	if err := agent.SaveBranchMeta(newPath, agent.BranchMeta{
+	branchMeta := agent.BranchMeta{
 		Name:             strings.TrimSpace(name),
 		ParentID:         parentID,
 		ForkTurn:         -1,
@@ -3065,7 +3247,11 @@ func (c *Controller) Branch(name string) (string, error) {
 		Preview:          branchPreview,
 		Turns:            branchTurns,
 		SchemaVersion:    agent.BranchMetaCountsVersion,
-	}); err != nil {
+	}
+	if err := inheritBranchAgentProfile(&branchMeta, parentPath); err != nil {
+		return "", c.rewindFail(err)
+	}
+	if err := agent.SaveBranchMeta(newPath, branchMeta); err != nil {
 		return "", c.rewindFail(err)
 	}
 	// See snapshotMu: the swap must not interleave with an in-flight save.
@@ -3086,6 +3272,17 @@ func (c *Controller) Branch(name string) (string, error) {
 	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 		Text: fmt.Sprintf("created branch %s", agent.BranchID(newPath))})
 	return newPath, nil
+}
+
+func inheritBranchAgentProfile(child *agent.BranchMeta, parentPath string) error {
+	parent, ok, err := agent.LoadBranchMeta(parentPath)
+	if err != nil {
+		return err
+	}
+	if ok {
+		child.InheritAgentProfile(parent)
+	}
+	return nil
 }
 
 // Branches lists saved conversation branches in this controller's session dir.
@@ -5112,11 +5309,11 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 			c.canceling = true
 		}
 		c.mu.Unlock()
+		c.browserPrompts.clearAll()
 		if cancel != nil {
 			// clearAll deliberately does not signal waiters. Pair it with the
 			// foreground cancellation so approval/ask waits always unblock.
 			c.approval.clearAll()
-			c.browserPrompts.clearAll()
 			cancel()
 		}
 		if fireSessionEnd && started {
@@ -5397,6 +5594,8 @@ func sandboxEscapeApprovalReason(reason string) string {
 // config files without re-prompting on every incremental edit.
 type managedConfigWriteApprover struct{ c *Controller }
 
+type trustedIntranetApprover struct{ c *Controller }
+
 func (m managedConfigWriteApprover) ApproveManagedConfigWrite(ctx context.Context, req tool.ConfigWriteRequest) (bool, string, error) {
 	subject := managedConfigWriteApprovalSubject(req.Path)
 	args, _ := json.Marshal(map[string]string{"path": req.Path})
@@ -5419,6 +5618,61 @@ func (m managedConfigWriteApprover) ManagedConfigWriteSessionAllowed(_ context.C
 
 func managedConfigWriteApprovalSubject(path string) string {
 	return i18n.M.ConfigWriteSubjectPrefix + strings.TrimSpace(path)
+}
+
+func (t trustedIntranetApprover) ApproveTrustedIntranet(ctx context.Context, req tool.TrustedIntranetRequest) (bool, string, error) {
+	subject := trustedIntranetApprovalSubject(req)
+	args, _ := json.Marshal(req)
+	reason := fmt.Sprintf("目标 %s 解析到私网地址 %s:%d；仅在你明确授权后，本次 web_fetch 才会直连访问。", req.Host, req.IP, req.Port)
+	reply, err := t.c.requestFreshApprovalDecision(ctx, TrustedIntranetApprovalTool, subject, args, reason)
+	if err != nil {
+		return false, "approval aborted", err
+	}
+	if !reply.allow {
+		return false, "user declined trusted intranet access", nil
+	}
+	if !reply.persist {
+		return true, "", nil
+	}
+	return t.persistGrant(req, subject, reply.session)
+}
+
+func (t trustedIntranetApprover) persistGrant(req tool.TrustedIntranetRequest, subject string, session bool) (bool, string, error) {
+	if t.c.onRememberTrustedIntranet == nil {
+		return false, "trusted intranet persistence is unavailable", fmt.Errorf("trusted intranet persistence callback is not configured")
+	}
+	remembered := t.c.onRememberTrustedIntranet(req)
+	t.c.emitTrustedIntranetRememberResult(remembered)
+	if remembered.Err != nil {
+		return false, "failed to persist trusted intranet access", remembered.Err
+	}
+	if !remembered.Saved && strings.TrimSpace(remembered.CoveredBy) == "" {
+		return false, "failed to persist trusted intranet access", fmt.Errorf("trusted intranet rule was not saved")
+	}
+	if session {
+		t.c.approval.grantSession(TrustedIntranetApprovalTool, subject)
+	}
+	return true, "", nil
+}
+
+func (t trustedIntranetApprover) TrustedIntranetSessionAllowed(_ context.Context, req tool.TrustedIntranetRequest) bool {
+	return t.c.approval.preApprovedForDecision(TrustedIntranetApprovalTool, trustedIntranetApprovalSubject(req), nil, true)
+}
+
+func trustedIntranetApprovalSubject(req tool.TrustedIntranetRequest) string {
+	return fmt.Sprintf("允许访问内网站点 %s (%s:%d)", strings.TrimSpace(req.Host), strings.TrimSpace(req.IP), req.Port)
+}
+
+func (c *Controller) emitTrustedIntranetRememberResult(remembered TrustedIntranetRememberResult) {
+	target := trustedIntranetApprovalSubject(remembered.Request)
+	switch {
+	case remembered.Err != nil:
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: fmt.Sprintf("保存可信内网站点失败：%s：%v", target, remembered.Err)})
+	case remembered.Saved:
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("已将可信内网站点保存到 %s：%s", remembered.Path, target)})
+	case strings.TrimSpace(remembered.CoveredBy) != "":
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("可信内网站点已存在：%s", remembered.CoveredBy)})
+	}
 }
 
 func (p planModeReadOnlyTrustApprover) CheckPlanModeReadOnlyTrust(ctx context.Context, req agent.PlanModeReadOnlyTrustRequest) (bool, string, error) {

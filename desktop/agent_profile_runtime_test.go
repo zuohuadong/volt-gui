@@ -174,7 +174,7 @@ func TestSetAgentProfileForTabSameIDStillRejectsDisabledProfile(t *testing.T) {
 
 func TestSetAgentProfileForTabRebuildsSameSessionAndClearRestoresBaseModel(t *testing.T) {
 	isolateDesktopUserDirs(t)
-	t.Setenv("AGENT_PROFILE_TEST_KEY", "sk-test")
+	setDesktopTestCredential(t, "AGENT_PROFILE_TEST_KEY", "sk-test")
 	root := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

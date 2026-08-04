@@ -26,6 +26,7 @@ import (
 	"voltui/internal/config"
 	"voltui/internal/control"
 	"voltui/internal/event"
+	"voltui/internal/instruction"
 	"voltui/internal/memory"
 	"voltui/internal/netclient"
 	"voltui/internal/plugin"
@@ -1945,10 +1946,16 @@ func defaultFullBootToolNames() []string {
 		"ask",
 		"bash",
 		"bash_output",
+		"browser_control",
+		"browser_navigate",
+		"calculate",
 		"code_index",
 		"complete_step",
 		"delete_range",
 		"delete_symbol",
+		"desktop_keyboard",
+		"desktop_mouse",
+		"desktop_screenshot",
 		"edit_file",
 		"explore",
 		"fleet",
@@ -1959,6 +1966,7 @@ func defaultFullBootToolNames() []string {
 		"install_skill",
 		"install_source",
 		"kill_shell",
+		"knowledge_search",
 		"list_sessions",
 		"ls",
 		"lsp_definition",
@@ -1994,6 +2002,7 @@ func economyBootToolNames() []string {
 		"ask",
 		"bash",
 		"bash_output",
+		"calculate",
 		"connect_tool_source",
 		"edit_file",
 		"kill_shell",
@@ -2045,6 +2054,7 @@ command = "reasonix-missing-mockmcp"
 		"ask",
 		"bash",
 		"bash_output",
+		"calculate",
 		"connect_tool_source",
 		"edit_file",
 		"kill_shell",
@@ -2055,7 +2065,7 @@ command = "reasonix-missing-mockmcp"
 	if got := toolSchemaNames(req.Tools); !reflect.DeepEqual(got, wantTools) {
 		t.Fatalf("economy first request tool order changed\ngot  %v\nwant %v", got, wantTools)
 	}
-	for _, want := range []string{"connect_tool_source", "read_file", "edit_file", "write_file", "bash", "ask"} {
+	for _, want := range []string{"calculate", "connect_tool_source", "read_file", "edit_file", "write_file", "bash", "ask"} {
 		if !requestHasTool(req, want) {
 			t.Fatalf("economy first request missing tool %q; tools=%v", want, toolSchemaNames(req.Tools))
 		}
@@ -2481,6 +2491,9 @@ READ ONLY SKILL BODY`)
 	subReq := reqs[2]
 	if !strings.Contains(systemMessage(subReq.Messages), "READ ONLY SKILL BODY") {
 		t.Fatalf("read_only_skill child should use the skill body as system prompt:\n%s", systemMessage(subReq.Messages))
+	}
+	if !strings.Contains(systemMessage(subReq.Messages), instruction.CalculationPolicy) {
+		t.Fatalf("read_only_skill child should include calculation policy:\n%s", systemMessage(subReq.Messages))
 	}
 	if !requestHasTool(subReq, "bash") || !requestHasTool(subReq, "read_file") {
 		t.Fatalf("read_only_skill child request should keep read-only research tools; tools=%v", toolSchemaNames(subReq.Tools))
@@ -3222,6 +3235,34 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 	}
 }
 
+func TestBuildCalculationPolicyIsAppended(t *testing.T) {
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "test-model"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "test-model"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "x"
+api_key_env = "REASONIX_TEST_KEY_UNSET"
+`)
+
+	ctrl, err := Build(context.Background(), Options{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	if sys := systemMessage(ctrl.History()); !strings.Contains(sys, instruction.CalculationPolicy) {
+		t.Fatalf("calculation policy missing from system prompt:\n%s", sys)
+	}
+}
+
 func TestBuildAppendsUserDecisionPolicyToCustomSystemPrompt(t *testing.T) {
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -3269,6 +3310,7 @@ func systemMessage(msgs []provider.Message) string {
 func stripLanguagePolicy(s string) string {
 	s = strings.TrimSpace(s)
 	for _, policy := range []string{
+		instruction.CalculationPolicy,
 		config.LanguagePolicy,
 		config.UserDecisionPolicy,
 	} {

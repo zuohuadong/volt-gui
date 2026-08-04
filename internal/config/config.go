@@ -57,6 +57,7 @@ type Config struct {
 	Environment      EnvironmentConfig   `toml:"environment"`
 	Plugins          []PluginEntry       `toml:"plugins"`
 	Skills           SkillsConfig        `toml:"skills"`
+	Codegraph        CodegraphConfig     `toml:"codegraph"`
 	Statusline       StatuslineConfig    `toml:"statusline"`
 	LSP              LSPConfig           `toml:"lsp"`
 	Workbench        WorkbenchConfig     `toml:"workbench"`
@@ -700,6 +701,24 @@ type LSPServer struct {
 	LanguageID  string            `toml:"language_id"`
 	Extensions  []string          `toml:"extensions"`
 	InstallHint string            `toml:"install_hint"`
+}
+
+// CodegraphConfig governs the optional CodeGraph runtime used by the
+// codegraph CLI compatibility surface. The section stays omitted from rendered
+// defaults; zero values loaded from older configs remain valid.
+type CodegraphConfig struct {
+	Enabled     bool   `toml:"enabled"`
+	AutoInstall bool   `toml:"auto_install"`
+	Path        string `toml:"path"`
+	Tier        string `toml:"tier"`
+}
+
+func (c CodegraphConfig) ShouldAutoStart() bool {
+	return c.Enabled
+}
+
+func (c CodegraphConfig) ResolvedTier() string {
+	return resolvedMCPTier(c.Tier)
 }
 
 // StatuslineConfig configures a custom status line. Command, when set, is run at
@@ -1959,8 +1978,9 @@ func Default() *Config {
 		Sandbox: SandboxConfig{Network: true},
 		// LSP tools on by default, but dormant until a language server is on PATH;
 		// a missing server yields an install hint rather than an error.
-		LSP:     LSPConfig{Enabled: true},
-		Network: NetworkConfig{ProxyMode: netclient.ModeAuto},
+		LSP:       LSPConfig{Enabled: true},
+		Codegraph: CodegraphConfig{Enabled: true, AutoInstall: true},
+		Network:   NetworkConfig{ProxyMode: netclient.ModeAuto},
 		Bot: BotConfig{
 			ToolApprovalMode:   "ask",
 			MaxSteps:           25,
@@ -2234,12 +2254,12 @@ func (c *Config) ResolveSystemPromptForRoot(root string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("system_prompt_file: %w", err)
 		}
-		return strings.TrimSpace(string(b)), nil
+		return c.ApplyBrandName(strings.TrimSpace(string(b))), nil
 	}
 	if strings.TrimSpace(c.Agent.SystemPrompt) == "" {
-		return DefaultSystemPrompt, nil
+		return c.ApplyBrandName(DefaultSystemPrompt), nil
 	}
-	return c.Agent.SystemPrompt, nil
+	return c.ApplyBrandName(c.Agent.SystemPrompt), nil
 }
 
 // Validate checks that the selected model's provider is usable.

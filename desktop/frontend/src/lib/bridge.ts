@@ -271,8 +271,6 @@ interface AppBindings {
   ReconnectMCPServer(name: string): Promise<void>;
   ClearMCPServerAuthentication(name: string): Promise<void>;
   SetMCPServerEnabled(name: string, enabled: boolean): Promise<void>;
-  TrustMCPServerTool(name: string, toolName: string): Promise<void>;
-  UntrustMCPServerTool(name: string, toolName: string): Promise<void>;
   RefreshSkills(): Promise<void>;
   SetSkillEnabled(name: string, enabled: boolean): Promise<void>;
   HooksSettings(scope: string): Promise<HooksSettingsView>;

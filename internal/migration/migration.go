@@ -219,6 +219,7 @@ func migrateLegacyMemorySources(sink event.Sink, verbose bool) memoryMigrationRe
 	if home, herr := os.UserHomeDir(); herr == nil {
 		addRoot(filepath.Join(home, ".voltui"), "~/.voltui")
 	}
+	addRoot(config.ReasonixHomeDir(), "~/.reasonix")
 	for _, legacyConfig := range config.LegacyUserConfigPaths() {
 		addRoot(filepath.Dir(legacyConfig), filepath.Dir(legacyConfig))
 	}
@@ -411,8 +412,15 @@ func migrateLegacySessionSources(sink event.Sink, verbose bool) sessionMigration
 	}
 	if home, herr := os.UserHomeDir(); herr == nil {
 		voltuiHome := filepath.Join(home, ".voltui")
-		addFlatSource(filepath.Join(voltuiHome, "sessions"), "~/.voltui/sessions", agent.MigrateLegacySessions)
+		legacySessions := filepath.Join(voltuiHome, "sessions")
+		addFlatSource(legacySessions, legacySessions, agent.MigrateLegacySessions)
 		addProjectSources(voltuiHome)
+	}
+	reasonixHome := config.ReasonixHomeDir()
+	if strings.TrimSpace(reasonixHome) != "" {
+		reasonixSessions := filepath.Join(reasonixHome, "sessions")
+		addFlatSource(reasonixSessions, reasonixSessions, agent.MigrateLegacySessionsFromConfigDir)
+		addProjectSources(reasonixHome)
 	}
 	for _, legacyConfig := range config.LegacyUserConfigPaths() {
 		legacyDir := filepath.Join(filepath.Dir(legacyConfig), "sessions")

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"voltui/internal/event"
+	"voltui/internal/instruction"
 	"voltui/internal/nilutil"
 	"voltui/internal/provider"
 	"voltui/internal/sandbox"
@@ -107,11 +108,12 @@ const plannerAskEndMarker = "</planner-ask>"
 // PlannerPromptWithContext appends cache-stable standing context, such as loaded
 // REASONIX.md / AGENTS.md memory, to the planner's smaller system prompt.
 func PlannerPromptWithContext(context string) string {
+	prompt := instruction.WithCalculationPolicy(DefaultPlannerPrompt)
 	context = strings.TrimSpace(context)
 	if context == "" {
-		return DefaultPlannerPrompt
+		return prompt
 	}
-	return DefaultPlannerPrompt + "\n\n# Planning context\n\n" + context
+	return prompt + "\n\n# Planning context\n\n" + context
 }
 
 // Coordinator runs two models in separate sessions to keep each one's prompt

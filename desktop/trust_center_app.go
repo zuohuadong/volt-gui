@@ -40,23 +40,22 @@ type TrustDestination struct {
 }
 
 type TrustFlow struct {
-	ID                   string             `json:"id"`
-	Category             string             `json:"category"`
-	Name                 string             `json:"name"`
-	Status               TrustStatus        `json:"status"`
-	Direction            string             `json:"direction,omitempty"`
-	Detail               string             `json:"detail,omitempty"`
-	Provider             string             `json:"provider,omitempty"`
-	Models               []string           `json:"models,omitempty"`
-	APISurface           string             `json:"apiSurface,omitempty"`
-	Credential           TrustCredentialRef `json:"credential"`
-	Destinations         []TrustDestination `json:"destinations"`
-	Classification       string             `json:"classification,omitempty"`
-	Transport            string             `json:"transport,omitempty"`
-	Runtime              string             `json:"runtime,omitempty"`
-	AutoStart            bool               `json:"autoStart,omitempty"`
-	TrustedReadOnlyTools int                `json:"trustedReadOnlyTools,omitempty"`
-	DataCategories       []string           `json:"dataCategories"`
+	ID             string             `json:"id"`
+	Category       string             `json:"category"`
+	Name           string             `json:"name"`
+	Status         TrustStatus        `json:"status"`
+	Direction      string             `json:"direction,omitempty"`
+	Detail         string             `json:"detail,omitempty"`
+	Provider       string             `json:"provider,omitempty"`
+	Models         []string           `json:"models,omitempty"`
+	APISurface     string             `json:"apiSurface,omitempty"`
+	Credential     TrustCredentialRef `json:"credential"`
+	Destinations   []TrustDestination `json:"destinations"`
+	Classification string             `json:"classification,omitempty"`
+	Transport      string             `json:"transport,omitempty"`
+	Runtime        string             `json:"runtime,omitempty"`
+	AutoStart      bool               `json:"autoStart,omitempty"`
+	DataCategories []string           `json:"dataCategories"`
 }
 
 type TrustLocation struct {
@@ -445,7 +444,7 @@ func trustNetworkFlows(cfg *config.Config, snap trustTabSnapshot) []TrustFlow {
 		flows = append(flows, TrustFlow{
 			ID: "mcp:" + name, Category: "mcp", Name: name, Status: status, Direction: "模型运行时 <-> MCP",
 			Detail: trustMCPDetail(transport), Destinations: destinations, Classification: classification,
-			Transport: transport, Runtime: runtimeName, AutoStart: entry.ShouldAutoStart(), TrustedReadOnlyTools: len(entry.TrustedReadOnlyTools),
+			Transport: transport, Runtime: runtimeName, AutoStart: entry.ShouldAutoStart(),
 			DataCategories: []string{"工具参数", "工具返回结果", "MCP 协议元数据"},
 		})
 	}

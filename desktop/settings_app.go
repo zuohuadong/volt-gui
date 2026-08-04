@@ -809,6 +809,9 @@ func desktopStartupSettingsFromConfig(cfg *config.Config) DesktopStartupSettings
 // app startup. Keep provider/key status in Settings(), where the Settings panel
 // actually needs it.
 func (a *App) DesktopStartupSettings() DesktopStartupSettingsView {
+	if config.SafeModeRequested() {
+		return desktopStartupSettingsFromConfig(config.LoadRecoveryDefaultsForRoot(a.activeWorkspaceRoot()))
+	}
 	cfg, _, err := a.loadDesktopUserConfigForView()
 	if err != nil {
 		return desktopStartupSettingsFromConfig(nil)
@@ -855,6 +858,7 @@ func (a *App) Settings() SettingsView {
 			Metrics:                 true,
 			MemoryCompiler:          true,
 			ExpandThinking:          false,
+			ConversationWidth:       "standard",
 		}
 	}
 	ctrl := a.activeCtrl()
@@ -930,6 +934,7 @@ func (a *App) Settings() SettingsView {
 		Metrics:                 cfg.DesktopMetrics(),
 		MemoryCompiler:          cfg.MemoryCompilerEnabled(),
 		ExpandThinking:          cfg.Desktop.ExpandThinking,
+		ConversationWidth:       cfg.DesktopConversationWidth(),
 		ConfigPath:              cfgPath,
 		ProviderKinds:           nonNil(provider.Kinds()),
 		AutoApproveTools:        ctrl != nil && ctrl.AutoApproveTools(),
@@ -1667,7 +1672,7 @@ func (a *App) rebuildSettingLocked(setting string) error {
 		if oldCtrl == nil {
 			leaseHeld := false
 			a.mu.Lock()
-			leaseHeld = setTabStartupError(tab, err)
+			leaseHeld = a.setTabStartupErrorLocked(tab, err)
 			tab.Ready = true
 			a.mu.Unlock()
 			if leaseHeld {
@@ -1710,6 +1715,7 @@ func (a *App) rebuildSettingLocked(setting string) error {
 	applyScopedMemoryRuntimeLocked(tab, memoryRuntime)
 	clearTabStartupError(tab)
 	tab.Ready = true
+	a.advanceSessionRuntimeEpochLocked(tab)
 	// Supersede any in-flight startup build: it would otherwise finish later,
 	// pass its generation check, and overwrite the controller just installed.
 	a.supersedeTabBuildLocked(tab)
@@ -2973,14 +2979,15 @@ func (a *App) SetBotSettings(b BotSettingsView) error {
 			Access:           botAccessConfigFromView(b.QQ.Access),
 		}
 		c.Bot.Feishu = config.FeishuBotConfig{
-			Enabled:           b.Feishu.Enabled,
-			Domain:            botDomainOrDefault(b.Feishu.Domain),
-			AppID:             strings.TrimSpace(b.Feishu.AppID),
-			AppSecretEnv:      strings.TrimSpace(b.Feishu.AppSecretEnv),
-			VerificationToken: strings.TrimSpace(b.Feishu.VerificationToken),
-			Mode:              strings.TrimSpace(b.Feishu.Mode),
-			WebhookPort:       b.Feishu.WebhookPort,
-			RequireMention:    b.Feishu.RequireMention,
+			Enabled:            b.Feishu.Enabled,
+			Domain:             botDomainOrDefault(b.Feishu.Domain),
+			AppID:              strings.TrimSpace(b.Feishu.AppID),
+			AppSecretEnv:       strings.TrimSpace(b.Feishu.AppSecretEnv),
+			VerificationToken:  strings.TrimSpace(b.Feishu.VerificationToken),
+			Mode:               strings.TrimSpace(b.Feishu.Mode),
+			WebhookPort:        b.Feishu.WebhookPort,
+			RequireMention:     b.Feishu.RequireMention,
+			OutboundMediaRoots: append([]string(nil), c.Bot.Feishu.OutboundMediaRoots...),
 		}
 		c.Bot.Weixin = config.WeixinBotConfig{
 			Enabled:   b.Weixin.Enabled,

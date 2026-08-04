@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.15.3](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.15.2...desktop-v0.15.3) (2026-08-04)
+
+
+### Bug Fixes
+
+* **desktop:** harden office output quality ([525b711](https://github.com/zuohuadong/volt-gui/commit/525b711900499e440504eb459fae7e1a515ae653))
+* **desktop:** prevent duplicate and corrupted office output ([2c145af](https://github.com/zuohuadong/volt-gui/commit/2c145af60fc5a26221e0767b4379ee57d68b37f6))
+* **desktop:** treat final messages as authoritative ([68a5cff](https://github.com/zuohuadong/volt-gui/commit/68a5cffd2564d0f78d43f0d941ca6fc80cbda48d))
+
 ## [0.15.2](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.15.1...desktop-v0.15.2) (2026-08-04)
 
 

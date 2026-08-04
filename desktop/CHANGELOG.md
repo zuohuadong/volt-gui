@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.1](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.15.0...desktop-v0.15.1) (2026-08-04)
+
+
+### Bug Fixes
+
+* **desktop:** realign desktop-build.sh with post-strip cmd layout ([02cd97c](https://github.com/zuohuadong/volt-gui/commit/02cd97c92559141b2c6d9409384bff0a5c706c84))
+* **desktop:** restore computer-use MCP and Bun runtime staging ([b12ebb8](https://github.com/zuohuadong/volt-gui/commit/b12ebb89f72df68b386d27f0d32206fc61cc8ca6))
+
 ## [0.15.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.14.0...desktop-v0.15.0) (2026-08-04)
 
 

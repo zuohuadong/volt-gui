@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.15.2](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.15.1...desktop-v0.15.2) (2026-08-04)
+
+
+### Bug Fixes
+
+* **desktop:** locate wails .app bundle by wails.json name field ([828c47c](https://github.com/zuohuadong/volt-gui/commit/828c47c5434fa5513912d4ae4a23f0676b526e26))
+* **desktop:** stage coreutils and computer-use at NSIS-relative paths ([6e77054](https://github.com/zuohuadong/volt-gui/commit/6e770546013f66133c0a65cab904bada4cc57757))
+* **desktop:** stage coreutils and windows prerequisites for NSIS ([4018786](https://github.com/zuohuadong/volt-gui/commit/40187869c555d49507e74d5d4741cc9eecfb9a6e))
+* **desktop:** stage coreutils into NSIS cwd (build/windows/installer) ([28750dd](https://github.com/zuohuadong/volt-gui/commit/28750dd8853b2f5c7f5769b6d9aea0bbe62b3cfa))
+
 ## [0.15.1](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.15.0...desktop-v0.15.1) (2026-08-04)
 
 

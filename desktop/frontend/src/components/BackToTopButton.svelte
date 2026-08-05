@@ -39,6 +39,10 @@
     font-size: 12px;
     font-weight: 650;
     backdrop-filter: blur(12px);
+    cursor: pointer;
+    pointer-events: auto;
+    touch-action: manipulation;
+    --wails-draggable: no-drag;
   }
 
   .back-to-top:hover {

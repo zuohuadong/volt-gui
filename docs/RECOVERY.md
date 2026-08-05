@@ -1,15 +1,15 @@
 # Recovery and diagnostics (v1.20+)
 
-Reasonix no longer ships a product `reasonix-guard` recovery shell. Crash
+VoltUI no longer ships a product `reasonix-guard` recovery shell. Crash
 records, pending-update state, and configuration problems do not change the
 next launch into a global Safe Mode.
 
 ## Prefer these tools
 
 ```text
-reasonix doctor
-reasonix doctor repair
-reasonix crash report   # when available in your build
+voltui doctor
+voltui doctor repair
+voltui crash report   # when available in your build
 ```
 
 - **doctor** inspects configuration, derived desktop state, and common install

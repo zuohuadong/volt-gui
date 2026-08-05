@@ -51,7 +51,7 @@ For the desktop and CLI usage of visible reasoning language, see
 
 ```toml
 default_model = "deepseek-flash"   # executor; set [agent].planner_model to add a planner
-# language    = "zh"               # ui language; empty = auto-detect from $LANG / $REASONIX_LANG
+# language    = "zh"               # ui language; empty = auto-detect from $LANG / $VOLTUI_LANG
 
 [ui]
 # shortcut_layout = "desktop"      # classic|desktop; compatibility setting
@@ -497,7 +497,7 @@ Chat and transcript shortcuts:
 | Transcript text selection | Copies transcript text | Releasing an in-app drag writes through the verified native clipboard path in a local session (`pbcopy` on macOS, the available Wayland/X11 tool on Linux, or the Windows clipboard). SSH falls back to OSC 52 and labels the fallback instead of claiming native success. `Ctrl+C`/`Super+C`/`Meta+C` or right-clicking the active selection copies it again. |
 | Composer text selection | Selects, copies, or replaces draft text | Releasing an in-app drag copies the selection through the same verified clipboard path as transcript text. Typing or pasting replaces the selection; arrow keys collapse it. |
 | Right-click with no active selection | Pastes clipboard text locally | In a local session with in-app mouse capture on, VoltUI reads text only and routes it through the normal bracketed-paste handling. Over SSH, use the terminal paste shortcut because the remote process cannot read the local clipboard; `/mouse` restores the terminal's native right-click menu. Right-click with an active selection still copies that selection. |
-| `/mouse` | Toggles in-app mouse capture | Off hands the mouse back to your terminal, restoring its native click-drag selection and right-click context menu, at the cost of in-app drag-select, the transcript scrollbar, and wheel-scroll. Set `REASONIX_DISABLE_MOUSE=1` to start every session with it off. |
+| `/mouse` | Toggles in-app mouse capture | Off hands the mouse back to your terminal, restoring its native click-drag selection and right-click context menu, at the cost of in-app drag-select, the transcript scrollbar, and wheel-scroll. Set `VOLTUI_DISABLE_MOUSE=1` to start every session with it off. |
 | `Ctrl+C` | Copies, cancels, clears, or quits | Copies an active transcript or composer selection first. Otherwise it cancels a running turn, clears non-empty input, or quits on a second empty-composer press. |
 | `Ctrl+D` | Quits the TUI | Immediate quit. |
 | Your terminal's text-paste shortcut | Pastes text | Text stays on the terminal's bracketed-paste path (`Cmd+V` on macOS, commonly `Ctrl+Shift+V` on Linux, and the terminal's configured shortcut elsewhere). VoltUI consumes the resulting paste event and never probes for an image first. |
@@ -513,7 +513,7 @@ Mode and display shortcuts:
 | `Ctrl+Y` | Toggles YOLO on/off | Turning YOLO off restores the previous Ask/Auto base when known. Terminals that forward Command/Super may also send `Cmd+Y`, but `Ctrl+Y` is the reliable terminal shortcut. |
 | `--yolo`, `--dangerously-skip-permissions` | Starts chat in YOLO | Same runtime mode as `Ctrl+Y`. |
 | `/work-mode [economy|balanced|delivery]` | Shows or switches the current session's work mode | `/profile` is a compatibility alias. Switching rebuilds the runtime atomically, preserves the conversation and approval posture, and is blocked while work is active. |
-| `/theme [auto|light|dark|style]` | Shows or switches the CLI theme | Bare `/theme` lists background modes and named accent palettes. The choice is saved to the user config; `REASONIX_THEME` and `REASONIX_THEME_STYLE` can override it for one run. |
+| `/theme [auto|light|dark|style]` | Shows or switches the CLI theme | Bare `/theme` lists background modes and named accent palettes. The choice is saved to the user config; `VOLTUI_THEME` and `VOLTUI_THEME_STYLE` can override it for one run. |
 | `Ctrl+O` | Toggles verbose reasoning display | Also available through `/verbose`. |
 | `Ctrl+B` | Expands or collapses long shell output | Long shell-output hint lines can also be clicked in the transcript; text selection is handled in-app while the full-screen TUI has mouse reporting enabled. |
 | `/goal <objective>`, `/goal --research <objective>`, `/goal --simple <objective>`, `/goal status`, `/goal clear` | Starts, checks, or clears Goal | Goal is not in any keyboard cycle; clearly long-horizon goals automatically enable AutoResearch after Goal is explicitly started. |
@@ -800,7 +800,7 @@ the desktop settings page.
 See [Subagent profiles](./SUBAGENT_PROFILES.md) for the complete CLI reference,
 Skill file format, model precedence, safety behavior, and troubleshooting.
 
-`/memory` lists both memory documents (`REASONIX.md` / `AGENTS.md`) and saved
+`/memory` lists both memory documents (`VOLTUI.md` / `AGENTS.md`) and saved
 auto-memory facts. During agent turns, the read-only `history` and `memory`
 tools let the model retrieve prior session decisions, compacted-history
 archives, and saved facts on demand instead of injecting that dynamic state into
@@ -880,7 +880,7 @@ Workers and subagents may explore independently, but the orchestrator owns the
 canonical state files. Completion requires a requirement-by-requirement evidence
 audit against `task_spec.md`; a passing narrow check is not treated as proof of a
 broad requirement. Dynamic run state stays in `.voltui/autoresearch/...`, not
-in `REASONIX.md`, `AGENTS.md`, project memory, tool schemas, or the cache-stable
+in `VOLTUI.md`, `AGENTS.md`, project memory, tool schemas, or the cache-stable
 system prompt. Public publishing, destructive operations, credentials, payments,
 and external notifications still follow the normal approval, privacy, and cache
 gates.
@@ -908,7 +908,7 @@ is a one-line edit afterwards — set `planner_model` to any other enabled provi
 planner_model = "deepseek-pro"   # used as the low-frequency planner
 ```
 
-The planner sees loaded `REASONIX.md` / `AGENTS.md` memory and a small read-only
+The planner sees loaded `VOLTUI.md` / `AGENTS.md` memory and a small read-only
 research tool set, so it can inspect relevant files before handing a plan to the
 executor. Writer and workflow tools remain executor-only.
 

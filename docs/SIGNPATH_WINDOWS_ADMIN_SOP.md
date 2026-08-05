@@ -1,7 +1,7 @@
-# Reasonix Windows SignPath 配置与验收 SOP
+# VoltUI Windows SignPath 配置与验收 SOP
 
 本文供 SignPath 管理员、GitHub 仓库管理员和 Release Maintainer 配置并验收
-Reasonix Windows Authenticode 两阶段签名链路。
+VoltUI Windows Authenticode 两阶段签名链路。
 
 关联变更：
 
@@ -447,7 +447,7 @@ Status = Valid
 在干净的 Windows 11 AMD64 和 ARM64 环境中检查安装目录：
 
 ```powershell
-Get-ChildItem "<Reasonix安装目录>" -Recurse -Filter *.exe |
+Get-ChildItem "<VoltUI安装目录>" -Recurse -Filter *.exe |
   ForEach-Object {
     $signature = Get-AuthenticodeSignature $_.FullName
     [PSCustomObject]@{
@@ -526,4 +526,4 @@ gh variable set SIGNPATH_RELEASE_SIGNING_ATTESTATION \
 - [SignPath Projects](https://docs.signpath.io/projects)
 - [SignPath Users and Permissions](https://docs.signpath.io/users/)
 - [SignPath GitHub Trusted Build System](https://docs.signpath.io/trusted-build-systems/github)
-- [Reasonix PR #6904](https://github.com/esengine/DeepSeek-Reasonix/pull/6904)
+- [VoltUI PR #6904](https://github.com/esengine/DeepSeek-Reasonix/pull/6904)

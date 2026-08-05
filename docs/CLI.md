@@ -1,4 +1,4 @@
-# Reasonix CLI Reference
+# VoltUI CLI Reference
 
 <a href="../README.md">README</a>
 &nbsp;·&nbsp;
@@ -13,14 +13,14 @@ configuration, plugins, and sandbox policy, see the [Guide](./GUIDE.md).
 ## Start a session
 
 ```sh
-reasonix
-reasonix --model deepseek-pro
-reasonix --profile delivery --effort high
-reasonix --dir /path/to/project
+voltui
+voltui --model deepseek-pro
+voltui --profile delivery --effort high
+voltui --dir /path/to/project
 ```
 
-Running `reasonix` without a subcommand starts the interactive terminal UI. Use
-`reasonix setup` first when no provider is configured.
+Running `voltui` without a subcommand starts the interactive terminal UI. Use
+`voltui setup` first when no provider is configured.
 
 | Flag | Purpose |
 | --- | --- |
@@ -42,27 +42,27 @@ Flags may appear before or after the prompt where applicable.
 ## Update the native CLI
 
 ```sh
-reasonix upgrade                  # install the latest official release
-reasonix upgrade --check          # report the target without installing
-reasonix upgrade --force          # reinstall the current official release
+voltui upgrade                  # install the latest official release
+voltui upgrade --check          # report the target without installing
+voltui upgrade --force          # reinstall the current official release
 ```
 
 The updater selects only strict `vX.Y.Z` non-prerelease GitHub Releases. During
 the 1.x compatibility period, old channel arguments and `--channel` are still
 accepted, but resolve to the same official release and print a deprecation
 notice. Legacy `[cli].update_channel` values are ignored and removed the next
-time Reasonix saves the configuration. The `reasonix update` alias behaves the
+time VoltUI saves the configuration. The `voltui update` alias behaves the
 same way.
 
 ## Configure providers
 
 ```sh
-reasonix setup                    # manage the user-global config
-reasonix setup --local            # manage ./reasonix.toml
-reasonix setup /path/to/config.toml
+voltui setup                    # manage the user-global config
+voltui setup --local            # manage ./voltui.toml
+voltui setup /path/to/config.toml
 ```
 
-In an interactive terminal, `reasonix setup` is a staged provider manager. It
+In an interactive terminal, `voltui setup` is a staged provider manager. It
 lists configured providers and lets you:
 
 - add OpenAI-compatible or Anthropic-compatible providers;
@@ -77,7 +77,7 @@ or CLI changes are retained, while an overlapping change is reported as a
 conflict instead of being overwritten.
 
 Provider definitions contain only the `api_key_env` variable name. Key values
-are stored in the shared Reasonix home `.env`, even with `--local`. When a
+are stored in the shared VoltUI home `.env`, even with `--local`. When a
 variable name is already used by another provider, setup asks whether to share
 that credential; choose a different variable name when the providers use
 different keys. Providers added or removed through setup are also added to or
@@ -90,16 +90,16 @@ Use the user-global currency command to inspect or select the official DeepSeek
 regional price table:
 
 ```sh
-reasonix config currency             # show the saved and resolved currency
-reasonix config currency auto        # follow the resolved locale
-reasonix config currency CNY
-reasonix config currency USD
+voltui config currency             # show the saved and resolved currency
+voltui config currency auto        # follow the resolved locale
+voltui config currency CNY
+voltui config currency USD
 ```
 
 `auto` resolves Simplified or Traditional Chinese locales to CNY and English or
 other locales to USD. An explicit `CNY` or `USD` selection remains independent
 from the UI language. This preference is stored in the user config and cannot
-be overridden by project `reasonix.toml`; `--local` is therefore not supported.
+be overridden by project `voltui.toml`; `--local` is therefore not supported.
 Custom provider prices are preserved.
 
 In an interactive session, `/currency` shows the saved and resolved values, and
@@ -113,14 +113,14 @@ Inspect the effective percentage and its source, set the global default, or add
 a project override:
 
 ```sh
-reasonix config compact-ratio              # show effective value and source
-reasonix config compact-ratio 75           # set the user-global default
-reasonix config compact-ratio --local 75   # override in ./reasonix.toml
+voltui config compact-ratio              # show effective value and source
+voltui config compact-ratio 75           # set the user-global default
+voltui config compact-ratio --local 75   # override in ./voltui.toml
 ```
 
 The editable range is 65–85%, with 80% as the built-in default. Lower values
 compact earlier and may reduce prompt-prefix cache reuse; higher values retain
-more context before compaction. Project `reasonix.toml` takes precedence over
+more context before compaction. Project `voltui.toml` takes precedence over
 the user config. Changes apply to new CLI sessions; an already-running session
 keeps the threshold it loaded at startup.
 
@@ -129,14 +129,14 @@ keeps the threshold it loaded at startup.
 Use `-p` / `--print` when a script needs only the final answer:
 
 ```sh
-reasonix -p "summarize this repository"
-reasonix -p "summarize this repository" --output-format json
-reasonix run "implement the TODOs in main.go"
-reasonix run --auto "implement the TODOs in main.go"
-echo "explain this code" | reasonix run
+voltui -p "summarize this repository"
+voltui -p "summarize this repository" --output-format json
+voltui run "implement the TODOs in main.go"
+voltui run --auto "implement the TODOs in main.go"
+echo "explain this code" | voltui run
 ```
 
-`reasonix run` keeps the normal streamed terminal presentation unless `-p` or a
+`voltui run` keeps the normal streamed terminal presentation unless `-p` or a
 structured output format is selected. It also accepts `--model`, `--profile`,
 `--max-steps`, `--effort`, `--dir`, `--add-dir`, `--continue`, `--resume PATH`,
 `--copy`, `--allowed-tools`, `--permission-mode`, and `--auto` / `-y` (an alias
@@ -151,9 +151,9 @@ for `--permission-mode auto`).
 | `stream-json` | Emits one shared `eventwire` JSON object per line, followed by the final result object. |
 
 ```sh
-reasonix -p "list the risky changes" --output-format text
-reasonix -p "summarize the diff" --output-format json
-reasonix run "run the tests" --output-format stream-json
+voltui -p "list the risky changes" --output-format text
+voltui -p "summarize the diff" --output-format json
+voltui run "run the tests" --output-format stream-json
 ```
 
 The final structured object has this shape:
@@ -197,7 +197,7 @@ must not receive prompts, reasoning, tool arguments, tool output, or approval
 text:
 
 ```sh
-reasonix run --events-jsonl "run the focused tests"
+voltui run --events-jsonl "run the focused tests"
 ```
 
 Every line has `schema_version`, `sequence`, and `kind`; the final line is
@@ -209,22 +209,22 @@ The following read-only commands expose persisted state without transcript,
 label, command, output, path, PID, or host-name content. Here, read-only means
 the commands do not mutate transcript, runtime, recovery, or query state. The
 first redacted-machine invocation may initialize a private identity key in the
-Reasonix user-state directory:
+VoltUI user-state directory:
 
 ```sh
-reasonix session list --json [--dir SESSION_DIR | --project-root PATH]
-reasonix session show <machine-session-id> --json [--dir SESSION_DIR | --project-root PATH]
-reasonix session status <machine-session-id> --json [--dir SESSION_DIR | --project-root PATH]
-reasonix session recovery [<machine-session-id>] --json [--dir SESSION_DIR | --project-root PATH]
-reasonix task list --json [--dir SESSION_DIR | --project-root PATH] [--session MACHINE_SESSION_ID]
-reasonix task show <task-id> --json [--dir SESSION_DIR | --project-root PATH] [--session MACHINE_SESSION_ID]
-reasonix hook list --json [--project-root PATH] [--home-dir PATH]
-reasonix hook status --json [--project-root PATH] [--home-dir PATH]
+voltui session list --json [--dir SESSION_DIR | --project-root PATH]
+voltui session show <machine-session-id> --json [--dir SESSION_DIR | --project-root PATH]
+voltui session status <machine-session-id> --json [--dir SESSION_DIR | --project-root PATH]
+voltui session recovery [<machine-session-id>] --json [--dir SESSION_DIR | --project-root PATH]
+voltui task list --json [--dir SESSION_DIR | --project-root PATH] [--session MACHINE_SESSION_ID]
+voltui task show <task-id> --json [--dir SESSION_DIR | --project-root PATH] [--session MACHINE_SESSION_ID]
+voltui hook list --json [--project-root PATH] [--home-dir PATH]
+voltui hook status --json [--project-root PATH] [--home-dir PATH]
 ```
 
 For `session` and `task`, `--dir` explicitly selects the session storage
 directory, while `--project-root` resolves the selected project's session
-store. The two options cannot be combined. Without either option, Reasonix
+store. The two options cannot be combined. Without either option, VoltUI
 selects the current project's session store.
 For `hook`, `--dir` is an alias for `--project-root`.
 `hook list` reports `active` or `invalid`; `invalid` means the
@@ -232,10 +232,10 @@ configured event cannot execute because its event, command/context source, or
 tool-event matcher is unusable. Matchers on non-tool events are ignored.
 
 Machine session IDs are keyed opaque hashes, not transcript file names. They
-remain stable for the same session and Reasonix user-state directory, while a
+remain stable for the same session and VoltUI user-state directory, while a
 different installation key produces unrelated IDs and prevents offline guesses
 from timestamps or model labels. Preserve the private identity key when moving
-the Reasonix state directory if automation depends on existing machine IDs.
+the VoltUI state directory if automation depends on existing machine IDs.
 Task `finished_at` is empty while a task is running, and
 `artifact_complete=true` is emitted only for a terminal task whose persisted
 artifact exists. A `running` record without a live session lease is reported as
@@ -252,11 +252,11 @@ Schema compatibility rules for version 1:
 ## Resume sessions
 
 ```sh
-reasonix --continue
-reasonix --resume
-reasonix --resume provider-config
-reasonix --resume <session-id>
-reasonix --resume provider-config --copy
+voltui --continue
+voltui --resume
+voltui --resume provider-config
+voltui --resume <session-id>
+voltui --resume provider-config --copy
 ```
 
 - `--continue` resumes the newest saved session immediately.
@@ -266,21 +266,21 @@ reasonix --resume provider-config --copy
   error.
 - `--resume=true` and `--resume=false` remain accepted for compatibility.
 - `--copy` leaves the original transcript untouched and continues in a new
-  writable session. Use it when another Reasonix process owns the original.
+  writable session. Use it when another VoltUI process owns the original.
 
-For one-shot runs, `reasonix run --resume PATH "task"` accepts a session file
+For one-shot runs, `voltui run --resume PATH "task"` accepts a session file
 path. Session leases prevent the desktop app and CLI from writing the same
 transcript concurrently.
 
 ## Permissions
 
 ```sh
-reasonix --permission-mode plan
-reasonix --permission-mode acceptEdits
-reasonix run -y "apply the requested changes"
-reasonix -p "run the focused tests" --allowed-tools "Bash(go test ./...)"
-reasonix --allowed-tools "Bash(git *) Edit"
-reasonix --allowed-tools "Bash(go test ./...)" --allowed-tools read_file
+voltui --permission-mode plan
+voltui --permission-mode acceptEdits
+voltui run -y "apply the requested changes"
+voltui -p "run the focused tests" --allowed-tools "Bash(go test ./...)"
+voltui --allowed-tools "Bash(git *) Edit"
+voltui --allowed-tools "Bash(go test ./...)" --allowed-tools read_file
 ```
 
 | Mode | Behavior |
@@ -293,7 +293,7 @@ reasonix --allowed-tools "Bash(go test ./...)" --allowed-tools read_file
 | `bypassPermissions` | Bypass approval prompts; equivalent to YOLO. |
 
 For unattended execution with ordinary writer fallback enabled, use
-`reasonix run --auto ...` (or `-y`). The alias cannot be combined with an
+`voltui run --auto ...` (or `-y`). The alias cannot be combined with an
 explicit `--permission-mode` value.
 
 `[permissions] allow_dynamic_bash = true` is an advanced opt-in that lets an
@@ -305,7 +305,7 @@ command names, shell `-c`, and other nested/indirect Bash forms. The default is
 filter. Rules may be comma- or space-separated, and the flag is repeatable.
 Configured deny rules always win over command-line allow rules.
 
-In non-interactive runs (`reasonix run` / `-p`) there is no prompt to answer, so
+In non-interactive runs (`voltui run` / `-p`) there is no prompt to answer, so
 approval modes resolve without blocking. The default `ask` / `manual` posture
 fails closed for explicit Ask decisions and ordinary writer fallback; readers
 still run. `acceptEdits` allows its named file-edit tools, while other Ask
@@ -322,14 +322,14 @@ mutations remain denied without a human.
 ## Additional directories
 
 ```sh
-reasonix --add-dir ../shared
-reasonix -p "update both projects" \
+voltui --add-dir ../shared
+voltui -p "update both projects" \
   --add-dir ../frontend \
   --add-dir ../backend
 ```
 
 Relative paths resolve from the workspace root and must already exist as
-directories. Reasonix resolves symlinks, removes duplicates, and extends the
+directories. VoltUI resolves symlinks, removes duplicates, and extends the
 file-writer and sandboxed Bash write boundaries for the session. These additions
 are runtime-only and are not written to configuration.
 
@@ -369,7 +369,7 @@ Clipboard actions are deliberately split by content type. Local transcript
 and composer selections use the native system clipboard and report success only
 after that write completes; SSH falls back to an explicitly labelled OSC 52
 request. Text paste remains the terminal's bracketed-paste action (`Cmd+V` on
-macOS and the terminal's configured shortcut elsewhere). While Reasonix owns the
+macOS and the terminal's configured shortcut elsewhere). While VoltUI owns the
 mouse in a local session, right-click with no selection reads clipboard text
 through the same paste path; right-click with a selection copies it. Over SSH,
 use the terminal paste shortcut because the remote process cannot read the local

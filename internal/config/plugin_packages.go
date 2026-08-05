@@ -17,7 +17,7 @@ func mergeInstalledPluginPackages(cfg *Config, root string) []string {
 	if cfg == nil {
 		return nil
 	}
-	voltuiHome := ReasonixHomeDir()
+	voltuiHome := VoltuiHomeDir()
 	if strings.TrimSpace(voltuiHome) == "" {
 		return nil
 	}

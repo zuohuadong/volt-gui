@@ -80,7 +80,7 @@ func legacyCredentialsPaths() []string {
 	if dir := legacyOSSupportDir(); dir != "" {
 		add(filepath.Join(dir, "credentials"))
 	}
-	if dir := reasonixHomeDir(); dir != "" {
+	if dir := voltuiHomeDir(); dir != "" {
 		add(filepath.Join(dir, ".env"))
 		add(filepath.Join(dir, "credentials"))
 	}

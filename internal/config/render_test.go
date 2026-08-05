@@ -62,14 +62,14 @@ func TestUserConfigPathUsesReasonixHome(t *testing.T) {
 	}
 }
 
-func TestReasonixManagedConfigPathsAreConfigFilesOnly(t *testing.T) {
+func TestVoltuiManagedConfigPathsAreConfigFilesOnly(t *testing.T) {
 	home := isolateUserConfigHome(t)
 	setRuntimeGOOS(t, "windows")
 	oldConfigDir := osUserConfigDir
 	osUserConfigDir = func() string { return filepath.Join(home, "AppData", "Roaming") }
 	t.Cleanup(func() { osUserConfigDir = oldConfigDir })
 
-	paths := ReasonixManagedConfigPaths()
+	paths := VoltuiManagedConfigPaths()
 	for _, want := range []string{
 		filepath.Join(home, "AppData", "Roaming", "voltui", "config.toml"),
 		filepath.Join(home, ".voltui", "config.json"),
@@ -94,11 +94,11 @@ func TestReasonixManagedConfigPathsAreConfigFilesOnly(t *testing.T) {
 		}
 		for _, forbidden := range []string{
 			home,
-			ReasonixHomeDir(),
+			VoltuiHomeDir(),
 			UserCredentialsPath(),
-			filepath.Join(ReasonixHomeDir(), "settings.json"),
-			filepath.Join(ReasonixHomeDir(), "skills"),
-			filepath.Join(ReasonixHomeDir(), "sessions"),
+			filepath.Join(VoltuiHomeDir(), "settings.json"),
+			filepath.Join(VoltuiHomeDir(), "skills"),
+			filepath.Join(VoltuiHomeDir(), "sessions"),
 		} {
 			if samePath(got, forbidden) {
 				t.Fatalf("managed config paths must not include %q: %v", forbidden, paths)

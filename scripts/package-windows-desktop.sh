@@ -25,22 +25,17 @@ BIN_DIR="$DESKTOP/build/bin"
 DIST="$ROOT/dist"
 APPNAME="${DESKTOP_APP_NAME:-VoltUI}"
 BINNAME="voltui-desktop"
-GUARDNAME="voltui-guard"
-LAUNCHERNAME="voltui-launcher"
 UPDATE_HELPER="voltui-update-helper.exe"
-WINDOWS_CLINAME="voltui-cli"
+CLINAME="voltui-cli"
 UNINSTALLER="voltui-uninstall.exe"
-BUNDLED_ENV="bundled.env"
 
 [ -d "$payload_input" ] || { echo "Windows payload directory is missing: $payload_input" >&2; exit 1; }
 PAYLOAD="$(cd "$payload_input" && pwd)"
 
 required_payload=(
 	"$BINNAME.exe"
-	"$GUARDNAME.exe"
-	"$LAUNCHERNAME.exe"
 	"$UPDATE_HELPER"
-	"$WINDOWS_CLINAME.exe"
+	"$CLINAME.exe"
 	"$UNINSTALLER"
 )
 for name in "${required_payload[@]}"; do
@@ -56,10 +51,8 @@ payload_exe_count=$(find "$PAYLOAD" -maxdepth 1 -type f -iname '*.exe' | wc -l |
 # Replace every source consumed by project.nsi before compiling the installer.
 # Copying preserves the Authenticode certificate table returned by SignPath.
 cp "$PAYLOAD/$BINNAME.exe" "$BIN_DIR/$BINNAME.exe"
-cp "$PAYLOAD/$GUARDNAME.exe" "$INSTALLER_DIR/$GUARDNAME.exe"
-cp "$PAYLOAD/$LAUNCHERNAME.exe" "$INSTALLER_DIR/$LAUNCHERNAME.exe"
 cp "$PAYLOAD/$UPDATE_HELPER" "$INSTALLER_DIR/$UPDATE_HELPER"
-cp "$PAYLOAD/$WINDOWS_CLINAME.exe" "$INSTALLER_DIR/$WINDOWS_CLINAME.exe"
+cp "$PAYLOAD/$CLINAME.exe" "$INSTALLER_DIR/$CLINAME.exe"
 
 [ -s "$INSTALLER_DIR/wails_tools.nsh" ] || {
 	echo "wails_tools.nsh is missing; run the initial Wails -nsis build first" >&2
@@ -88,7 +81,7 @@ fi
 	cd "$INSTALLER_DIR"
 	makensis \
 		"-D${binary_define}=${binary_path}" \
-		"-DARG_REASONIX_SIGNED_UNINSTALLER=${uninstaller_path}" \
+		"-DARG_VOLTUI_SIGNED_UNINSTALLER=${uninstaller_path}" \
 		project.nsi
 )
 
@@ -100,44 +93,38 @@ dist_installer="$DIST/${APPNAME}-windows-${arch}-installer.exe"
 dist_portable="$DIST/${APPNAME}-windows-${arch}.zip"
 cp "$installer" "$dist_installer"
 
-portable_staging=$(mktemp -d "${TMPDIR:-/tmp}/voltui-portable.XXXXXX")
+portable_staging=$(mktemp -d)
+portable_staging_root="${TMPDIR:-/tmp}"
+portable_staging_root="${portable_staging_root%/}"
 cleanup() {
 	case "$portable_staging" in
-	"${TMPDIR:-/tmp}"/* | /tmp/*) rm -rf -- "$portable_staging" ;;
+	"$portable_staging_root"/* | /tmp/*) rm -rf -- "$portable_staging" ;;
 	*) echo "refusing to clean unexpected portable staging directory: $portable_staging" >&2 ;;
 	esac
 }
 trap cleanup EXIT
 
-cp "$PAYLOAD/$BINNAME.exe" "$portable_staging/$BINNAME.exe"
-cp "$PAYLOAD/$GUARDNAME.exe" "$portable_staging/$GUARDNAME.exe"
-cp "$PAYLOAD/$LAUNCHERNAME.exe" "$portable_staging/$LAUNCHERNAME.exe"
-cp "$PAYLOAD/$BINNAME.exe" "$portable_staging/$APPNAME.exe"
-cp "$PAYLOAD/$UPDATE_HELPER" "$portable_staging/$UPDATE_HELPER"
-cp "$PAYLOAD/$WINDOWS_CLINAME.exe" "$portable_staging/$WINDOWS_CLINAME.exe"
-if [ -e "$INSTALLER_DIR/$BUNDLED_ENV" ]; then
-	[ -s "$INSTALLER_DIR/$BUNDLED_ENV" ] || { echo "Windows bundled model settings are empty" >&2; exit 1; }
-	cp "$INSTALLER_DIR/$BUNDLED_ENV" "$portable_staging/$BUNDLED_ENV"
-fi
-export WINDOWS_PORTABLE_APP_NAME="$APPNAME"
-export WINDOWS_PORTABLE_BINARY_PREFIX="voltui"
+portable_payload=("$BINNAME.exe" "$UPDATE_HELPER" "$CLINAME.exe")
+for portable_name in "${portable_payload[@]}"; do
+	cp "$PAYLOAD/$portable_name" "$portable_staging/$portable_name"
+done
+for resource in computer-use-mcp computer-use-runtime coreutils; do
+	[ -d "$INSTALLER_DIR/$resource" ] || { echo "Windows runtime resource is missing: $resource" >&2; exit 1; }
+	cp -R "$INSTALLER_DIR/$resource" "$portable_staging/$resource"
+done
 "$ROOT/scripts/verify-windows-portable.sh" "$portable_staging"
 
-if command -v powershell.exe >/dev/null 2>&1; then
-	portable_staging_win="$portable_staging"
-	dist_portable_win="$dist_portable"
-	if command -v cygpath >/dev/null 2>&1; then
-		portable_staging_win="$(cygpath -w "$portable_staging")"
-		dist_portable_win="$(cygpath -w "$dist_portable")"
-	fi
+rm -f -- "$dist_portable"
+if command -v cygpath >/dev/null 2>&1 && command -v powershell.exe >/dev/null 2>&1; then
+	portable_staging_win="$(cygpath -w "$portable_staging")"
+	dist_portable_win="$(cygpath -w "$dist_portable")"
 	powershell.exe -NoProfile -Command \
 		"Compress-Archive -Force -Path '$portable_staging_win\\*' -DestinationPath '$dist_portable_win'"
 else
-	command -v zip >/dev/null 2>&1 || { echo "zip or powershell.exe is required to build the Windows portable archive" >&2; exit 1; }
-	rm -f -- "$dist_portable"
+	command -v zip >/dev/null 2>&1 || { echo "zip is required for Windows portable packaging" >&2; exit 1; }
 	(
 		cd "$portable_staging"
-		zip -q "$dist_portable" ./*
+		zip -q -r "$dist_portable" .
 	)
 fi
 

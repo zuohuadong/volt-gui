@@ -289,6 +289,20 @@ describe("unified workbench IA state", () => {
     expect(template?.prompt).toContain("原始值、公式、单位、舍入规则及“估算/约”标识");
   });
 
+  test("keeps planning milestones finite, consistent, and resource-feasible", () => {
+    const planningTemplate = WORK_OUTCOME_TEMPLATES.find((outcomeTemplate) => outcomeTemplate.id === "plan-work");
+    expect(planningTemplate?.prompt).toContain("有限且连续的里程碑编号");
+    expect(planningTemplate?.prompt).toContain("不得出现未定义的里程碑");
+    expect(planningTemplate?.prompt).toContain("完成标准、交付物、任务与唯一负责人、风险");
+    expect(planningTemplate?.prompt).toContain("每个任务只能有一人");
+    expect(planningTemplate?.prompt).toContain("同一负责人不得在重叠时间段承担多个任务");
+    expect(planningTemplate?.prompt).toContain("零人力窗口不得安排工作");
+    expect(planningTemplate?.prompt).toContain("不得使用未定义的“高×中”“中×低”等符号表达");
+    expect(planningTemplate?.prompt).toContain("每个风险及其缓解措施只描述一次");
+    expect(planningTemplate?.prompt).toContain("不得循环扩写");
+    expect(planningTemplate?.prompt).toContain("标题后不得出现无法归类的孤立文本");
+  });
+
   test("keeps receipt fields pending until evidence exists and only settles the shell on turn_done", () => {
     const pending = createPendingTaskReceipt({
       id: "receipt-1",

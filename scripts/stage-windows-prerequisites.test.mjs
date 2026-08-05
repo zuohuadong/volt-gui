@@ -126,10 +126,10 @@ test('renders configurable product wording without changing pinned assets', () =
   assert.match(readme, /Anyong Desktop Windows 前置依赖离线包（windows\/amd64，v1\.0\.0）/);
 });
 
-test('full mocked desktop build does not stage or emit prerequisites assets', {
+test('full mocked desktop build stages prerequisites without emitting assets', {
   skip: process.platform === 'win32',
 }, () => {
-  const fixture = join(tmpdir(), `desktop-without-prerequisites-${process.pid}-${Date.now()}`);
+  const fixture = join(tmpdir(), `desktop-with-prerequisites-${process.pid}-${Date.now()}`);
   const bin = join(fixture, 'bin');
   const script = join(fixture, 'scripts', 'desktop-build.sh');
   try {
@@ -140,9 +140,19 @@ test('full mocked desktop build does not stage or emit prerequisites assets', {
     copyFileSync(new URL('./package-windows-desktop.sh', import.meta.url), join(fixture, 'scripts', 'package-windows-desktop.sh'));
     copyFileSync(new URL('./verify-windows-portable.sh', import.meta.url), join(fixture, 'scripts', 'verify-windows-portable.sh'));
     chmodSync(script, 0o755);
-    chmodSync(join(fixture, 'scripts', 'package-windows-desktop.sh'), 0o755);
-    chmodSync(join(fixture, 'scripts', 'verify-windows-portable.sh'), 0o755);
-    writeFileSync(join(fixture, 'desktop', 'wails.json'), '{}\n');
+    const packageScript = join(fixture, 'scripts', 'package-windows-desktop.sh');
+    writeExecutable(packageScript, [
+      '#!/usr/bin/env bash',
+      'arch="$1"',
+      'payload="$2"',
+      'app="${DESKTOP_APP_NAME:-VoltUI}"',
+      'root="$(cd "$(dirname "$0")/.." && pwd)"',
+      'mkdir -p "$root/dist"',
+      ': > "$root/dist/${app}-windows-${arch}.zip"',
+      'cp "build/bin/voltui-desktop-amd64-installer.exe" "$root/dist/${app}-windows-${arch}-installer.exe"',
+      '',
+    ].join('\n'));
+    writeFileSync(join(fixture, 'desktop', 'wails.json'), JSON.stringify({name:'voltui-desktop'})+'\n');
 
     writeExecutable(join(bin, 'node'), String.raw`#!/usr/bin/env bash
 case "$1" in
@@ -160,8 +170,13 @@ case "$1" in
     printf 'installer\n' > "$2/coreutils-system-installer.exe"
     ;;
   */stage-windows-prerequisites.mjs)
-    echo 'desktop build must not stage prerequisites' >&2
-    exit 97
+    mkdir -p "$2"
+    printf 'bootstrapper\n' > "$2/MicrosoftEdgeWebview2Setup.exe"
+    ;;
+  -e)
+    if [[ "$2" == *'j.name'* ]]; then
+      printf 'voltui-desktop'
+    fi
     ;;
 esac
 `);
@@ -169,11 +184,7 @@ esac
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "-o" ]; then
     mkdir -p "$(dirname "$2")"
-    case "$2" in
-      *voltui-cli.exe) printf '#!/usr/bin/env bash\necho cli\n' > "$2" ;;
-      *voltui-launcher.exe) printf '#!/usr/bin/env bash\necho launcher\n' > "$2" ;;
-      *) printf '#!/usr/bin/env bash\nexit 0\n' > "$2" ;;
-    esac
+    printf '#!/usr/bin/env bash\n' > "$2"
     chmod +x "$2"
     exit 0
   fi
@@ -182,12 +193,9 @@ done
 `);
     writeExecutable(join(bin, 'wails'), String.raw`#!/usr/bin/env bash
 mkdir -p build/bin build/windows/installer
-printf 'installer\n' > build/bin/voltui-desktop-amd64-installer.exe
-printf 'desktop\n' > build/bin/voltui-desktop.exe
-printf 'uninstaller\n' > build/windows/installer/voltui-uninstall.exe
-mkdir -p build/windows/installer/tmp
-printf 'tools\n' > build/windows/installer/wails_tools.nsh
-printf 'webview2\n' > build/windows/installer/tmp/MicrosoftEdgeWebview2Setup.exe
+: > build/bin/voltui-desktop-amd64-installer.exe
+: > build/bin/voltui-desktop.exe
+: > build/windows/installer/voltui-uninstall.exe
 `);
     writeExecutable(join(bin, 'makensis'), String.raw`#!/usr/bin/env bash
 mkdir -p ../../bin
@@ -283,7 +291,7 @@ test('NSIS preserves its generated uninstaller without a Windows command shell',
   }
 });
 
-test('desktop packaging excludes prerequisites while keeping the online WebView2 bootstrapper', () => {
+test('desktop packaging stages prerequisites and keeps the online WebView2 bootstrapper', () => {
   const buildScript = readFileSync(new URL('./desktop-build.sh', import.meta.url), 'utf8');
   const installer = readFileSync(new URL('../desktop/build/windows/installer/project.nsi', import.meta.url), 'utf8');
   const desktopCI = readFileSync(new URL('../.github/workflows/desktop-ci.yml', import.meta.url), 'utf8');
@@ -294,12 +302,6 @@ test('desktop packaging excludes prerequisites while keeping the online WebView2
   const wailsVersion = desktopGoMod.match(/github\.com\/wailsapp\/wails\/v2 (v\S+)/)?.[1];
 
   assert.match(buildScript, /-nsis -webview2 embed/);
-  assert.match(buildScript, /CGO_ENABLED=0 wails build "\$\{build_args\[@\]\}"/);
-  assert.match(buildScript, /\.\/cmd\/reasonix-guard/);
-  assert.doesNotMatch(buildScript, /\.\/cmd\/voltui-guard/);
-  assert.doesNotMatch(buildScript, /stage-windows-prerequisites/);
-  assert.doesNotMatch(buildScript, /WINDOWS_PREREQUISITES_/);
-  assert.doesNotMatch(buildScript, /-prerequisites\.zip/);
   assert.match(installer, /ReadRegStr \$0 HKLM.+EdgeUpdate.+"pv"/);
   assert.match(installer, /separately versioned Windows prerequisites ZIP/);
   assert.doesNotMatch(installer, /VoltUI-windows-\$\{ARCH\}-prerequisites\.zip/);

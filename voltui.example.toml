@@ -48,7 +48,17 @@ compact_force_ratio = 0.9   # force compacting at this high-water mark
 # models. Use `models = [...]` to expose several under a single entry — switching
 # models reuses the same connection; no need to re-declare base_url/api_key.
 # 西谷内网模型网关 — OpenAI 兼容接口 (http://192.168.1.47:9010/v1)
-# 模型名称与 9010 的实时 /models 目录保持一致；桌面端会自动发现同 namespace 的新聊天模型。
+# 每个模型单独一个 provider entry，model 字段写完整 id（含 provider 前缀斜杠）
+# 调用时 default_model = "qwen-thinking" 或 "glm-5.2"，ResolveModel 自动拼接
+# 短名语义: qwen-thinking(思考) / glm-5.2
+
+[[providers]]
+name           = "glm-5.2"
+kind           = "openai"
+base_url       = "http://192.168.1.47:9010/v1"
+model          = "glm-primary/glm-5.2-nvfp4"
+api_key_env    = "volt_API_KEY"
+context_window = 131072
 
 [[providers]]
 name           = "qwen-thinking"

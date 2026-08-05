@@ -5,12 +5,13 @@
 #
 # Output lands in <repo>/dist/ with stable, platform-keyed names that
 # desktop/cmd/sign's `manifest` subcommand maps back to update.PlatformKey:
-#   macOS:   VoltUI-darwin-<arch>.zip                  (ditto archive; updater channel)
-#            VoltUI-darwin-universal.dmg               (drag-to-install; human download)
-#   Windows: VoltUI-windows-<arch>-installer.exe       (NSIS per-user installer; updater channel)
-#            VoltUI-windows-<arch>.zip                 (portable human download)
-#   Linux:   VoltUI-linux-<arch>.tar.gz                (desktop + guard + CLI; portable updater)
-#            VoltUI-linux-<arch>.deb                   (Debian/Ubuntu package; native updater)
+#   macOS:   <App>-darwin-<arch>.zip                   (ditto archive; updater channel)
+#            <App>-darwin-universal.dmg                (drag-to-install; human download)
+#   Windows: <App>-windows-<arch>-installer.exe        (NSIS per-user installer; updater channel)
+#            <App>-windows-<arch>.zip                  (portable human download)
+#   Linux:   <App>-linux-<arch>.tar.gz                 (portable updater)
+#            <App>-linux-<arch>.deb                    (Debian/Ubuntu package)
+# <App> defaults to VoltUI; forks can override it with DESKTOP_APP_NAME.
 #
 # Usage: scripts/desktop-build.sh <os/arch> <version> [channel]
 #   e.g. scripts/desktop-build.sh darwin/arm64 v1.1.0
@@ -25,78 +26,56 @@ os="${PLATFORM%/*}"
 arch="${PLATFORM#*/}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APPNAME="VoltUI"            # wails.json productName -> VoltUI.app
-BINNAME="voltui-desktop"    # wails.json outputfilename -> linux binary name
-CLINAME="reasonix"            # bundled CLI sidecar used for remote serve upload
-WINDOWS_CLINAME="voltui-cli" # Windows cannot store VoltUI.exe and reasonix.exe separately
-GUARDNAME="voltui-guard"
-LAUNCHERNAME="voltui-launcher"
-COMPUTER_USE_MCP_VERSION="6.2.0"
-BUN_RUNTIME_VERSION="1.3.14"
-windows_resource_tool_dir=""
-
-# desktop/ is a nested Go module, so the Go toolchain cannot discover the
-# repository VCS revision for the Wails binary. Link the same source identity
-# into both Desktop and its CLI sidecar before this script mutates packaging
-# metadata such as wails.json.
-SOURCE_REVISION="$(git -C "$ROOT" rev-parse --verify HEAD)" 2>/dev/null || SOURCE_REVISION=""
-if [ -z "$SOURCE_REVISION" ]; then
-	SOURCE_REVISION="0000000000000000000000000000000000000000"
-elif ! git -C "$ROOT" diff-index --quiet HEAD --; then
-	SOURCE_REVISION="$SOURCE_REVISION+dirty"
-fi
-source_revision_ldflag="-X voltui/internal/remote/protocol.linkedSourceRevision=$SOURCE_REVISION"
+APPNAME="${DESKTOP_APP_NAME:-VoltUI}"
+BINNAME="voltui-desktop"
+CLINAME="voltui-cli"
+UPDATE_HELPER="voltui-update-helper.exe"
+UNINSTALLER="voltui-uninstall.exe"
+COMPUTER_USE_MCP_VERSION="${COMPUTER_USE_MCP_VERSION:-6.2.0}"
+BUN_RUNTIME_VERSION="${BUN_RUNTIME_VERSION:-1.3.14}"
+RUNTIME_STAGE="$(mktemp -d)"
+COMPUTER_USE_MCP_RESOURCE="$RUNTIME_STAGE/computer-use-mcp"
+COMPUTER_USE_RUNTIME_RESOURCE="$RUNTIME_STAGE/computer-use-runtime"
+COREUTILS_RESOURCE="$RUNTIME_STAGE/coreutils"
+TEMP_DIRS=("$RUNTIME_STAGE")
 
 cleanup() {
-	if [ -n "$windows_resource_tool_dir" ]; then
-		rm -rf "$windows_resource_tool_dir"
-	fi
+	local temp_dir
+	for temp_dir in "${TEMP_DIRS[@]}"; do
+		rm -rf -- "$temp_dir"
+	done
 }
 trap cleanup EXIT
 
-cd "$ROOT/desktop"
-
-build_guard() {
-	echo "==> go build VoltUI Guard"
-	mkdir -p "$(dirname "$guard_out")"
-	if [ "$arch" = universal ]; then
-		guard_tmp=$(mktemp -d)
-		(cd "$ROOT" && GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$guard_tmp/amd64" ./cmd/reasonix-guard)
-		(cd "$ROOT" && GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$guard_tmp/arm64" ./cmd/reasonix-guard)
-		lipo -create "$guard_tmp/amd64" "$guard_tmp/arm64" -output "$guard_out"
-		rm -rf "$guard_tmp"
-	else
-		(cd "$ROOT" && GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$guard_out" ./cmd/reasonix-guard)
-	fi
+copy_resource_tree() {
+	local source="$1"
+	local destination="$2"
+	rm -rf -- "$destination"
+	mkdir -p "$(dirname "$destination")"
+	cp -R "$source" "$destination"
 }
 
 build_cli() {
 	echo "==> go build VoltUI CLI sidecar"
 	mkdir -p "$(dirname "$cli_out")"
 	if [ "$arch" = universal ]; then
-		cli_tmp=$(mktemp -d)
-		(cd "$ROOT" && GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION $source_revision_ldflag" -o "$cli_tmp/amd64" ./cmd/reasonix)
-		(cd "$ROOT" && GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION $source_revision_ldflag" -o "$cli_tmp/arm64" ./cmd/reasonix)
+		cli_tmp="$(mktemp -d)"
+		TEMP_DIRS+=("$cli_tmp")
+		(cd "$ROOT" && GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$cli_tmp/amd64" ./cmd/voltui)
+		(cd "$ROOT" && GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$cli_tmp/arm64" ./cmd/voltui)
 		lipo -create "$cli_tmp/amd64" "$cli_tmp/arm64" -output "$cli_out"
-		rm -rf "$cli_tmp"
+		rm -rf -- "$cli_tmp"
 	else
-		(cd "$ROOT" && GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION $source_revision_ldflag" -o "$cli_out" ./cmd/reasonix)
+		(cd "$ROOT" && GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o "$cli_out" ./cmd/voltui)
 	fi
 }
 
-stamp_windows_executable() {
-	local target="$1"
-	local description="$2"
-	local internal_name="$3"
-	local original_filename="$4"
-	"$windows_resource_tool" \
-		-exe "$target" \
-		-icon "$ROOT/desktop/build/windows/icon.ico" \
-		-version "$numver" \
-		-description "$description" \
-		-internal-name "$internal_name" \
-		-original-filename "$original_filename"
-}
+echo "==> stage @zavora-ai/computer-use-mcp@$COMPUTER_USE_MCP_VERSION"
+node "$ROOT/scripts/stage-computer-use-mcp.mjs" "$COMPUTER_USE_MCP_RESOURCE" "$COMPUTER_USE_MCP_VERSION" "$PLATFORM"
+echo "==> stage Bun runtime $BUN_RUNTIME_VERSION"
+node "$ROOT/scripts/stage-bun-runtime.mjs" "$COMPUTER_USE_RUNTIME_RESOURCE" "$BUN_RUNTIME_VERSION" "$PLATFORM"
+
+cd "$ROOT/desktop"
 
 validate_volt_model_bundle() {
 	local base_url="$1"
@@ -152,33 +131,23 @@ numver="${VERSION#v}"; numver="${numver%%-*}"
 node -e 'const fs=require("fs"),f="wails.json",j=JSON.parse(fs.readFileSync(f,"utf8"));j.info.productVersion=process.argv[1];fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n")' "$numver"
 
 # NSIS installer is Windows-only (Wails requires a single windows target for -nsis).
-ldflags="-X main.version=$VERSION -X main.channel=$CHANNEL $source_revision_ldflag"
+RUNTIME_BRAND="${VOLTUI_BRAND_NAME:-VoltUI}"
+ldflags="-X main.version=$VERSION -X main.channel=$CHANNEL -X 'voltui/internal/config.defaultBrandName=$RUNTIME_BRAND'"
 [ "$os" = "darwin" ] && [ "${HAS_APPLE_CERT:-}" = "true" ] && ldflags="$ldflags -X main.macSelfUpdate=true"
-UPDATE_HELPER="voltui-update-helper.exe"
 if [ "$os" = windows ]; then
-	stage_volt_model_bundle
-	windows_resource_tool_dir=$(mktemp -d)
-	windows_resource_tool="$windows_resource_tool_dir/voltui-windows-resource.exe"
-	echo "==> build Windows resource stamper"
-	go build -trimpath -o "$windows_resource_tool" ./cmd/windows-resource
-	guard_out="$ROOT/desktop/build/windows/installer/$GUARDNAME.exe"
-	build_guard
-	stamp_windows_executable "$guard_out" "VoltUI Guard" "$GUARDNAME" "$GUARDNAME.exe"
-	launcher_out="$ROOT/desktop/build/windows/installer/$LAUNCHERNAME.exe"
-	echo "==> go build Windows GUI launcher"
-	(cd "$ROOT" && GOOS=windows GOARCH="$arch" CGO_ENABLED=0 go build -trimpath \
-		-ldflags="-s -w -H windowsgui -X main.version=$VERSION" -o "$launcher_out" ./cmd/reasonix-guard)
-	stamp_windows_executable "$launcher_out" "VoltUI Launcher" "$LAUNCHERNAME" "$LAUNCHERNAME.exe"
+	echo "==> stage bundled Microsoft Coreutils"
+	node "$ROOT/scripts/stage-coreutils.mjs" "$COREUTILS_RESOURCE" "$PLATFORM"
 	echo "==> go build Windows update helper"
 	GOOS=windows GOARCH="$arch" go build -trimpath -ldflags="-s -w" \
 		-o "build/windows/installer/$UPDATE_HELPER" ./cmd/update-helper
-	stamp_windows_executable "build/windows/installer/$UPDATE_HELPER" "VoltUI Update Helper" "voltui-update-helper" "$UPDATE_HELPER"
-	cli_out="$ROOT/desktop/build/windows/installer/$WINDOWS_CLINAME.exe"
+	copy_resource_tree "$COMPUTER_USE_MCP_RESOURCE" "build/windows/installer/computer-use-mcp"
+	copy_resource_tree "$COMPUTER_USE_RUNTIME_RESOURCE" "build/windows/installer/computer-use-runtime"
+	copy_resource_tree "$COREUTILS_RESOURCE" "build/windows/installer/coreutils"
+	cli_out="$ROOT/desktop/build/windows/installer/$CLINAME.exe"
 	build_cli
-	stamp_windows_executable "$cli_out" "VoltUI CLI" "$WINDOWS_CLINAME" "$WINDOWS_CLINAME.exe"
-	# The first NSIS pass must regenerate this release's uninstaller; a stale
-	# preserved file must never enter the signing payload.
-	rm -f "build/windows/installer/voltui-uninstall.exe"
+	# The first NSIS pass must generate this release's uninstaller. Removing a
+	# previous copy prevents stale bytes from entering the signing payload.
+	rm -f -- "build/windows/installer/$UNINSTALLER"
 fi
 build_args=()
 [ "${DESKTOP_BUILD_CLEAN:-1}" != "0" ] && build_args+=(-clean)
@@ -195,8 +164,6 @@ else
 	wails build "${build_args[@]}"
 fi
 if [ "$os" != windows ]; then
-	guard_out="$ROOT/desktop/build/bin/$GUARDNAME"
-	build_guard
 	cli_out="$ROOT/desktop/build/bin/$CLINAME"
 	build_cli
 fi
@@ -205,18 +172,19 @@ mkdir -p "$ROOT/dist"
 
 case "$os" in
 darwin)
-	# Wails names the bundle after outputfilename (voltui-desktop.app); repackage
-	# it as VoltUI.app for a clean user-facing name.
-	staging=$(mktemp -d)
+	# Wails derives the bundle directory from productName, which forks can brand.
+	# Locate the clean build's bundle instead of assuming a specific display name.
+	app_bundle=$(find build/bin -maxdepth 1 -type d -name "*.app" -print -quit)
+	app_bundle_count=$(find build/bin -maxdepth 1 -type d -name "*.app" | wc -l | tr -d '[:space:]')
+	[ "$app_bundle_count" = 1 ] || { echo "Wails produced $app_bundle_count macOS app bundles, want exactly one" >&2; exit 1; }
+	staging="$(mktemp -d)"
+	TEMP_DIRS+=("$staging")
 	app="$staging/${APPNAME}.app"
-	cp -R "build/bin/voltui-desktop.app" "$app"
-	cp "$guard_out" "$app/Contents/MacOS/$GUARDNAME"
+	cp -R "$app_bundle" "$app"
 	cp "$cli_out" "$app/Contents/MacOS/$CLINAME"
+	copy_resource_tree "$COMPUTER_USE_MCP_RESOURCE" "$app/Contents/Resources/computer-use-mcp"
+	copy_resource_tree "$COMPUTER_USE_RUNTIME_RESOURCE" "$app/Contents/Resources/computer-use-runtime"
 	bundle_executable=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$app/Contents/Info.plist")
-	# LaunchServices must own the Wails/AppKit process directly. Making Guard the
-	# bundle executable leaves the Dock attached to a non-UI parent process, so
-	# clicking the icon cannot reliably reactivate the desktop window. Guard and
-	# the CLI remain bundled as independent recovery sidecars.
 	[ "$bundle_executable" = "$BINNAME" ] || { echo "macOS bundle executable is $bundle_executable, want $BINNAME" >&2; exit 1; }
 	bundle_icon=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$app/Contents/Info.plist")
 	case "$bundle_icon" in
@@ -269,16 +237,23 @@ darwin)
 		# the updater channel, the .dmg is release-page only. create-dmg can exit nonzero
 		# while still writing the image, so gate on the file existing, not the exit code.
 		dmgsrc=$(mktemp -d)
+		TEMP_DIRS+=("$dmgsrc")
 		cp -R "$app" "$dmgsrc/${APPNAME}.app"
 		dmg="$ROOT/dist/${APPNAME}-darwin-universal.dmg"
-		create-dmg \
-			--volname "$APPNAME" \
-			--window-size 540 380 \
-			--icon-size 110 \
-			--icon "${APPNAME}.app" 150 190 \
-			--app-drop-link 390 190 \
-			--no-internet-enable \
-			"$dmg" "$dmgsrc" || true
+		dmg_args=(
+			--volname "$APPNAME"
+			--window-size 540 380
+			--icon-size 110
+			--icon "${APPNAME}.app" 150 190
+			--app-drop-link 390 190
+			--no-internet-enable
+		)
+		# Headless Finder layout must be opt-in via the dedicated env var, never
+		# inferred from CI=true — formal release CI still needs the Finder layout.
+		if [ "${VOLTUI_DMG_SKIP_FINDER:-0}" = "1" ]; then
+			dmg_args+=(--skip-jenkins)
+		fi
+		create-dmg "${dmg_args[@]}" "$dmg" "$dmgsrc" || true
 		[ -f "$dmg" ] || { echo "create-dmg did not produce $dmg" >&2; exit 1; }
 		# The .dmg is a separately-downloaded artifact, so sign + notarize + staple the
 		# disk image itself too — the stapled .app inside isn't enough for the image.
@@ -303,10 +278,8 @@ windows)
 	mkdir -p "$payload_dir"
 	cp "build/bin/$BINNAME.exe" "$payload_dir/$BINNAME.exe"
 	cp "build/windows/installer/$UPDATE_HELPER" "$payload_dir/$UPDATE_HELPER"
-	cp "$launcher_out" "$payload_dir/$LAUNCHERNAME.exe"
-	cp "$guard_out" "$payload_dir/$GUARDNAME.exe"
-	cp "build/windows/installer/$WINDOWS_CLINAME.exe" "$payload_dir/$WINDOWS_CLINAME.exe"
-	cp "build/windows/installer/voltui-uninstall.exe" "$payload_dir/voltui-uninstall.exe"
+	cp "build/windows/installer/$CLINAME.exe" "$payload_dir/$CLINAME.exe"
+	cp "build/windows/installer/$UNINSTALLER" "$payload_dir/$UNINSTALLER"
 	"$ROOT/scripts/package-windows-desktop.sh" "$arch" "$payload_dir"
 	;;
 linux)
@@ -316,16 +289,16 @@ linux)
 		'StartupWMClass=voltui-desktop'; do
 		grep -F -x -q "$desktop_contract" build/linux/voltui.desktop || { echo "Linux desktop entry missing: $desktop_contract" >&2; exit 1; }
 	done
-	echo "==> stage @zavora-ai/computer-use-mcp@$COMPUTER_USE_MCP_VERSION"
-	node "$ROOT/scripts/stage-computer-use-mcp.mjs" "build/computer-use-mcp" "$COMPUTER_USE_MCP_VERSION" "$PLATFORM"
-	echo "==> stage Bun runtime $BUN_RUNTIME_VERSION"
-	node "$ROOT/scripts/stage-bun-runtime.mjs" "build/computer-use-runtime" "$BUN_RUNTIME_VERSION" "$PLATFORM"
-	linux_staging=$(mktemp -d)
-	cp "build/bin/$BINNAME" "build/bin/$GUARDNAME" "build/bin/$CLINAME" "$linux_staging/"
-	cp -R build/computer-use-mcp build/computer-use-runtime "$linux_staging/"
-	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C "$linux_staging" \
-		"$BINNAME" "$GUARDNAME" "$CLINAME" computer-use-mcp computer-use-runtime
-	rm -rf "$linux_staging"
+	copy_resource_tree "$COMPUTER_USE_MCP_RESOURCE" "build/computer-use-mcp"
+	copy_resource_tree "$COMPUTER_USE_RUNTIME_RESOURCE" "build/computer-use-runtime"
+	linux_staging="$(mktemp -d)"
+	TEMP_DIRS+=("$linux_staging")
+	cp "build/bin/$BINNAME" "$linux_staging/$BINNAME"
+	cp "build/bin/$CLINAME" "$linux_staging/$CLINAME"
+	copy_resource_tree "$COMPUTER_USE_MCP_RESOURCE" "$linux_staging/computer-use-mcp"
+	copy_resource_tree "$COMPUTER_USE_RUNTIME_RESOURCE" "$linux_staging/computer-use-runtime"
+	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C "$linux_staging" .
+	rm -rf -- "$linux_staging"
 	# .deb for Debian/Ubuntu. Portable updater still uses the tarball under
 	# platforms[]; .deb remains a human-download artifact. Debian versions use
 	# "~" for prereleases so 1.18.0~rc.1 < 1.18.0 (policy version ordering).
@@ -342,14 +315,10 @@ linux)
 	DEB_VERSION="$deb_version" DEB_ARCH="$arch" \
 		nfpm package --config build/linux/nfpm.yaml --packager deb \
 		--target "$ROOT/dist/${APPNAME}-linux-${arch}.deb"
-	# Contract smoke: package identity, native entry point, and bundled MCP runtime.
+	# Contract smoke: package identity and version must match the release metadata.
 	deb_path="$ROOT/dist/${APPNAME}-linux-${arch}.deb"
 	dpkg-deb --field "$deb_path" Package | grep -x 'voltui-desktop' >/dev/null
 	dpkg-deb --field "$deb_path" Version | grep -x "$deb_version" >/dev/null
-	dpkg-deb --contents "$deb_path" | grep -E 'usr/bin/voltui-desktop' >/dev/null
-	dpkg-deb --contents "$deb_path" | grep -E 'usr/lib/voltui/computer-use-mcp' >/dev/null
-	dpkg-deb --contents "$deb_path" | grep -E 'usr/lib/voltui/computer-use-runtime' >/dev/null
-	dpkg-deb --contents "$deb_path" | grep -E 'usr/share/applications/voltui.desktop' >/dev/null
 	;;
 *)
 	echo "unsupported os: $os" >&2

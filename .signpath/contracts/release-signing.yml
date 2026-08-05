@@ -14,7 +14,10 @@ fingerprint_files:
   - .github/workflows/release-desktop-trigger.yml
   - .signpath/artifact-configurations/windows-payload.xml
   - .signpath/artifact-configurations/windows-installer-v2.xml
+  - desktop/build/windows/installer/project.nsi
   - scripts/complete-signpath-request.ps1
+  - scripts/desktop-build.sh
   - scripts/package-windows-desktop.sh
   - scripts/verify-windows-authenticode.ps1
+  - scripts/verify-windows-portable.sh
   - cmd/signpath-contract/main.go

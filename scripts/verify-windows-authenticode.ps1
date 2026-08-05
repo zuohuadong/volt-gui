@@ -14,12 +14,16 @@ param(
 $ErrorActionPreference = "Stop"
 
 $expectedPayload = @(
-    "reasonix-desktop.exe",
-    "reasonix-guard.exe",
-    "reasonix-launcher.exe",
-    "reasonix-update-helper.exe",
-    "reasonix-cli.exe",
-    "reasonix-uninstall.exe"
+    "voltui-desktop.exe",
+    "voltui-update-helper.exe",
+    "voltui-cli.exe",
+    "voltui-uninstall.exe"
+)
+
+$expectedPortable = @(
+    "voltui-desktop.exe",
+    "voltui-update-helper.exe",
+    "voltui-cli.exe"
 )
 
 function Assert-AuthenticodeSignature {
@@ -50,24 +54,21 @@ foreach ($name in $expectedPayload) {
 }
 Assert-AuthenticodeSignature -Path $InstallerPath
 
-$extractRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("reasonix-authenticode-" + [guid]::NewGuid().ToString("N"))
+$extractRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("voltui-authenticode-" + [guid]::NewGuid().ToString("N"))
 try {
     Expand-Archive -LiteralPath $PortableArchivePath -DestinationPath $extractRoot
     $portableFiles = @(Get-ChildItem -LiteralPath $extractRoot -File -Filter "*.exe")
-    if ($portableFiles.Count -ne 6) {
-        throw "Portable archive must contain exactly 6 executables, found $($portableFiles.Count)"
+    if ($portableFiles.Count -ne $expectedPortable.Count) {
+        throw "Portable archive must contain exactly $($expectedPortable.Count) executables, found $($portableFiles.Count)"
     }
-    foreach ($file in $portableFiles) {
-        Assert-AuthenticodeSignature -Path $file.FullName
+    foreach ($portableName in $expectedPortable) {
+        Assert-AuthenticodeSignature -Path (Join-Path $extractRoot $portableName)
     }
 
     $portableSources = @{
-        "reasonix-desktop.exe"       = "reasonix-desktop.exe"
-        "reasonix-guard.exe"         = "reasonix-guard.exe"
-        "reasonix-launcher.exe"      = "reasonix-launcher.exe"
-        "Reasonix.exe"               = "reasonix-launcher.exe"
-        "reasonix-update-helper.exe" = "reasonix-update-helper.exe"
-        "reasonix-cli.exe"           = "reasonix-cli.exe"
+        "voltui-desktop.exe"       = "voltui-desktop.exe"
+        "voltui-update-helper.exe" = "voltui-update-helper.exe"
+        "voltui-cli.exe"           = "voltui-cli.exe"
     }
     foreach ($entry in $portableSources.GetEnumerator()) {
         $portableHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $extractRoot $entry.Key)).Hash

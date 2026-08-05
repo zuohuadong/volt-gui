@@ -169,14 +169,14 @@ func TestConventionDirsDiscovered(t *testing.T) {
 	}
 }
 
-func TestReasonixHomeDirOverridesGlobalReasonixSkills(t *testing.T) {
+func TestVoltuiHomeDirOverridesGlobalVoltuiSkills(t *testing.T) {
 	home := t.TempDir()
-	reasonixHome := filepath.Join(t.TempDir(), "rx-home")
+	voltuiHome := filepath.Join(t.TempDir(), "rx-home")
 	writeSkill(t, home, ".voltui/skills/old.md", "---\ndescription: old\n---\nold")
 	writeSkill(t, home, ".voltui/skills/current.md", "---\ndescription: old current\n---\nold current")
-	currentPath := writeSkill(t, reasonixHome, "skills/current.md", "---\ndescription: current\n---\ncurrent")
+	currentPath := writeSkill(t, voltuiHome, "skills/current.md", "---\ndescription: current\n---\ncurrent")
 
-	st := New(Options{HomeDir: home, ReasonixHomeDir: reasonixHome, DisableBuiltins: true})
+	st := New(Options{HomeDir: home, VoltuiHomeDir: voltuiHome, DisableBuiltins: true})
 	list := st.List()
 	current, ok := find(list, "current")
 	if !ok {
@@ -193,7 +193,7 @@ func TestReasonixHomeDirOverridesGlobalReasonixSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	want := filepath.Join(reasonixHome, SkillsDirname, "created", SkillFile)
+	want := filepath.Join(voltuiHome, SkillsDirname, "created", SkillFile)
 	if path != want {
 		t.Fatalf("created skill path = %q, want %q", path, want)
 	}

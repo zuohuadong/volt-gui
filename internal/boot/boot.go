@@ -372,7 +372,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// outside the workspace after a fresh per-write human approval. The bash
 	// OS-sandbox write roots deliberately stay unwidened: config repair goes
 	// through the approval-gated file tools, not raw shell writes.
-	managedConfig := builtin.NewManagedConfigPaths(config.ReasonixManagedConfigPaths())
+	managedConfig := builtin.NewManagedConfigPaths(config.VoltuiManagedConfigPaths())
 	bashSpec := sandbox.Spec{Mode: cfg.BashMode(), WriteRoots: writeRoots, ForbidReadRoots: forbidReadRoots, Network: cfg.Sandbox.Network}
 	bashSpec.Shell = shell
 	// The session-data guard blocks agent writes into Reasonix's own session

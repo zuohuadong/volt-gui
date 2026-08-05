@@ -87,15 +87,15 @@ func IsValidName(name string) bool { return config.IsValidSkillName(name) }
 
 // Options configure a Store. ProjectRoot "" reads only the global + custom
 // scopes. HomeDir "" resolves to the OS home dir (tests point it at a tmpdir).
-// ReasonixHomeDir overrides the canonical VoltUI home; empty uses
-// config.ReasonixHomeDir(), or HomeDir/.voltui when HomeDir is explicitly set.
+// VoltuiHomeDir overrides the canonical VoltUI home; empty uses
+// config.VoltuiHomeDir(), or HomeDir/.voltui when HomeDir is explicitly set.
 type Options struct {
-	HomeDir         string
-	ReasonixHomeDir string
-	ProjectRoot     string
-	CustomPaths     []string
-	ExcludedPaths   []string
-	DisabledNames   []string
+	HomeDir       string
+	VoltuiHomeDir string
+	ProjectRoot   string
+	CustomPaths   []string
+	ExcludedPaths []string
+	DisabledNames []string
 	// AllowedNames is a session-scoped canonical skill allowlist. Empty keeps
 	// the inherited full skill surface; non-empty values restrict both listing
 	// and direct invocation through Read.
@@ -111,7 +111,7 @@ type Options struct {
 // Store resolves skills across the configured roots.
 type Store struct {
 	homeDir         string
-	reasonixHomeDir string
+	voltuiHomeDir   string
 	projectRoot     string
 	customPaths     []string
 	excludedPaths   map[string]bool
@@ -131,12 +131,12 @@ func New(opts Options) *Store {
 			home = h
 		}
 	}
-	reasonixHome := opts.ReasonixHomeDir
-	if reasonixHome == "" {
+	voltuiHome := opts.VoltuiHomeDir
+	if voltuiHome == "" {
 		if opts.HomeDir != "" {
-			reasonixHome = filepath.Join(home, ".voltui")
+			voltuiHome = filepath.Join(home, ".voltui")
 		} else {
-			reasonixHome = config.ReasonixHomeDir()
+			voltuiHome = config.VoltuiHomeDir()
 		}
 	}
 	root := opts.ProjectRoot
@@ -162,7 +162,7 @@ func New(opts Options) *Store {
 	}
 	return &Store{
 		homeDir:         home,
-		reasonixHomeDir: reasonixHome,
+		voltuiHomeDir:   voltuiHome,
 		projectRoot:     root,
 		customPaths:     custom,
 		excludedPaths:   excluded,
@@ -219,13 +219,13 @@ func (s *Store) roots() []discoveryRoot {
 	for _, d := range s.customPaths {
 		dirs = append(dirs, de{d, ScopeCustom, false})
 	}
-	if s.reasonixHomeDir != "" {
-		dirs = append(dirs, de{filepath.Join(s.reasonixHomeDir, SkillsDirname), ScopeGlobal, false})
+	if s.voltuiHomeDir != "" {
+		dirs = append(dirs, de{filepath.Join(s.voltuiHomeDir, SkillsDirname), ScopeGlobal, false})
 	}
 	if config.IsolatedHomeDir() == "" {
 		for _, c := range config.ConventionDirs {
 			dir := filepath.Join(s.homeDir, c, SkillsDirname)
-			if s.reasonixHomeDir != "" && config.CanonicalSkillPath(filepath.Dir(dir)) == config.CanonicalSkillPath(s.reasonixHomeDir) {
+			if s.voltuiHomeDir != "" && config.CanonicalSkillPath(filepath.Dir(dir)) == config.CanonicalSkillPath(s.voltuiHomeDir) {
 				continue
 			}
 			dirs = append(dirs, de{dir, ScopeGlobal, c == ".claude"})
@@ -686,8 +686,8 @@ func (s *Store) CreateWithContent(name string, scope Scope, content string) (str
 }
 
 func (s *Store) globalSkillsRoot() string {
-	if s.reasonixHomeDir != "" {
-		return filepath.Join(s.reasonixHomeDir, SkillsDirname)
+	if s.voltuiHomeDir != "" {
+		return filepath.Join(s.voltuiHomeDir, SkillsDirname)
 	}
 	return filepath.Join(s.homeDir, ".voltui", SkillsDirname)
 }

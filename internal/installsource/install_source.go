@@ -91,7 +91,7 @@ func NewTool(opts Options) tool.Tool {
 	voltuiHome := ""
 	if opts.HomeDir != "" {
 		voltuiHome = filepath.Join(home, ".voltui")
-	} else if dir := config.ReasonixHomeDir(); dir != "" {
+	} else if dir := config.VoltuiHomeDir(); dir != "" {
 		voltuiHome = dir
 	} else if home != "" {
 		voltuiHome = filepath.Join(home, ".voltui")

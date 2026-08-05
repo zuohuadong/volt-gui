@@ -1,14 +1,14 @@
 # 恢复与诊断（v1.20+）
 
-Reasonix 不再提供产品化的 `reasonix-guard` 恢复壳。崩溃记录、pending 更新状态
+VoltUI 不再提供产品化的 `reasonix-guard` 恢复壳。崩溃记录、pending 更新状态
 和配置问题**不会**在下次启动时强制进入全局安全模式。
 
 ## 请使用这些命令
 
 ```text
-reasonix doctor
-reasonix doctor repair
-reasonix crash report   # 视构建是否包含而定
+voltui doctor
+voltui doctor repair
+voltui crash report   # 视构建是否包含而定
 ```
 
 - **doctor**：检查配置、桌面派生状态与常见安装问题，不加载 Wails。

@@ -184,7 +184,7 @@ func TestManagedConfigWriteFailsClosedWithoutApprover(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.Default()
-	managed := NewManagedConfigPaths(config.ReasonixManagedConfigPaths())
+	managed := NewManagedConfigPaths(config.VoltuiManagedConfigPaths())
 	w := writeFile{roots: realRoots(cfg.WriteRootsForRoot(project)), managed: managed}
 
 	// Headless runs and sub-agents with no interactive parent carry no approver
@@ -215,7 +215,7 @@ func TestManagedConfigWriteGatedOnApprover(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.Default()
-	managed := NewManagedConfigPaths(config.ReasonixManagedConfigPaths())
+	managed := NewManagedConfigPaths(config.VoltuiManagedConfigPaths())
 	w := writeFile{roots: realRoots(cfg.WriteRootsForRoot(project)), managed: managed}
 
 	// Approved: current config.toml and the legacy v0.x config.json become

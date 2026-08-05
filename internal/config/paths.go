@@ -31,10 +31,10 @@ func userConfigPath() string {
 }
 
 func userConfigDir() string {
-	return reasonixHomeDir()
+	return voltuiHomeDir()
 }
 
-func reasonixHomeDir() string {
+func voltuiHomeDir() string {
 	if dir := firstEnvDir("VOLTUI_HOME", "REASONIX_HOME"); dir != "" {
 		return dir
 	}
@@ -137,7 +137,7 @@ func userSupportDir() string {
 	if dir := firstEnvDir("VOLTUI_STATE_HOME", "REASONIX_STATE_HOME"); dir != "" {
 		return dir
 	}
-	return reasonixHomeDir()
+	return voltuiHomeDir()
 }
 
 func legacyOSSupportDir() string {
@@ -149,7 +149,7 @@ func legacyOSSupportDir() string {
 		return ""
 	}
 	path := filepath.Join(dir, "voltui")
-	if current := reasonixHomeDir(); current != "" && samePath(path, current) {
+	if current := voltuiHomeDir(); current != "" && samePath(path, current) {
 		return ""
 	}
 	return path
@@ -281,11 +281,11 @@ func LegacyUserConfigPaths() []string {
 // callers must treat it as read-only and must never remove the directory.
 func LegacyOSSupportDir() string { return legacyOSSupportDir() }
 
-// ReasonixHomeDir is the current VoltUI home directory. It honors VOLTUI_HOME,
+// VoltuiHomeDir is the current VoltUI home directory. It honors VOLTUI_HOME,
 // then legacy REASONIX_HOME, then uses ~/.voltui on macOS/Linux or %APPDATA%/voltui on
 // Windows, with a %USERPROFILE%/AppData/Roaming fallback when %APPDATA% is
 // unavailable.
-func ReasonixHomeDir() string { return reasonixHomeDir() }
+func VoltuiHomeDir() string { return voltuiHomeDir() }
 
 // UserCredentialsPath is the voltui-owned global .env file under VoltUI
 // home. It is the single source for provider credentials saved by VoltUI, so
@@ -316,13 +316,13 @@ func defaultBundledEnvPath() string {
 	return filepath.Join(filepath.Dir(exe), "bundled.env")
 }
 
-// ReasonixManagedConfigPaths returns the VoltUI-owned user configuration FILES
+// VoltuiManagedConfigPaths returns the VoltUI-owned user configuration FILES
 // that model-driven tools may repair on the user's request, each gated by a
 // fresh per-write human approval: the current config.toml, compatibility TOML
 // locations, and the legacy v0.x ~/.voltui/config.json. Individual files,
 // never directories: the home also holds credentials, hooks, skills, and
 // session stores, and none of those may ride along on a config repair.
-func ReasonixManagedConfigPaths() []string {
+func VoltuiManagedConfigPaths() []string {
 	var out []string
 	out = appendUniquePath(out, UserConfigPath())
 	for _, path := range LegacyUserConfigPaths() {

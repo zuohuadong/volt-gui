@@ -22,7 +22,7 @@ get a tailored request shape automatically — no extra config needed.
 
 | Provider/model | Base URL | Reasoning control | `/effort` levels | Notes |
 |----------------|----------|-------------------|------------------|-------|
-| Kimi CN/Global `kimi-k3` | `api.moonshot.cn/v1`, `api.moonshot.ai/v1` | `reasoning_effort` | `low`, `high`, `max` | Always thinks; defaults to `max`. Reasonix replays the complete assistant message, uses `max_completion_tokens`, and omits K3's fixed sampling fields. |
+| Kimi CN/Global `kimi-k3` | `api.moonshot.cn/v1`, `api.moonshot.ai/v1` | `reasoning_effort` | `low`, `high`, `max` | Always thinks; defaults to `max`. VoltUI replays the complete assistant message, uses `max_completion_tokens`, and omits K3's fixed sampling fields. |
 | OpenCode Go `kimi-k3` | `opencode.ai/zen/go/v1` | `reasoning_effort` | `high`, `max` | Relay-specific scale; defaults to `max` and keeps the relay's standard OpenAI-compatible request shape. |
 | Token Rhythm DeepSeek V4 | `tokenrhythm.studio/v1` | DeepSeek `thinking.type` + `reasoning_effort` | Model-specific DeepSeek scale | Selected through the preset's model override, independent of the gateway host. |
 | Token Rhythm GLM 5/5.1/5.2 | `tokenrhythm.studio/v1` | GLM `thinking.type` (`enabled`\|`disabled`) | `auto`, `enabled`, `disabled` | Selected through the preset's model override; `reasoning_effort` is omitted. |
@@ -32,7 +32,7 @@ On the Token Rhythm endpoint, exact GLM model IDs (`glm-5`, `glm-5.1`, and
 existing configuration has no `reasoning_protocol` field. The endpoint check
 keeps unrelated mixed-model gateways backward-compatible. A `model_overrides`
 entry with explicit `reasoning_protocol = "glm"` remains available for aliases
-and custom model IDs. While GLM thinking is enabled, Reasonix retains and
+and custom model IDs. While GLM thinking is enabled, VoltUI retains and
 returns the original `reasoning_content` unchanged in later history, as required
 by GLM interleaved and preserved thinking.
 
@@ -40,8 +40,8 @@ by GLM interleaved and preserved thinking.
 
 The optional `deepseek-anthropic` preset targets
 `https://api.deepseek.com/anthropic`. It keeps the official Chat Completions
-provider as Reasonix's default, but provides a native Messages API path for
-compatibility testing and Anthropic-oriented clients. Reasonix emits
+provider as VoltUI's default, but provides a native Messages API path for
+compatibility testing and Anthropic-oriented clients. VoltUI emits
 `thinking.type=enabled|disabled` with `output_config.effort`, replays unsigned
 DeepSeek thinking blocks from historical tool-call turns, omits unsupported
 images, and relies on DeepSeek's automatic prefix cache instead of ignored
@@ -60,7 +60,7 @@ unsupported model names follow DeepSeek's documented Flash fallback.
 Any other OpenAI-compatible backend falls through to the standard
 `reasoning_effort` scale (`low`\|`medium`\|`high`). A resolved provider/model
 entry may explicitly advertise a different supported scale; in that case
-Reasonix preserves those declared values instead of applying the generic
+VoltUI preserves those declared values instead of applying the generic
 ceiling. Curated per-model capability metadata can opt into another scale as
 shown above.
 

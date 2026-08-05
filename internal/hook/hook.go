@@ -661,7 +661,7 @@ func reasonixHome(override string) string {
 	if override != "" {
 		return filepath.Join(override, SettingsDirname)
 	}
-	if dir := config.ReasonixHomeDir(); dir != "" {
+	if dir := config.VoltuiHomeDir(); dir != "" {
 		return dir
 	}
 	if h, err := os.UserHomeDir(); err == nil {

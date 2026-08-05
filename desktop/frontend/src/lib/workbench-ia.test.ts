@@ -14,7 +14,10 @@ import {
   recoveredTaskThreadsFromBackend,
   reconcileProjectTaskNodes,
   restartTaskReceipt,
+  restoreTaskTranscript,
   settleTaskReceipt,
+  snapshotTaskTranscript,
+  transcriptForHistoryHydration,
   verificationEvidenceFromTool,
   visibleReceiptRuntime,
 } from "./workbench-ia";
@@ -112,6 +115,49 @@ describe("unified workbench IA state", () => {
     ]);
     expect(persisted.inboxTasks[0].transcript).toBeUndefined();
     expect(JSON.stringify(persisted)).not.toContain("不应写入后端侧栏快照");
+  });
+
+  test("preserves pending transcript state only while the task is running", () => {
+    const transcript = [
+      { id: "user-1", role: "user" as const, body: "分析数据", pending: false },
+      { id: "assistant-1", role: "assistant" as const, body: "", pending: true },
+    ];
+
+    const snapshot = snapshotTaskTranscript(transcript);
+    expect(snapshot).not.toBe(transcript);
+    expect(snapshot[1].pending).toBe(true);
+    expect(restoreTaskTranscript(snapshot, "running")[1].pending).toBe(true);
+    expect(restoreTaskTranscript(snapshot, "idle")[1].pending).toBe(false);
+  });
+
+  test("keeps live task state when persisted history hydrates a running transcript", () => {
+    const currentTranscript = [
+      { id: "user-live", role: "user" as const, body: "继续分析", pending: false },
+      { id: "assistant-pending", role: "assistant" as const, body: "", pending: true },
+    ];
+    const hydratedTranscript = [
+      { id: "history-user", role: "user" as const, body: "旧问题", pending: false },
+      { id: "history-assistant", role: "assistant" as const, body: "旧回答", pending: false },
+    ];
+
+    const runningTranscript = transcriptForHistoryHydration(currentTranscript, hydratedTranscript, "running");
+    expect(runningTranscript).toEqual(currentTranscript);
+    expect(runningTranscript).not.toBe(currentTranscript);
+    expect(runningTranscript[1].pending).toBe(true);
+  });
+
+  test("uses hydrated history when the local transcript has no active pending state", () => {
+    const completedTranscript = [
+      { id: "completed-user", role: "user" as const, body: "已完成的旧问题", pending: false },
+      { id: "completed-assistant", role: "assistant" as const, body: "已完成的旧回答", pending: false },
+    ];
+    const hydratedTranscript = [
+      { id: "history-user", role: "user" as const, body: "后台新问题", pending: false },
+      { id: "history-assistant", role: "assistant" as const, body: "后台新回答", pending: false },
+    ];
+
+    expect(transcriptForHistoryHydration(completedTranscript, hydratedTranscript, "running")).toEqual(hydratedTranscript);
+    expect(transcriptForHistoryHydration(completedTranscript, hydratedTranscript, "idle")).toEqual(hydratedTranscript);
   });
 
   test("limits legacy and new receipt runtime details to project and agent", () => {
@@ -287,6 +333,31 @@ describe("unified workbench IA state", () => {
     expect(template?.prompt).toContain("ONNX");
     expect(template?.prompt).toContain("结构摘要");
     expect(template?.prompt).toContain("核心信息不足时先提问");
+  });
+
+  test("applies the shared office-output quality gate to every office template", () => {
+    for (const template of WORK_OUTCOME_TEMPLATES) {
+      expect(template.prompt).toContain("最终只能输出一份正文");
+      expect(template.prompt).toContain("不得先输出 Markdown 源码再输出渲染版");
+      expect(template.prompt).toContain("人名、称谓、术语、字段名和数字必须与输入逐字一致");
+      expect(template.prompt).toContain("禁止形近错字、乱码、随机字符");
+      expect(template.prompt).toContain("Markdown 表格和代码块必须完整闭合");
+      expect(template.prompt).toContain("核对样本数、总和、公式、单位和结果");
+      expect(template.prompt).toContain("独立复算");
+    }
+  });
+
+  test("keeps meeting owners character-for-character identical", () => {
+    const template = WORK_OUTCOME_TEMPLATES.find((item) => item.id === "meeting-followup");
+    expect(template?.prompt).toContain("负责人姓名必须与原文逐字一致");
+    expect(template?.prompt).toContain("“张工”不得改写为“Z工”");
+  });
+
+  test("requires tool-backed and independently checked arithmetic", () => {
+    const template = WORK_OUTCOME_TEMPLATES.find((item) => item.id === "analyze-data");
+    expect(template?.prompt).toContain("所有算术统计必须调用计算器或代码执行工具");
+    expect(template?.prompt).toContain("保留可核对的计算式");
+    expect(template?.prompt).toContain("独立复算");
   });
 
   test("keeps receipt fields pending until evidence exists and only settles the shell on turn_done", () => {

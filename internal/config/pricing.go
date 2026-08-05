@@ -159,12 +159,12 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 		return false, fmt.Errorf("config %s: %w", path, err)
 	}
 	defaultVersion := Default().ConfigVersion
-	currentVersionvoltUpgrade := header.ConfigVersion >= defaultVersion && hasRetiredBundledvoltGLM(&header)
-	if header.ConfigVersion >= defaultVersion && !currentVersionvoltUpgrade {
+	currentVersionvoltRecovery := header.ConfigVersion >= defaultVersion && hasRetiredBundledvoltStep(&header)
+	if header.ConfigVersion >= defaultVersion && !currentVersionvoltRecovery {
 		return false, nil
 	}
 	cfg := LoadForEdit(path)
-	changed := migrateRetiredBundledvoltGLM(cfg)
+	changed := migrateRetiredBundledvoltStep(cfg)
 	if header.ConfigVersion < deepSeekPricingResetConfigVersion {
 		resetOfficialProviderPricingDefaults(cfg)
 		changed = true
@@ -195,11 +195,11 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 }
 
 const (
-	retiredvoltGLMProvider = "glm-5.2"
-	retiredvoltGLMModel    = "glm-primary/glm-5.2-nvfp4"
+	retiredvoltStepProvider = "qwen-thinking"
+	retiredvoltStepModel    = "qwen-gpu4/step3p7-flash"
 )
 
-func migrateRetiredBundledvoltGLM(c *Config) bool {
+func migrateRetiredBundledvoltStep(c *Config) bool {
 	if c == nil {
 		return false
 	}
@@ -208,59 +208,62 @@ func migrateRetiredBundledvoltGLM(c *Config) bool {
 		return false
 	}
 	replacement := bundled[0]
-	configuredReplacement, ok := c.Provider(replacementRef)
-	if !ok || !sameBundledvoltRoute(*configuredReplacement, replacement) {
+	retiredIndex := retiredBundledvoltStepIndex(c, replacement)
+	if retiredIndex < 0 {
 		return false
 	}
-
-	retiredIndex := retiredBundledvoltGLMIndex(c, replacement)
-	if retiredIndex < 0 {
+	configuredReplacement, replacementExists := c.Provider(replacementRef)
+	if replacementExists && !sameBundledvoltRoute(*configuredReplacement, replacement) {
 		return false
 	}
 	migrateRetiredvoltAgentRefs(c, replacementRef)
 	migrateRetiredvoltBotRefs(c, replacementRef)
-	c.Desktop.ProviderAccess = migrateRetiredvoltGLMProviderAccess(c.Desktop.ProviderAccess, replacementRef)
-	c.Providers = append(c.Providers[:retiredIndex], c.Providers[retiredIndex+1:]...)
+	c.Desktop.ProviderAccess = migrateRetiredvoltProviderAccess(c.Desktop.ProviderAccess, replacementRef)
+	if replacementExists {
+		c.Providers = append(c.Providers[:retiredIndex], c.Providers[retiredIndex+1:]...)
+	} else {
+		c.Providers[retiredIndex] = replacement
+	}
 	return true
 }
 
 func migrateRetiredvoltAgentRefs(c *Config, replacement string) {
-	c.DefaultModel = migrateRetiredvoltGLMRef(c.DefaultModel, replacement)
-	c.Agent.PlannerModel = migrateRetiredvoltGLMRef(c.Agent.PlannerModel, replacement)
-	c.Agent.GuardianModel = migrateRetiredvoltGLMRef(c.Agent.GuardianModel, replacement)
-	c.Agent.RecoveryModel = migrateRetiredvoltGLMRef(c.Agent.RecoveryModel, replacement)
-	c.Agent.SubagentModel = migrateRetiredvoltGLMRef(c.Agent.SubagentModel, replacement)
+	c.DefaultModel = migrateRetiredvoltModelRef(c.DefaultModel, replacement)
+	c.Agent.PlannerModel = migrateRetiredvoltModelRef(c.Agent.PlannerModel, replacement)
+	c.Agent.GuardianModel = migrateRetiredvoltModelRef(c.Agent.GuardianModel, replacement)
+	c.Agent.RecoveryModel = migrateRetiredvoltModelRef(c.Agent.RecoveryModel, replacement)
+	c.Agent.SubagentModel = migrateRetiredvoltModelRef(c.Agent.SubagentModel, replacement)
 	for name, ref := range c.Agent.SubagentModels {
-		c.Agent.SubagentModels[name] = migrateRetiredvoltGLMRef(ref, replacement)
+		c.Agent.SubagentModels[name] = migrateRetiredvoltModelRef(ref, replacement)
 	}
 }
 
 func migrateRetiredvoltBotRefs(c *Config, replacement string) {
-	c.Bot.Model = migrateRetiredvoltGLMRef(c.Bot.Model, replacement)
-	c.Bot.QQ.Model = migrateRetiredvoltGLMRef(c.Bot.QQ.Model, replacement)
+	c.Bot.Model = migrateRetiredvoltModelRef(c.Bot.Model, replacement)
+	c.Bot.QQ.Model = migrateRetiredvoltModelRef(c.Bot.QQ.Model, replacement)
 	for i := range c.Bot.Routes {
-		c.Bot.Routes[i].Model = migrateRetiredvoltGLMRef(c.Bot.Routes[i].Model, replacement)
+		c.Bot.Routes[i].Model = migrateRetiredvoltModelRef(c.Bot.Routes[i].Model, replacement)
 	}
 	for i := range c.Bot.Connections {
-		c.Bot.Connections[i].Model = migrateRetiredvoltGLMRef(c.Bot.Connections[i].Model, replacement)
+		c.Bot.Connections[i].Model = migrateRetiredvoltModelRef(c.Bot.Connections[i].Model, replacement)
 	}
 }
 
-func hasRetiredBundledvoltGLM(c *Config) bool {
+func hasRetiredBundledvoltStep(c *Config) bool {
 	_, bundled := bundledvoltProviderDefaults()
-	return len(bundled) == 1 && retiredBundledvoltGLMIndex(c, bundled[0]) >= 0
+	return len(bundled) == 1 && retiredBundledvoltStepIndex(c, bundled[0]) >= 0
 }
 
-func retiredBundledvoltGLMIndex(c *Config, replacement ProviderEntry) int {
+func retiredBundledvoltStepIndex(c *Config, replacement ProviderEntry) int {
 	if c == nil {
 		return -1
 	}
 	for i := range c.Providers {
 		entry := c.Providers[i]
-		if strings.TrimSpace(entry.Name) == retiredvoltGLMProvider &&
+		if strings.TrimSpace(entry.Name) == retiredvoltStepProvider &&
 			strings.EqualFold(strings.TrimSpace(entry.Kind), "openai") &&
 			strings.TrimRight(strings.TrimSpace(entry.BaseURL), "/") == strings.TrimRight(replacement.BaseURL, "/") &&
-			strings.TrimSpace(entry.Model) == retiredvoltGLMModel &&
+			strings.TrimSpace(entry.Model) == retiredvoltStepModel &&
 			len(entry.Models) == 0 && strings.TrimSpace(entry.APIKeyEnv) == replacement.APIKeyEnv {
 			return i
 		}
@@ -276,15 +279,15 @@ func sameBundledvoltRoute(got, want ProviderEntry) bool {
 		len(got.Models) == 0 && strings.TrimSpace(got.APIKeyEnv) == strings.TrimSpace(want.APIKeyEnv)
 }
 
-func migrateRetiredvoltGLMRef(ref, replacement string) string {
+func migrateRetiredvoltModelRef(ref, replacement string) string {
 	trimmed := strings.TrimSpace(ref)
-	if trimmed == retiredvoltGLMProvider || strings.HasPrefix(trimmed, retiredvoltGLMProvider+"/") {
+	if trimmed == retiredvoltStepProvider || strings.HasPrefix(trimmed, retiredvoltStepProvider+"/") {
 		return replacement
 	}
 	return ref
 }
 
-func migrateRetiredvoltGLMProviderAccess(access []string, replacement string) []string {
+func migrateRetiredvoltProviderAccess(access []string, replacement string) []string {
 	if access == nil {
 		return nil
 	}
@@ -292,7 +295,7 @@ func migrateRetiredvoltGLMProviderAccess(access []string, replacement string) []
 	seen := make(map[string]struct{}, len(access))
 	for _, name := range access {
 		name = strings.TrimSpace(name)
-		if name == retiredvoltGLMProvider {
+		if name == retiredvoltStepProvider {
 			name = replacement
 		}
 		if name == "" {

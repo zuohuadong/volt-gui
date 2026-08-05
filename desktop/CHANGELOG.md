@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.15.5](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.15.4...desktop-v0.15.5) (2026-08-05)
+
+
+### Bug Fixes
+
+* **desktop:** keep task output ordered ([#83](https://github.com/zuohuadong/volt-gui/issues/83)) ([307bf83](https://github.com/zuohuadong/volt-gui/commit/307bf839e1eae88dc92a146a396ca7d1f3631fb6))
+* **desktop:** preserve running task and card state ([#81](https://github.com/zuohuadong/volt-gui/issues/81)) ([9b88f1d](https://github.com/zuohuadong/volt-gui/commit/9b88f1d81470127afaf7a287591f1e6456e0f876))
+
+
+### Refactoring
+
+* **brand:** rename Reasonix to VoltUI across CLI, desktop, and docs ([1b8b9ff](https://github.com/zuohuadong/volt-gui/commit/1b8b9ff471a229aad8a5c47b3bf500f317b4250d))
+
 ## [0.15.4](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.15.3...desktop-v0.15.4) (2026-08-04)
 
 

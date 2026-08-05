@@ -62,6 +62,10 @@ import (
 // while one is already active in the same Controller.
 var ErrTurnRunning = errors.New("turn already running")
 
+// ErrTurnTimeout reports that the host's foreground-turn protection limit
+// expired. It is distinct from Cancel so frontends can explain automatic stop.
+var ErrTurnTimeout = errors.New("turn reached the configured protection limit; completed results were kept")
+
 // errTurnRunningRotation and errRotationInProgress are returned by the
 // session-rotation gate (beginRotation) when a rotation cannot proceed: a turn
 // is in flight, or another rotation already holds the gate.
@@ -208,11 +212,12 @@ type Controller struct {
 
 	// mu guards the run state; every critical section under it is short and
 	// non-blocking.
-	mu        sync.Mutex
-	cancel    context.CancelFunc
-	running   bool
-	finishing bool // TurnDone is still being delivered; park a replacement turn
-	canceling bool
+	mu          sync.Mutex
+	cancel      context.CancelFunc
+	turnTimeout time.Duration
+	running     bool
+	finishing   bool // TurnDone is still being delivered; park a replacement turn
+	canceling   bool
 	// closed marks the controller as terminally torn down (close() ran). It
 	// seals turn admission: without it, a submit arriving AFTER close cleared
 	// the parked queue — but while a still-running turn's TurnDone delivery
@@ -475,6 +480,9 @@ type Options struct {
 	// terminal. Bot/headless frontends set a positive value so an unanswered
 	// prompt can't wedge the session indefinitely (#4626, #4402).
 	ApprovalTimeout time.Duration
+	// TurnTimeout bounds a complete foreground turn, including model, tool, and
+	// recovery work. Zero preserves the unbounded CLI/headless contract.
+	TurnTimeout time.Duration
 	// BrowserCredentialVault optionally stores browser credentials so prompts can
 	// offer a saved entry. nil disables save/restore (prompts still work).
 	BrowserCredentialVault *browserauth.Vault
@@ -543,6 +551,7 @@ func New(opts Options) *Controller {
 		externalFolderToolRefs:            opts.ExternalFolderToolRefs,
 		approval:                          newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
 		browserPrompts:                    newBrowserPromptManager(opts.BrowserCredentialVault, opts.ApprovalTimeout),
+		turnTimeout:                       opts.TurnTimeout,
 	}
 	if strings.TrimSpace(opts.WorkspaceRoot) != "" {
 		c.autoResearch = autoresearch.NewStore(opts.WorkspaceRoot)
@@ -763,13 +772,20 @@ func (c *Controller) admitGuardedTurn(body func(ctx context.Context) error, park
 		c.mu.Unlock()
 		return turnParked
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := c.newTurnContext(context.Background())
 	c.cancel = cancel
 	c.running = true
 	c.canceling = false
 	c.mu.Unlock()
 	c.spawnGuardedTurn(ctx, cancel, body)
 	return turnStarted
+}
+
+func (c *Controller) newTurnContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if c.turnTimeout > 0 {
+		return context.WithTimeout(parent, c.turnTimeout)
+	}
+	return context.WithCancel(parent)
 }
 
 // spawnGuardedTurn launches an admitted turn body plus its autosave companion.
@@ -788,6 +804,9 @@ func (c *Controller) spawnGuardedTurn(ctx context.Context, cancel context.Cancel
 			}
 		}()
 		err := body(ctx)
+		if c.turnTimeout > 0 && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == context.DeadlineExceeded {
+			err = ErrTurnTimeout
+		}
 		c.finishGuardedTurn(explainError(err))
 	}()
 }
@@ -828,7 +847,7 @@ func (c *Controller) finishGuardedTurn(err error) {
 		}
 		next := c.parkedTurns[0]
 		c.parkedTurns = c.parkedTurns[1:]
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := c.newTurnContext(context.Background())
 		c.cancel = cancel
 		c.running = true
 		c.canceling = false
@@ -908,7 +927,7 @@ func (c *Controller) runTurn(ctx context.Context, input string) error {
 // composition, checkpoints, hooks, and plan approval. It is for transports that
 // need a blocking request/response boundary, such as ACP session/prompt.
 func (c *Controller) RunTurn(ctx context.Context, input string) error {
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := c.newTurnContext(ctx)
 	c.mu.Lock()
 	// finishing is part of the gate: TurnDone delivery for the previous turn
 	// is still fanning out, and starting a synchronous turn inside that

@@ -147,6 +147,8 @@ type Options struct {
 	// terminal. Headless/bot frontends pass a positive value so an unanswered
 	// prompt can't wedge the session indefinitely (#4626, #4402).
 	ApprovalTimeout time.Duration
+	// TurnTimeout bounds a foreground turn. Zero leaves turns unbounded.
+	TurnTimeout time.Duration
 	// HeadlessApprovalMode selects the non-interactive tool-approval contract
 	// (control.ToolApprovalAuto/DontAsk/Yolo) applied to every headless-only gate
 	// this boot constructs: the top-level executor, task/read_only_task,
@@ -1685,6 +1687,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		DisableColdResumePrune: !cfg.ColdResumePruneEnabled(),
 		Shell:                  shell,
 		ApprovalTimeout:        opts.ApprovalTimeout,
+		TurnTimeout:            opts.TurnTimeout,
 		BrowserCredentialVault: browserauth.NewVault(),
 		RuntimeProfile:         runtimeProfile,
 		OnRemember: func(rule string) control.RememberResult {

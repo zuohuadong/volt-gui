@@ -682,6 +682,7 @@
   let conversationScrollFrame: number | undefined;
   let backToTopTarget = $state<HTMLElement | null>(null);
   let backToTopVisible = $state(false);
+  let queueActionMenuOpen = $state(false);
   let historyPageTabId = $state("");
   let historyPageStartTurn = $state(0);
   let historyPageTotalTurns = $state(0);
@@ -9050,6 +9051,7 @@ function openGovernanceCenter() {
                 onMoveQueuedMessage={moveQueuedThreadMessage}
                 onSteerQueuedMessage={steerQueuedThreadMessage}
                 onResumeQueuedMessage={resumeQueuedThreadMessage}
+                onQueueActionMenuOpenChange={(open) => (queueActionMenuOpen = open)}
               />
             </div>
           </section>
@@ -9496,6 +9498,7 @@ function openGovernanceCenter() {
                       onMoveQueuedMessage={moveQueuedThreadMessage}
                       onSteerQueuedMessage={steerQueuedThreadMessage}
                       onResumeQueuedMessage={resumeQueuedThreadMessage}
+                      onQueueActionMenuOpenChange={(open) => (queueActionMenuOpen = open)}
                     />
                   </section>
 
@@ -10376,6 +10379,7 @@ function openGovernanceCenter() {
                   onMoveQueuedMessage={moveQueuedThreadMessage}
                   onSteerQueuedMessage={steerQueuedThreadMessage}
                   onResumeQueuedMessage={resumeQueuedThreadMessage}
+                  onQueueActionMenuOpenChange={(open) => (queueActionMenuOpen = open)}
                 />
                 <div class="home__context">
                   <button type="button" onclick={focusComposer}>
@@ -10441,7 +10445,7 @@ function openGovernanceCenter() {
             </div>
           </section>
         {/if}
-        <BackToTopButton visible={backToTopVisible} aboveComposer={showActiveTranscript} onActivate={scrollActivePageToTop} />
+        <BackToTopButton visible={backToTopVisible && !queueActionMenuOpen} aboveComposer={showActiveTranscript} onActivate={scrollActivePageToTop} />
       </div>
 
       {#if codeInspectorOpen}

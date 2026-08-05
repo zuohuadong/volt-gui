@@ -3282,6 +3282,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	sink := a.desktopControllerSink(buildSink, cfg.Notifications)
 
 	ctrl, err := boot.Build(buildCtx, boot.Options{
+		TurnTimeout:              desktopTurnTimeout,
 		Model:                    model,
 		RequireKey:               false,
 		AllowUnlistedModel:       allowUnlistedModel,

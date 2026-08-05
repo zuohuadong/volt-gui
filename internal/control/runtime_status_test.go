@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -19,6 +20,38 @@ func (r *approvalBlockingRunner) Run(ctx context.Context, _ string) error {
 
 type askBlockingRunner struct {
 	c *Controller
+}
+
+type contextBlockingRunner struct{}
+
+func (contextBlockingRunner) Run(ctx context.Context, _ string) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestTurnTimeoutStopsInteractiveTurnWithoutClassifyingUserCancel(t *testing.T) {
+	done := make(chan event.Event, 1)
+	c := New(Options{
+		Runner:      contextBlockingRunner{},
+		TurnTimeout: 25 * time.Millisecond,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.TurnDone {
+				done <- e
+			}
+		}),
+	})
+
+	c.Send("bounded turn")
+	e := waitTurnDoneEvent(t, done)
+	if e.Cancelled {
+		t.Fatal("deadline expiry must not be classified as a user cancel")
+	}
+	if e.Err == nil {
+		t.Fatal("deadline expiry must report a timeout error")
+	}
+	if !errors.Is(e.Err, ErrTurnTimeout) {
+		t.Fatalf("deadline expiry error = %v, want ErrTurnTimeout", e.Err)
+	}
 }
 
 func (r *askBlockingRunner) Run(ctx context.Context, _ string) error {

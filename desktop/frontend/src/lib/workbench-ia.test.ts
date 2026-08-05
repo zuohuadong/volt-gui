@@ -353,6 +353,14 @@ describe("unified workbench IA state", () => {
       expect(template.prompt).toContain("独立复算");
       expect(template.prompt).toContain("所有推算必须展示公式和舍入规则");
       expect(template.prompt).toContain("统一标注“估算”或“约”");
+      expect(template.prompt).toContain("“发生次数”是缺陷证据");
+      expect(template.prompt).toContain("不得拆成独立缺陷");
+      expect(template.prompt).toContain("价格、周期和服务");
+      expect(template.prompt).toContain("字符数必须由工具实算");
+      expect(template.prompt).toContain("不得报告精确字符数");
+      expect(template.prompt).toContain("不得扩展到不适用的供应商");
+      expect(template.prompt).toContain("最多执行一次局部修正");
+      expect(template.prompt).toContain("不得整篇重写或进入自检循环");
     }
   });
 

@@ -2105,6 +2105,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	newSink := &tabEventSink{tabID: tab.ID, app: a, ctx: a.ctx}
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
+		TurnTimeout:              desktopTurnTimeout,
 		Model:                    modelResolution.ref,
 		RequireKey:               false,
 		AllowUnlistedModel:       modelResolution.allowUnlisted,
@@ -8078,6 +8079,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	}
 
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
+		TurnTimeout:              desktopTurnTimeout,
 		Model:                    name,
 		RequireKey:               false,
 		AllowUnlistedModel:       allowUnlistedModel,
@@ -8253,6 +8255,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		return err
 	}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
+		TurnTimeout:              desktopTurnTimeout,
 		Model:                    modelRef,
 		RequireKey:               false,
 		AllowUnlistedModel:       modelResolution.allowUnlisted,
@@ -8393,6 +8396,7 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 		return err
 	}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
+		TurnTimeout:              desktopTurnTimeout,
 		Model:                    modelRef,
 		RequireKey:               false,
 		AllowUnlistedModel:       allowUnlistedModel,

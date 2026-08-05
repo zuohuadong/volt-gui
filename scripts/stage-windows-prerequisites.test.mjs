@@ -126,39 +126,29 @@ test('renders configurable product wording without changing pinned assets', () =
   assert.match(readme, /Anyong Desktop Windows 前置依赖离线包（windows\/amd64，v1\.0\.0）/);
 });
 
-test('full mocked desktop build stages prerequisites without emitting assets', {
+test('full mocked desktop build packages current runtime and OEM bundle without offline prerequisites', {
   skip: process.platform === 'win32',
 }, () => {
   const fixture = join(tmpdir(), `desktop-with-prerequisites-${process.pid}-${Date.now()}`);
   const bin = join(fixture, 'bin');
   const script = join(fixture, 'scripts', 'desktop-build.sh');
+  const packageScript = join(fixture, 'scripts', 'package-windows-desktop.sh');
+  const verifyScript = join(fixture, 'scripts', 'verify-windows-portable.sh');
   try {
     mkdirSync(join(fixture, 'desktop'), { recursive: true });
     mkdirSync(join(fixture, 'scripts'), { recursive: true });
     mkdirSync(bin, { recursive: true });
     copyFileSync(new URL('./desktop-build.sh', import.meta.url), script);
-    copyFileSync(new URL('./package-windows-desktop.sh', import.meta.url), join(fixture, 'scripts', 'package-windows-desktop.sh'));
-    copyFileSync(new URL('./verify-windows-portable.sh', import.meta.url), join(fixture, 'scripts', 'verify-windows-portable.sh'));
-    chmodSync(script, 0o755);
-    const packageScript = join(fixture, 'scripts', 'package-windows-desktop.sh');
-    writeExecutable(packageScript, [
-      '#!/usr/bin/env bash',
-      'arch="$1"',
-      'payload="$2"',
-      'app="${DESKTOP_APP_NAME:-VoltUI}"',
-      'root="$(cd "$(dirname "$0")/.." && pwd)"',
-      'mkdir -p "$root/dist"',
-      ': > "$root/dist/${app}-windows-${arch}.zip"',
-      'cp "build/bin/voltui-desktop-amd64-installer.exe" "$root/dist/${app}-windows-${arch}-installer.exe"',
-      '',
-    ].join('\n'));
+    copyFileSync(new URL('./package-windows-desktop.sh', import.meta.url), packageScript);
+    copyFileSync(new URL('./verify-windows-portable.sh', import.meta.url), verifyScript);
+    for (const buildScript of [script, packageScript, verifyScript]) chmodSync(buildScript, 0o755);
     writeFileSync(join(fixture, 'desktop', 'wails.json'), JSON.stringify({name:'voltui-desktop'})+'\n');
 
     writeExecutable(join(bin, 'node'), String.raw`#!/usr/bin/env bash
 case "$1" in
   */stage-computer-use-mcp.mjs)
-    mkdir -p "$2"
-    printf 'server\n' > "$2/server.js"
+    mkdir -p "$2/node_modules/@zavora-ai/computer-use-mcp/dist"
+    printf 'server\n' > "$2/node_modules/@zavora-ai/computer-use-mcp/dist/server.js"
     ;;
   */stage-bun-runtime.mjs)
     mkdir -p "$2"
@@ -192,10 +182,12 @@ while [ "$#" -gt 0 ]; do
 done
 `);
     writeExecutable(join(bin, 'wails'), String.raw`#!/usr/bin/env bash
-mkdir -p build/bin build/windows/installer
-: > build/bin/voltui-desktop-amd64-installer.exe
-: > build/bin/voltui-desktop.exe
-: > build/windows/installer/voltui-uninstall.exe
+mkdir -p build/bin build/windows/installer/tmp
+printf 'first-pass installer\n' > build/bin/voltui-desktop-amd64-installer.exe
+printf 'desktop\n' > build/bin/voltui-desktop.exe
+printf 'uninstaller\n' > build/windows/installer/voltui-uninstall.exe
+printf 'wails tools\n' > build/windows/installer/wails_tools.nsh
+printf 'webview bootstrapper\n' > build/windows/installer/tmp/MicrosoftEdgeWebview2Setup.exe
 `);
     writeExecutable(join(bin, 'makensis'), String.raw`#!/usr/bin/env bash
 mkdir -p ../../bin
@@ -223,32 +215,33 @@ printf 'installer\n' > ../../bin/voltui-desktop-amd64-installer.exe
       encoding: 'utf8',
     });
     assert.equal(archiveEntries.status, 0, archiveEntries.stderr || archiveEntries.stdout);
-    assert.deepEqual(archiveEntries.stdout.trim().split('\n').sort(), [
-      'Anyong.exe',
+    const archiveEntryNames = archiveEntries.stdout.trim().split('\n');
+    const requiredArchiveEntries = [
       'bundled.env',
+      'computer-use-mcp/node_modules/@zavora-ai/computer-use-mcp/dist/server.js',
+      'computer-use-runtime/bun.exe',
+      'coreutils/coreutils-system-installer.exe',
+      'coreutils/voltui-coreutils-path.txt',
       'voltui-cli.exe',
       'voltui-desktop.exe',
-      'voltui-guard.exe',
-      'voltui-launcher.exe',
       'voltui-update-helper.exe',
-    ]);
-    const portableApp = spawnSync('unzip', ['-p', join(fixture, 'dist', 'Anyong-windows-amd64.zip'), 'Anyong.exe'], {
-      env: { ...process.env, PATH: '/usr/bin:/bin' },
-      encoding: 'utf8',
-    });
+    ];
+    for (const archiveEntryName of requiredArchiveEntries) {
+      assert.ok(archiveEntryNames.includes(archiveEntryName), `portable archive is missing ${archiveEntryName}`);
+    }
+    assert.equal(archiveEntryNames.some((archiveEntryName) => /VC_redist|MicrosoftEdgeWebView2RuntimeInstaller/.test(archiveEntryName)), false);
     const desktopApp = spawnSync('unzip', ['-p', join(fixture, 'dist', 'Anyong-windows-amd64.zip'), 'voltui-desktop.exe'], {
       env: { ...process.env, PATH: '/usr/bin:/bin' },
       encoding: 'utf8',
     });
-    const updateLauncher = spawnSync('unzip', ['-p', join(fixture, 'dist', 'Anyong-windows-amd64.zip'), 'voltui-launcher.exe'], {
+    const updateHelper = spawnSync('unzip', ['-p', join(fixture, 'dist', 'Anyong-windows-amd64.zip'), 'voltui-update-helper.exe'], {
       env: { ...process.env, PATH: '/usr/bin:/bin' },
       encoding: 'utf8',
     });
-    assert.equal(portableApp.status, 0, portableApp.stderr || portableApp.stdout);
     assert.equal(desktopApp.status, 0, desktopApp.stderr || desktopApp.stdout);
-    assert.equal(updateLauncher.status, 0, updateLauncher.stderr || updateLauncher.stdout);
-    assert.equal(portableApp.stdout, desktopApp.stdout);
-    assert.notEqual(portableApp.stdout, updateLauncher.stdout);
+    assert.equal(updateHelper.status, 0, updateHelper.stderr || updateHelper.stdout);
+    assert.equal(desktopApp.stdout, 'desktop\n');
+    assert.notEqual(desktopApp.stdout, updateHelper.stdout);
     const bundled = spawnSync('unzip', ['-p', join(fixture, 'dist', 'Anyong-windows-amd64.zip'), 'bundled.env'], {
       env: { ...process.env, PATH: '/usr/bin:/bin' },
       encoding: 'utf8',

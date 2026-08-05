@@ -13,7 +13,9 @@ import {
   recoveredTaskThreadsFromBackend,
   reconcileProjectTaskNodes,
   restartTaskReceipt,
+  restoreTaskTranscript,
   settleTaskReceipt,
+  snapshotTaskTranscript,
   verificationEvidenceFromTool,
 } from "./workbench-ia";
 
@@ -110,6 +112,19 @@ describe("unified workbench IA state", () => {
     ]);
     expect(persisted.inboxTasks[0].transcript).toBeUndefined();
     expect(JSON.stringify(persisted)).not.toContain("不应写入后端侧栏快照");
+  });
+
+  test("preserves pending transcript state only while the task is running", () => {
+    const transcript = [
+      { id: "user-1", role: "user" as const, body: "分析数据", pending: false },
+      { id: "assistant-1", role: "assistant" as const, body: "", pending: true },
+    ];
+
+    const snapshot = snapshotTaskTranscript(transcript);
+    expect(snapshot).not.toBe(transcript);
+    expect(snapshot[1].pending).toBe(true);
+    expect(restoreTaskTranscript(snapshot, "running")[1].pending).toBe(true);
+    expect(restoreTaskTranscript(snapshot, "idle")[1].pending).toBe(false);
   });
 
   test("rebuilds recoverable inbox tasks from backend topics when WebView storage is gone", () => {

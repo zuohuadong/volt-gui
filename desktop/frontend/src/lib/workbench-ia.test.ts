@@ -17,6 +17,7 @@ import {
   restoreTaskTranscript,
   settleTaskReceipt,
   snapshotTaskTranscript,
+  transcriptForHistoryHydration,
   verificationEvidenceFromTool,
   visibleReceiptRuntime,
 } from "./workbench-ia";
@@ -127,6 +128,36 @@ describe("unified workbench IA state", () => {
     expect(snapshot[1].pending).toBe(true);
     expect(restoreTaskTranscript(snapshot, "running")[1].pending).toBe(true);
     expect(restoreTaskTranscript(snapshot, "idle")[1].pending).toBe(false);
+  });
+
+  test("keeps live task state when persisted history hydrates a running transcript", () => {
+    const currentTranscript = [
+      { id: "user-live", role: "user" as const, body: "继续分析", pending: false },
+      { id: "assistant-pending", role: "assistant" as const, body: "", pending: true },
+    ];
+    const hydratedTranscript = [
+      { id: "history-user", role: "user" as const, body: "旧问题", pending: false },
+      { id: "history-assistant", role: "assistant" as const, body: "旧回答", pending: false },
+    ];
+
+    const runningTranscript = transcriptForHistoryHydration(currentTranscript, hydratedTranscript, "running");
+    expect(runningTranscript).toEqual(currentTranscript);
+    expect(runningTranscript).not.toBe(currentTranscript);
+    expect(runningTranscript[1].pending).toBe(true);
+  });
+
+  test("uses hydrated history when the local transcript has no active pending state", () => {
+    const completedTranscript = [
+      { id: "completed-user", role: "user" as const, body: "已完成的旧问题", pending: false },
+      { id: "completed-assistant", role: "assistant" as const, body: "已完成的旧回答", pending: false },
+    ];
+    const hydratedTranscript = [
+      { id: "history-user", role: "user" as const, body: "后台新问题", pending: false },
+      { id: "history-assistant", role: "assistant" as const, body: "后台新回答", pending: false },
+    ];
+
+    expect(transcriptForHistoryHydration(completedTranscript, hydratedTranscript, "running")).toEqual(hydratedTranscript);
+    expect(transcriptForHistoryHydration(completedTranscript, hydratedTranscript, "idle")).toEqual(hydratedTranscript);
   });
 
   test("limits legacy and new receipt runtime details to project and agent", () => {

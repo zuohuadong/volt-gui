@@ -241,6 +241,7 @@ func (a *App) SetAgentProfileForTab(tabID, profileID string) error {
 		return err
 	}
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
+		TurnTimeout:              desktopTurnTimeout,
 		Model:                    modelRef,
 		RequireKey:               false,
 		AllowUnlistedModel:       modelResolution.allowUnlisted,

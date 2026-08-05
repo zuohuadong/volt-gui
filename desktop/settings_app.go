@@ -1622,7 +1622,8 @@ func (a *App) rebuildSettingLocked(setting string) error {
 		return err
 	}
 	ctrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model: model, RequireKey: false, AllowUnlistedModel: modelResolution.allowUnlisted,
+		TurnTimeout: desktopTurnTimeout,
+		Model:       model, RequireKey: false, AllowUnlistedModel: modelResolution.allowUnlisted,
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),

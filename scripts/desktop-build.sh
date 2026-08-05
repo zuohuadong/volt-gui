@@ -159,6 +159,7 @@ build_args+=(-platform "$PLATFORM" -ldflags "$ldflags")
 
 echo "==> wails build ${build_args[*]}"
 if [ "$os" = windows ]; then
+	stage_xigu_model_bundle
 	CGO_ENABLED=0 wails build "${build_args[@]}"
 else
 	wails build "${build_args[@]}"

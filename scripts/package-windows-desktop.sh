@@ -108,6 +108,9 @@ portable_payload=("$BINNAME.exe" "$UPDATE_HELPER" "$CLINAME.exe")
 for portable_name in "${portable_payload[@]}"; do
 	cp "$PAYLOAD/$portable_name" "$portable_staging/$portable_name"
 done
+if [ -s "$INSTALLER_DIR/bundled.env" ]; then
+	cp "$INSTALLER_DIR/bundled.env" "$portable_staging/bundled.env"
+fi
 for resource in computer-use-mcp computer-use-runtime coreutils; do
 	[ -d "$INSTALLER_DIR/$resource" ] || { echo "Windows runtime resource is missing: $resource" >&2; exit 1; }
 	cp -R "$INSTALLER_DIR/$resource" "$portable_staging/$resource"

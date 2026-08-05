@@ -2,7 +2,7 @@
 # Resolution order: flag > ./voltui.toml > ~/.config/voltui/config.toml > built-in defaults.
 # Secrets come from the environment via api_key_env; never put keys here.
 
-default_model = "qwen-thinking"   # a provider name (→ its default model) or "provider/model"
+default_model = "glm-5.2"   # a provider name (→ its default model) or "provider/model"
 # language      = "zh"   # ui language; empty = auto-detect from $LANG / $VOLTUI_LANG
 
 # White-label / OEM branding — replace the product name and logos for your
@@ -51,14 +51,12 @@ compact_force_ratio = 0.9   # force compacting at this high-water mark
 # 模型名称与 9010 的实时 /models 目录保持一致；桌面端会自动发现同 namespace 的新聊天模型。
 
 [[providers]]
-name           = "qwen-thinking"
+name           = "glm-5.2"
 kind           = "openai"
 base_url       = "http://192.168.1.47:9010/v1"
-model          = "qwen-gpu4/step3p7-flash"
+model          = "glm-primary/glm-5.2-nvfp4"
 api_key_env    = "XIGU_API_KEY"
 context_window = 131072
-supported_efforts = ["low", "medium", "high"]
-default_effort = "low"
 
 # A single-model provider still works (use `model = "..."`) — pick this form when a
 # model needs its own base_url / context_window / price (e.g. the two MiMo SKUs

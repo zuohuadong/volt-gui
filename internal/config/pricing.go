@@ -159,12 +159,12 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 		return false, fmt.Errorf("config %s: %w", path, err)
 	}
 	defaultVersion := Default().ConfigVersion
-	currentVersionXiguUpgrade := header.ConfigVersion >= defaultVersion && hasRetiredBundledXiguGLM(&header)
-	if header.ConfigVersion >= defaultVersion && !currentVersionXiguUpgrade {
+	currentVersionXiguRecovery := header.ConfigVersion >= defaultVersion && hasRetiredBundledXiguStep(&header)
+	if header.ConfigVersion >= defaultVersion && !currentVersionXiguRecovery {
 		return false, nil
 	}
 	cfg := LoadForEdit(path)
-	changed := migrateRetiredBundledXiguGLM(cfg)
+	changed := migrateRetiredBundledXiguStep(cfg)
 	if header.ConfigVersion < deepSeekPricingResetConfigVersion {
 		resetOfficialProviderPricingDefaults(cfg)
 		changed = true
@@ -195,11 +195,11 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 }
 
 const (
-	retiredXiguGLMProvider = "glm-5.2"
-	retiredXiguGLMModel    = "glm-primary/glm-5.2-nvfp4"
+	retiredXiguStepProvider = "qwen-thinking"
+	retiredXiguStepModel    = "qwen-gpu4/step3p7-flash"
 )
 
-func migrateRetiredBundledXiguGLM(c *Config) bool {
+func migrateRetiredBundledXiguStep(c *Config) bool {
 	if c == nil {
 		return false
 	}
@@ -208,59 +208,62 @@ func migrateRetiredBundledXiguGLM(c *Config) bool {
 		return false
 	}
 	replacement := bundled[0]
-	configuredReplacement, ok := c.Provider(replacementRef)
-	if !ok || !sameBundledXiguRoute(*configuredReplacement, replacement) {
+	retiredIndex := retiredBundledXiguStepIndex(c, replacement)
+	if retiredIndex < 0 {
 		return false
 	}
-
-	retiredIndex := retiredBundledXiguGLMIndex(c, replacement)
-	if retiredIndex < 0 {
+	configuredReplacement, replacementExists := c.Provider(replacementRef)
+	if replacementExists && !sameBundledXiguRoute(*configuredReplacement, replacement) {
 		return false
 	}
 	migrateRetiredXiguAgentRefs(c, replacementRef)
 	migrateRetiredXiguBotRefs(c, replacementRef)
-	c.Desktop.ProviderAccess = migrateRetiredXiguGLMProviderAccess(c.Desktop.ProviderAccess, replacementRef)
-	c.Providers = append(c.Providers[:retiredIndex], c.Providers[retiredIndex+1:]...)
+	c.Desktop.ProviderAccess = migrateRetiredXiguProviderAccess(c.Desktop.ProviderAccess, replacementRef)
+	if replacementExists {
+		c.Providers = append(c.Providers[:retiredIndex], c.Providers[retiredIndex+1:]...)
+	} else {
+		c.Providers[retiredIndex] = replacement
+	}
 	return true
 }
 
 func migrateRetiredXiguAgentRefs(c *Config, replacement string) {
-	c.DefaultModel = migrateRetiredXiguGLMRef(c.DefaultModel, replacement)
-	c.Agent.PlannerModel = migrateRetiredXiguGLMRef(c.Agent.PlannerModel, replacement)
-	c.Agent.GuardianModel = migrateRetiredXiguGLMRef(c.Agent.GuardianModel, replacement)
-	c.Agent.RecoveryModel = migrateRetiredXiguGLMRef(c.Agent.RecoveryModel, replacement)
-	c.Agent.SubagentModel = migrateRetiredXiguGLMRef(c.Agent.SubagentModel, replacement)
+	c.DefaultModel = migrateRetiredXiguModelRef(c.DefaultModel, replacement)
+	c.Agent.PlannerModel = migrateRetiredXiguModelRef(c.Agent.PlannerModel, replacement)
+	c.Agent.GuardianModel = migrateRetiredXiguModelRef(c.Agent.GuardianModel, replacement)
+	c.Agent.RecoveryModel = migrateRetiredXiguModelRef(c.Agent.RecoveryModel, replacement)
+	c.Agent.SubagentModel = migrateRetiredXiguModelRef(c.Agent.SubagentModel, replacement)
 	for name, ref := range c.Agent.SubagentModels {
-		c.Agent.SubagentModels[name] = migrateRetiredXiguGLMRef(ref, replacement)
+		c.Agent.SubagentModels[name] = migrateRetiredXiguModelRef(ref, replacement)
 	}
 }
 
 func migrateRetiredXiguBotRefs(c *Config, replacement string) {
-	c.Bot.Model = migrateRetiredXiguGLMRef(c.Bot.Model, replacement)
-	c.Bot.QQ.Model = migrateRetiredXiguGLMRef(c.Bot.QQ.Model, replacement)
+	c.Bot.Model = migrateRetiredXiguModelRef(c.Bot.Model, replacement)
+	c.Bot.QQ.Model = migrateRetiredXiguModelRef(c.Bot.QQ.Model, replacement)
 	for i := range c.Bot.Routes {
-		c.Bot.Routes[i].Model = migrateRetiredXiguGLMRef(c.Bot.Routes[i].Model, replacement)
+		c.Bot.Routes[i].Model = migrateRetiredXiguModelRef(c.Bot.Routes[i].Model, replacement)
 	}
 	for i := range c.Bot.Connections {
-		c.Bot.Connections[i].Model = migrateRetiredXiguGLMRef(c.Bot.Connections[i].Model, replacement)
+		c.Bot.Connections[i].Model = migrateRetiredXiguModelRef(c.Bot.Connections[i].Model, replacement)
 	}
 }
 
-func hasRetiredBundledXiguGLM(c *Config) bool {
+func hasRetiredBundledXiguStep(c *Config) bool {
 	_, bundled := bundledXiguProviderDefaults()
-	return len(bundled) == 1 && retiredBundledXiguGLMIndex(c, bundled[0]) >= 0
+	return len(bundled) == 1 && retiredBundledXiguStepIndex(c, bundled[0]) >= 0
 }
 
-func retiredBundledXiguGLMIndex(c *Config, replacement ProviderEntry) int {
+func retiredBundledXiguStepIndex(c *Config, replacement ProviderEntry) int {
 	if c == nil {
 		return -1
 	}
 	for i := range c.Providers {
 		entry := c.Providers[i]
-		if strings.TrimSpace(entry.Name) == retiredXiguGLMProvider &&
+		if strings.TrimSpace(entry.Name) == retiredXiguStepProvider &&
 			strings.EqualFold(strings.TrimSpace(entry.Kind), "openai") &&
 			strings.TrimRight(strings.TrimSpace(entry.BaseURL), "/") == strings.TrimRight(replacement.BaseURL, "/") &&
-			strings.TrimSpace(entry.Model) == retiredXiguGLMModel &&
+			strings.TrimSpace(entry.Model) == retiredXiguStepModel &&
 			len(entry.Models) == 0 && strings.TrimSpace(entry.APIKeyEnv) == replacement.APIKeyEnv {
 			return i
 		}
@@ -276,15 +279,15 @@ func sameBundledXiguRoute(got, want ProviderEntry) bool {
 		len(got.Models) == 0 && strings.TrimSpace(got.APIKeyEnv) == strings.TrimSpace(want.APIKeyEnv)
 }
 
-func migrateRetiredXiguGLMRef(ref, replacement string) string {
+func migrateRetiredXiguModelRef(ref, replacement string) string {
 	trimmed := strings.TrimSpace(ref)
-	if trimmed == retiredXiguGLMProvider || strings.HasPrefix(trimmed, retiredXiguGLMProvider+"/") {
+	if trimmed == retiredXiguStepProvider || strings.HasPrefix(trimmed, retiredXiguStepProvider+"/") {
 		return replacement
 	}
 	return ref
 }
 
-func migrateRetiredXiguGLMProviderAccess(access []string, replacement string) []string {
+func migrateRetiredXiguProviderAccess(access []string, replacement string) []string {
 	if access == nil {
 		return nil
 	}
@@ -292,7 +295,7 @@ func migrateRetiredXiguGLMProviderAccess(access []string, replacement string) []
 	seen := make(map[string]struct{}, len(access))
 	for _, name := range access {
 		name = strings.TrimSpace(name)
-		if name == retiredXiguGLMProvider {
+		if name == retiredXiguStepProvider {
 			name = replacement
 		}
 		if name == "" {

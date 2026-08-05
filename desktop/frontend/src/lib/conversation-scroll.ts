@@ -10,3 +10,7 @@ export function isConversationNearBottom(
 export function shouldAutoScrollConversation(pinnedToBottom: boolean, force = false): boolean {
   return force || pinnedToBottom;
 }
+
+export function scrollConversationToTop(scrollContainer: Pick<HTMLElement, "scrollTop">): void {
+  scrollContainer.scrollTop = 0;
+}

@@ -199,6 +199,14 @@ const (
 	retiredXiguStepModel    = "qwen-gpu4/step3p7-flash"
 )
 
+// IsRetiredBundledXiguModel reports the known unhealthy OEM Step route. The
+// gateway can still advertise this model even though its chat-completion
+// response places final text in reasoning_content and leaves content empty.
+func IsRetiredBundledXiguModel(providerName, model string) bool {
+	return strings.EqualFold(strings.TrimSpace(providerName), retiredXiguStepProvider) &&
+		strings.TrimSpace(model) == retiredXiguStepModel
+}
+
 func migrateRetiredBundledXiguStep(c *Config) bool {
 	if c == nil {
 		return false
@@ -260,10 +268,9 @@ func retiredBundledXiguStepIndex(c *Config, replacement ProviderEntry) int {
 	}
 	for i := range c.Providers {
 		entry := c.Providers[i]
-		if strings.TrimSpace(entry.Name) == retiredXiguStepProvider &&
+		if IsRetiredBundledXiguModel(entry.Name, entry.Model) &&
 			strings.EqualFold(strings.TrimSpace(entry.Kind), "openai") &&
 			strings.TrimRight(strings.TrimSpace(entry.BaseURL), "/") == strings.TrimRight(replacement.BaseURL, "/") &&
-			strings.TrimSpace(entry.Model) == retiredXiguStepModel &&
 			len(entry.Models) == 0 && strings.TrimSpace(entry.APIKeyEnv) == replacement.APIKeyEnv {
 			return i
 		}

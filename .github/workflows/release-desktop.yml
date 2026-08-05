@@ -148,7 +148,7 @@ jobs:
           # execute, including during recovery of an older candidate.
           ref: ${{ github.sha }}
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -196,7 +196,7 @@ jobs:
         with:
           ref: ${{ inputs.approved_sha || inputs.tag || github.ref }}
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -234,13 +234,13 @@ jobs:
         with:
           ref: ${{ inputs.approved_sha || inputs.tag || github.ref }}
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: desktop/go.mod
           cache: true
           cache-dependency-path: desktop/go.sum
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - uses: pnpm/action-setup@v6
@@ -340,7 +340,7 @@ jobs:
 
       # Sign every executable that users actually run before rebuilding the
       # portable archive and NSIS installer. Signing only the finished NSIS
-      # container leaves reasonix-desktop.exe and its sidecars unsigned after
+      # container leaves voltui-desktop.exe and its sidecars unsigned after
       # installation, which can trigger Defender reputation/ML quarantine.
       - name: Upload unsigned Windows payload for SignPath
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true'
@@ -441,8 +441,8 @@ jobs:
           $arch = if ("${{ matrix.platform }}" -eq "windows/arm64") { "arm64" } else { "amd64" }
           ./scripts/verify-windows-authenticode.ps1 `
             -PayloadDirectory signed-payload `
-            -InstallerPath "dist/Reasonix-windows-$arch-installer.exe" `
-            -PortableArchivePath "dist/Reasonix-windows-$arch.zip" `
+            -InstallerPath "dist/VoltUI-windows-$arch-installer.exe" `
+            -PortableArchivePath "dist/VoltUI-windows-$arch.zip" `
             -RequireTrusted:$true
 
       - name: Sign artifacts (minisign)
@@ -474,13 +474,13 @@ jobs:
         with:
           ref: ${{ inputs.approved_sha || inputs.tag || github.ref }}
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: desktop/go.mod
           cache: true
           cache-dependency-path: desktop/go.sum
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
 

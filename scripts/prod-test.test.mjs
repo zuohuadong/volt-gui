@@ -25,7 +25,7 @@ test("prod_test runs the Wails packaging chain in headless mode when no TTY is a
     mkdirSync(bin, { recursive: true });
     copyFileSync(join(root, "prod_test"), join(fixture, "prod_test"));
     chmodSync(join(fixture, "prod_test"), 0o755);
-    writeFileSync(join(fixture, "desktop", "wails.json"), "{}\n");
+    writeFileSync(join(fixture, "desktop", "wails.json"), JSON.stringify({name:"voltui-desktop"})+"\n");
 
     writeExecutable(
       join(fixture, "scripts", "desktop-build.sh"),
@@ -107,23 +107,48 @@ test("desktop-build skips Finder DMG layout only when explicitly requested", () 
     mkdirSync(bin, { recursive: true });
     copyFileSync(join(root, "scripts", "desktop-build.sh"), join(fixture, "scripts", "desktop-build.sh"));
     chmodSync(join(fixture, "scripts", "desktop-build.sh"), 0o755);
-    writeFileSync(join(fixture, "desktop", "wails.json"), "{}\n");
+    writeFileSync(join(fixture, "desktop", "wails.json"), JSON.stringify({name:"voltui-desktop"})+"\n");
 
     writeExecutable(
       join(bin, "node"),
       `#!/usr/bin/env bash
 case "\${1:-}" in
   */stage-computer-use-mcp.mjs|*/stage-bun-runtime.mjs) mkdir -p "$2" ;;
+  -e)
+    if [[ "$2" == *'j.name'* ]]; then
+      printf 'voltui-desktop'
+    fi
+    ;;
 esac
 `
     );
     writeExecutable(
       join(bin, "wails"),
       `#!/usr/bin/env bash
-mkdir -p build/bin/西谷智灯暗涌系统.app/Contents/MacOS
-: > build/bin/西谷智灯暗涌系统.app/Contents/MacOS/voltui-desktop
+app="build/bin/voltui-desktop.app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+: > "$app/Contents/MacOS/voltui-desktop"
+printf '<?xml version="1.0"?>\\n<plist version="1.0"><dict><key>CFBundleExecutable</key><string>voltui-desktop</string><key>CFBundleIconFile</key><string>icon.icns</string></dict></plist>\\n' > "$app/Contents/Info.plist"
+printf 'icon\\n' > "$app/Contents/Resources/icon.icns"
 `
     );
+    writeExecutable(
+      join(bin, "go"),
+      `#!/usr/bin/env bash
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    mkdir -p "$(dirname "$2")"
+    : > "$2"
+    exit 0
+  fi
+  shift
+done
+if [ "$1" = "env" ]; then exit 0; fi
+`
+    );
+    writeExecutable(join(bin, "lipo"), "#!/usr/bin/env bash\nexit 0\n");
+    writeExecutable(join(bin, "xcrun"), "#!/usr/bin/env bash\nexit 0\n");
+    writeExecutable(join(bin, "security"), "#!/usr/bin/env bash\nprintf 'false\\n'\n");
     writeExecutable(join(bin, "codesign"), "#!/usr/bin/env bash\nexit 0\n");
     writeExecutable(
       join(bin, "ditto"),

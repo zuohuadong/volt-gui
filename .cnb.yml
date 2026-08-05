@@ -148,6 +148,7 @@ main:
               ca-certificates \
               curl \
               nsis \
+              unzip \
               xz-utils \
               zip
 

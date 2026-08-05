@@ -171,6 +171,18 @@ export function restoreTaskTranscript(
   }));
 }
 
+export function transcriptForHistoryHydration(
+  currentTranscriptItems: TranscriptItem[],
+  hydratedTranscriptItems: TranscriptItem[],
+  runState: TranscriptRunState,
+): TranscriptItem[] {
+  const currentTranscriptHasPendingState = currentTranscriptItems.some((transcriptItem) => transcriptItem.pending);
+  const selectedTranscriptItems = runState === "running" && currentTranscriptHasPendingState
+    ? currentTranscriptItems
+    : hydratedTranscriptItems;
+  return snapshotTaskTranscript(selectedTranscriptItems);
+}
+
 export interface OutcomeTemplate {
   id: TaskOutcomeTemplateID;
   title: string;

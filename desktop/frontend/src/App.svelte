@@ -188,6 +188,7 @@
     settleTaskReceipt,
     snapshotFromProjectNodes,
     snapshotTaskTranscript,
+    transcriptForHistoryHydration,
     verificationEvidenceFromTool,
     visibleReceiptRuntime,
   } from "./lib/workbench-ia";
@@ -6992,7 +6993,10 @@ function openGovernanceCenter() {
       scrollConversationToBottom("auto", true);
       return;
     }
-    transcript = historyToTranscript(page.messages, historyPageIDPrefix(page));
+    const hydratedTranscript = historyToTranscript(page.messages, historyPageIDPrefix(page));
+    const currentTab = tabs.find((candidate) => candidate.id === tab.id);
+    const runState = (currentTab?.running ?? tab.running) ? "running" : "idle";
+    transcript = transcriptForHistoryHydration(transcript, hydratedTranscript, runState);
     scrollConversationToBottom("auto", true);
   }
 

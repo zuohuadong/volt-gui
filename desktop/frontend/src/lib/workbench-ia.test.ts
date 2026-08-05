@@ -333,24 +333,44 @@ describe("unified workbench IA state", () => {
     expect(template?.prompt).toContain("ONNX");
     expect(template?.prompt).toContain("结构摘要");
     expect(template?.prompt).toContain("核心信息不足时先提问");
+    expect(template?.prompt).toContain("输入只给出总数时，不得自行拆分模块数据或补造日期");
+    expect(template?.prompt).toContain("统一使用“上线前”");
   });
 
   test("applies the shared office-output quality gate to every office template", () => {
     for (const template of WORK_OUTCOME_TEMPLATES) {
       expect(template.prompt).toContain("最终只能输出一份正文");
       expect(template.prompt).toContain("不得先输出 Markdown 源码再输出渲染版");
-      expect(template.prompt).toContain("人名、称谓、术语、字段名和数字必须与输入逐字一致");
+      expect(template.prompt).toContain("保存文件后也不得再次完整复述正文");
+      expect(template.prompt).toContain("输入事实 → 输出事实");
+      expect(template.prompt).toContain("前后端主体、状态码和技术判断必须与输入逐字一致");
       expect(template.prompt).toContain("禁止形近错字、乱码、随机字符");
+      expect(template.prompt).toContain("所有精确数字、日期、ID、模块分布和缺陷出现时间必须逐项追溯到输入");
+      expect(template.prompt).toContain("不得为凑齐总数、比例或叙述闭环反向构造分项数据");
+      expect(template.prompt).toContain("不得生造术语");
       expect(template.prompt).toContain("Markdown 表格和代码块必须完整闭合");
       expect(template.prompt).toContain("核对样本数、总和、公式、单位和结果");
       expect(template.prompt).toContain("独立复算");
+      expect(template.prompt).toContain("所有推算必须展示公式和舍入规则");
+      expect(template.prompt).toContain("统一标注“估算”或“约”");
     }
+  });
+
+  test("keeps organized materials formal, source-faithful, and unique", () => {
+    const template = WORK_OUTCOME_TEMPLATES.find((item) => item.id === "organize-materials");
+    expect(template?.prompt).toContain("材料 A/B/C 等来源标识必须原样保留");
+    expect(template?.prompt).toContain("核心风险点");
+    expect(template?.prompt).toContain("硬性截止日期");
+    expect(template?.prompt).toContain("只保留一份最终结果");
   });
 
   test("keeps meeting owners character-for-character identical", () => {
     const template = WORK_OUTCOME_TEMPLATES.find((item) => item.id === "meeting-followup");
     expect(template?.prompt).toContain("负责人姓名必须与原文逐字一致");
     expect(template?.prompt).toContain("“张工”不得改写为“Z工”");
+    expect(template?.prompt).toContain("“后端返回 200”不得改写成“前端返回 HTTP 200”或省略");
+    expect(template?.prompt).toContain("待确认事项不得擅自写入固定日期");
+    expect(template?.prompt).toContain("验收日期必须晚于方案提出日期");
   });
 
   test("requires tool-backed and independently checked arithmetic", () => {
@@ -358,6 +378,9 @@ describe("unified workbench IA state", () => {
     expect(template?.prompt).toContain("所有算术统计必须调用计算器或代码执行工具");
     expect(template?.prompt).toContain("保留可核对的计算式");
     expect(template?.prompt).toContain("独立复算");
+    expect(template?.prompt).toContain("340 × 4.5% = 15.3");
+    expect(template?.prompt).toContain("估算约 15 条");
+    expect(template?.prompt).toContain("原始值、公式、单位、舍入规则及“估算/约”标识");
   });
 
   test("keeps receipt fields pending until evidence exists and only settles the shell on turn_done", () => {

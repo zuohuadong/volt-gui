@@ -155,6 +155,22 @@ export interface WorkbenchSnapshotV2 {
   projectDockCollapsed: boolean;
 }
 
+export type TranscriptRunState = "idle" | "running";
+
+export function snapshotTaskTranscript(transcriptItems: TranscriptItem[]): TranscriptItem[] {
+  return transcriptItems.map((transcriptItem) => ({ ...transcriptItem }));
+}
+
+export function restoreTaskTranscript(
+  transcriptItems: TranscriptItem[],
+  runState: TranscriptRunState,
+): TranscriptItem[] {
+  return transcriptItems.map((transcriptItem) => ({
+    ...transcriptItem,
+    pending: runState === "running" ? transcriptItem.pending : false,
+  }));
+}
+
 export interface OutcomeTemplate {
   id: TaskOutcomeTemplateID;
   title: string;

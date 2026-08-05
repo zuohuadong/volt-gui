@@ -63,7 +63,7 @@ func TestRefreshModelsForTabAddsNewLiveModelForProviderNamespace(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":"qwen-gpu4/step3p7-flash"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"qwen-gpu4/new-model"}]}`))
 	}))
 	defer server.Close()
 
@@ -90,7 +90,7 @@ func TestRefreshModelsForTabAddsNewLiveModelForProviderNamespace(t *testing.T) {
 	models := modelCatalogTestApp("qwen-thinking/qwen-gpu4/old-model").RefreshModelsForTab("tab")
 	var found ModelInfo
 	for _, model := range models {
-		if model.Ref == "qwen-thinking/qwen-gpu4/step3p7-flash" {
+		if model.Ref == "qwen-thinking/qwen-gpu4/new-model" {
 			found = model
 			break
 		}
@@ -102,14 +102,14 @@ func TestRefreshModelsForTabAddsNewLiveModelForProviderNamespace(t *testing.T) {
 
 func TestReconcileModelCatalogDoesNotCrossSingleProviderNamespace(t *testing.T) {
 	configured := []ModelInfo{{
-		Ref:      "qwen-thinking/qwen-gpu4/step3p7-flash",
+		Ref:      "qwen-thinking/qwen-gpu4/chat-model",
 		Provider: "qwen-thinking",
-		Model:    "qwen-gpu4/step3p7-flash",
+		Model:    "qwen-gpu4/chat-model",
 	}}
 	probeKeys := map[string]string{"qwen-thinking": "gateway"}
 	outcomes := map[string]modelCatalogProbeOutcome{
 		"gateway": {modelIDs: []string{
-			"qwen-gpu4/step3p7-flash",
+			"qwen-gpu4/chat-model",
 			"glm-primary/glm-5.2-nvfp4",
 			"glm-5.2",
 		}},
@@ -124,11 +124,11 @@ func TestReconcileModelCatalogDoesNotCrossSingleProviderNamespace(t *testing.T) 
 func TestReconcileModelCatalogMapsBareModelToMatchingProviderName(t *testing.T) {
 	configured := []ModelInfo{
 		{Ref: "glm-5.2/glm-primary/glm-5.2-nvfp4", Provider: "glm-5.2", Model: "glm-primary/glm-5.2-nvfp4"},
-		{Ref: "qwen-thinking/qwen-gpu4/step3p7-flash", Provider: "qwen-thinking", Model: "qwen-gpu4/step3p7-flash"},
+		{Ref: "qwen-thinking/qwen-gpu4/chat-model", Provider: "qwen-thinking", Model: "qwen-gpu4/chat-model"},
 	}
 	probeKeys := map[string]string{"glm-5.2": "gateway", "qwen-thinking": "gateway"}
 	outcomes := map[string]modelCatalogProbeOutcome{
-		"gateway": {modelIDs: []string{"glm-5.2", "glm-primary/glm-5.2-nvfp4", "qwen-gpu4/step3p7-flash"}},
+		"gateway": {modelIDs: []string{"glm-5.2", "glm-primary/glm-5.2-nvfp4", "qwen-gpu4/chat-model"}},
 	}
 
 	models := reconcileModelCatalog(configured, probeKeys, outcomes)
@@ -167,10 +167,79 @@ func TestResolveModelCatalogSelectionAllowsValidatedLiveModel(t *testing.T) {
 		Name: "qwen-thinking", Kind: "openai", BaseURL: "http://127.0.0.1:9010/v1",
 		Model: "qwen-gpu4/old-model", APIKeyEnv: "LOCAL_API_KEY",
 	}}
-	ref := "qwen-thinking/qwen-gpu4/step3p7-flash"
+	ref := "qwen-thinking/qwen-gpu4/live-model"
 	entry, ok := resolveModelCatalogSelection(cfg, ref, []ModelInfo{{Ref: ref, Availability: "available"}})
-	if !ok || entry.Name != "qwen-thinking" || entry.Model != "qwen-gpu4/step3p7-flash" {
+	if !ok || entry.Name != "qwen-thinking" || entry.Model != "qwen-gpu4/live-model" {
 		t.Fatalf("resolved live model = %+v, ok=%v", entry, ok)
+	}
+}
+
+func TestReconcileModelCatalogKeepsRetiredCurrentModelUnavailable(t *testing.T) {
+	configured := []ModelInfo{{
+		Ref:      "qwen-thinking/qwen-gpu4/step3p7-flash",
+		Provider: "qwen-thinking",
+		Model:    "qwen-gpu4/step3p7-flash",
+		Current:  true,
+	}}
+	probeKeys := map[string]string{"qwen-thinking": "gateway"}
+	outcomes := map[string]modelCatalogProbeOutcome{
+		"gateway": {modelIDs: []string{"qwen-gpu4/step3p7-flash"}},
+	}
+
+	models := reconcileModelCatalog(configured, probeKeys, outcomes)
+	if len(models) != 1 || models[0].Availability != "unavailable" || models[0].UnavailableReason == "" {
+		t.Fatalf("retired current model = %+v, want one unavailable entry", models)
+	}
+}
+
+func TestReconcileModelCatalogSkipsRetiredDiscoveredModel(t *testing.T) {
+	configured := []ModelInfo{{
+		Ref:      "qwen-thinking/qwen-gpu4/old-model",
+		Provider: "qwen-thinking",
+		Model:    "qwen-gpu4/old-model",
+	}}
+	probeKeys := map[string]string{"qwen-thinking": "gateway"}
+	outcomes := map[string]modelCatalogProbeOutcome{
+		"gateway": {modelIDs: []string{"qwen-gpu4/step3p7-flash"}},
+	}
+
+	if models := reconcileModelCatalog(configured, probeKeys, outcomes); len(models) != 0 {
+		t.Fatalf("retired live model was rediscovered: %+v", models)
+	}
+}
+
+func TestResolveModelCatalogSelectionRejectsRetiredModel(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers = []config.ProviderEntry{{
+		Name: "qwen-thinking", Kind: "openai", BaseURL: "http://127.0.0.1:9010/v1",
+		Model: "qwen-gpu4/step3p7-flash", APIKeyEnv: "LOCAL_API_KEY",
+	}}
+	ref := "qwen-thinking/qwen-gpu4/step3p7-flash"
+	if entry, ok := resolveModelCatalogSelection(cfg, ref, []ModelInfo{{Ref: ref, Availability: "available"}}); ok || entry != nil {
+		t.Fatalf("retired model resolved: %+v", entry)
+	}
+}
+
+func TestResolveAccessibleDesktopFallbackSkipsRetiredModel(t *testing.T) {
+	cfg := config.Default()
+	cfg.DefaultModel = "qwen-thinking/qwen-gpu4/step3p7-flash"
+	cfg.Providers = []config.ProviderEntry{
+		{
+			Name: "qwen-thinking", Kind: "openai", BaseURL: "http://127.0.0.1:9010/v1",
+			Model: "qwen-gpu4/step3p7-flash", APIKeyEnv: "LOCAL_API_KEY",
+		},
+		{
+			Name: "healthy", Kind: "openai", BaseURL: "http://127.0.0.1:9011/v1",
+			Model: "healthy-model", APIKeyEnv: "LOCAL_API_KEY",
+		},
+	}
+
+	entry, ref, ok := resolveAccessibleDesktopFallback(cfg, "qwen-thinking/qwen-gpu4/step3p7-flash", map[string]bool{
+		"qwen-thinking": true,
+		"healthy":       true,
+	})
+	if !ok || ref != "healthy/healthy-model" || entry == nil || entry.Name != "healthy" {
+		t.Fatalf("fallback = entry:%+v ref:%q ok:%v, want healthy model", entry, ref, ok)
 	}
 }
 

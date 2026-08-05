@@ -199,6 +199,14 @@ const (
 	retiredvoltStepModel    = "qwen-gpu4/step3p7-flash"
 )
 
+// IsRetiredBundledvoltModel reports the known unhealthy OEM Step route. The
+// gateway can still advertise this model even though its chat-completion
+// response places final text in reasoning_content and leaves content empty.
+func IsRetiredBundledvoltModel(providerName, model string) bool {
+	return strings.EqualFold(strings.TrimSpace(providerName), retiredvoltStepProvider) &&
+		strings.TrimSpace(model) == retiredvoltStepModel
+}
+
 func migrateRetiredBundledvoltStep(c *Config) bool {
 	if c == nil {
 		return false
@@ -260,10 +268,9 @@ func retiredBundledvoltStepIndex(c *Config, replacement ProviderEntry) int {
 	}
 	for i := range c.Providers {
 		entry := c.Providers[i]
-		if strings.TrimSpace(entry.Name) == retiredvoltStepProvider &&
+		if IsRetiredBundledvoltModel(entry.Name, entry.Model) &&
 			strings.EqualFold(strings.TrimSpace(entry.Kind), "openai") &&
 			strings.TrimRight(strings.TrimSpace(entry.BaseURL), "/") == strings.TrimRight(replacement.BaseURL, "/") &&
-			strings.TrimSpace(entry.Model) == retiredvoltStepModel &&
 			len(entry.Models) == 0 && strings.TrimSpace(entry.APIKeyEnv) == replacement.APIKeyEnv {
 			return i
 		}

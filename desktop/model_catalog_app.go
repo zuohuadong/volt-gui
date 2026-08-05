@@ -115,6 +115,9 @@ func reconcileConfiguredCatalog(configured []ModelInfo, providerProbeKeys map[st
 }
 
 func reconcileConfiguredModel(model ModelInfo, outcome modelCatalogProbeOutcome, probed bool) (ModelInfo, bool) {
+	if config.IsRetiredBundledvoltModel(model.Provider, model.Model) {
+		return unavailableCurrentCatalogModel(model, "该模型路由已停用，请切换到可用模型。")
+	}
 	if !config.IsLikelyChatModel(model.Model) {
 		return unavailableCurrentCatalogModel(model, "当前模型不支持文本对话，请切换到聊天模型。")
 	}
@@ -166,6 +169,9 @@ func appendLiveCatalogModels(refreshed []ModelInfo, seenModels map[string]bool, 
 			continue
 		}
 		for _, providerName := range liveCatalogProviders(providers, liveModel) {
+			if config.IsRetiredBundledvoltModel(providerName, liveModel) {
+				continue
+			}
 			pairKey := modelCatalogPairKey(providerName, liveModel)
 			if seenModels[pairKey] {
 				continue
@@ -258,6 +264,9 @@ func modelCatalogNamespace(model string) string {
 
 func resolveModelCatalogSelection(cfg *config.Config, ref string, models []ModelInfo) (*config.ProviderEntry, bool) {
 	if entry, ok := cfg.ResolveModel(ref); ok {
+		if config.IsRetiredBundledvoltModel(entry.Name, entry.Model) {
+			return nil, false
+		}
 		return entry, true
 	}
 	for _, model := range models {
@@ -274,7 +283,7 @@ func (a *App) validateUnlistedCatalogModel(cfg *config.Config, workspaceRoot, re
 		return false
 	}
 	entry, ok := cfg.ResolveExplicitProviderModel(ref)
-	if !ok || !config.IsLikelyChatModel(entry.Model) || !modelProviderAccessAllowed(providerAccessSet(cfg.Desktop.ProviderAccess), entry.Name) {
+	if !ok || config.IsRetiredBundledvoltModel(entry.Name, entry.Model) || !config.IsLikelyChatModel(entry.Model) || !modelProviderAccessAllowed(providerAccessSet(cfg.Desktop.ProviderAccess), entry.Name) {
 		return false
 	}
 	entry.ResolveAPIKeyForRoot(workspaceRoot)
@@ -332,7 +341,7 @@ func (a *App) resolveDesktopModelForRebuild(workspaceRoot, ref string) (desktopM
 	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, ref)
 	access := providerAccessSet(cfg.Desktop.ProviderAccess)
 	if entry, ok := cfg.ResolveModel(ref); ok {
-		if modelProviderAccessAllowed(access, entry.Name) {
+		if modelProviderAccessAllowed(access, entry.Name) && !config.IsRetiredBundledvoltModel(entry.Name, entry.Model) {
 			return desktopModelResolution{entry: entry, ref: entry.Name + "/" + entry.Model}, nil
 		}
 	}
@@ -345,7 +354,7 @@ func (a *App) resolveDesktopModelForRebuild(workspaceRoot, ref string) (desktopM
 		return desktopModelResolution{}, fmt.Errorf("unknown model %q", ref)
 	}
 	entry, ok := cfg.ResolveModel(resolved)
-	if !ok || !modelProviderAccessAllowed(access, entry.Name) {
+	if !ok || !modelProviderAccessAllowed(access, entry.Name) || config.IsRetiredBundledvoltModel(entry.Name, entry.Model) {
 		if fallbackEntry, fallbackRef, found := resolveAccessibleDesktopFallback(cfg, ref, access); found {
 			return desktopModelResolution{entry: fallbackEntry, ref: fallbackRef, fallback: true}, nil
 		}
@@ -357,7 +366,7 @@ func (a *App) resolveDesktopModelForRebuild(workspaceRoot, ref string) (desktopM
 func resolveAccessibleDesktopFallback(cfg *config.Config, ref string, access map[string]bool) (*config.ProviderEntry, string, bool) {
 	defaultRef := strings.TrimSpace(cfg.DefaultModel)
 	if defaultRef != "" && defaultRef != strings.TrimSpace(ref) {
-		if entry, ok := cfg.ResolveModel(defaultRef); ok && modelProviderAccessAllowed(access, entry.Name) {
+		if entry, ok := cfg.ResolveModel(defaultRef); ok && modelProviderAccessAllowed(access, entry.Name) && !config.IsRetiredBundledvoltModel(entry.Name, entry.Model) {
 			return entry, entry.Name + "/" + entry.Model, true
 		}
 	}
@@ -367,7 +376,7 @@ func resolveAccessibleDesktopFallback(cfg *config.Config, ref string, access map
 			continue
 		}
 		fallbackRef := provider.Name + "/" + provider.DefaultModel()
-		if entry, ok := cfg.ResolveModel(fallbackRef); ok {
+		if entry, ok := cfg.ResolveModel(fallbackRef); ok && !config.IsRetiredBundledvoltModel(entry.Name, entry.Model) {
 			return entry, fallbackRef, true
 		}
 	}

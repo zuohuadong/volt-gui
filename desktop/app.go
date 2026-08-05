@@ -8025,6 +8025,9 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		return err
 	}
 	entry, ok := cfg.ResolveModel(name)
+	if ok && config.IsRetiredBundledvoltModel(entry.Name, entry.Model) {
+		return fmt.Errorf("model %q route is retired", name)
+	}
 	allowUnlistedModel := false
 	if !ok {
 		entry, ok = resolveModelCatalogSelection(cfg, name, a.RefreshModelsForTab(tabID))

@@ -210,13 +210,18 @@ func BotAccessActive(access config.BotAccessConfig) bool {
 
 func botAccessConfig(access config.BotAccessConfig) bot.AccessConfig {
 	return bot.AccessConfig{
-		Enabled:        access.Enabled,
-		AllowAll:       access.AllowAll,
-		PairingEnabled: access.PairingEnabled,
-		Users:          trimStringSlice(access.Users),
-		Groups:         trimStringSlice(access.Groups),
-		Approvers:      trimStringSlice(access.Approvers),
-		Admins:         trimStringSlice(access.Admins),
+		Enabled:                access.Enabled,
+		AllowAll:               access.AllowAll,
+		PairingEnabled:         access.PairingEnabled,
+		Users:                  trimStringSlice(access.Users),
+		Groups:                 trimStringSlice(access.Groups),
+		Approvers:              trimStringSlice(access.Approvers),
+		Admins:                 trimStringSlice(access.Admins),
+		WorkspaceRoots:         trimStringSlice(access.WorkspaceRoots),
+		ProjectIDs:             trimStringSlice(access.ProjectIDs),
+		AgentProfileIDs:        trimStringSlice(access.AgentProfileIDs),
+		PermissionCeiling:      strings.TrimSpace(access.PermissionCeiling),
+		RequireHighRiskConfirm: access.RequireHighRiskConfirm,
 	}
 }
 
@@ -241,15 +246,19 @@ func botSessionMappings(mappings []config.BotConnectionSessionMapping) []bot.Ses
 	out := make([]bot.SessionMapping, 0, len(mappings))
 	for _, mapping := range mappings {
 		out = append(out, bot.SessionMapping{
-			RemoteID:      strings.TrimSpace(mapping.RemoteID),
-			SessionID:     strings.TrimSpace(mapping.SessionID),
-			SessionSource: strings.TrimSpace(mapping.SessionSource),
-			ChatType:      strings.TrimSpace(mapping.ChatType),
-			UserID:        strings.TrimSpace(mapping.UserID),
-			ThreadID:      strings.TrimSpace(mapping.ThreadID),
-			Scope:         strings.TrimSpace(mapping.Scope),
-			WorkspaceRoot: strings.TrimSpace(mapping.WorkspaceRoot),
-			UpdatedAt:     strings.TrimSpace(mapping.UpdatedAt),
+			RemoteID:               strings.TrimSpace(mapping.RemoteID),
+			SessionID:              strings.TrimSpace(mapping.SessionID),
+			SessionSource:          strings.TrimSpace(mapping.SessionSource),
+			ChatType:               strings.TrimSpace(mapping.ChatType),
+			UserID:                 strings.TrimSpace(mapping.UserID),
+			ThreadID:               strings.TrimSpace(mapping.ThreadID),
+			ProjectID:              strings.TrimSpace(mapping.ProjectID),
+			AgentProfileID:         strings.TrimSpace(mapping.AgentProfileID),
+			PermissionCeiling:      strings.TrimSpace(mapping.PermissionCeiling),
+			RequireHighRiskConfirm: mapping.RequireHighRiskConfirm,
+			Scope:                  strings.TrimSpace(mapping.Scope),
+			WorkspaceRoot:          strings.TrimSpace(mapping.WorkspaceRoot),
+			UpdatedAt:              strings.TrimSpace(mapping.UpdatedAt),
 		})
 	}
 	return out

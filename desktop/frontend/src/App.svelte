@@ -169,7 +169,11 @@
     prependTranscriptPage,
     trimLiveTranscript,
   } from "./lib/history-pagination";
-  import { isConversationNearBottom, shouldAutoScrollConversation } from "./lib/conversation-scroll";
+  import {
+    isConversationNearBottom,
+    scrollConversationToTop,
+    shouldAutoScrollConversation,
+  } from "./lib/conversation-scroll";
   import { compactIdentifier, formatWorkbenchDateTime } from "./lib/workbench-format";
   import {
     INBOX_PROJECT_ID,
@@ -205,6 +209,7 @@
   import { checkpointRestoreMessage } from "./lib/checkpoint-feedback";
   import { stripInternalTranscriptBlocks } from "./lib/transcript-visibility";
   import { mergeStreamingText, reconcileAssistantText } from "./lib/assistant-stream";
+  import { insertTurnTranscriptItem } from "./lib/transcript-order";
   import type { AssistantTextEventKind } from "./lib/assistant-stream";
   import type {
     ActivityMode,
@@ -3308,7 +3313,7 @@
         historyPageTotalTurns += 1;
       }
     }
-    transcript.push(item);
+    transcript = insertTurnTranscriptItem(transcript, item);
     transcript = trimTranscriptItems(transcript);
     saveActiveSidebarConversationTranscript();
     scrollConversationToBottom();
@@ -7058,12 +7063,14 @@ function openGovernanceCenter() {
   }
 
   function scrollActivePageToTop() {
-    if (!backToTopTarget?.isConnected) {
+    const target = showActiveTranscript ? conversationScrollEl : backToTopTarget;
+    if (!target?.isConnected) {
       backToTopTarget = null;
       backToTopVisible = false;
       return;
     }
-    backToTopTarget.scrollTo({ top: 0, behavior: "smooth" });
+    scrollConversationToTop(target);
+    backToTopTarget = target;
     backToTopVisible = false;
   }
 

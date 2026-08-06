@@ -884,7 +884,7 @@ func useBundledXiguGateway(t *testing.T, baseURL string) {
 	t.Cleanup(func() { bundledEnvPath = previousPath })
 }
 
-func TestApplyUserConfigUpgradesOnStartupRetiresBundledXiguStep(t *testing.T) {
+func TestApplyUserConfigUpgradesOnStartupMigratesLegacyBundledXiguStep(t *testing.T) {
 	const baseURL = "http://gateway.internal.test:9010/v1"
 	useBundledXiguGateway(t, baseURL)
 
@@ -903,8 +903,8 @@ func TestApplyUserConfigUpgradesOnStartupRetiresBundledXiguStep(t *testing.T) {
 	cfg.Bot.Connections = []BotConnectionConfig{{ID: "connection", Model: "qwen-thinking"}}
 	cfg.Desktop.ProviderAccess = []string{"qwen-thinking", "custom"}
 	cfg.Providers = []ProviderEntry{{
-		Name: retiredXiguStepProvider, Kind: "openai", BaseURL: baseURL,
-		Model: retiredXiguStepModel, APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true,
+		Name: legacyXiguStepProvider, Kind: "openai", BaseURL: baseURL,
+		Model: legacyXiguStepModel, APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true,
 	}}
 	if err := cfg.SaveTo(path); err != nil {
 		t.Fatalf("SaveTo: %v", err)
@@ -914,17 +914,17 @@ func TestApplyUserConfigUpgradesOnStartupRetiresBundledXiguStep(t *testing.T) {
 		t.Fatalf("ApplyUserConfigUpgradesOnStartup: %v", err)
 	}
 	if !changed {
-		t.Fatal("v5 OEM config should migrate away from the unhealthy Step route")
+		t.Fatal("v5 OEM config should migrate the legacy Step route to the canonical step provider")
 	}
 	got := LoadForEditWithoutCredentials(path)
 	if got.ConfigVersion != 5 {
 		t.Fatalf("config_version = %d, want 5", got.ConfigVersion)
 	}
-	if _, ok := got.Provider(retiredXiguStepProvider); ok {
-		t.Fatalf("retired bundled Step provider remains after migration: %+v", got.Providers)
+	if _, ok := got.Provider(legacyXiguStepProvider); ok {
+		t.Fatalf("legacy bundled Step provider remains after migration: %+v", got.Providers)
 	}
-	if glm, ok := got.Provider("glm-5.2"); !ok || glm.Model != "glm-primary/glm-5.2-nvfp4" {
-		t.Fatalf("GLM replacement = %+v, ok=%v", glm, ok)
+	if step, ok := got.Provider("step"); !ok || step.Model != "step-3.7-flash" {
+		t.Fatalf("step provider = %+v, ok=%v", step, ok)
 	}
 	for field, ref := range map[string]string{
 		"default": got.DefaultModel, "planner": got.Agent.PlannerModel, "recovery": got.Agent.RecoveryModel,
@@ -932,14 +932,14 @@ func TestApplyUserConfigUpgradesOnStartupRetiresBundledXiguStep(t *testing.T) {
 		"bot": got.Bot.Model, "qq": got.Bot.QQ.Model, "route": got.Bot.Routes[0].Model,
 		"connection": got.Bot.Connections[0].Model,
 	} {
-		if ref != "glm-5.2" {
-			t.Errorf("%s model = %q, want glm-5.2", field, ref)
+		if ref != "step" {
+			t.Errorf("%s model = %q, want step", field, ref)
 		}
 	}
 	if got.Agent.SubagentModels["custom"] != "custom/model" {
 		t.Fatalf("custom subagent ref changed: %q", got.Agent.SubagentModels["custom"])
 	}
-	if want := []string{"glm-5.2", "custom"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
+	if want := []string{"step", "custom"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
 		t.Fatalf("provider_access = %+v, want %+v", got.Desktop.ProviderAccess, want)
 	}
 
@@ -949,18 +949,18 @@ func TestApplyUserConfigUpgradesOnStartupRetiresBundledXiguStep(t *testing.T) {
 	}
 }
 
-func TestApplyUserConfigUpgradesOnStartupReusesBundledGLM(t *testing.T) {
+func TestApplyUserConfigUpgradesOnStartupDeduplicatesLegacyStep(t *testing.T) {
 	const baseURL = "http://gateway.internal.test:9010/v1"
 	useBundledXiguGateway(t, baseURL)
 
 	path := UserConfigPath()
 	cfg := Default()
 	cfg.ConfigVersion = 5
-	cfg.DefaultModel = retiredXiguStepProvider
-	cfg.Desktop.ProviderAccess = []string{retiredXiguStepProvider, "glm-5.2", "custom"}
+	cfg.DefaultModel = legacyXiguStepProvider
+	cfg.Desktop.ProviderAccess = []string{legacyXiguStepProvider, "glm-5.2", "custom"}
 	cfg.Providers = append(cfg.Providers, ProviderEntry{
-		Name: retiredXiguStepProvider, Kind: "openai", BaseURL: baseURL,
-		Model: retiredXiguStepModel, APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true,
+		Name: legacyXiguStepProvider, Kind: "openai", BaseURL: baseURL,
+		Model: legacyXiguStepModel, APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true,
 	})
 	if err := cfg.SaveTo(path); err != nil {
 		t.Fatalf("SaveTo: %v", err)
@@ -971,19 +971,22 @@ func TestApplyUserConfigUpgradesOnStartupReusesBundledGLM(t *testing.T) {
 		t.Fatalf("existing replacement migration = changed:%v err:%v, want changed", changed, err)
 	}
 	got := LoadForEditWithoutCredentials(path)
-	if _, ok := got.Provider(retiredXiguStepProvider); ok {
-		t.Fatalf("retired bundled Step provider remains after migration: %+v", got.Providers)
+	if _, ok := got.Provider(legacyXiguStepProvider); ok {
+		t.Fatalf("legacy bundled Step provider remains after migration: %+v", got.Providers)
 	}
-	replacementCount := 0
+	stepCount := 0
 	for _, entry := range got.Providers {
-		if entry.Name == "glm-5.2" {
-			replacementCount++
+		if entry.Name == "step" {
+			stepCount++
 		}
 	}
-	if replacementCount != 1 {
-		t.Fatalf("bundled GLM provider count = %d, want 1", replacementCount)
+	if stepCount != 1 {
+		t.Fatalf("bundled step provider count = %d, want 1", stepCount)
 	}
-	if want := []string{"glm-5.2", "custom"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
+	if got.DefaultModel != "step" {
+		t.Fatalf("default model = %q, want step", got.DefaultModel)
+	}
+	if want := []string{"step", "glm-5.2", "custom"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
 		t.Fatalf("provider_access = %+v, want %+v", got.Desktop.ProviderAccess, want)
 	}
 }
@@ -994,10 +997,10 @@ func TestApplyUserConfigUpgradesOnStartupPreservesCustomStepProvider(t *testing.
 	path := UserConfigPath()
 	cfg := Default()
 	cfg.ConfigVersion = 5
-	cfg.DefaultModel = retiredXiguStepProvider
+	cfg.DefaultModel = legacyXiguStepProvider
 	cfg.Providers = append(cfg.Providers, ProviderEntry{
-		Name: retiredXiguStepProvider, Kind: "openai", BaseURL: "https://custom.example/v1",
-		Model: retiredXiguStepModel, APIKeyEnv: "CUSTOM_STEP_KEY", ContextWindow: 200_000,
+		Name: legacyXiguStepProvider, Kind: "openai", BaseURL: "https://custom.example/v1",
+		Model: legacyXiguStepModel, APIKeyEnv: "CUSTOM_STEP_KEY", ContextWindow: 200_000,
 	})
 	if err := cfg.SaveTo(path); err != nil {
 		t.Fatalf("SaveTo: %v", err)
@@ -1008,42 +1011,83 @@ func TestApplyUserConfigUpgradesOnStartupPreservesCustomStepProvider(t *testing.
 		t.Fatalf("custom provider migration = changed:%v err:%v, want no-op", changed, err)
 	}
 	got := LoadForEditWithoutCredentials(path)
-	custom, ok := got.Provider(retiredXiguStepProvider)
+	custom, ok := got.Provider(legacyXiguStepProvider)
 	if !ok || custom.BaseURL != "https://custom.example/v1" || custom.APIKeyEnv != "CUSTOM_STEP_KEY" {
 		t.Fatalf("custom Step provider changed: %+v, ok=%v", custom, ok)
 	}
-	if got.DefaultModel != retiredXiguStepProvider {
+	if got.DefaultModel != legacyXiguStepProvider {
 		t.Fatalf("custom default model = %q, want preserved", got.DefaultModel)
 	}
 }
 
-func TestApplyUserConfigUpgradesOnStartupPreservesCustomGLMReplacement(t *testing.T) {
+func TestApplyUserConfigUpgradesOnStartupMigratesLegacyStepPreservingCustomGLM(t *testing.T) {
 	const baseURL = "http://gateway.internal.test:9010/v1"
 	useBundledXiguGateway(t, baseURL)
 
 	path := UserConfigPath()
 	cfg := Default()
 	cfg.ConfigVersion = 5
-	cfg.DefaultModel = retiredXiguStepProvider
+	cfg.DefaultModel = legacyXiguStepProvider
 	cfg.Providers = []ProviderEntry{
 		{Name: "glm-5.2", Kind: "openai", BaseURL: "https://custom.example/v1", Model: "custom-glm", APIKeyEnv: "CUSTOM_GLM_KEY"},
-		{Name: retiredXiguStepProvider, Kind: "openai", BaseURL: baseURL, Model: retiredXiguStepModel, APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true},
+		{Name: legacyXiguStepProvider, Kind: "openai", BaseURL: baseURL, Model: legacyXiguStepModel, APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true},
 	}
 	if err := cfg.SaveTo(path); err != nil {
 		t.Fatalf("SaveTo: %v", err)
 	}
 
 	changed, err := ApplyUserConfigUpgradesOnStartup(path)
-	if err != nil || changed {
-		t.Fatalf("custom GLM replacement migration = changed:%v err:%v, want no-op", changed, err)
+	if err != nil || !changed {
+		t.Fatalf("legacy Step migration = changed:%v err:%v, want changed", changed, err)
 	}
 	got := LoadForEditWithoutCredentials(path)
 	custom, ok := got.Provider("glm-5.2")
 	if !ok || custom.BaseURL != "https://custom.example/v1" || custom.Model != "custom-glm" || custom.APIKeyEnv != "CUSTOM_GLM_KEY" {
 		t.Fatalf("custom GLM provider changed: %+v, ok=%v", custom, ok)
 	}
-	if _, ok := got.Provider(retiredXiguStepProvider); !ok {
-		t.Fatalf("custom GLM collision removed the bundled Step route: %+v", got.Providers)
+	if _, ok := got.Provider(legacyXiguStepProvider); ok {
+		t.Fatalf("legacy bundled Step provider remains after migration: %+v", got.Providers)
+	}
+	if step, ok := got.Provider("step"); !ok || step.Model != "step-3.7-flash" {
+		t.Fatalf("step provider = %+v, ok=%v", step, ok)
+	}
+	if got.DefaultModel != "step" {
+		t.Fatalf("default model = %q, want step", got.DefaultModel)
+	}
+}
+
+func TestApplyUserConfigUpgradesOnStartupMigratesLegacyBundledXiguGLM(t *testing.T) {
+	const baseURL = "http://gateway.internal.test:9010/v1"
+	useBundledXiguGateway(t, baseURL)
+
+	path := UserConfigPath()
+	cfg := Default()
+	cfg.ConfigVersion = 5
+	cfg.DefaultModel = "glm-5.2"
+	cfg.Providers = []ProviderEntry{{
+		Name: "glm-5.2", Kind: "openai", BaseURL: baseURL,
+		Model: legacyXiguGLMModel, APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true,
+	}}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	changed, err := ApplyUserConfigUpgradesOnStartup(path)
+	if err != nil || !changed {
+		t.Fatalf("legacy GLM migration = changed:%v err:%v, want changed", changed, err)
+	}
+	got := LoadForEditWithoutCredentials(path)
+	glm, ok := got.Provider("glm-5.2")
+	if !ok || glm.Model != "glm-5.2" {
+		t.Fatalf("glm provider = %+v, ok=%v, want model glm-5.2", glm, ok)
+	}
+	if got.DefaultModel != "glm-5.2" {
+		t.Fatalf("default model = %q, want glm-5.2", got.DefaultModel)
+	}
+
+	again, err := ApplyUserConfigUpgradesOnStartup(path)
+	if err != nil || again {
+		t.Fatalf("second migration = changed:%v err:%v, want no-op", again, err)
 	}
 }
 

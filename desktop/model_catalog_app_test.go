@@ -174,7 +174,7 @@ func TestResolveModelCatalogSelectionAllowsValidatedLiveModel(t *testing.T) {
 	}
 }
 
-func TestReconcileModelCatalogKeepsRetiredCurrentModelUnavailable(t *testing.T) {
+func TestReconcileModelCatalogKeepsLegacyCurrentModelUnavailable(t *testing.T) {
 	configured := []ModelInfo{{
 		Ref:      "qwen-thinking/qwen-gpu4/step3p7-flash",
 		Provider: "qwen-thinking",
@@ -188,11 +188,11 @@ func TestReconcileModelCatalogKeepsRetiredCurrentModelUnavailable(t *testing.T) 
 
 	models := reconcileModelCatalog(configured, probeKeys, outcomes)
 	if len(models) != 1 || models[0].Availability != "unavailable" || models[0].UnavailableReason == "" {
-		t.Fatalf("retired current model = %+v, want one unavailable entry", models)
+		t.Fatalf("legacy current model = %+v, want one unavailable entry", models)
 	}
 }
 
-func TestReconcileModelCatalogSkipsRetiredDiscoveredModel(t *testing.T) {
+func TestReconcileModelCatalogSkipsLegacyDiscoveredModel(t *testing.T) {
 	configured := []ModelInfo{{
 		Ref:      "qwen-thinking/qwen-gpu4/old-model",
 		Provider: "qwen-thinking",
@@ -204,11 +204,11 @@ func TestReconcileModelCatalogSkipsRetiredDiscoveredModel(t *testing.T) {
 	}
 
 	if models := reconcileModelCatalog(configured, probeKeys, outcomes); len(models) != 0 {
-		t.Fatalf("retired live model was rediscovered: %+v", models)
+		t.Fatalf("legacy live model was rediscovered: %+v", models)
 	}
 }
 
-func TestResolveModelCatalogSelectionRejectsRetiredModel(t *testing.T) {
+func TestResolveModelCatalogSelectionRejectsLegacyModel(t *testing.T) {
 	cfg := config.Default()
 	cfg.Providers = []config.ProviderEntry{{
 		Name: "qwen-thinking", Kind: "openai", BaseURL: "http://127.0.0.1:9010/v1",
@@ -216,11 +216,11 @@ func TestResolveModelCatalogSelectionRejectsRetiredModel(t *testing.T) {
 	}}
 	ref := "qwen-thinking/qwen-gpu4/step3p7-flash"
 	if entry, ok := resolveModelCatalogSelection(cfg, ref, []ModelInfo{{Ref: ref, Availability: "available"}}); ok || entry != nil {
-		t.Fatalf("retired model resolved: %+v", entry)
+		t.Fatalf("legacy model resolved: %+v", entry)
 	}
 }
 
-func TestResolveAccessibleDesktopFallbackSkipsRetiredModel(t *testing.T) {
+func TestResolveAccessibleDesktopFallbackSkipsLegacyModel(t *testing.T) {
 	cfg := config.Default()
 	cfg.DefaultModel = "qwen-thinking/qwen-gpu4/step3p7-flash"
 	cfg.Providers = []config.ProviderEntry{

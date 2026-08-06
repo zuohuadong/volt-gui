@@ -159,12 +159,12 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 		return false, fmt.Errorf("config %s: %w", path, err)
 	}
 	defaultVersion := Default().ConfigVersion
-	currentVersionXiguRecovery := header.ConfigVersion >= defaultVersion && hasRetiredBundledXiguStep(&header)
+	currentVersionXiguRecovery := header.ConfigVersion >= defaultVersion && hasLegacyBundledXiguRoutes(&header)
 	if header.ConfigVersion >= defaultVersion && !currentVersionXiguRecovery {
 		return false, nil
 	}
 	cfg := LoadForEdit(path)
-	changed := migrateRetiredBundledXiguStep(cfg)
+	changed := migrateLegacyBundledXiguRoutes(cfg)
 	if header.ConfigVersion < deepSeekPricingResetConfigVersion {
 		resetOfficialProviderPricingDefaults(cfg)
 		changed = true
@@ -195,83 +195,110 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 }
 
 const (
-	retiredXiguStepProvider = "qwen-thinking"
-	retiredXiguStepModel    = "qwen-gpu4/step3p7-flash"
+	legacyXiguStepProvider = "qwen-thinking"
+	legacyXiguStepModel    = "qwen-gpu4/step3p7-flash"
+	legacyXiguGLMProvider  = "glm-5.2"
+	legacyXiguGLMModel     = "glm-primary/glm-5.2-nvfp4"
 )
 
-// IsRetiredBundledXiguModel reports the known unhealthy OEM Step route. The
-// gateway can still advertise this model even though its chat-completion
-// response places final text in reasoning_content and leaves content empty.
-func IsRetiredBundledXiguModel(providerName, model string) bool {
-	return strings.EqualFold(strings.TrimSpace(providerName), retiredXiguStepProvider) &&
-		strings.TrimSpace(model) == retiredXiguStepModel
+// IsLegacyBundledXiguModel reports OEM gateway routes that predate the current
+// un-namespaced glm-5.2 / step-3.7-flash catalog. Startup migration rewrites
+// them to the canonical bundled providers instead of serving the stale
+// namespaced IDs.
+func IsLegacyBundledXiguModel(providerName, model string) bool {
+	model = strings.TrimSpace(model)
+	switch strings.ToLower(strings.TrimSpace(providerName)) {
+	case legacyXiguStepProvider:
+		return model == legacyXiguStepModel
+	case legacyXiguGLMProvider:
+		return model == legacyXiguGLMModel
+	}
+	return false
 }
 
-func migrateRetiredBundledXiguStep(c *Config) bool {
+func migrateLegacyBundledXiguRoutes(c *Config) bool {
 	if c == nil {
 		return false
 	}
-	replacementRef, bundled := bundledXiguProviderDefaults()
-	if replacementRef == "" || len(bundled) != 1 {
+	defaultRef, bundled := bundledXiguProviderDefaults()
+	if defaultRef == "" || len(bundled) == 0 {
 		return false
 	}
-	replacement := bundled[0]
-	retiredIndex := retiredBundledXiguStepIndex(c, replacement)
-	if retiredIndex < 0 {
-		return false
+	canonical := map[string]ProviderEntry{}
+	for _, entry := range bundled {
+		canonical[entry.Name] = entry
 	}
-	configuredReplacement, replacementExists := c.Provider(replacementRef)
-	if replacementExists && !sameBundledXiguRoute(*configuredReplacement, replacement) {
-		return false
+	base := bundled[0]
+	changed := false
+	if index := legacyBundledXiguRouteIndex(c, legacyXiguStepProvider, legacyXiguStepModel, base); index >= 0 {
+		step := canonical["step"]
+		if existing, ok := c.Provider(step.Name); ok {
+			if sameBundledXiguRoute(*existing, step) {
+				migrateLegacyXiguAgentRefs(c, legacyXiguStepProvider, step.Name)
+				migrateLegacyXiguBotRefs(c, legacyXiguStepProvider, step.Name)
+				c.Desktop.ProviderAccess = migrateLegacyXiguProviderAccess(c.Desktop.ProviderAccess, legacyXiguStepProvider, step.Name)
+				c.Providers = append(c.Providers[:index], c.Providers[index+1:]...)
+				changed = true
+			}
+		} else {
+			migrateLegacyXiguAgentRefs(c, legacyXiguStepProvider, step.Name)
+			migrateLegacyXiguBotRefs(c, legacyXiguStepProvider, step.Name)
+			c.Desktop.ProviderAccess = migrateLegacyXiguProviderAccess(c.Desktop.ProviderAccess, legacyXiguStepProvider, step.Name)
+			c.Providers[index].Name = step.Name
+			c.Providers[index].Model = step.Model
+			changed = true
+		}
 	}
-	migrateRetiredXiguAgentRefs(c, replacementRef)
-	migrateRetiredXiguBotRefs(c, replacementRef)
-	c.Desktop.ProviderAccess = migrateRetiredXiguProviderAccess(c.Desktop.ProviderAccess, replacementRef)
-	if replacementExists {
-		c.Providers = append(c.Providers[:retiredIndex], c.Providers[retiredIndex+1:]...)
-	} else {
-		c.Providers[retiredIndex] = replacement
+	if index := legacyBundledXiguRouteIndex(c, legacyXiguGLMProvider, legacyXiguGLMModel, base); index >= 0 {
+		c.Providers[index].Model = canonical[legacyXiguGLMProvider].Model
+		changed = true
 	}
-	return true
+	return changed
 }
 
-func migrateRetiredXiguAgentRefs(c *Config, replacement string) {
-	c.DefaultModel = migrateRetiredXiguModelRef(c.DefaultModel, replacement)
-	c.Agent.PlannerModel = migrateRetiredXiguModelRef(c.Agent.PlannerModel, replacement)
-	c.Agent.GuardianModel = migrateRetiredXiguModelRef(c.Agent.GuardianModel, replacement)
-	c.Agent.RecoveryModel = migrateRetiredXiguModelRef(c.Agent.RecoveryModel, replacement)
-	c.Agent.SubagentModel = migrateRetiredXiguModelRef(c.Agent.SubagentModel, replacement)
+func migrateLegacyXiguAgentRefs(c *Config, from, to string) {
+	c.DefaultModel = migrateLegacyXiguModelRef(c.DefaultModel, from, to)
+	c.Agent.PlannerModel = migrateLegacyXiguModelRef(c.Agent.PlannerModel, from, to)
+	c.Agent.GuardianModel = migrateLegacyXiguModelRef(c.Agent.GuardianModel, from, to)
+	c.Agent.RecoveryModel = migrateLegacyXiguModelRef(c.Agent.RecoveryModel, from, to)
+	c.Agent.SubagentModel = migrateLegacyXiguModelRef(c.Agent.SubagentModel, from, to)
 	for name, ref := range c.Agent.SubagentModels {
-		c.Agent.SubagentModels[name] = migrateRetiredXiguModelRef(ref, replacement)
+		c.Agent.SubagentModels[name] = migrateLegacyXiguModelRef(ref, from, to)
 	}
 }
 
-func migrateRetiredXiguBotRefs(c *Config, replacement string) {
-	c.Bot.Model = migrateRetiredXiguModelRef(c.Bot.Model, replacement)
-	c.Bot.QQ.Model = migrateRetiredXiguModelRef(c.Bot.QQ.Model, replacement)
+func migrateLegacyXiguBotRefs(c *Config, from, to string) {
+	c.Bot.Model = migrateLegacyXiguModelRef(c.Bot.Model, from, to)
+	c.Bot.QQ.Model = migrateLegacyXiguModelRef(c.Bot.QQ.Model, from, to)
 	for i := range c.Bot.Routes {
-		c.Bot.Routes[i].Model = migrateRetiredXiguModelRef(c.Bot.Routes[i].Model, replacement)
+		c.Bot.Routes[i].Model = migrateLegacyXiguModelRef(c.Bot.Routes[i].Model, from, to)
 	}
 	for i := range c.Bot.Connections {
-		c.Bot.Connections[i].Model = migrateRetiredXiguModelRef(c.Bot.Connections[i].Model, replacement)
+		c.Bot.Connections[i].Model = migrateLegacyXiguModelRef(c.Bot.Connections[i].Model, from, to)
 	}
 }
 
-func hasRetiredBundledXiguStep(c *Config) bool {
+func hasLegacyBundledXiguRoutes(c *Config) bool {
 	_, bundled := bundledXiguProviderDefaults()
-	return len(bundled) == 1 && retiredBundledXiguStepIndex(c, bundled[0]) >= 0
+	if len(bundled) == 0 {
+		return false
+	}
+	base := bundled[0]
+	return legacyBundledXiguRouteIndex(c, legacyXiguStepProvider, legacyXiguStepModel, base) >= 0 ||
+		legacyBundledXiguRouteIndex(c, legacyXiguGLMProvider, legacyXiguGLMModel, base) >= 0
 }
 
-func retiredBundledXiguStepIndex(c *Config, replacement ProviderEntry) int {
+func legacyBundledXiguRouteIndex(c *Config, name, model string, base ProviderEntry) int {
 	if c == nil {
 		return -1
 	}
 	for i := range c.Providers {
 		entry := c.Providers[i]
-		if IsRetiredBundledXiguModel(entry.Name, entry.Model) &&
+		if strings.EqualFold(strings.TrimSpace(entry.Name), name) &&
+			strings.TrimSpace(entry.Model) == model &&
 			strings.EqualFold(strings.TrimSpace(entry.Kind), "openai") &&
-			strings.TrimRight(strings.TrimSpace(entry.BaseURL), "/") == strings.TrimRight(replacement.BaseURL, "/") &&
-			len(entry.Models) == 0 && strings.TrimSpace(entry.APIKeyEnv) == replacement.APIKeyEnv {
+			strings.TrimRight(strings.TrimSpace(entry.BaseURL), "/") == strings.TrimRight(base.BaseURL, "/") &&
+			len(entry.Models) == 0 && strings.TrimSpace(entry.APIKeyEnv) == base.APIKeyEnv {
 			return i
 		}
 	}
@@ -286,15 +313,15 @@ func sameBundledXiguRoute(got, want ProviderEntry) bool {
 		len(got.Models) == 0 && strings.TrimSpace(got.APIKeyEnv) == strings.TrimSpace(want.APIKeyEnv)
 }
 
-func migrateRetiredXiguModelRef(ref, replacement string) string {
+func migrateLegacyXiguModelRef(ref, from, to string) string {
 	trimmed := strings.TrimSpace(ref)
-	if trimmed == retiredXiguStepProvider || strings.HasPrefix(trimmed, retiredXiguStepProvider+"/") {
-		return replacement
+	if trimmed == from || strings.HasPrefix(trimmed, from+"/") {
+		return to
 	}
 	return ref
 }
 
-func migrateRetiredXiguProviderAccess(access []string, replacement string) []string {
+func migrateLegacyXiguProviderAccess(access []string, from, to string) []string {
 	if access == nil {
 		return nil
 	}
@@ -302,8 +329,8 @@ func migrateRetiredXiguProviderAccess(access []string, replacement string) []str
 	seen := make(map[string]struct{}, len(access))
 	for _, name := range access {
 		name = strings.TrimSpace(name)
-		if name == retiredXiguStepProvider {
-			name = replacement
+		if name == from {
+			name = to
 		}
 		if name == "" {
 			continue

@@ -1932,7 +1932,8 @@ func bundledXiguProviderDefaults() (string, []ProviderEntry) {
 	}
 	baseURL := strings.TrimRight(rawBaseURL, "/")
 	return "glm-5.2", []ProviderEntry{
-		{Name: "glm-5.2", Kind: "openai", BaseURL: baseURL, Model: "glm-primary/glm-5.2-nvfp4", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true},
+		{Name: "glm-5.2", Kind: "openai", BaseURL: baseURL, Model: "glm-5.2", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true},
+		{Name: "step", Kind: "openai", BaseURL: baseURL, Model: "step-3.7-flash", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 262_144, NoProxy: true},
 	}
 }
 

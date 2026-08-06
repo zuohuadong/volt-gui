@@ -8025,8 +8025,8 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		return err
 	}
 	entry, ok := cfg.ResolveModel(name)
-	if ok && config.IsRetiredBundledXiguModel(entry.Name, entry.Model) {
-		return fmt.Errorf("model %q route is retired", name)
+	if ok && config.IsLegacyBundledXiguModel(entry.Name, entry.Model) {
+		return fmt.Errorf("model %q route was renamed", name)
 	}
 	allowUnlistedModel := false
 	if !ok {

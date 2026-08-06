@@ -65,14 +65,15 @@ func TestDefaultUsesBundledXiguGateway(t *testing.T) {
 	t.Cleanup(func() { bundledEnvPath = previousPath })
 
 	cfg := Default()
-	if cfg.DefaultModel != "glm-5.2" {
-		t.Fatalf("default model = %q, want glm-5.2", cfg.DefaultModel)
+	if cfg.DefaultModel != "vlm" {
+		t.Fatalf("default model = %q, want vlm", cfg.DefaultModel)
 	}
 	want := map[string]struct {
-		model string
+		model  string
+		vision bool
 	}{
-		"glm-5.2": {model: "glm-5.2/glm-5.2"},
-		"step":    {model: "step-3.7-flash/step-3.7-flash"},
+		"xllm": {model: "glm-5.2/glm-5.2", vision: false},
+		"vlm":  {model: "step-3.7-flash/step-3.7-flash", vision: true},
 	}
 	if len(cfg.Providers) != len(want)+2 {
 		t.Fatalf("provider count = %d, want %d bundled and 2 public defaults", len(cfg.Providers), len(want))
@@ -82,11 +83,11 @@ func TestDefaultUsesBundledXiguGateway(t *testing.T) {
 		if !ok {
 			t.Fatalf("bundled provider %q is missing", name)
 		}
-		if entry.BaseURL != baseURL || entry.Model != expected.model || entry.APIKeyEnv != "XIGU_API_KEY" || entry.Vision || !entry.NoProxy {
+		if entry.BaseURL != baseURL || entry.Model != expected.model || entry.APIKeyEnv != "XIGU_API_KEY" || entry.Vision != expected.vision || !entry.NoProxy {
 			t.Errorf("provider %q = %+v", name, entry)
 		}
 	}
-	for _, retired := range []string{"xllm", "vlm", "qwen-thinking"} {
+	for _, retired := range []string{"glm-5.2", "step", "qwen-thinking"} {
 		if _, ok := cfg.Provider(retired); ok {
 			t.Errorf("retired bundled provider %q is still configured", retired)
 		}

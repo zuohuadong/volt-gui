@@ -200,19 +200,24 @@ const (
 	legacyXiguGLMProvider  = "glm-5.2"
 	legacyXiguGLMModel     = "glm-primary/glm-5.2-nvfp4"
 	legacyXiguGLMModelV2   = "glm-5.2"
+	// Pre-logical-name bundled provider: step → vlm.
+	// (glm-5.2 already == legacyXiguGLMProvider, so no separate V2 constant.)
+	legacyXiguStepProviderV2 = "step"
 )
 
 // IsLegacyBundledXiguModel reports OEM gateway routes that predate the current
-// un-namespaced glm-5.2 / step-3.7-flash catalog. Startup migration rewrites
-// them to the canonical bundled providers instead of serving the stale
-// namespaced IDs.
+// xllm/vlm logical-name catalog. Startup migration rewrites them to the
+// canonical bundled providers instead of serving stale namespaced or
+// pre-logical-name IDs.
 func IsLegacyBundledXiguModel(providerName, model string) bool {
 	model = strings.TrimSpace(model)
 	switch strings.ToLower(strings.TrimSpace(providerName)) {
 	case legacyXiguStepProvider:
 		return model == legacyXiguStepModel
+	case legacyXiguStepProviderV2:
+		return model == legacyXiguStepModel || model == "step-3.7-flash/step-3.7-flash"
 	case legacyXiguGLMProvider:
-		return model == legacyXiguGLMModel || model == legacyXiguGLMModelV2
+		return model == legacyXiguGLMModel || model == legacyXiguGLMModelV2 || model == "glm-5.2/glm-5.2"
 	}
 	return false
 }
@@ -231,31 +236,55 @@ func migrateLegacyBundledXiguRoutes(c *Config) bool {
 	}
 	base := bundled[0]
 	changed := false
-	if index := legacyBundledXiguRouteIndex(c, legacyXiguStepProvider, legacyXiguStepModel, base); index >= 0 {
-		step := canonical["step"]
-		if existing, ok := c.Provider(step.Name); ok {
-			if sameBundledXiguRoute(*existing, step) {
-				migrateLegacyXiguAgentRefs(c, legacyXiguStepProvider, step.Name)
-				migrateLegacyXiguBotRefs(c, legacyXiguStepProvider, step.Name)
-				c.Desktop.ProviderAccess = migrateLegacyXiguProviderAccess(c.Desktop.ProviderAccess, legacyXiguStepProvider, step.Name)
-				c.Providers = append(c.Providers[:index], c.Providers[index+1:]...)
+
+	// Migrate legacy Step routes (qwen-thinking or pre-logical-name "step") → vlm.
+	vlm := canonical["vlm"]
+	stepLegacyProviders := []string{legacyXiguStepProvider, legacyXiguStepProviderV2}
+	stepLegacyModels := []string{legacyXiguStepModel, "step-3.7-flash/step-3.7-flash"}
+	for _, legacyName := range stepLegacyProviders {
+		for _, legacyModel := range stepLegacyModels {
+			index := legacyBundledXiguRouteIndex(c, legacyName, legacyModel, base)
+			if index < 0 {
+				continue
+			}
+			if existing, ok := c.Provider(vlm.Name); ok {
+				if sameBundledXiguRoute(*existing, vlm) {
+					migrateLegacyXiguAgentRefs(c, legacyName, vlm.Name)
+					migrateLegacyXiguBotRefs(c, legacyName, vlm.Name)
+					c.Desktop.ProviderAccess = migrateLegacyXiguProviderAccess(c.Desktop.ProviderAccess, legacyName, vlm.Name)
+					c.Providers = append(c.Providers[:index], c.Providers[index+1:]...)
+					changed = true
+				}
+			} else {
+				migrateLegacyXiguAgentRefs(c, legacyName, vlm.Name)
+				migrateLegacyXiguBotRefs(c, legacyName, vlm.Name)
+				c.Desktop.ProviderAccess = migrateLegacyXiguProviderAccess(c.Desktop.ProviderAccess, legacyName, vlm.Name)
+				c.Providers[index].Name = vlm.Name
+				c.Providers[index].Model = vlm.Model
 				changed = true
 			}
-		} else {
-			migrateLegacyXiguAgentRefs(c, legacyXiguStepProvider, step.Name)
-			migrateLegacyXiguBotRefs(c, legacyXiguStepProvider, step.Name)
-			c.Desktop.ProviderAccess = migrateLegacyXiguProviderAccess(c.Desktop.ProviderAccess, legacyXiguStepProvider, step.Name)
-			c.Providers[index].Name = step.Name
-			c.Providers[index].Model = step.Model
-			changed = true
+			break // only one match per legacy name; provider slice shifted
 		}
 	}
-	if index := legacyBundledXiguRouteIndex(c, legacyXiguGLMProvider, legacyXiguGLMModel, base); index >= 0 {
-		c.Providers[index].Model = canonical[legacyXiguGLMProvider].Model
-		changed = true
-	} else if index := legacyBundledXiguRouteIndex(c, legacyXiguGLMProvider, legacyXiguGLMModelV2, base); index >= 0 {
-		c.Providers[index].Model = canonical[legacyXiguGLMProvider].Model
-		changed = true
+
+	// Migrate legacy GLM routes (glm-primary namespaced or pre-logical-name "glm-5.2") → xllm.
+	xllm := canonical["xllm"]
+	glmLegacyProviders := []string{legacyXiguGLMProvider}
+	glmLegacyModels := []string{legacyXiguGLMModel, legacyXiguGLMModelV2, "glm-5.2/glm-5.2"}
+	for _, legacyName := range glmLegacyProviders {
+		for _, legacyModel := range glmLegacyModels {
+			index := legacyBundledXiguRouteIndex(c, legacyName, legacyModel, base)
+			if index < 0 {
+				continue
+			}
+			c.Providers[index].Name = xllm.Name
+			c.Providers[index].Model = xllm.Model
+			migrateLegacyXiguAgentRefs(c, legacyName, xllm.Name)
+			migrateLegacyXiguBotRefs(c, legacyName, xllm.Name)
+			c.Desktop.ProviderAccess = migrateLegacyXiguProviderAccess(c.Desktop.ProviderAccess, legacyName, xllm.Name)
+			changed = true
+			break
+		}
 	}
 	return changed
 }
@@ -289,8 +318,10 @@ func hasLegacyBundledXiguRoutes(c *Config) bool {
 	}
 	base := bundled[0]
 	return legacyBundledXiguRouteIndex(c, legacyXiguStepProvider, legacyXiguStepModel, base) >= 0 ||
+		legacyBundledXiguRouteIndex(c, legacyXiguStepProviderV2, "step-3.7-flash/step-3.7-flash", base) >= 0 ||
 		legacyBundledXiguRouteIndex(c, legacyXiguGLMProvider, legacyXiguGLMModel, base) >= 0 ||
-		legacyBundledXiguRouteIndex(c, legacyXiguGLMProvider, legacyXiguGLMModelV2, base) >= 0
+		legacyBundledXiguRouteIndex(c, legacyXiguGLMProvider, legacyXiguGLMModelV2, base) >= 0 ||
+		legacyBundledXiguRouteIndex(c, legacyXiguGLMProvider, "glm-5.2/glm-5.2", base) >= 0
 }
 
 func legacyBundledXiguRouteIndex(c *Config, name, model string, base ProviderEntry) int {

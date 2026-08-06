@@ -123,20 +123,20 @@ func TestReconcileModelCatalogDoesNotCrossSingleProviderNamespace(t *testing.T) 
 
 func TestReconcileModelCatalogMapsBareModelToMatchingProviderName(t *testing.T) {
 	configured := []ModelInfo{
-		{Ref: "glm-5.2/glm-primary/glm-5.2-nvfp4", Provider: "glm-5.2", Model: "glm-primary/glm-5.2-nvfp4"},
+		{Ref: "glm-5.2/glm-5.2/glm-5.2", Provider: "glm-5.2", Model: "glm-5.2/glm-5.2"},
 		{Ref: "qwen-thinking/qwen-gpu4/chat-model", Provider: "qwen-thinking", Model: "qwen-gpu4/chat-model"},
 	}
 	probeKeys := map[string]string{"glm-5.2": "gateway", "qwen-thinking": "gateway"}
 	outcomes := map[string]modelCatalogProbeOutcome{
-		"gateway": {modelIDs: []string{"glm-5.2", "glm-primary/glm-5.2-nvfp4", "qwen-gpu4/chat-model"}},
+		"gateway": {modelIDs: []string{"glm-5.2/glm-5.2", "qwen-gpu4/chat-model"}},
 	}
 
 	models := reconcileModelCatalog(configured, probeKeys, outcomes)
 	for _, model := range models {
-		if model.Ref == "glm-5.2/glm-5.2" && model.Availability == "available" {
+		if model.Ref == "glm-5.2/glm-5.2/glm-5.2" && model.Availability == "available" {
 			return
 		}
-		if model.Ref == "qwen-thinking/glm-5.2" {
+		if model.Ref == "qwen-thinking/glm-5.2/glm-5.2" {
 			t.Fatalf("bare GLM model mapped to qwen provider: %+v", model)
 		}
 	}

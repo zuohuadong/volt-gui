@@ -71,8 +71,8 @@ func TestDefaultUsesBundledvoltGateway(t *testing.T) {
 	want := map[string]struct {
 		model string
 	}{
-		"glm-5.2": {model: "glm-5.2"},
-		"step":    {model: "step-3.7-flash"},
+		"glm-5.2": {model: "glm-5.2/glm-5.2"},
+		"step":    {model: "step-3.7-flash/step-3.7-flash"},
 	}
 	if len(cfg.Providers) != len(want)+2 {
 		t.Fatalf("provider count = %d, want %d bundled and 2 public defaults", len(cfg.Providers), len(want))

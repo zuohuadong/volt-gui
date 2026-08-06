@@ -199,6 +199,7 @@ const (
 	legacyvoltStepModel    = "qwen-gpu4/step3p7-flash"
 	legacyvoltGLMProvider  = "glm-5.2"
 	legacyvoltGLMModel     = "glm-primary/glm-5.2-nvfp4"
+	legacyvoltGLMModelV2   = "glm-5.2"
 )
 
 // IsLegacyBundledvoltModel reports OEM gateway routes that predate the current
@@ -211,7 +212,7 @@ func IsLegacyBundledvoltModel(providerName, model string) bool {
 	case legacyvoltStepProvider:
 		return model == legacyvoltStepModel
 	case legacyvoltGLMProvider:
-		return model == legacyvoltGLMModel
+		return model == legacyvoltGLMModel || model == legacyvoltGLMModelV2
 	}
 	return false
 }
@@ -252,6 +253,9 @@ func migrateLegacyBundledvoltRoutes(c *Config) bool {
 	if index := legacyBundledvoltRouteIndex(c, legacyvoltGLMProvider, legacyvoltGLMModel, base); index >= 0 {
 		c.Providers[index].Model = canonical[legacyvoltGLMProvider].Model
 		changed = true
+	} else if index := legacyBundledvoltRouteIndex(c, legacyvoltGLMProvider, legacyvoltGLMModelV2, base); index >= 0 {
+		c.Providers[index].Model = canonical[legacyvoltGLMProvider].Model
+		changed = true
 	}
 	return changed
 }
@@ -285,7 +289,8 @@ func hasLegacyBundledvoltRoutes(c *Config) bool {
 	}
 	base := bundled[0]
 	return legacyBundledvoltRouteIndex(c, legacyvoltStepProvider, legacyvoltStepModel, base) >= 0 ||
-		legacyBundledvoltRouteIndex(c, legacyvoltGLMProvider, legacyvoltGLMModel, base) >= 0
+		legacyBundledvoltRouteIndex(c, legacyvoltGLMProvider, legacyvoltGLMModel, base) >= 0 ||
+		legacyBundledvoltRouteIndex(c, legacyvoltGLMProvider, legacyvoltGLMModelV2, base) >= 0
 }
 
 func legacyBundledvoltRouteIndex(c *Config, name, model string, base ProviderEntry) int {

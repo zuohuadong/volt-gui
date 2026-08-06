@@ -98,6 +98,30 @@ export function removeQueuedMessage(queue: readonly QueuedThreadMessage[], id: s
   return queue.filter((message) => message.id !== id);
 }
 
+// retargetQueuedMessages re-keys a thread's pending queue when its backend tab
+// is re-created under a new id (for example after the previous tab expired
+// while the user was viewing another project). Without the re-key, queued
+// follow-ups stay attached to the dead tab id and silently disappear from the
+// composer. Messages caught mid-flight are paused so the user can confirm
+// before they send against the rebound thread.
+export function retargetQueuedMessages(
+  queue: readonly QueuedThreadMessage[],
+  fromTabId: string,
+  toTabId: string,
+): QueuedThreadMessage[] {
+  if (!fromTabId || !toTabId || fromTabId === toTabId) return [...queue];
+  return queue.map((message) => {
+    if (message.tabId !== fromTabId) return message;
+    if (message.status !== "sending") return { ...message, tabId: toTabId };
+    return {
+      ...message,
+      tabId: toTabId,
+      status: "paused",
+      error: "对话已重新连接，请确认后继续发送",
+    };
+  });
+}
+
 export function moveQueuedMessage(
   queue: readonly QueuedThreadMessage[],
   id: string,

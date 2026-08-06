@@ -9,6 +9,7 @@ import {
   rekeyComposerDraft,
   resolveQueuedDeliveryFailure,
   removeQueuedMessage,
+  retargetQueuedMessages,
   settleQueuedTurn,
   takeNextFollowUp,
   updateQueuedMessage,
@@ -29,6 +30,34 @@ function queued(id: string, overrides: Partial<QueuedThreadMessage> = {}): Queue
 }
 
 describe("thread message queue", () => {
+  test("retargets pending follow-ups when the thread rebinds to a new tab id", () => {
+    const initial = [
+      queued("a", { tabId: "tab-old" }),
+      queued("b", { tabId: "tab-old", status: "paused", error: "上一轮失败" }),
+      queued("c", { tabId: "tab-old", status: "sending" }),
+      queued("other", { tabId: "tab-2" }),
+    ];
+
+    const next = retargetQueuedMessages(initial, "tab-old", "tab-new");
+
+    expect(next.find((message) => message.id === "a")).toMatchObject({ tabId: "tab-new", status: "queued" });
+    expect(next.find((message) => message.id === "b")).toMatchObject({ tabId: "tab-new", status: "paused", error: "上一轮失败" });
+    expect(next.find((message) => message.id === "c")).toMatchObject({
+      tabId: "tab-new",
+      status: "paused",
+      error: "对话已重新连接，请确认后继续发送",
+    });
+    expect(next.find((message) => message.id === "other")).toMatchObject({ tabId: "tab-2", status: "queued" });
+  });
+
+  test("keeps the queue untouched when the tab id is unchanged or missing", () => {
+    const initial = [queued("a", { tabId: "tab-old" })];
+
+    expect(retargetQueuedMessages(initial, "tab-old", "tab-old")).toEqual(initial);
+    expect(retargetQueuedMessages(initial, "", "tab-new")).toEqual(initial);
+    expect(retargetQueuedMessages(initial, "tab-old", "")).toEqual(initial);
+  });
+
   test("queues a trimmed follow-up for the active thread without losing the model submission", () => {
     const next = enqueueQueuedMessage([], {
       id: "q-1",

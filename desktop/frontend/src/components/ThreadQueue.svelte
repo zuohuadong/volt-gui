@@ -26,6 +26,14 @@
   let editDraft = $state("");
   let openMenuIds = new Set<string>();
 
+  // Bound the rendered rows so a long follow-up queue cannot squeeze the
+  // template cards and composer off the home/new-task page; the action
+  // overlays stay unclipped because the list itself still does not scroll.
+  const COLLAPSED_VISIBLE_COUNT = 3;
+  let expanded = $state(false);
+  const visibleMessages = $derived(expanded ? messages : messages.slice(0, COLLAPSED_VISIBLE_COUNT));
+  const hiddenCount = $derived(messages.length - visibleMessages.length);
+
   onDestroy(() => onMenuOpenChange?.(false));
 
   function handleMenuToggle(event: Event, id: string) {
@@ -80,7 +88,7 @@
     </header>
 
     <div class="thread-queue__list">
-      {#each messages as message, index (message.id)}
+      {#each visibleMessages as message, index (message.id)}
         <article class:paused={message.status === "paused"} class:failed={message.status === "failed"}>
           <div class="thread-queue__index">{index + 1}</div>
           <div class="thread-queue__content">
@@ -115,6 +123,11 @@
         </article>
       {/each}
     </div>
+    {#if messages.length > COLLAPSED_VISIBLE_COUNT}
+      <button type="button" class="thread-queue__toggle" onclick={() => (expanded = !expanded)}>
+        {expanded ? "收起队列" : `展开剩余 ${hiddenCount} 条`}
+      </button>
+    {/if}
   </section>
 {/if}
 
@@ -168,6 +181,23 @@
     gap: 6px;
     /* 让工作台外层负责滚动，避免行内浮层被局部滚动容器裁切。 */
     overflow: visible;
+  }
+
+  .thread-queue__toggle {
+    justify-self: center;
+    min-height: 28px;
+    padding: 0 12px;
+    border: 1px solid var(--border, #dce1db);
+    border-radius: 7px;
+    background: var(--card, #fff);
+    color: var(--muted-foreground, #687169);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .thread-queue__toggle:hover {
+    color: var(--foreground, #1f2421);
   }
 
   article {

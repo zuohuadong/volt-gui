@@ -11,6 +11,7 @@ describe("turn progress", () => {
   });
 
   test("warns before the desktop turn protection limit", () => {
-    expect(turnProgress("assistant", true, 310_000).hint).toContain("接近 6 分钟保护上限");
+    expect(turnProgress("assistant", true, 310_000).hint).toContain("当前阶段耗时较长");
+    expect(turnProgress("assistant", true, 670_000).hint).toContain("接近 12 分钟保护上限");
   });
 });

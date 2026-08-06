@@ -371,7 +371,19 @@ describe("unified workbench IA state", () => {
       expect(template.prompt).toContain("不得暴露工具内部参数名、模式名或枚举值");
       expect(template.prompt).toContain("硬性字数上限");
       expect(template.prompt).toContain("超限必须压缩到限制内");
+      expect(template.prompt).toContain("本条消息声明的任务类型是唯一准绳");
+      expect(template.prompt).toContain("不得把上一任务的正文、标题、称谓或格式带入本次交付");
+      expect(template.prompt).toContain("最多调用一轮");
+      expect(template.prompt).toContain("不得为自检反复调用工具");
     }
+  });
+
+  test("refuses to fabricate an analysis when no data was provided", () => {
+    const template = WORK_OUTCOME_TEMPLATES.find((item) => item.id === "analyze-data");
+    expect(template?.prompt).toContain("未提供任何实际表格、指标或结构化数据");
+    expect(template?.prompt).toContain("不得生成空分析框架");
+    expect(template?.prompt).toContain("标记为“已完成”");
+    expect(template?.prompt).toContain("明确说明未收到数据");
   });
 
   test("keeps organized materials formal, source-faithful, and unique", () => {

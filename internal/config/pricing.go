@@ -159,12 +159,12 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 		return false, fmt.Errorf("config %s: %w", path, err)
 	}
 	defaultVersion := Default().ConfigVersion
-	currentVersionvoltRecovery := header.ConfigVersion >= defaultVersion && hasRetiredBundledvoltStep(&header)
+	currentVersionvoltRecovery := header.ConfigVersion >= defaultVersion && hasLegacyBundledvoltRoutes(&header)
 	if header.ConfigVersion >= defaultVersion && !currentVersionvoltRecovery {
 		return false, nil
 	}
 	cfg := LoadForEdit(path)
-	changed := migrateRetiredBundledvoltStep(cfg)
+	changed := migrateLegacyBundledvoltRoutes(cfg)
 	if header.ConfigVersion < deepSeekPricingResetConfigVersion {
 		resetOfficialProviderPricingDefaults(cfg)
 		changed = true
@@ -195,83 +195,110 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 }
 
 const (
-	retiredvoltStepProvider = "qwen-thinking"
-	retiredvoltStepModel    = "qwen-gpu4/step3p7-flash"
+	legacyvoltStepProvider = "qwen-thinking"
+	legacyvoltStepModel    = "qwen-gpu4/step3p7-flash"
+	legacyvoltGLMProvider  = "glm-5.2"
+	legacyvoltGLMModel     = "glm-primary/glm-5.2-nvfp4"
 )
 
-// IsRetiredBundledvoltModel reports the known unhealthy OEM Step route. The
-// gateway can still advertise this model even though its chat-completion
-// response places final text in reasoning_content and leaves content empty.
-func IsRetiredBundledvoltModel(providerName, model string) bool {
-	return strings.EqualFold(strings.TrimSpace(providerName), retiredvoltStepProvider) &&
-		strings.TrimSpace(model) == retiredvoltStepModel
+// IsLegacyBundledvoltModel reports OEM gateway routes that predate the current
+// un-namespaced glm-5.2 / step-3.7-flash catalog. Startup migration rewrites
+// them to the canonical bundled providers instead of serving the stale
+// namespaced IDs.
+func IsLegacyBundledvoltModel(providerName, model string) bool {
+	model = strings.TrimSpace(model)
+	switch strings.ToLower(strings.TrimSpace(providerName)) {
+	case legacyvoltStepProvider:
+		return model == legacyvoltStepModel
+	case legacyvoltGLMProvider:
+		return model == legacyvoltGLMModel
+	}
+	return false
 }
 
-func migrateRetiredBundledvoltStep(c *Config) bool {
+func migrateLegacyBundledvoltRoutes(c *Config) bool {
 	if c == nil {
 		return false
 	}
-	replacementRef, bundled := bundledvoltProviderDefaults()
-	if replacementRef == "" || len(bundled) != 1 {
+	defaultRef, bundled := bundledvoltProviderDefaults()
+	if defaultRef == "" || len(bundled) == 0 {
 		return false
 	}
-	replacement := bundled[0]
-	retiredIndex := retiredBundledvoltStepIndex(c, replacement)
-	if retiredIndex < 0 {
-		return false
+	canonical := map[string]ProviderEntry{}
+	for _, entry := range bundled {
+		canonical[entry.Name] = entry
 	}
-	configuredReplacement, replacementExists := c.Provider(replacementRef)
-	if replacementExists && !sameBundledvoltRoute(*configuredReplacement, replacement) {
-		return false
+	base := bundled[0]
+	changed := false
+	if index := legacyBundledvoltRouteIndex(c, legacyvoltStepProvider, legacyvoltStepModel, base); index >= 0 {
+		step := canonical["step"]
+		if existing, ok := c.Provider(step.Name); ok {
+			if sameBundledvoltRoute(*existing, step) {
+				migrateLegacyvoltAgentRefs(c, legacyvoltStepProvider, step.Name)
+				migrateLegacyvoltBotRefs(c, legacyvoltStepProvider, step.Name)
+				c.Desktop.ProviderAccess = migrateLegacyvoltProviderAccess(c.Desktop.ProviderAccess, legacyvoltStepProvider, step.Name)
+				c.Providers = append(c.Providers[:index], c.Providers[index+1:]...)
+				changed = true
+			}
+		} else {
+			migrateLegacyvoltAgentRefs(c, legacyvoltStepProvider, step.Name)
+			migrateLegacyvoltBotRefs(c, legacyvoltStepProvider, step.Name)
+			c.Desktop.ProviderAccess = migrateLegacyvoltProviderAccess(c.Desktop.ProviderAccess, legacyvoltStepProvider, step.Name)
+			c.Providers[index].Name = step.Name
+			c.Providers[index].Model = step.Model
+			changed = true
+		}
 	}
-	migrateRetiredvoltAgentRefs(c, replacementRef)
-	migrateRetiredvoltBotRefs(c, replacementRef)
-	c.Desktop.ProviderAccess = migrateRetiredvoltProviderAccess(c.Desktop.ProviderAccess, replacementRef)
-	if replacementExists {
-		c.Providers = append(c.Providers[:retiredIndex], c.Providers[retiredIndex+1:]...)
-	} else {
-		c.Providers[retiredIndex] = replacement
+	if index := legacyBundledvoltRouteIndex(c, legacyvoltGLMProvider, legacyvoltGLMModel, base); index >= 0 {
+		c.Providers[index].Model = canonical[legacyvoltGLMProvider].Model
+		changed = true
 	}
-	return true
+	return changed
 }
 
-func migrateRetiredvoltAgentRefs(c *Config, replacement string) {
-	c.DefaultModel = migrateRetiredvoltModelRef(c.DefaultModel, replacement)
-	c.Agent.PlannerModel = migrateRetiredvoltModelRef(c.Agent.PlannerModel, replacement)
-	c.Agent.GuardianModel = migrateRetiredvoltModelRef(c.Agent.GuardianModel, replacement)
-	c.Agent.RecoveryModel = migrateRetiredvoltModelRef(c.Agent.RecoveryModel, replacement)
-	c.Agent.SubagentModel = migrateRetiredvoltModelRef(c.Agent.SubagentModel, replacement)
+func migrateLegacyvoltAgentRefs(c *Config, from, to string) {
+	c.DefaultModel = migrateLegacyvoltModelRef(c.DefaultModel, from, to)
+	c.Agent.PlannerModel = migrateLegacyvoltModelRef(c.Agent.PlannerModel, from, to)
+	c.Agent.GuardianModel = migrateLegacyvoltModelRef(c.Agent.GuardianModel, from, to)
+	c.Agent.RecoveryModel = migrateLegacyvoltModelRef(c.Agent.RecoveryModel, from, to)
+	c.Agent.SubagentModel = migrateLegacyvoltModelRef(c.Agent.SubagentModel, from, to)
 	for name, ref := range c.Agent.SubagentModels {
-		c.Agent.SubagentModels[name] = migrateRetiredvoltModelRef(ref, replacement)
+		c.Agent.SubagentModels[name] = migrateLegacyvoltModelRef(ref, from, to)
 	}
 }
 
-func migrateRetiredvoltBotRefs(c *Config, replacement string) {
-	c.Bot.Model = migrateRetiredvoltModelRef(c.Bot.Model, replacement)
-	c.Bot.QQ.Model = migrateRetiredvoltModelRef(c.Bot.QQ.Model, replacement)
+func migrateLegacyvoltBotRefs(c *Config, from, to string) {
+	c.Bot.Model = migrateLegacyvoltModelRef(c.Bot.Model, from, to)
+	c.Bot.QQ.Model = migrateLegacyvoltModelRef(c.Bot.QQ.Model, from, to)
 	for i := range c.Bot.Routes {
-		c.Bot.Routes[i].Model = migrateRetiredvoltModelRef(c.Bot.Routes[i].Model, replacement)
+		c.Bot.Routes[i].Model = migrateLegacyvoltModelRef(c.Bot.Routes[i].Model, from, to)
 	}
 	for i := range c.Bot.Connections {
-		c.Bot.Connections[i].Model = migrateRetiredvoltModelRef(c.Bot.Connections[i].Model, replacement)
+		c.Bot.Connections[i].Model = migrateLegacyvoltModelRef(c.Bot.Connections[i].Model, from, to)
 	}
 }
 
-func hasRetiredBundledvoltStep(c *Config) bool {
+func hasLegacyBundledvoltRoutes(c *Config) bool {
 	_, bundled := bundledvoltProviderDefaults()
-	return len(bundled) == 1 && retiredBundledvoltStepIndex(c, bundled[0]) >= 0
+	if len(bundled) == 0 {
+		return false
+	}
+	base := bundled[0]
+	return legacyBundledvoltRouteIndex(c, legacyvoltStepProvider, legacyvoltStepModel, base) >= 0 ||
+		legacyBundledvoltRouteIndex(c, legacyvoltGLMProvider, legacyvoltGLMModel, base) >= 0
 }
 
-func retiredBundledvoltStepIndex(c *Config, replacement ProviderEntry) int {
+func legacyBundledvoltRouteIndex(c *Config, name, model string, base ProviderEntry) int {
 	if c == nil {
 		return -1
 	}
 	for i := range c.Providers {
 		entry := c.Providers[i]
-		if IsRetiredBundledvoltModel(entry.Name, entry.Model) &&
+		if strings.EqualFold(strings.TrimSpace(entry.Name), name) &&
+			strings.TrimSpace(entry.Model) == model &&
 			strings.EqualFold(strings.TrimSpace(entry.Kind), "openai") &&
-			strings.TrimRight(strings.TrimSpace(entry.BaseURL), "/") == strings.TrimRight(replacement.BaseURL, "/") &&
-			len(entry.Models) == 0 && strings.TrimSpace(entry.APIKeyEnv) == replacement.APIKeyEnv {
+			strings.TrimRight(strings.TrimSpace(entry.BaseURL), "/") == strings.TrimRight(base.BaseURL, "/") &&
+			len(entry.Models) == 0 && strings.TrimSpace(entry.APIKeyEnv) == base.APIKeyEnv {
 			return i
 		}
 	}
@@ -286,15 +313,15 @@ func sameBundledvoltRoute(got, want ProviderEntry) bool {
 		len(got.Models) == 0 && strings.TrimSpace(got.APIKeyEnv) == strings.TrimSpace(want.APIKeyEnv)
 }
 
-func migrateRetiredvoltModelRef(ref, replacement string) string {
+func migrateLegacyvoltModelRef(ref, from, to string) string {
 	trimmed := strings.TrimSpace(ref)
-	if trimmed == retiredvoltStepProvider || strings.HasPrefix(trimmed, retiredvoltStepProvider+"/") {
-		return replacement
+	if trimmed == from || strings.HasPrefix(trimmed, from+"/") {
+		return to
 	}
 	return ref
 }
 
-func migrateRetiredvoltProviderAccess(access []string, replacement string) []string {
+func migrateLegacyvoltProviderAccess(access []string, from, to string) []string {
 	if access == nil {
 		return nil
 	}
@@ -302,8 +329,8 @@ func migrateRetiredvoltProviderAccess(access []string, replacement string) []str
 	seen := make(map[string]struct{}, len(access))
 	for _, name := range access {
 		name = strings.TrimSpace(name)
-		if name == retiredvoltStepProvider {
-			name = replacement
+		if name == from {
+			name = to
 		}
 		if name == "" {
 			continue

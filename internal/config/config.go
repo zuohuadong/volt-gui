@@ -1931,9 +1931,12 @@ func bundledvoltProviderDefaults() (string, []ProviderEntry) {
 		return "", nil
 	}
 	baseURL := strings.TrimRight(rawBaseURL, "/")
-	return "glm-5.2", []ProviderEntry{
-		{Name: "glm-5.2", Kind: "openai", BaseURL: baseURL, Model: "glm-5.2/glm-5.2", APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, NoProxy: true},
-		{Name: "step", Kind: "openai", BaseURL: baseURL, Model: "step-3.7-flash/step-3.7-flash", APIKeyEnv: "volt_API_KEY", ContextWindow: 262_144, NoProxy: true},
+	// Stable logical names (xllm = 纯文本, vlm = 多模态) decouple the dropdown
+	// label from the underlying gateway model ID. When the backend model changes,
+	// only the Model field below needs updating — the provider name stays fixed.
+	return "vlm", []ProviderEntry{
+		{Name: "xllm", Kind: "openai", BaseURL: baseURL, Model: "glm-5.2/glm-5.2", APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, NoProxy: true},
+		{Name: "vlm", Kind: "openai", BaseURL: baseURL, Model: "step-3.7-flash/step-3.7-flash", APIKeyEnv: "volt_API_KEY", ContextWindow: 262_144, Vision: true, NoProxy: true},
 	}
 }
 

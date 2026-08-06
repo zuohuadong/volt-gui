@@ -914,7 +914,7 @@ func TestApplyUserConfigUpgradesOnStartupMigratesLegacyBundledvoltStep(t *testin
 		t.Fatalf("ApplyUserConfigUpgradesOnStartup: %v", err)
 	}
 	if !changed {
-		t.Fatal("v5 OEM config should migrate the legacy Step route to the canonical step provider")
+		t.Fatal("v5 OEM config should migrate the legacy Step route to the canonical vlm provider")
 	}
 	got := LoadForEditWithoutCredentials(path)
 	if got.ConfigVersion != 5 {
@@ -923,8 +923,8 @@ func TestApplyUserConfigUpgradesOnStartupMigratesLegacyBundledvoltStep(t *testin
 	if _, ok := got.Provider(legacyvoltStepProvider); ok {
 		t.Fatalf("legacy bundled Step provider remains after migration: %+v", got.Providers)
 	}
-	if step, ok := got.Provider("step"); !ok || step.Model != "step-3.7-flash/step-3.7-flash" {
-		t.Fatalf("step provider = %+v, ok=%v", step, ok)
+	if vlm, ok := got.Provider("vlm"); !ok || vlm.Model != "step-3.7-flash/step-3.7-flash" {
+		t.Fatalf("vlm provider = %+v, ok=%v", vlm, ok)
 	}
 	for field, ref := range map[string]string{
 		"default": got.DefaultModel, "planner": got.Agent.PlannerModel, "recovery": got.Agent.RecoveryModel,
@@ -932,14 +932,14 @@ func TestApplyUserConfigUpgradesOnStartupMigratesLegacyBundledvoltStep(t *testin
 		"bot": got.Bot.Model, "qq": got.Bot.QQ.Model, "route": got.Bot.Routes[0].Model,
 		"connection": got.Bot.Connections[0].Model,
 	} {
-		if ref != "step" {
-			t.Errorf("%s model = %q, want step", field, ref)
+		if ref != "vlm" {
+			t.Errorf("%s model = %q, want vlm", field, ref)
 		}
 	}
 	if got.Agent.SubagentModels["custom"] != "custom/model" {
 		t.Fatalf("custom subagent ref changed: %q", got.Agent.SubagentModels["custom"])
 	}
-	if want := []string{"step", "custom"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
+	if want := []string{"vlm", "custom"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
 		t.Fatalf("provider_access = %+v, want %+v", got.Desktop.ProviderAccess, want)
 	}
 
@@ -974,19 +974,19 @@ func TestApplyUserConfigUpgradesOnStartupDeduplicatesLegacyStep(t *testing.T) {
 	if _, ok := got.Provider(legacyvoltStepProvider); ok {
 		t.Fatalf("legacy bundled Step provider remains after migration: %+v", got.Providers)
 	}
-	stepCount := 0
+	vlmCount := 0
 	for _, entry := range got.Providers {
-		if entry.Name == "step" {
-			stepCount++
+		if entry.Name == "vlm" {
+			vlmCount++
 		}
 	}
-	if stepCount != 1 {
-		t.Fatalf("bundled step provider count = %d, want 1", stepCount)
+	if vlmCount != 1 {
+		t.Fatalf("bundled vlm provider count = %d, want 1", vlmCount)
 	}
-	if got.DefaultModel != "step" {
-		t.Fatalf("default model = %q, want step", got.DefaultModel)
+	if got.DefaultModel != "vlm" {
+		t.Fatalf("default model = %q, want vlm", got.DefaultModel)
 	}
-	if want := []string{"step", "glm-5.2", "custom"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
+	if want := []string{"vlm", "glm-5.2", "custom"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
 		t.Fatalf("provider_access = %+v, want %+v", got.Desktop.ProviderAccess, want)
 	}
 }
@@ -1041,6 +1041,8 @@ func TestApplyUserConfigUpgradesOnStartupMigratesLegacyStepPreservingCustomGLM(t
 		t.Fatalf("legacy Step migration = changed:%v err:%v, want changed", changed, err)
 	}
 	got := LoadForEditWithoutCredentials(path)
+	// The custom GLM provider has a non-bundled base_url, so it must survive
+	// migration under its original name "glm-5.2".
 	custom, ok := got.Provider("glm-5.2")
 	if !ok || custom.BaseURL != "https://custom.example/v1" || custom.Model != "custom-glm" || custom.APIKeyEnv != "CUSTOM_GLM_KEY" {
 		t.Fatalf("custom GLM provider changed: %+v, ok=%v", custom, ok)
@@ -1048,11 +1050,11 @@ func TestApplyUserConfigUpgradesOnStartupMigratesLegacyStepPreservingCustomGLM(t
 	if _, ok := got.Provider(legacyvoltStepProvider); ok {
 		t.Fatalf("legacy bundled Step provider remains after migration: %+v", got.Providers)
 	}
-	if step, ok := got.Provider("step"); !ok || step.Model != "step-3.7-flash/step-3.7-flash" {
-		t.Fatalf("step provider = %+v, ok=%v", step, ok)
+	if vlm, ok := got.Provider("vlm"); !ok || vlm.Model != "step-3.7-flash/step-3.7-flash" {
+		t.Fatalf("vlm provider = %+v, ok=%v", vlm, ok)
 	}
-	if got.DefaultModel != "step" {
-		t.Fatalf("default model = %q, want step", got.DefaultModel)
+	if got.DefaultModel != "vlm" {
+		t.Fatalf("default model = %q, want vlm", got.DefaultModel)
 	}
 }
 
@@ -1077,12 +1079,12 @@ func TestApplyUserConfigUpgradesOnStartupMigratesLegacyBundledvoltGLM(t *testing
 		t.Fatalf("legacy GLM migration = changed:%v err:%v, want changed", changed, err)
 	}
 	got := LoadForEditWithoutCredentials(path)
-	glm, ok := got.Provider("glm-5.2")
-	if !ok || glm.Model != "glm-5.2/glm-5.2" {
-		t.Fatalf("glm provider = %+v, ok=%v, want model glm-5.2", glm, ok)
+	xllm, ok := got.Provider("xllm")
+	if !ok || xllm.Model != "glm-5.2/glm-5.2" {
+		t.Fatalf("xllm provider = %+v, ok=%v, want model glm-5.2/glm-5.2", xllm, ok)
 	}
-	if got.DefaultModel != "glm-5.2" {
-		t.Fatalf("default model = %q, want glm-5.2", got.DefaultModel)
+	if got.DefaultModel != "xllm" {
+		t.Fatalf("default model = %q, want xllm", got.DefaultModel)
 	}
 
 	again, err := ApplyUserConfigUpgradesOnStartup(path)

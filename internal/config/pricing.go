@@ -200,19 +200,24 @@ const (
 	legacyvoltGLMProvider  = "glm-5.2"
 	legacyvoltGLMModel     = "glm-primary/glm-5.2-nvfp4"
 	legacyvoltGLMModelV2   = "glm-5.2"
+	// Pre-logical-name bundled provider: step → vlm.
+	// (glm-5.2 already == legacyvoltGLMProvider, so no separate V2 constant.)
+	legacyvoltStepProviderV2 = "step"
 )
 
 // IsLegacyBundledvoltModel reports OEM gateway routes that predate the current
-// un-namespaced glm-5.2 / step-3.7-flash catalog. Startup migration rewrites
-// them to the canonical bundled providers instead of serving the stale
-// namespaced IDs.
+// xllm/vlm logical-name catalog. Startup migration rewrites them to the
+// canonical bundled providers instead of serving stale namespaced or
+// pre-logical-name IDs.
 func IsLegacyBundledvoltModel(providerName, model string) bool {
 	model = strings.TrimSpace(model)
 	switch strings.ToLower(strings.TrimSpace(providerName)) {
 	case legacyvoltStepProvider:
 		return model == legacyvoltStepModel
+	case legacyvoltStepProviderV2:
+		return model == legacyvoltStepModel || model == "step-3.7-flash/step-3.7-flash"
 	case legacyvoltGLMProvider:
-		return model == legacyvoltGLMModel || model == legacyvoltGLMModelV2
+		return model == legacyvoltGLMModel || model == legacyvoltGLMModelV2 || model == "glm-5.2/glm-5.2"
 	}
 	return false
 }
@@ -231,31 +236,55 @@ func migrateLegacyBundledvoltRoutes(c *Config) bool {
 	}
 	base := bundled[0]
 	changed := false
-	if index := legacyBundledvoltRouteIndex(c, legacyvoltStepProvider, legacyvoltStepModel, base); index >= 0 {
-		step := canonical["step"]
-		if existing, ok := c.Provider(step.Name); ok {
-			if sameBundledvoltRoute(*existing, step) {
-				migrateLegacyvoltAgentRefs(c, legacyvoltStepProvider, step.Name)
-				migrateLegacyvoltBotRefs(c, legacyvoltStepProvider, step.Name)
-				c.Desktop.ProviderAccess = migrateLegacyvoltProviderAccess(c.Desktop.ProviderAccess, legacyvoltStepProvider, step.Name)
-				c.Providers = append(c.Providers[:index], c.Providers[index+1:]...)
+
+	// Migrate legacy Step routes (qwen-thinking or pre-logical-name "step") → vlm.
+	vlm := canonical["vlm"]
+	stepLegacyProviders := []string{legacyvoltStepProvider, legacyvoltStepProviderV2}
+	stepLegacyModels := []string{legacyvoltStepModel, "step-3.7-flash/step-3.7-flash"}
+	for _, legacyName := range stepLegacyProviders {
+		for _, legacyModel := range stepLegacyModels {
+			index := legacyBundledvoltRouteIndex(c, legacyName, legacyModel, base)
+			if index < 0 {
+				continue
+			}
+			if existing, ok := c.Provider(vlm.Name); ok {
+				if sameBundledvoltRoute(*existing, vlm) {
+					migrateLegacyvoltAgentRefs(c, legacyName, vlm.Name)
+					migrateLegacyvoltBotRefs(c, legacyName, vlm.Name)
+					c.Desktop.ProviderAccess = migrateLegacyvoltProviderAccess(c.Desktop.ProviderAccess, legacyName, vlm.Name)
+					c.Providers = append(c.Providers[:index], c.Providers[index+1:]...)
+					changed = true
+				}
+			} else {
+				migrateLegacyvoltAgentRefs(c, legacyName, vlm.Name)
+				migrateLegacyvoltBotRefs(c, legacyName, vlm.Name)
+				c.Desktop.ProviderAccess = migrateLegacyvoltProviderAccess(c.Desktop.ProviderAccess, legacyName, vlm.Name)
+				c.Providers[index].Name = vlm.Name
+				c.Providers[index].Model = vlm.Model
 				changed = true
 			}
-		} else {
-			migrateLegacyvoltAgentRefs(c, legacyvoltStepProvider, step.Name)
-			migrateLegacyvoltBotRefs(c, legacyvoltStepProvider, step.Name)
-			c.Desktop.ProviderAccess = migrateLegacyvoltProviderAccess(c.Desktop.ProviderAccess, legacyvoltStepProvider, step.Name)
-			c.Providers[index].Name = step.Name
-			c.Providers[index].Model = step.Model
-			changed = true
+			break // only one match per legacy name; provider slice shifted
 		}
 	}
-	if index := legacyBundledvoltRouteIndex(c, legacyvoltGLMProvider, legacyvoltGLMModel, base); index >= 0 {
-		c.Providers[index].Model = canonical[legacyvoltGLMProvider].Model
-		changed = true
-	} else if index := legacyBundledvoltRouteIndex(c, legacyvoltGLMProvider, legacyvoltGLMModelV2, base); index >= 0 {
-		c.Providers[index].Model = canonical[legacyvoltGLMProvider].Model
-		changed = true
+
+	// Migrate legacy GLM routes (glm-primary namespaced or pre-logical-name "glm-5.2") → xllm.
+	xllm := canonical["xllm"]
+	glmLegacyProviders := []string{legacyvoltGLMProvider}
+	glmLegacyModels := []string{legacyvoltGLMModel, legacyvoltGLMModelV2, "glm-5.2/glm-5.2"}
+	for _, legacyName := range glmLegacyProviders {
+		for _, legacyModel := range glmLegacyModels {
+			index := legacyBundledvoltRouteIndex(c, legacyName, legacyModel, base)
+			if index < 0 {
+				continue
+			}
+			c.Providers[index].Name = xllm.Name
+			c.Providers[index].Model = xllm.Model
+			migrateLegacyvoltAgentRefs(c, legacyName, xllm.Name)
+			migrateLegacyvoltBotRefs(c, legacyName, xllm.Name)
+			c.Desktop.ProviderAccess = migrateLegacyvoltProviderAccess(c.Desktop.ProviderAccess, legacyName, xllm.Name)
+			changed = true
+			break
+		}
 	}
 	return changed
 }
@@ -289,8 +318,10 @@ func hasLegacyBundledvoltRoutes(c *Config) bool {
 	}
 	base := bundled[0]
 	return legacyBundledvoltRouteIndex(c, legacyvoltStepProvider, legacyvoltStepModel, base) >= 0 ||
+		legacyBundledvoltRouteIndex(c, legacyvoltStepProviderV2, "step-3.7-flash/step-3.7-flash", base) >= 0 ||
 		legacyBundledvoltRouteIndex(c, legacyvoltGLMProvider, legacyvoltGLMModel, base) >= 0 ||
-		legacyBundledvoltRouteIndex(c, legacyvoltGLMProvider, legacyvoltGLMModelV2, base) >= 0
+		legacyBundledvoltRouteIndex(c, legacyvoltGLMProvider, legacyvoltGLMModelV2, base) >= 0 ||
+		legacyBundledvoltRouteIndex(c, legacyvoltGLMProvider, "glm-5.2/glm-5.2", base) >= 0
 }
 
 func legacyBundledvoltRouteIndex(c *Config, name, model string, base ProviderEntry) int {

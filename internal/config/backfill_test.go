@@ -923,7 +923,7 @@ func TestApplyUserConfigUpgradesOnStartupMigratesLegacyBundledXiguStep(t *testin
 	if _, ok := got.Provider(legacyXiguStepProvider); ok {
 		t.Fatalf("legacy bundled Step provider remains after migration: %+v", got.Providers)
 	}
-	if step, ok := got.Provider("step"); !ok || step.Model != "step-3.7-flash" {
+	if step, ok := got.Provider("step"); !ok || step.Model != "step-3.7-flash/step-3.7-flash" {
 		t.Fatalf("step provider = %+v, ok=%v", step, ok)
 	}
 	for field, ref := range map[string]string{
@@ -1048,7 +1048,7 @@ func TestApplyUserConfigUpgradesOnStartupMigratesLegacyStepPreservingCustomGLM(t
 	if _, ok := got.Provider(legacyXiguStepProvider); ok {
 		t.Fatalf("legacy bundled Step provider remains after migration: %+v", got.Providers)
 	}
-	if step, ok := got.Provider("step"); !ok || step.Model != "step-3.7-flash" {
+	if step, ok := got.Provider("step"); !ok || step.Model != "step-3.7-flash/step-3.7-flash" {
 		t.Fatalf("step provider = %+v, ok=%v", step, ok)
 	}
 	if got.DefaultModel != "step" {
@@ -1078,7 +1078,7 @@ func TestApplyUserConfigUpgradesOnStartupMigratesLegacyBundledXiguGLM(t *testing
 	}
 	got := LoadForEditWithoutCredentials(path)
 	glm, ok := got.Provider("glm-5.2")
-	if !ok || glm.Model != "glm-5.2" {
+	if !ok || glm.Model != "glm-5.2/glm-5.2" {
 		t.Fatalf("glm provider = %+v, ok=%v, want model glm-5.2", glm, ok)
 	}
 	if got.DefaultModel != "glm-5.2" {

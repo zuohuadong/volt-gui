@@ -199,6 +199,7 @@ const (
 	legacyXiguStepModel    = "qwen-gpu4/step3p7-flash"
 	legacyXiguGLMProvider  = "glm-5.2"
 	legacyXiguGLMModel     = "glm-primary/glm-5.2-nvfp4"
+	legacyXiguGLMModelV2   = "glm-5.2"
 )
 
 // IsLegacyBundledXiguModel reports OEM gateway routes that predate the current
@@ -211,7 +212,7 @@ func IsLegacyBundledXiguModel(providerName, model string) bool {
 	case legacyXiguStepProvider:
 		return model == legacyXiguStepModel
 	case legacyXiguGLMProvider:
-		return model == legacyXiguGLMModel
+		return model == legacyXiguGLMModel || model == legacyXiguGLMModelV2
 	}
 	return false
 }
@@ -252,6 +253,9 @@ func migrateLegacyBundledXiguRoutes(c *Config) bool {
 	if index := legacyBundledXiguRouteIndex(c, legacyXiguGLMProvider, legacyXiguGLMModel, base); index >= 0 {
 		c.Providers[index].Model = canonical[legacyXiguGLMProvider].Model
 		changed = true
+	} else if index := legacyBundledXiguRouteIndex(c, legacyXiguGLMProvider, legacyXiguGLMModelV2, base); index >= 0 {
+		c.Providers[index].Model = canonical[legacyXiguGLMProvider].Model
+		changed = true
 	}
 	return changed
 }
@@ -285,7 +289,8 @@ func hasLegacyBundledXiguRoutes(c *Config) bool {
 	}
 	base := bundled[0]
 	return legacyBundledXiguRouteIndex(c, legacyXiguStepProvider, legacyXiguStepModel, base) >= 0 ||
-		legacyBundledXiguRouteIndex(c, legacyXiguGLMProvider, legacyXiguGLMModel, base) >= 0
+		legacyBundledXiguRouteIndex(c, legacyXiguGLMProvider, legacyXiguGLMModel, base) >= 0 ||
+		legacyBundledXiguRouteIndex(c, legacyXiguGLMProvider, legacyXiguGLMModelV2, base) >= 0
 }
 
 func legacyBundledXiguRouteIndex(c *Config, name, model string, base ProviderEntry) int {

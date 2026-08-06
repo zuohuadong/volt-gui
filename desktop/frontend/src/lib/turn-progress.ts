@@ -18,7 +18,7 @@ function progressPhase(role: string, hasBody: boolean, elapsedMs: number): strin
 }
 
 function progressHint(elapsedMs: number): string {
-  if (elapsedMs >= 300_000) return "接近 6 分钟保护上限，将自动停止并保留已完成结果";
+  if (elapsedMs >= 660_000) return "接近 12 分钟保护上限，将自动停止并保留已完成结果";
   if (elapsedMs >= 120_000) return "当前阶段耗时较长，可随时停止；已完成结果会保留";
   return "结果会自动显示";
 }

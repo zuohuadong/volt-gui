@@ -552,6 +552,16 @@ type Agent struct {
 	// start of each user turn. See applyStormBreaker.
 	blockedTurnStreak int
 
+	// readOnlyChurnRounds counts consecutive tool rounds in which every call
+	// succeeded and was read-only — no write, edit, completion, or delivered
+	// result. stormSig/blockedTurnStreak only see failures and blocks, and the
+	// todo stall guard treats each differently-worded search as unique
+	// progress, so a proofreading loop (repeated grep/bash/python re-checks of
+	// the same material) burns the whole turn budget undetected. Reset by any
+	// failed, blocked, or mutating round and at the start of each user turn.
+	// See applyStormBreaker.
+	readOnlyChurnRounds int
+
 	// loopGuardArmed / loopGuardReceiptMark let final readiness stand down
 	// after a loop guard fired this user turn: once the host has told the model
 	// to stop retrying and report the blocker, demanding the receipts that the
@@ -1498,6 +1508,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	rawInput = withInterruptedRecovery(rawInput, a.pendingInterruptedRecovery())
 	a.repeatSuccessCounts = nil
 	a.blockedTurnStreak = 0
+	a.readOnlyChurnRounds = 0
 	a.loopGuardArmed = false
 	a.loopGuardReceiptMark = 0
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
@@ -3345,6 +3356,15 @@ const stormBreakThreshold = 3
 // no-op/write loop and should be redirected to a different tool or final answer.
 const repeatSuccessBreakThreshold = 2
 
+// readOnlyChurnBreakThreshold is how many consecutive all-read-only tool rounds
+// the agent tolerates before nudging the model to stop re-checking and deliver.
+// Legitimate exploration interleaves reads with writes, edits, todo updates, or
+// asks, all of which reset the counter; eight uninterrupted read-only rounds is
+// the proofreading/verification death-spiral shape seen in office document
+// tasks, where the model re-greps and re-counts the same material until the
+// turn timeout kills the run.
+const readOnlyChurnBreakThreshold = 8
+
 const (
 	// todoProgressNudgeRounds is the first adaptive checkpoint. The host asks
 	// the model to reassess, but keeps the turn alive so it can recover.
@@ -3387,6 +3407,39 @@ func (a *Agent) applyStormBreaker(calls []provider.ToolCall, outcomes []toolOutc
 			break
 		}
 	}
+
+	// Read-only churn: every call in the round succeeded and was read-only,
+	// so neither the failure signature nor the blocked streak can see the
+	// loop. A mutating, failing, or blocked round is real progress (or a real
+	// blocker) and resets the counter; bookkeeping tools such as todo_write
+	// are not read-only, so they break the run the same way.
+	churnRound := len(calls) > 0 && len(calls) == len(outcomes)
+	for i, outcome := range outcomes {
+		if outcome.blocked || outcome.errMsg != "" {
+			churnRound = false
+			break
+		}
+		// resolvedReadOnly is only populated for CallResolver tools; fall back
+		// to the registry entry, honouring any dispatch-time override.
+		readOnly := outcome.resolved && outcome.resolvedReadOnly
+		if !outcome.resolved {
+			target, _, ambiguous := a.tools.ResolveCall(calls[i].Name)
+			readOnly = target != nil && len(ambiguous) == 0 && target.ReadOnly()
+		}
+		if calls[i].ResolvedReadOnly != nil {
+			readOnly = *calls[i].ResolvedReadOnly
+		}
+		if !readOnly {
+			churnRound = false
+			break
+		}
+	}
+	if churnRound {
+		a.readOnlyChurnRounds++
+	} else {
+		a.readOnlyChurnRounds = 0
+	}
+
 	if allBlocked {
 		a.blockedTurnStreak++
 	} else {
@@ -3411,6 +3464,21 @@ func (a *Agent) applyStormBreaker(calls []provider.ToolCall, outcomes []toolOutc
 	stormHit := ok && a.stormCount >= stormBreakThreshold
 	streakHit := allBlocked && a.blockedTurnStreak >= stormBreakThreshold
 	if !stormHit && !streakHit {
+		// Fire once per run, exactly at the threshold: re-injecting the
+		// directive every subsequent round would keep growing the transcript
+		// tail and re-trigger compaction, cratering the prompt cache (the
+		// failure mode compactStuck exists to prevent). A reset run may fire
+		// again once it reaches the threshold.
+		if churnRound && a.readOnlyChurnRounds == readOnlyChurnBreakThreshold {
+			guard := fmt.Sprintf(
+				"[loop guard] the last %d tool rounds were all read-only inspections with no write, edit, completion, or delivered result. Re-reading, re-searching, or re-counting the same material — for example proofreading with repeated grep/bash/python calls — does not improve the output and burns the turn budget. Verification belongs inside the answer: stop tool-based self-checking now and deliver the final result, or name the concrete blocker.",
+				a.readOnlyChurnRounds)
+			results[0] = outcomes[0].output + "\n\n" + guard
+			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Code: event.NoticeCodeLoopGuard, Text: loopGuardNoticeText(), Detail: fmt.Sprintf(
+				"loop guard: %d consecutive read-only-only rounds — nudging the model to deliver instead of re-checking",
+				a.readOnlyChurnRounds)})
+			a.armLoopGuardPass(receiptMark)
+		}
 		return
 	}
 

@@ -134,6 +134,7 @@
     rekeyComposerDraft,
     removeQueuedMessage,
     resolveQueuedDeliveryFailure,
+    retargetQueuedMessages,
     settleQueuedTurn,
     takeNextFollowUp,
     updateQueuedMessage,
@@ -3552,13 +3553,14 @@
       const project = activeSidebarProject(projectId);
       const conversation = sidebarConversation(projectId, conversationId);
       if (!conversation) return activeTab;
-      if (conversation.tabId) {
+      const previousTabId = conversation.tabId ?? "";
+      if (previousTabId) {
         try {
-          await withTimeout(app().SetActiveTab(conversation.tabId), "切换对话超时，请稍后重试。");
-          const current = tabs.find((tab) => tab.id === conversation.tabId) ?? activeTab;
+          await withTimeout(app().SetActiveTab(previousTabId), "切换对话超时，请稍后重试。");
+          const current = tabs.find((tab) => tab.id === previousTabId) ?? activeTab;
           if (!current) return undefined;
-          const meta = { ...current, id: conversation.tabId };
-          return tabs.find((tab) => tab.id === conversation.tabId) ?? meta;
+          const meta = { ...current, id: previousTabId };
+          return tabs.find((tab) => tab.id === previousTabId) ?? meta;
         } catch (error) {
           if (!isMissingTabError(error)) throw error;
           clearSidebarConversationThread(projectId, conversationId);
@@ -3584,6 +3586,12 @@
         }
       }
       updateSidebarConversationThread(projectId, conversationId, meta);
+      if (previousTabId && meta.id !== previousTabId) {
+        // The backend tab was re-created (e.g. the old tab expired while the
+        // user viewed another project); carry its pending queue over so
+        // follow-ups are not silently orphaned on the dead tab id.
+        queuedMessages = retargetQueuedMessages(queuedMessages, previousTabId, meta.id);
+      }
       return meta;
     })()
       .catch((error) => {
@@ -7838,12 +7846,20 @@ function openGovernanceCenter() {
       createdAtMs: Date.now(),
     });
     setComposerInput("");
-    appendTranscript({
-      id: `queued-${Date.now()}`,
-      role: "notice",
-      title: "已加入后续队列",
-      body: "当前 Turn 完成后将继续发送；也可以在输入框上方改为立即指导。",
-    });
+    // One rolling notice per thread: repeatedly appending a notice for every
+    // queued message stacks duplicate prompts in the transcript.
+    const pendingCount = queuedMessages.filter(
+      (message) => message.tabId === tabID && message.status !== "failed",
+    ).length;
+    const noticeId = `queue-notice-${tabID}`;
+    const noticeBody = pendingCount > 1
+      ? `共 ${pendingCount} 条后续消息，当前 Turn 完成后将按顺序发送；也可以在输入框上方改为立即指导。`
+      : "当前 Turn 完成后将继续发送；也可以在输入框上方改为立即指导。";
+    if (transcript.some((item) => item.id === noticeId)) {
+      updateTranscriptItem(noticeId, { body: noticeBody });
+    } else {
+      appendTranscript({ id: noticeId, role: "notice", title: "已加入后续队列", body: noticeBody });
+    }
     focusComposer();
   }
 

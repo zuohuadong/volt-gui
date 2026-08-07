@@ -141,6 +141,8 @@ type Options struct {
 	// terminal. Headless/bot frontends pass a positive value so an unanswered
 	// prompt can't wedge the session indefinitely (#4626, #4402).
 	ApprovalTimeout time.Duration
+	// TurnTimeout bounds a foreground turn. Zero leaves turns unbounded.
+	TurnTimeout time.Duration
 	// SessionRecoveryMeta and OnSessionRecovered let richer frontends attach
 	// local UI metadata to automatic transcript recovery branches.
 	SessionRecoveryMeta func(control.SessionRecoveryRequest) agent.BranchMeta
@@ -1242,6 +1244,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Shell:                           shell,
 		PlanModeAllowedTools:            cfg.Agent.PlanModeAllowedTools,
 		ApprovalTimeout:                 opts.ApprovalTimeout,
+		TurnTimeout:                     opts.TurnTimeout,
 		BrowserCredentialVault:          browserauth.NewVault(),
 		OnRemember: func(rule string) control.RememberResult {
 			return rememberPermissionRule(root, rule)

@@ -259,6 +259,24 @@ describe("unified workbench IA state", () => {
       expect(template.prompt).toContain("独立复算");
       expect(template.prompt).toContain("所有推算必须展示公式和舍入规则");
       expect(template.prompt).toContain("统一标注“估算”或“约”");
+      expect(template.prompt).toContain("“发生次数”是缺陷证据");
+      expect(template.prompt).toContain("不得拆成独立缺陷");
+      expect(template.prompt).toContain("价格、周期和服务");
+      expect(template.prompt).toContain("字符数必须由工具实算");
+      expect(template.prompt).toContain("不得报告精确字符数");
+      expect(template.prompt).toContain("不得扩展到不适用的供应商");
+      expect(template.prompt).toContain("最多执行一次局部修正");
+      expect(template.prompt).toContain("不得整篇重写或进入自检循环");
+      expect(template.prompt).toContain("全文校对");
+      expect(template.prompt).toContain("连续递增且不得重复");
+      expect(template.prompt).toContain("对全量样本求最小值、最大值和对应日期");
+      expect(template.prompt).toContain("并列关系");
+      expect(template.prompt).toContain("初步风险判断");
+      expect(template.prompt).toContain("自然日、工作日和各阶段有效天数");
+      expect(template.prompt).toContain("维护窗口只能扣减实际重叠的阶段");
+      expect(template.prompt).toContain("不得暴露工具内部参数名、模式名或枚举值");
+      expect(template.prompt).toContain("硬性字数上限");
+      expect(template.prompt).toContain("超限必须压缩到限制内");
     }
   });
 

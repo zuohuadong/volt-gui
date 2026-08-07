@@ -292,6 +292,7 @@ func (a *App) applyScopedMemoryRuntimeRebuild(plan scopedMemoryRuntimeRebuildPla
 	snap := plan.snap
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
+		TurnTimeout:              desktopTurnTimeout,
 		Model:                    plan.modelRef,
 		RequireKey:               false,
 		AllowUnlistedModel:       plan.allowUnlisted,

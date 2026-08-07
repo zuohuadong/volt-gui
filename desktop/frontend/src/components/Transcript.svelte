@@ -5,7 +5,8 @@
   import MarkdownView from "./MarkdownView.svelte";
   import { isToolDetailsOpen, setToolOpenState, type ToolOpenState } from "../lib/tool-open-state";
   import { visibleTranscriptText } from "../lib/transcript-visibility";
-  import { formatUserError } from "../lib/user-error";
+  import { normalizedToolName, toolErrorPresentation, toolOperationBadge, toolOutputDuplicatesError } from "../lib/tool-presentation";
+  import { turnProgress } from "../lib/turn-progress";
   import type { QuestionAnswer, TranscriptItem, WireApproval, WireAsk } from "../lib/types";
 
   let {
@@ -170,10 +171,6 @@
     }
   }
 
-  function normalizedToolName(name: string) {
-    return name.toLowerCase().replace(/^functions\./, "").replace(/^tool_/, "").trim();
-  }
-
   function shortToolName(name: string) {
     const normalized = normalizedToolName(name);
     if (normalized === "read_file" || normalized === "get_file") return "读取文件";
@@ -215,8 +212,10 @@
     const actionName = shortToolName(name);
     const action = command ? commandAction(command) : query ? `${actionName}：${query}` : actionName;
     const detail = command ? compactCommand(command) : path || query || item.toolSubject || "";
-    const renderedOutput = item.toolOutput ?? output;
+    const candidateOutput = item.toolOutput ?? output;
+    const renderedOutput = toolOutputDuplicatesError(candidateOutput, item.error) ? "" : candidateOutput;
     const cancelled = isToolCancellation(item.error);
+    const failure = item.error && !cancelled ? toolErrorPresentation(item.error, sending) : undefined;
     const status = item.pending ? "正在执行" : cancelled ? "已取消" : item.error ? "失败" : renderedOutput || item.toolSummary ? "已完成" : "已记录";
     return {
       action,
@@ -224,9 +223,10 @@
       output: renderedOutput,
       status,
       tool: actionName,
-      readOnly: item.readOnly,
+      badge: toolOperationBadge(name, item.readOnly),
       summary: item.toolSummary,
-      error: item.error ? formatUserError(item.error) : undefined,
+      errorSummary: cancelled ? "操作已取消。" : failure?.summary,
+      errorDetail: failure?.detail,
       cancelled,
       durationMs: item.durationMs,
       truncated: item.truncated,
@@ -273,12 +273,6 @@
     return elapsed > 0 ? `耗时 ${formatDuration(elapsed)}` : "已完成";
   }
 
-  function pendingLabel(item: TranscriptItem) {
-    if (item.role === "tool") return "正在执行工具";
-    if (item.role === "reasoning") return "正在整理思路";
-    return "正在思考";
-  }
-
   function pendingElapsedMs(item: TranscriptItem) {
     return Math.max(0, nowMs - (item.createdAtMs ?? nowMs));
   }
@@ -289,8 +283,8 @@
     return `已等待 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
   }
 
-  function isLikelyStalled(item: TranscriptItem) {
-    return pendingElapsedMs(item) >= 120000;
+  function itemProgress(item: TranscriptItem) {
+    return turnProgress(item.role, Boolean(item.body.trim()), pendingElapsedMs(item));
   }
 
   function handleToolToggle(event: Event, item: TranscriptItem) {
@@ -346,14 +340,20 @@
         <span></span>
         <div>
           <strong>执行内容</strong>
-          <p>{tool.action}{tool.readOnly ? " · 只读" : ""}</p>
+          <p>{tool.action}{tool.badge ? ` · ${tool.badge}` : ""}</p>
           {#if tool.detail}<code>{tool.detail}</code>{/if}
           {#if tool.summary}<p class="tool-summary">{tool.summary}</p>{/if}
           {#if tool.archived && !tool.archiveLoaded && !tool.output}
             <p class="tool-archive-status">{tool.archiveLoading ? "正在加载归档详情…" : tool.archiveLoadError || "结果已归档，展开时加载完整参数和输出。"}</p>
           {/if}
           {#if tool.output}<pre>{tool.output}</pre>{/if}
-          {#if tool.error}<p class={tool.cancelled ? "tool-cancelled" : "tool-error"}>{tool.cancelled ? `已取消：${tool.error}` : tool.error}</p>{/if}
+          {#if tool.errorSummary}<p class={tool.cancelled ? "tool-cancelled" : "tool-error"}>{tool.errorSummary}</p>{/if}
+          {#if tool.errorDetail}
+            <details class="tool-error-details">
+              <summary>查看技术详情</summary>
+              <pre>{tool.errorDetail}</pre>
+            </details>
+          {/if}
         </div>
       </div>
     </div>
@@ -387,8 +387,8 @@
           {#if item.pending && !item.body.trim()}
             <div class="pending-status" role="status" aria-live="polite">
               <LoaderCircle size={15} />
-              <strong>{pendingLabel(item)}</strong>
-              <em>{pendingElapsedLabel(item)} · {isLikelyStalled(item) ? "可能卡住了，可点击停止后重试" : "结果会自动显示"}</em>
+              <strong>{itemProgress(item).phase}</strong>
+              <em>{pendingElapsedLabel(item)} · {itemProgress(item).hint}</em>
             </div>
           {:else if item.role === "tool"}
             {@render toolEvidence(item)}
@@ -426,8 +426,8 @@
               {#if item.pending && item.role === "assistant"}
                 <div class="pending-inline-status" role="status" aria-live="polite">
                   <LoaderCircle size={13} />
-                  <span>{isLikelyStalled(item) ? "处理时间较长" : "正在继续处理"}</span>
-                  <em>{pendingElapsedLabel(item)} · {isLikelyStalled(item) ? "可点击停止后重试" : "后续内容会自动更新"}</em>
+                  <span>{itemProgress(item).phase}</span>
+                  <em>{pendingElapsedLabel(item)} · {itemProgress(item).hint}</em>
                 </div>
               {/if}
             {/if}
@@ -439,7 +439,7 @@
                   {#if child.pending && !child.body.trim()}
                     <div class="pending-status pending-status--compact" role="status" aria-live="polite">
                       <LoaderCircle size={14} />
-                      <strong>{pendingLabel(child)}</strong>
+                      <strong>{itemProgress(child).phase}</strong>
                     </div>
                   {:else}
                     {@render toolEvidence(child)}
@@ -859,6 +859,26 @@
   .thinking-step .tool-cancelled {
     background: #f8f5ee;
     color: #7a6240;
+  }
+
+  .tool-error-details {
+    margin-top: 6px;
+    color: #7c4a4a;
+    font-size: 12px;
+  }
+
+  .tool-error-details summary {
+    width: fit-content;
+    min-height: 24px;
+    cursor: pointer;
+    color: #7c4a4a;
+    list-style-position: inside;
+  }
+
+  .tool-error-details pre {
+    margin-top: 5px;
+    background: #fdf6f6;
+    color: #7c4a4a;
   }
 
   .thinking-step .tool-summary::before,

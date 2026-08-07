@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { ArrowDown, ArrowUp, CornerDownRight, MoreHorizontal, Pencil, Play, Trash2, X } from "@lucide/svelte";
 
   import type { QueuedThreadMessage } from "../lib/task-lifecycle";
@@ -10,6 +11,7 @@
     onMove,
     onSteer,
     onResume,
+    onMenuOpenChange,
   }: {
     messages: QueuedThreadMessage[];
     onEdit: (id: string, display: string) => void;
@@ -17,10 +19,30 @@
     onMove: (id: string, offset: -1 | 1) => void;
     onSteer: (id: string) => void | Promise<void>;
     onResume: (id: string) => void;
+    onMenuOpenChange?: (open: boolean) => void;
   } = $props();
 
   let editingId = $state("");
   let editDraft = $state("");
+  let openMenuIds = new Set<string>();
+
+  onDestroy(() => onMenuOpenChange?.(false));
+
+  function handleMenuToggle(event: Event, id: string) {
+    const details = event.currentTarget;
+    if (!(details instanceof HTMLDetailsElement)) return;
+    const next = new Set(openMenuIds);
+    if (details.open) next.add(id);
+    else next.delete(id);
+    openMenuIds = next;
+    onMenuOpenChange?.(next.size > 0);
+  }
+
+  function runMenuAction(event: Event, action: () => void) {
+    const button = event.currentTarget;
+    if (button instanceof HTMLElement) button.closest("details")?.removeAttribute("open");
+    action();
+  }
 
   function beginEdit(message: QueuedThreadMessage) {
     editingId = message.id;
@@ -79,13 +101,13 @@
                 <button type="button" title="恢复到待发送队列" onclick={() => onResume(message.id)}><Play size={13} /> 恢复</button>
               {/if}
               <button class="thread-queue__steer" type="button" title="立即作为当前 Turn 指导发送" disabled={message.status === "sending"} onclick={() => onSteer(message.id)}><CornerDownRight size={13} /> Steer</button>
-              <details class="thread-queue__more">
+              <details class="thread-queue__more" ontoggle={(event) => handleMenuToggle(event, message.id)}>
                 <summary aria-label={`第 ${index + 1} 条消息的更多操作`} title="更多操作"><MoreHorizontal size={14} /></summary>
                 <div>
-                  <button type="button" disabled={message.status === "sending"} onclick={() => beginEdit(message)}><Pencil size={13} /> 编辑</button>
-                  <button type="button" disabled={index === 0 || message.status === "sending"} onclick={() => onMove(message.id, -1)}><ArrowUp size={13} /> 上移</button>
-                  <button type="button" disabled={index === messages.length - 1 || message.status === "sending"} onclick={() => onMove(message.id, 1)}><ArrowDown size={13} /> 下移</button>
-                  <button class="danger" type="button" disabled={message.status === "sending"} onclick={() => onDelete(message.id)}><Trash2 size={13} /> 删除</button>
+                  <button type="button" disabled={message.status === "sending"} onclick={(event) => runMenuAction(event, () => beginEdit(message))}><Pencil size={13} /> 编辑</button>
+                  <button type="button" disabled={index === 0 || message.status === "sending"} onclick={(event) => runMenuAction(event, () => onMove(message.id, -1))}><ArrowUp size={13} /> 上移</button>
+                  <button type="button" disabled={index === messages.length - 1 || message.status === "sending"} onclick={(event) => runMenuAction(event, () => onMove(message.id, 1))}><ArrowDown size={13} /> 下移</button>
+                  <button class="danger" type="button" disabled={message.status === "sending"} onclick={(event) => runMenuAction(event, () => onDelete(message.id))}><Trash2 size={13} /> 删除</button>
                 </div>
               </details>
             </div>
@@ -252,7 +274,7 @@
 
   .thread-queue__more > div {
     position: absolute;
-    top: calc(100% + 5px);
+    bottom: calc(100% + 5px);
     right: 0;
     z-index: 20;
     display: grid;

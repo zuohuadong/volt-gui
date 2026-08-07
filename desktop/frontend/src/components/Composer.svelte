@@ -3,6 +3,7 @@
   import { AtSign, Check, FileText, FileType, Folder, FolderKanban, Image, Paperclip, Plus, Presentation, Search, Send, ShieldCheck, Square, Table, WandSparkles, X } from "@lucide/svelte";
   import { t } from "../lib/i18n";
   import { app, onFilesDropped, openExternal } from "../lib/bridge";
+  import { composerSubmission } from "../lib/composer-submit";
   import { contextRemainingPercent, formatSessionCost } from "../lib/thread-ux";
   import type { QueuedThreadMessage } from "../lib/task-lifecycle";
   import type { ComposerToolApprovalMode } from "../lib/tool-approval-mode";
@@ -50,6 +51,7 @@
     onMoveQueuedMessage,
     onSteerQueuedMessage,
     onResumeQueuedMessage,
+    onQueueActionMenuOpenChange,
   }: {
     input: string;
     commands: CommandInfo[];
@@ -90,6 +92,7 @@
     onMoveQueuedMessage?: (id: string, offset: -1 | 1) => void;
     onSteerQueuedMessage?: (id: string) => void | Promise<void>;
     onResumeQueuedMessage?: (id: string) => void;
+    onQueueActionMenuOpenChange?: (open: boolean) => void;
   } = $props();
 
   let fileMatches = $state<DirEntry[]>([]);
@@ -351,17 +354,11 @@
   }
 
   function submitComposer() {
-    const text = input.trim();
     if (disabled || !canSubmit) return;
-    const refs = attachments.map((attachment) => `@${attachment.path}`).join(" ");
-    const displayText = [text, refs].filter(Boolean).join(text && refs ? " " : "");
-    const projectLabel = selectedProjectId ? selectedProjectLabel() : "";
-    const permissionLabel = selectedPermissionLabel();
-    const contextLines = [
-      projectLabel && `归属项目：${projectLabel}`,
-      `工作权限：${permissionLabel}`,
-    ].filter(Boolean);
-    const submitText = [...contextLines, displayText].filter(Boolean).join("\n");
+    const { displayText, submitText } = composerSubmission({
+      text: input,
+      attachmentPaths: attachments.map((attachment) => attachment.path),
+    });
     onSend(displayText, submitText);
     attachments = [];
     fileMatches = [];
@@ -594,6 +591,7 @@
     onMove={onMoveQueuedMessage ?? (() => undefined)}
     onSteer={onSteerQueuedMessage ?? (() => undefined)}
     onResume={onResumeQueuedMessage ?? (() => undefined)}
+    onMenuOpenChange={onQueueActionMenuOpenChange}
   />
 
   {#if !minimal}

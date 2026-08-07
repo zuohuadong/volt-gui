@@ -22,6 +22,38 @@ type askBlockingRunner struct {
 	c *Controller
 }
 
+type contextBlockingRunner struct{}
+
+func (contextBlockingRunner) Run(ctx context.Context, _ string) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestTurnTimeoutStopsInteractiveTurnWithoutClassifyingUserCancel(t *testing.T) {
+	done := make(chan event.Event, 1)
+	c := New(Options{
+		Runner:      contextBlockingRunner{},
+		TurnTimeout: 25 * time.Millisecond,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.TurnDone {
+				done <- e
+			}
+		}),
+	})
+
+	c.Send("bounded turn")
+	e := waitTurnDoneEvent(t, done)
+	if errors.Is(e.Err, context.Canceled) {
+		t.Fatal("deadline expiry must not be classified as a user cancel")
+	}
+	if e.Err == nil {
+		t.Fatal("deadline expiry must report a timeout error")
+	}
+	if !errors.Is(e.Err, ErrTurnTimeout) {
+		t.Fatalf("deadline expiry error = %v, want ErrTurnTimeout", e.Err)
+	}
+}
+
 func (r *askBlockingRunner) Run(ctx context.Context, _ string) error {
 	_, err := r.c.Ask(ctx, []event.AskQuestion{{
 		ID:      "choice",
@@ -223,14 +255,16 @@ func assertCancelClearedPendingRuntimeStatus(t *testing.T, st RuntimeStatus) {
 	}
 }
 
-func waitTurnDoneEvent(t *testing.T, done <-chan event.Event) {
+func waitTurnDoneEvent(t *testing.T, done <-chan event.Event) event.Event {
 	t.Helper()
 	select {
 	case e := <-done:
 		if e.Kind != event.TurnDone {
 			t.Fatalf("event = %v, want TurnDone", e.Kind)
 		}
+		return e
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for turn_done")
+		return event.Event{}
 	}
 }

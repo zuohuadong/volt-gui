@@ -61,6 +61,10 @@ import (
 // while one is already active in the same Controller.
 var ErrTurnRunning = errors.New("turn already running")
 
+// ErrTurnTimeout reports that the host's foreground-turn protection limit
+// expired. It is distinct from Cancel so frontends can explain automatic stop.
+var ErrTurnTimeout = errors.New("turn reached the configured protection limit; completed results were kept")
+
 // errTurnRunningRotation and errRotationInProgress are returned by the
 // session-rotation gate (beginRotation) when a rotation cannot proceed: a turn
 // is in flight, or another rotation already holds the gate.
@@ -180,10 +184,11 @@ type Controller struct {
 
 	// mu guards the run state; every critical section under it is short and
 	// non-blocking.
-	mu        sync.Mutex
-	cancel    context.CancelFunc
-	running   bool
-	canceling bool
+	mu          sync.Mutex
+	cancel      context.CancelFunc
+	turnTimeout time.Duration
+	running     bool
+	canceling   bool
 	// rotating is set under mu while NewSession/ClearSession swap the executor
 	// session out. Checking running once and then swapping later leaves a
 	// TOCTOU window: a turn can start (running=false at check time) during the
@@ -430,6 +435,9 @@ type Options struct {
 	// terminal. Bot/headless frontends set a positive value so an unanswered
 	// prompt can't wedge the session indefinitely (#4626, #4402).
 	ApprovalTimeout time.Duration
+	// TurnTimeout bounds a complete foreground turn, including model, tool, and
+	// recovery work. Zero preserves the unbounded CLI/headless contract.
+	TurnTimeout time.Duration
 	// BrowserCredentialVault stores browser login credentials exclusively in the
 	// OS keyring. nil keeps interactive login ephemeral.
 	BrowserCredentialVault *browserauth.Vault
@@ -489,6 +497,7 @@ func New(opts Options) *Controller {
 		externalFolderToolRefs:            opts.ExternalFolderToolRefs,
 		approval:                          newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
 		browserPrompts:                    newBrowserPromptManager(opts.BrowserCredentialVault, opts.ApprovalTimeout),
+		turnTimeout:                       opts.TurnTimeout,
 	}
 	if strings.TrimSpace(opts.WorkspaceRoot) != "" {
 		c.autoResearch = autoresearch.NewStore(opts.WorkspaceRoot)
@@ -615,6 +624,13 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) bool {
 	return c.runGuardedWithReservation(0, body)
 }
 
+func (c *Controller) newTurnContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if c.turnTimeout > 0 {
+		return context.WithTimeout(parent, c.turnTimeout)
+	}
+	return context.WithCancel(parent)
+}
+
 func (c *Controller) runGuardedWithReservation(reservation uint64, body func(ctx context.Context) error) bool {
 	c.mu.Lock()
 	if reservation != 0 {
@@ -630,7 +646,7 @@ func (c *Controller) runGuardedWithReservation(reservation uint64, body func(ctx
 		c.mu.Unlock()
 		return false
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := c.newTurnContext(context.Background())
 	c.cancel = cancel
 	c.running = true
 	c.canceling = false
@@ -657,6 +673,9 @@ func (c *Controller) runGuardedWithReservation(reservation uint64, body func(ctx
 			}
 		}()
 		err := body(ctx)
+		if c.turnTimeout > 0 && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == context.DeadlineExceeded {
+			err = ErrTurnTimeout
+		}
 		c.mu.Lock()
 		c.running = false
 		c.cancel = nil
@@ -724,7 +743,7 @@ func (c *Controller) runTurn(ctx context.Context, input string) error {
 // composition, checkpoints, hooks, and plan approval. It is for transports that
 // need a blocking request/response boundary, such as ACP session/prompt.
 func (c *Controller) RunTurn(ctx context.Context, input string) error {
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := c.newTurnContext(ctx)
 	c.mu.Lock()
 	if c.running || c.rotating || c.rotationPending || c.submissionReservation != 0 {
 		c.mu.Unlock()

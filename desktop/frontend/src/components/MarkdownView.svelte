@@ -1,6 +1,7 @@
 <script lang="ts">
   import CodeBlock from "./CodeBlock.svelte";
   import MathView from "./MathView.svelte";
+  import { normalizeMalformedMarkdownTables } from "../lib/markdown-normalize";
 
   type InlinePart =
     | { id: string; kind: "text"; text: string }
@@ -31,7 +32,7 @@
   let lastParsedText = "";
   let lastBlocks: MarkdownBlock[] = [];
   const blocks = $derived.by(() => {
-    const normalized = normalizeMath(text);
+    const normalized = normalizeMath(normalizeMalformedMarkdownTables(text));
     if (normalized === lastParsedText) return lastBlocks;
     lastParsedText = normalized;
     lastBlocks = parseMarkdown(normalized);

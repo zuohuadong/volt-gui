@@ -68,6 +68,11 @@ describe("user-facing errors", () => {
     expect(formatUserError("operation cancelled")).toBe("操作已取消。");
   });
 
+  test("distinguishes the turn protection limit from a model network timeout", () => {
+    expect(formatUserError("turn reached the configured protection limit; completed results were kept"))
+      .toBe("本次任务已达到运行保护上限并自动停止；已完成结果已保留，可继续当前任务。");
+  });
+
   test("is idempotent for already-safe recovery messages", () => {
     for (const message of [
       "工具参数不完整，本次调用已停止，请重试；若仍失败，请缩短要写入的内容。",

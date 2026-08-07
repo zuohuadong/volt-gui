@@ -25,6 +25,16 @@ test("hides provider reasoning and serialized tool-call blocks from final text",
   expect(visibleTranscriptText(value)).toBe("最终回答");
 });
 
+test("hides a strict opening planning aside before the final Markdown document", () => {
+  const value = "我需要先分析供应商数据，让我先整理比较维度。\n\n# 供应商选型结论\n\n选择 A。";
+  expect(visibleTranscriptText(value)).toBe("# 供应商选型结论\n\n选择 A。");
+});
+
+test("preserves ordinary first-person prose and headings", () => {
+  const value = "我需要先说明本报告的适用范围。\n\n# 适用范围\n\n本报告用于内部评审。";
+  expect(visibleTranscriptText(value)).toBe(value);
+});
+
 test("hides internal blocks after a visible prefix", () => {
   expect(visibleTranscriptText("先说结论。\n<analysis>private details</analysis>\n最终回答")).toBe("先说结论。\n\n最终回答");
 });

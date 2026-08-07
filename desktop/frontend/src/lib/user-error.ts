@@ -46,6 +46,7 @@ export function formatUserError(error: unknown): string {
   if (/agent profile "[^"]+" model is unavailable because provider "[^"]+" is not added/i.test(detail) || detail.startsWith("Agent 依赖的模型渠道尚未添加")) return "Agent 依赖的模型渠道尚未添加，请前往模型设置。";
   if (/agent profile base model "[^"]+" is unavailable/i.test(detail) || detail.startsWith("Agent 基础模型当前不可用")) return "Agent 基础模型当前不可用，请前往模型设置。";
   if (TOOL_ARGUMENT_PATTERN.test(detail) || detail.startsWith("工具参数不完整，")) return "工具参数不完整，本次调用已停止，请重试；若仍失败，请缩短要写入的内容。";
+  if (/turn reached the configured protection limit/i.test(detail)) return "本次任务已达到运行保护上限并自动停止；已完成结果已保留，可继续当前任务。";
   if (NETWORK_PATTERN.test(detail) || detail.startsWith("模型服务连接失败或响应超时，")) return "模型服务连接失败或响应超时，请检查网络和渠道状态后重试。";
   if (/(?:turn already running|上一轮任务仍在运行)/i.test(detail)) return "上一轮任务仍在运行，请等待完成或停止后重试。";
   if (/(?:workspace is still starting|工作区正在准备中)/i.test(detail)) return "工作区正在准备中，请稍后重试。";

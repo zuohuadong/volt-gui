@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.15.6](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.15.5...desktop-v0.15.6) (2026-08-07)
+
+
+### Bug Fixes
+
+* **desktop:** harden office document validation ([b9272f5](https://github.com/zuohuadong/volt-gui/commit/b9272f5db9b3e447af6be1931f415d828c31ddc8))
+* **desktop:** harden workbench output and long-turn recovery ([b92b00e](https://github.com/zuohuadong/volt-gui/commit/b92b00ece508b5a488d925c3917f7f9063ffe1bc))
+* **desktop:** resolve reported workbench output issues ([f058777](https://github.com/zuohuadong/volt-gui/commit/f05877791fd7db5709143318404c6cacc52f4922))
+
 ## [0.15.5](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.15.4...desktop-v0.15.5) (2026-08-05)
 
 

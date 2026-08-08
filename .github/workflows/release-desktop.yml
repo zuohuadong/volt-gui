@@ -729,7 +729,7 @@ jobs:
           path: release-control
           ref: ${{ github.workflow_sha }}
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: release-control/desktop/go.mod
           cache: true

@@ -390,6 +390,7 @@
 * **ci:** sync repolint baseline with main-v2 ([1f68365](https://github.com/zuohuadong/volt-gui/commit/1f68365782b47682e7168a5f7fb5d25cae5edb20))
 * **deps:** batch Dependabot Go/npm upgrades on main-v2 ([db44780](https://github.com/zuohuadong/volt-gui/commit/db44780c27f12305abda8d44f2a0112dfd248219))
 * **deps:** batch open Dependabot upgrades / 批量合并 Dependabot 依赖升级 ([b691eeb](https://github.com/zuohuadong/volt-gui/commit/b691eeba9da02a900a485551e890d8f47d902a3d))
+* **deps:** bump astro from 7.1.5 to 7.1.6 in /site in the npm group ([#86](https://github.com/zuohuadong/volt-gui/issues/86)) ([f31d23f](https://github.com/zuohuadong/volt-gui/commit/f31d23ff50ad556e92ca3a864ae385000cc9ce14))
 * keep controller within main-v2 lint budget ([10ee9b1](https://github.com/zuohuadong/volt-gui/commit/10ee9b1e20053f1d7b00134d626ba4a9298ca8e2))
 * **lint:** account for contextual tool coverage ([eabcc35](https://github.com/zuohuadong/volt-gui/commit/eabcc35160b1a9385a96ae22970d278526690d7e))
 * **lint:** baseline latest governor growth ([c459e8a](https://github.com/zuohuadong/volt-gui/commit/c459e8a88d60ac029ab60be07cf8057341aebebe))

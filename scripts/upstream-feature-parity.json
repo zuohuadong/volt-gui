@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "reviewedUpstreamHead": "2335d0df9ea4029108ed965f76c2efff30fe6cf4",
+  "reviewedUpstreamHead": "3254ba655bc01e4b535ec09a807c56693b6a2d68",
   "syncExcludedPathspecs": [
     ":(exclude,glob).github/**",
     ":(exclude,glob)docs/**",
@@ -106,6 +106,7 @@
         "internal/i18n/",
         "internal/installsource/",
         "internal/guardian/",
+        "internal/hook/",
         "internal/memory/",
         "internal/planmode/",
         "internal/provider/",
@@ -119,14 +120,14 @@
       ],
       "status": "reviewed-deferred",
       "evidence": ["scripts/upstream-sync.sh", "scripts/check-upstream-feature-parity.mjs"],
-      "note": "这些运行内核在 Volt fork 中存在独立 API、安全或平台边界；上游变更必须逐项审计，不随 marker 静默前进。"
+      "note": "这些运行内核在 Volt fork 中存在独立 API、安全或平台边界；本轮已审查 Hook 的 Windows POSIX 脚本归一化、批处理参数和全局 home 路径变更，因 Volt 路径与插件兼容层不同而继续延后逐项移植。"
     },
     {
       "id": "non-runtime-exclusions",
-      "paths": [".github/", "docs/", "README", "site/", "cmd/reasonix-guard/"],
+      "paths": [".github/", "docs/", "README", "site/", "cmd/reasonix-guard/", "benchmarks/", "sdk/", "workers/accounts/README.md"],
       "status": "reviewed-deferred",
       "evidence": ["scripts/upstream-sync.sh", "scripts/check-upstream-feature-parity.mjs"],
-      "note": "CI、文档、站点和 Reasonix 专属 guard 不属于 Volt 的选择性 Go 同步范围，但仍纳入 marker 审计集合。"
+      "note": "CI、文档、站点、基准与 SDK 示例 README、账户 Worker README 和 Reasonix 专属 guard 不属于 Volt 的选择性 Go 同步范围，但仍纳入 marker 审计集合。"
     }
   ]
 }

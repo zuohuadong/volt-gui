@@ -121,7 +121,11 @@ func TestTaskExplicitWritePathsCannotBypassBoundaryThroughCapabilityProxy(t *tes
 		ReadOnly:    false,
 		Args:        json.RawMessage(`{}`),
 	}})
-	task := newTestTaskTool(t, proxyWriterCallingProvider{}, parent, "sys", "", "", nil).
+	task := newTestTaskTool(t, testTaskToolConfig{
+		provider:     proxyWriterCallingProvider{},
+		registry:     parent,
+		systemPrompt: "sys",
+	}).
 		WithTranscripts(NewSubagentStore(t.TempDir()), root, "base-model", "base-effort")
 	out, err := task.Execute(testTaskContext(), json.RawMessage(`{
 		"prompt":"attempt dynamic writer",

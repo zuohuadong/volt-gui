@@ -40,7 +40,7 @@ func TestCreateTaskCreatesHostOwnedLayoutAndInitialState(t *testing.T) {
 	if task.ID != "20260629-153000-find-the-root-cause-of-ui-lag" {
 		t.Fatalf("task id = %q", task.ID)
 	}
-	wantRoot := filepath.Join(root, ".voltui", "autoresearch", task.ID)
+	wantRoot := filepath.Join(root, ".reasonix", "autoresearch", task.ID)
 	if task.Root != wantRoot {
 		t.Fatalf("task root = %q, want %q", task.Root, wantRoot)
 	}

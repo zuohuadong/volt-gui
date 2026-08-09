@@ -68,10 +68,10 @@ func TestParseWorkModeKeepsBalancedAsFullInternally(t *testing.T) {
 func TestWorkModeCompletionPublishesPrimaryCommandAndAliasArguments(t *testing.T) {
 	m := newTestChatTUI()
 	m.runtimeProfile = boot.TokenModeFull
-	if !hasLabel(m.slashItems(), "/work-mode") {
+	if !hasCompletionLabel(m.slashItems(), "/work-mode") {
 		t.Fatal("slash completion missing /work-mode")
 	}
-	if hasLabel(m.slashItems(), "/profile") {
+	if hasCompletionLabel(m.slashItems(), "/profile") {
 		t.Fatal("technical /profile alias should not duplicate the primary command in the slash menu")
 	}
 	for _, input := range []string{"/work-mode ", "/profile "} {
@@ -80,18 +80,18 @@ func TestWorkModeCompletionPublishesPrimaryCommandAndAliasArguments(t *testing.T
 			t.Fatalf("%q did not activate work-mode argument completion", input)
 		}
 		for _, want := range []string{"economy", "balanced", "delivery"} {
-			if !hasLabel(items, want) {
-				t.Errorf("%q completion missing %q: %v", input, want, labels(items))
+			if !hasCompletionLabel(items, want) {
+				t.Errorf("%q completion missing %q: %v", input, want, completionLabels(items))
 			}
 		}
 	}
 }
 
 func TestWorkModeHelpAndStatusUseUserFacingName(t *testing.T) {
-	if !hasLabel(builtinHelpItems(), "/work-mode") {
+	if !hasCompletionLabel(builtinHelpItems(), "/work-mode") {
 		t.Fatal("built-in help missing /work-mode")
 	}
-	if hasLabel(builtinHelpItems(), "/profile") {
+	if hasCompletionLabel(builtinHelpItems(), "/profile") {
 		t.Fatal("built-in help should not duplicate the technical /profile alias")
 	}
 	m := newChatTUI(control.New(control.Options{Label: "model"}), "", make(chan event.Event, 1), 80)

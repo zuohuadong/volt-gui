@@ -75,12 +75,17 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	headers, _ := cfg.Extra["headers"].(map[string]string)
 	extraBody, _ := cfg.Extra["extra_body"].(map[string]any)
 	vision, _ := cfg.Extra["vision"].(bool)
+	explicitModelVision, _ := cfg.Extra["vision_model_explicit"].(bool)
+	officialDeepSeek := IsDeepSeek(cfg.BaseURL)
+	// Keep stale provider-wide vision flags from sending unsupported image parts
+	// while preserving an explicit capability declaration for future models.
+	vision = vision && (!officialDeepSeek || explicitModelVision)
 	visionDetail, _ := cfg.Extra["vision_detail"].(string)
 	visionDetail = strings.ToLower(strings.TrimSpace(visionDetail))
 	if visionDetail != "low" && visionDetail != "high" {
 		visionDetail = "" // auto — omit the field
 	}
-	deepseek := protocol == "deepseek" || (protocol == "" && IsDeepSeek(cfg.BaseURL))
+	deepseek := protocol == "deepseek" || (protocol == "" && officialDeepSeek)
 	minimax := protocol == "" && IsMiniMax(cfg.BaseURL)
 	zhipu := protocol == "" && IsZhipu(cfg.BaseURL)
 	longcat := protocol == "" && IsLongCat(cfg.BaseURL)
@@ -366,6 +371,7 @@ var bufPool = sync.Pool{
 }
 
 func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	ctx = provider.WithRequestAttemptCounter(ctx)
 	buf := bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
 	if err := json.NewEncoder(buf).Encode(c.buildRequest(req)); err != nil {
@@ -683,6 +689,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 		if sr.Usage != nil {
 			u := normaliseUsage(sr.Usage)
 			u.FinishReason = lastFinishReason
+			provider.ApplyRequestAttemptCount(ctx, u)
 			emitted = true
 			if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkUsage, Usage: u}) {
 				return emitted, ctx.Err()

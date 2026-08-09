@@ -80,16 +80,21 @@ func discoverDocs(cwd, userDir string) []Source {
 
 	// 2. Ancestor chain, outermost → project root. The project root (cwd) is
 	//    tagged ScopeProject; everything above it ScopeAncestor.
+	workspaceRoot := gitRoot(absOf(cwd))
+	if workspaceRoot == "" {
+		workspaceRoot = absOf(cwd)
+	}
+	loader := confinedLoader{workspaceRoot: workspaceRoot, seen: &seen}
 	for _, dir := range ancestorsToRoot(cwd) {
 		scope := ScopeAncestor
 		if sameDir(dir, cwd) {
 			scope = ScopeProject
 		}
-		out = append(out, loadFrom(dir, docNames, scope, &seen)...)
+		out = append(out, loader.loadDir(dir, docNames, scope)...)
 	}
 
 	// 3. Project-local overrides (highest precedence).
-	out = append(out, loadFrom(cwd, localNames, ScopeLocal, &seen)...)
+	out = append(out, loader.loadDir(cwd, localNames, ScopeLocal)...)
 
 	return out
 }

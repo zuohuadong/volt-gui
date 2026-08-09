@@ -454,7 +454,6 @@ func (s *SubagentStore) sessionAncestors(current string) ([]string, error) {
 	if current == "" {
 		return nil, nil
 	}
-	sessionDir := filepath.Dir(s.dir)
 	var ancestors []string
 	seen := map[string]bool{}
 	for cursor := current; cursor != ""; {
@@ -462,7 +461,11 @@ func (s *SubagentStore) sessionAncestors(current string) ([]string, error) {
 			return nil, fmt.Errorf("cycle at session %q", cursor)
 		}
 		seen[cursor] = true
-		meta, ok, err := LoadBranchMeta(filepath.Join(sessionDir, cursor+".jsonl"))
+		metaPath, valid := s.parentSessionPath(cursor)
+		if !valid {
+			return nil, fmt.Errorf("invalid session identifier %q", cursor)
+		}
+		meta, ok, err := LoadBranchMeta(metaPath)
 		if err != nil {
 			return nil, err
 		}
@@ -729,14 +732,17 @@ func (s *SubagentStore) isAncestorSession(ancestor, current string) (bool, error
 	if ancestor == "" || current == "" {
 		return false, nil
 	}
-	sessionDir := filepath.Dir(s.dir)
 	seen := map[string]bool{}
 	for cursor := current; cursor != ""; {
 		if seen[cursor] {
 			return false, fmt.Errorf("cycle at session %q", cursor)
 		}
 		seen[cursor] = true
-		meta, ok, err := LoadBranchMeta(filepath.Join(sessionDir, cursor+".jsonl"))
+		metaPath, valid := s.parentSessionPath(cursor)
+		if !valid {
+			return false, fmt.Errorf("invalid session identifier %q", cursor)
+		}
+		meta, ok, err := LoadBranchMeta(metaPath)
 		if err != nil {
 			return false, err
 		}

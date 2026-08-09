@@ -86,6 +86,35 @@ v0.x sessions are in a custom Windows install/data directory, use
 See
 [Configuration paths](./CONFIG_PATHS.md) for the full path list and limitations.
 
+## Reasonix → VoltUI name map
+
+VoltUI was renamed from Reasonix. Old installs keep working through
+case-by-case compatibility fallbacks in `internal/config/paths.go`; new
+configurations should use the VoltUI names. When both are set, the VoltUI name
+wins and the Reasonix name is read only as a fallback.
+
+| Kind | Reasonix (legacy) | VoltUI (current) | Fallback behavior |
+|---|---|---|---|
+| Product / brand | Reasonix | VoltUI | `VOLTUI_BRAND_NAME` > `REASONIX_BRAND_NAME` > compiled default |
+| Project memory file | `REASONIX.md` | `VOLTUI.md` | Either loads; `AGENTS.md` / `CLAUDE.md` also accepted |
+| Project config file | `reasonix.toml` | `voltui.toml` | `voltui.toml` wins on the project |
+| Home directory | `~/.reasonix` | `~/.voltui` (`%AppData%\voltui` on Windows) | — |
+| Home env var | `REASONIX_HOME` | `VOLTUI_HOME` | `VOLTUI_HOME` first, then `REASONIX_HOME` |
+| State env var | `REASONIX_STATE_HOME` | `VOLTUI_STATE_HOME` | `VOLTUI_STATE_HOME` first, then `REASONIX_STATE_HOME` |
+| Cache env var | `REASONIX_CACHE_HOME` | `VOLTUI_CACHE_HOME` | `VOLTUI_CACHE_HOME` first, then `REASONIX_CACHE_HOME` |
+| Theme env var | `REASONIX_THEME` | `VOLTUI_THEME` | Per-run override |
+| Language env var | `REASONIX_LANG` | `VOLTUI_LANG` | Per-run override |
+| Brand env var | `REASONIX_BRAND_NAME` | `VOLTUI_BRAND_NAME` | `VOLTUI_BRAND_NAME` first, then `REASONIX_BRAND_NAME` |
+| Convention dir | `.reasonix/` | `.voltui/` | `.voltui` highest; `.agents` / `.agent` / `.claude` also scanned |
+| Binary / command | `reasonix` | `voltui` | — |
+| Plugin prefix | `reasonix-plugin-` | `voltui-plugin-` | — |
+| npm package | `reasonix` | `voltui` | — |
+
+The dual-name fallbacks exist only so existing Reasonix users upgrade without
+losing data; new installs and new docs should use the VoltUI names exclusively.
+Do not introduce new `REASONIX_*` references in code or documentation — when you
+touch a file, migrate it to the VoltUI name.
+
 ## What's the same
 
 The agent core carries over: the loop, tools (read/write/edit/glob/grep/bash/…),

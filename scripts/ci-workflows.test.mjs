@@ -113,6 +113,13 @@ if (upstreamSyncSh !== null) {
     }
   });
 
+  test("upstream-sync.sh rejects an invalid sync marker before diffing", () => {
+    const markerValidation = upstreamSyncSh.indexOf('git cat-file -e "$LAST_SYNC^{commit}"');
+    const cumulativeDiff = upstreamSyncSh.indexOf('git diff --name-status -M "$LAST_SYNC" "$UPSTREAM_HEAD"');
+    assert.ok(markerValidation >= 0, "sync must validate a non-empty marker as a fetched commit");
+    assert.ok(cumulativeDiff > markerValidation, "marker validation must happen before cumulative diffing");
+  });
+
   if (upstreamParityManifest !== null) {
     test("upstream-sync.sh gates marker advancement on reviewed excluded features", () => {
       const parityCheck = upstreamSyncSh.indexOf('node "$PARITY_CHECK" "$LAST_SYNC" "$UPSTREAM_HEAD"');

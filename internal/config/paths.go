@@ -349,6 +349,12 @@ func VoltUIManagedConfigPaths() []string {
 	return out
 }
 
+// VoltuiManagedConfigPaths preserves the upstream exported spelling while the
+// fork keeps the existing VoltUI acronym form for compatibility.
+func VoltuiManagedConfigPaths() []string {
+	return VoltUIManagedConfigPaths()
+}
+
 func ReasonixManagedConfigPaths() []string {
 	return VoltUIManagedConfigPaths()
 }
@@ -372,6 +378,10 @@ func appendUniquePath(paths []string, path string) []string {
 // Windows, with a %USERPROFILE%/AppData/Roaming fallback when %APPDATA% is
 // unavailable.
 func VoltUIHomeDir() string { return reasonixHomeDir() }
+
+// VoltuiHomeDir preserves the upstream exported spelling while the fork keeps
+// the existing VoltUI acronym form for compatibility.
+func VoltuiHomeDir() string { return VoltUIHomeDir() }
 
 // RemoteStateDir is local state for the remote-SSH module (the managed
 // known_hosts file, cached host metadata): <VoltUI home>/remote. Routed

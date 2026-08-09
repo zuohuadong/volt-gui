@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const [, , baseCommit = "", upstreamHead = ""] = process.argv;
@@ -14,18 +14,19 @@ if (!upstreamHead) {
 }
 
 const syncScript = readFileSync(syncScriptPath, "utf8");
+const syncPathsBlock = syncScript.match(/SYNC_PATHS=\(\n([\s\S]*?)\n\)/)?.[1] ?? "";
+const syncPathspecs = [...syncPathsBlock.matchAll(/^\s+'([^']+)'\s*$/gm)].map((match) => match[1]);
 const syncExcludedPathspecs = [...syncScript.matchAll(/^\s+'(\:\(exclude(?:,glob)?\)[^']+)'\s*$/gm)].map((match) => match[1]);
 const reviewedPathspecs = manifest.syncExcludedPathspecs ?? [];
-const positivePathspec = (pathspec) => pathspec
-  .replace(/^:\(exclude,glob\)/, ":(glob)")
-  .replace(/^:\(exclude\)/, "");
-const diffArgs = baseCommit
-  ? ["diff", "--name-only", baseCommit, upstreamHead, "--", ...syncExcludedPathspecs.map(positivePathspec)]
-  : ["diff-tree", "--no-commit-id", "--name-only", "-r", upstreamHead, "--", ...syncExcludedPathspecs.map(positivePathspec)];
-const changedFiles = execFileSync("git", diffArgs, { encoding: "utf8" })
+const listChangedFiles = (pathspecs = []) => execFileSync("git", baseCommit
+  ? ["diff", "--name-only", baseCommit, upstreamHead, ...(pathspecs.length > 0 ? ["--", ...pathspecs] : [])]
+  : ["diff-tree", "--no-commit-id", "--name-only", "-r", upstreamHead, ...(pathspecs.length > 0 ? ["--", ...pathspecs] : [])], { encoding: "utf8" })
   .split("\n")
   .map((filePath) => filePath.trim())
   .filter(Boolean);
+const allChangedFiles = listChangedFiles();
+const syncedFiles = new Set(listChangedFiles(syncPathspecs));
+const changedFiles = allChangedFiles.filter((filePath) => !syncedFiles.has(filePath));
 
 const featureEntries = manifest.features ?? [];
 const reviewedHead = manifest.reviewedUpstreamHead ?? "";
@@ -36,6 +37,13 @@ const unresolvedFeatures = featureEntries.filter((feature) =>
   changedFiles.some((filePath) => (feature.paths ?? []).some((prefix) => filePath === prefix || filePath.startsWith(prefix)))
   && !["integrated", "reviewed-deferred"].includes(feature.status),
 );
+const changedFeatures = featureEntries.filter((feature) =>
+  changedFiles.some((filePath) => (feature.paths ?? []).some((prefix) => filePath === prefix || filePath.startsWith(prefix))),
+);
+const invalidEvidenceFeatures = changedFeatures.filter((feature) => {
+  const evidence = feature.evidence ?? [];
+  return evidence.length === 0 || evidence.some((filePath) => !existsSync(join(process.cwd(), filePath)));
+});
 const errors = [];
 const missingReviewedPathspecs = syncExcludedPathspecs.filter((pathspec) => !reviewedPathspecs.includes(pathspec));
 const staleReviewedPathspecs = reviewedPathspecs.filter((pathspec) => !syncExcludedPathspecs.includes(pathspec));
@@ -53,6 +61,9 @@ if (unmatchedFiles.length > 0) {
 }
 if (unresolvedFeatures.length > 0) {
   errors.push(`features require an explicit disposition: ${unresolvedFeatures.map((feature) => feature.id).join(", ")}`);
+}
+if (invalidEvidenceFeatures.length > 0) {
+  errors.push(`features require existing evidence paths: ${invalidEvidenceFeatures.map((feature) => feature.id).join(", ")}`);
 }
 
 if (errors.length > 0) {

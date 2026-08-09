@@ -1,6 +1,6 @@
-# Reasonix 主题包 V2
+# VoltUI 主题包 V2
 
-Reasonix 桌面端原生主题包。主题是**受控皮肤**：语义颜色令牌、密度/圆角配方，以及首页与任务/工作区可独立配置的本地背景图。主题**不能**执行 CSS、JavaScript、加载字体、远程 URL 或 SVG 脚本。V1 主题继续兼容，并在两个场景共用首页图片。
+VoltUI 桌面端原生主题包。主题是**受控皮肤**：语义颜色令牌、密度/圆角配方，以及首页与任务/工作区可独立配置的本地背景图。主题**不能**执行 CSS、JavaScript、加载字体、远程 URL 或 SVG 脚本。V1 主题继续兼容，并在两个场景共用首页图片。
 
 > English: [THEME_PACK.md](./THEME_PACK.md)
 
@@ -60,7 +60,7 @@ Reasonix 桌面端原生主题包。主题是**受控皮肤**：语义颜色令�
 | `official-cyan-stage` | Cyan Stage / 青岚舞台 | carbon | 青蓝舞台与光环、原创数字表演者 |
 | `official-noir-gold` | Noir Gold / 黑金序曲 | carbon | 黑丝绒、金色聚光灯、原创绅士 |
 
-预览在应用内主题库（设置 → 外观）中展示，来自真实 Reasonix 构建。**请勿把应用截图当作主题背景导入。** 素材来源、哈希与许可记录见 [THEME_ASSETS.zh-CN.md](./THEME_ASSETS.zh-CN.md)；生成脚本在 `scripts/official-theme-art/`（程序化、固定种子、可复现）。
+预览在应用内主题库（设置 → 外观）中展示，来自真实 VoltUI 构建。**请勿把应用截图当作主题背景导入。** 素材来源、哈希与许可记录见 [THEME_ASSETS.zh-CN.md](./THEME_ASSETS.zh-CN.md)；生成脚本在 `scripts/official-theme-art/`（程序化、固定种子、可复现）。
 
 ## 包格式
 
@@ -164,7 +164,7 @@ JSON Schema： [theme-pack.schema.json](./theme-pack.schema.json)
 
 ## 存储
 
-| Reasonix 主目录路径 | 用途 |
+| VoltUI 主目录路径 | 用途 |
 | --- | --- |
 | `desktop-theme-state.json` | 版本化的当前主题指针（**不**改 `config.toml`） |
 | `themes/<id>/` | 用户主题库（`theme.json` + 最多两张可选场景图片） |

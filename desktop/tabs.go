@@ -4235,7 +4235,7 @@ func singleSurfaceTabsFile(f desktopTabsFile) desktopTabsFile {
 }
 
 func desktopConfigDir() string {
-	return config.ReasonixHomeDir()
+	return config.VoltuiHomeDir()
 }
 
 func (a *App) saveTabsLocked() {

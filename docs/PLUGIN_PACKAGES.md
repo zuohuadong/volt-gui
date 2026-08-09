@@ -352,7 +352,7 @@ such as Superpowers and Claude-style skill packs, VoltUI maps:
   plugin's commit/push checks read; other tools' responses pass through as
   the raw result. Imported hooks receive Claude-compatible snake_case stdin
   payloads, including `hook_event_name`. Before process launch, the host
-  expands `${CLAUDE_PLUGIN_ROOT}` and `${REASONIX_PLUGIN_ROOT}` (plus their
+  expands `${CLAUDE_PLUGIN_ROOT}` and `${VOLTUI_PLUGIN_ROOT}` (plus their
   unbraced `$NAME` and Windows `%NAME%` spellings), so plugin-relative paths
   do not depend on the target shell's environment-variable syntax. On Windows,
   shell-form hooks without an explicit shell use the same Git Bash-first,
@@ -361,8 +361,12 @@ such as Superpowers and Claude-style skill packs, VoltUI maps:
   for Windows Bash even when it is not on `cmd.exe`'s `PATH`; an explicit
   interpreter path remains untouched. If no usable Bash is installed, the hook
   reports a clear prerequisite error instead of the localized `sh is not
-  recognized` output. Captured legacy-code-page output is normalized to UTF-8
-  before it reaches the UI. A `PreToolUse` or
+  recognized` output. A non-standard or portable Bash configured with
+  `[tools.shell] prefer = "bash"` and `path = ".../bash.exe"` is reused by
+  explicit Bash hooks. `voltui plugin doctor <name>` and
+  `voltui doctor capabilities` report a missing required shell before the
+  first hook invocation. Captured legacy-code-page output is normalized to
+  UTF-8 before it reaches the UI. A `PreToolUse` or
   `UserPromptSubmit` hook can still deny via exit code 2 or its JSON deny
   shape on exit 0 (`hookSpecificOutput.permissionDecision` for `PreToolUse`,
   top-level `decision:"block"` for `UserPromptSubmit`); an imported
@@ -389,11 +393,11 @@ run third-party install scripts.
 
 Plugin hooks receive these environment variables:
 
-- `REASONIX_PLUGIN_ROOT`
-- `REASONIX_PLUGIN_NAME`
-- `REASONIX_PLUGIN_VERSION`
-- `REASONIX_HOME`
-- `REASONIX_WORKSPACE_ROOT`
+- `VOLTUI_PLUGIN_ROOT`
+- `VOLTUI_PLUGIN_NAME`
+- `VOLTUI_PLUGIN_VERSION`
+- `VOLTUI_HOME`
+- `VOLTUI_WORKSPACE_ROOT`
 - `CLAUDE_PROJECT_DIR`
 - `CLAUDE_PLUGIN_ROOT`
 

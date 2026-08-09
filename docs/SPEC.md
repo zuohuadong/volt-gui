@@ -440,7 +440,7 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   transient active-goal user block. AutoResearch is a Goal strategy, not a
   standalone global skill: it writes project-local state under
   `.voltui/autoresearch/YYYYMMDD-HHMMSS-slug/` and keeps dynamic run state out
-  of `REASONIX.md`, `AGENTS.md`, project memory, tool schemas, and the
+  of `VOLTUI.md`, `AGENTS.md`, project memory, tool schemas, and the
   cache-stable system prompt. `/goal --research <objective>` forces that
   strategy; `/goal --simple <objective>` forces lightweight Goal. Outside goal
   mode, ordinary prompts never change collaboration mode or create durable
@@ -622,7 +622,7 @@ without importing provider keys or VoltUI control variables.
 
 ```toml
 default_model = "deepseek"   # provider name (→ its default model) or "provider/model"
-# language    = "zh"                # ui language tag; empty = auto-detect from $LANG / $REASONIX_LANG
+# language    = "zh"                # ui language tag; empty = auto-detect from $LANG / $VOLTUI_LANG
 
 [ui]
 # shortcut_layout = "desktop"       # classic|desktop; compatibility setting

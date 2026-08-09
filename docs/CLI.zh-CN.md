@@ -1,4 +1,4 @@
-# Reasonix CLI 命令参考
+# VoltUI CLI 命令参考
 
 <a href="../README.zh-CN.md">README</a>
 &nbsp;·&nbsp;
@@ -12,14 +12,14 @@
 ## 启动会话
 
 ```sh
-reasonix
-reasonix --model deepseek-pro
-reasonix --profile delivery --effort high
-reasonix --dir /path/to/project
+voltui
+voltui --model deepseek-pro
+voltui --profile delivery --effort high
+voltui --dir /path/to/project
 ```
 
-不带子命令运行 `reasonix` 会进入交互式终端界面。尚未配置 provider 时，先运行
-`reasonix setup`。
+不带子命令运行 `voltui` 会进入交互式终端界面。尚未配置 provider 时，先运行
+`voltui setup`。
 
 | 参数 | 用途 |
 | --- | --- |
@@ -38,15 +38,28 @@ reasonix --dir /path/to/project
 
 适用时，参数可以放在 prompt 前面或后面。
 
+## 更新原生 CLI
+
+```sh
+voltui upgrade                  # 安装最新正式版
+voltui upgrade --check          # 只报告目标版本
+voltui upgrade --force          # 重新安装当前正式版
+```
+
+更新器只选择严格的 `vX.Y.Z` 非 prerelease GitHub Release。1.x 兼容期内，旧渠道
+位置参数与 `--channel` 仍可使用，但都会解析到同一正式版并打印废弃提示。历史
+`[cli].update_channel` 值不再影响更新，并会在 VoltUI 下次保存配置时移除。别名
+`voltui update` 的行为完全相同。
+
 ## 配置供应商
 
 ```sh
-reasonix setup                    # 管理用户全局配置
-reasonix setup --local            # 管理 ./reasonix.toml
-reasonix setup /path/to/config.toml
+voltui setup                    # 管理用户全局配置
+voltui setup --local            # 管理 ./voltui.toml
+voltui setup /path/to/config.toml
 ```
 
-在交互式终端中，`reasonix setup` 是一个暂存式供应商管理器。它会列出已配置的
+在交互式终端中，`voltui setup` 是一个暂存式供应商管理器。它会列出已配置的
 provider，并支持：
 
 - 添加 OpenAI-compatible 或 Anthropic-compatible provider；
@@ -60,26 +73,60 @@ provider，并支持：
 不会直接覆盖。
 
 Provider 定义只保存 `api_key_env` 变量名。即使使用 `--local`，Key 的真实值也始终保存
-在 CLI 与桌面端共用的 Reasonix 全局 `.env` 中。如果变量名已被其他 provider 使用，
+在 CLI 与桌面端共用的 VoltUI 全局 `.env` 中。如果变量名已被其他 provider 使用，
 setup 会询问是否共享该凭据；两个 provider 使用不同 Key 时，应改用不同变量名。通过
 setup 添加或删除 provider 时，也会同步维护桌面端 provider access，因此相同模型可以
 直接在桌面端使用。
+
+### 配置区域定价货币
+
+使用用户全局货币命令查看或选择 DeepSeek 官方区域价格表：
+
+```sh
+voltui config currency             # 显示已保存值和最终解析结果
+voltui config currency auto        # 跟随解析后的 locale
+voltui config currency CNY
+voltui config currency USD
+```
+
+`auto` 会把简体或繁体中文 locale 解析为 CNY，把英文及其他 locale 解析为 USD。显式
+选择 `CNY` 或 `USD` 后，货币不再跟随界面语言。该偏好只保存在用户全局配置中，项目
+`voltui.toml` 无法覆盖，因此不支持 `--local`。自定义 provider 价格不会被修改。
+
+在交互式会话中，`/currency` 显示已保存值和最终解析结果；
+`/currency auto|CNY|USD` 会修改偏好并刷新当前运行时，同时保留当前对话。
+
+### 配置自动压缩阈值
+
+桌面端与 CLI 共用用户全局的自动压缩阈值。可以查看当前生效值及来源、修改全局默认值，
+或为当前项目添加覆盖：
+
+```sh
+voltui config compact-ratio              # 查看生效值及来源
+voltui config compact-ratio 75           # 设置用户全局默认值
+voltui config compact-ratio --local 75   # 写入 ./voltui.toml 项目覆盖
+```
+
+可设置范围为 65–85%，内置默认值为 80%。数值越低越早压缩，可能降低 prompt prefix
+缓存复用率；数值越高则会在压缩前保留更多上下文。项目 `voltui.toml` 的优先级高于
+用户全局配置。修改会应用于新启动的 CLI 会话；已经运行的会话继续使用启动时加载的阈值。
 
 ## 一次性运行与自动化
 
 脚本只需要最终回答时，使用 `-p` / `--print`：
 
 ```sh
-reasonix -p "总结这个仓库"
-reasonix -p "总结这个仓库" --output-format json
-reasonix run "实现 main.go 里的 TODO"
-echo "解释这段代码" | reasonix run
+voltui -p "总结这个仓库"
+voltui -p "总结这个仓库" --output-format json
+voltui run "实现 main.go 里的 TODO"
+voltui run --auto "实现 main.go 里的 TODO"
+echo "解释这段代码" | voltui run
 ```
 
-未使用 `-p` 或结构化输出格式时，`reasonix run` 保持正常的终端流式展示。它也接受
+未使用 `-p` 或结构化输出格式时，`voltui run` 保持正常的终端流式展示。它也接受
 `--model`、`--profile`、`--max-steps`、`--effort`、`--dir`、`--add-dir`、
 `--continue`、`--resume PATH`、`--copy`、`--allowed-tools` 和
-`--permission-mode`。
+`--permission-mode`，以及作为 `--permission-mode auto` 别名的 `--auto` / `-y`。
 
 ### 输出格式
 
@@ -90,9 +137,9 @@ echo "解释这段代码" | reasonix run
 | `stream-json` | 每行输出一个共用 `eventwire` JSON 对象，最后再输出最终结果对象。 |
 
 ```sh
-reasonix -p "列出有风险的改动" --output-format text
-reasonix -p "总结 diff" --output-format json
-reasonix run "运行测试" --output-format stream-json
+voltui -p "列出有风险的改动" --output-format text
+voltui -p "总结 diff" --output-format json
+voltui run "运行测试" --output-format stream-json
 ```
 
 最终结构化对象的格式如下：
@@ -106,6 +153,8 @@ reasonix run "运行测试" --output-format stream-json
   "num_turns": 1,
   "result": "...",
   "session_id": "...",
+  "total_cost": 0,
+  "currency": "CNY",
   "total_cost_usd": 0,
   "usage": {
     "input_tokens": 0,
@@ -116,6 +165,12 @@ reasonix run "运行测试" --output-format stream-json
 }
 ```
 
+`total_cost` 使用 `currency` 给出的 ISO 货币代码计价；DeepSeek 官方价格目前会输出
+`CNY` 或 `USD`。`total_cost_usd` 作为数字兼容别名继续保留，并与 `total_cost` 数值
+相同；即使 `currency` 为 `CNY`，它也不会按旧字段名自动换算为美元。新接入必须同时读取
+`total_cost` 和 `currency`。如果一次结构化运行包含多种货币，VoltUI 会直接报错，
+不会输出容易误解的合计金额。
+
 执行失败时使用 `subtype: "error_during_execution"` 和 `is_error: true`。
 结构化模式会把运行时错误保留在 JSON 中，不再额外重复输出一份人类可读错误。
 
@@ -125,7 +180,7 @@ reasonix run "运行测试" --output-format stream-json
 使用独立的事件参数：
 
 ```sh
-reasonix run --events-jsonl "运行 focused tests"
+voltui run --events-jsonl "运行 focused tests"
 ```
 
 每行都包含 `schema_version`、`sequence` 和 `kind`，最后一行为
@@ -135,28 +190,29 @@ reasonix run --events-jsonl "运行 focused tests"
 
 以下只读命令可以查询持久化状态，但不会输出 transcript、label、command、output、路径、
 PID 或 hostname。这里的“只读”是指不会修改 transcript、runtime、recovery 或被查询的
-状态；首次使用脱敏机器接口时，Reasonix 可能会在用户状态目录初始化一个私有身份密钥：
+状态；首次使用脱敏机器接口时，VoltUI 可能会在用户状态目录初始化一个私有身份密钥：
 
 ```sh
-reasonix session list --json [--dir SESSION_DIR]
-reasonix session show <machine-session-id> --json [--dir SESSION_DIR]
-reasonix session status <machine-session-id> --json [--dir SESSION_DIR]
-reasonix session recovery [<machine-session-id>] --json [--dir SESSION_DIR]
-reasonix task list --json [--dir SESSION_DIR] [--session MACHINE_SESSION_ID]
-reasonix task show <task-id> --json [--dir SESSION_DIR] [--session MACHINE_SESSION_ID]
-reasonix hook list --json [--project-root PATH] [--home-dir PATH]
-reasonix hook status --json [--project-root PATH] [--home-dir PATH]
+voltui session list --json [--dir SESSION_DIR | --project-root PATH]
+voltui session show <machine-session-id> --json [--dir SESSION_DIR | --project-root PATH]
+voltui session status <machine-session-id> --json [--dir SESSION_DIR | --project-root PATH]
+voltui session recovery [<machine-session-id>] --json [--dir SESSION_DIR | --project-root PATH]
+voltui task list --json [--dir SESSION_DIR | --project-root PATH] [--session MACHINE_SESSION_ID]
+voltui task show <task-id> --json [--dir SESSION_DIR | --project-root PATH] [--session MACHINE_SESSION_ID]
+voltui hook list --json [--project-root PATH] [--home-dir PATH]
+voltui hook status --json [--project-root PATH] [--home-dir PATH]
 ```
 
-对于 `session` 和 `task`，`--dir` 明确指定 session 存储目录；未指定时，Reasonix
-选择当前项目的 session store。对于 `hook`，`--dir` 是 `--project-root` 的别名。
+对于 `session` 和 `task`，`--dir` 明确指定 session 存储目录，`--project-root`
+则解析指定项目的 session store；两者不能同时使用。都未指定时，VoltUI 选择当前
+项目的 session store。对于 `hook`，`--dir` 是 `--project-root` 的别名。
 `hook list` 的状态值为 `active` 或 `invalid`；`invalid` 表示配置的
 event 因事件名、命令/context 来源或工具事件 matcher 无效而无法执行。非工具事件
 会忽略 matcher。
 
-机器 session ID 是带密钥的 opaque hash，不是 transcript 文件名。在同一个 Reasonix
+机器 session ID 是带密钥的 opaque hash，不是 transcript 文件名。在同一个 VoltUI
 用户状态目录中，同一 session 的 ID 保持稳定；不同安装密钥会生成互不关联的 ID，无法再
-根据时间戳或模型 label 离线猜测。迁移 Reasonix 状态目录时，如果自动化依赖已有 machine
+根据时间戳或模型 label 离线猜测。迁移 VoltUI 状态目录时，如果自动化依赖已有 machine
 ID，需要一并保留该私有身份密钥。任务仍在运行时
 `finished_at` 为空；只有任务已经结束并且持久化产物存在时，才会输出
 `artifact_complete=true`。没有 live session lease 的 `running` 记录会显示为
@@ -173,11 +229,11 @@ Schema version 1 的兼容规则：
 ## 恢复会话
 
 ```sh
-reasonix --continue
-reasonix --resume
-reasonix --resume provider-config
-reasonix --resume <session-id>
-reasonix --resume provider-config --copy
+voltui --continue
+voltui --resume
+voltui --resume provider-config
+voltui --resume <session-id>
+voltui --resume provider-config --copy
 ```
 
 - `--continue` 立即恢复最新保存的会话。
@@ -186,19 +242,19 @@ reasonix --resume provider-config --copy
   子串。没有匹配或匹配不唯一时会返回明确错误。
 - 为保持兼容，仍接受 `--resume=true` 和 `--resume=false`。
 - `--copy` 不修改原 transcript，而是在新的可写会话中继续。原会话已被另一个
-  Reasonix 进程占用时可以使用它。
+  VoltUI 进程占用时可以使用它。
 
-一次性运行可用 `reasonix run --resume PATH "任务"` 指定 session 文件路径。Session
+一次性运行可用 `voltui run --resume PATH "任务"` 指定 session 文件路径。Session
 lease 会阻止桌面端和 CLI 同时写入同一个 transcript。
 
 ## 权限
 
 ```sh
-reasonix --permission-mode plan
-reasonix --permission-mode acceptEdits
-reasonix -p "运行指定测试" --allowed-tools "Bash(go test ./...)"
-reasonix --allowed-tools "Bash(git *) Edit"
-reasonix --allowed-tools "Bash(go test ./...)" --allowed-tools read_file
+voltui --permission-mode plan
+voltui --permission-mode acceptEdits
+voltui -p "运行指定测试" --allowed-tools "Bash(go test ./...)"
+voltui --allowed-tools "Bash(git *) Edit"
+voltui --allowed-tools "Bash(go test ./...)" --allowed-tools read_file
 ```
 
 | 模式 | 行为 |
@@ -210,25 +266,31 @@ reasonix --allowed-tools "Bash(go test ./...)" --allowed-tools read_file
 | `plan` | 以只读 Plan 模式启动交互式会话。 |
 | `bypassPermissions` | 跳过审批；等同于 YOLO。 |
 
+无人值守执行需要放行普通 writer fallback 时，使用 `voltui run --auto ...`
+（或 `-y`）。这个别名不能和显式 `--permission-mode` 同时使用。
+
 `--allowed-tools` 是会话权限覆盖，不是 provider tool schema 过滤器。规则可以用逗号
 或空格分隔，也可重复传入参数。配置中的 deny 规则始终优先于命令行 allow 规则。
 
-在非交互运行（`reasonix run` / `-p`）下没有可应答的审批，各模式都以非阻塞方式解析：
-`ask`、`manual`、`acceptEdits` 保留 run 自主性，放行普通审批决策；`auto` 仍自动批准
-普通 fallback，但对命中显式 ask 规则的命令改为拒绝，而不是无人值守地执行；`dontAsk`
-拒绝；`bypassPermissions` 执行一切，仅始终需要人工新鲜批准的工具（记忆、plan、沙箱
-逃逸、受管配置写入）除外。
+在非交互运行（`voltui run` / `-p`）下没有可应答的审批，各模式都以非阻塞方式解析。
+默认 `ask` / `manual` 对显式 Ask 决策和普通 writer fallback 失败关闭，只读调用仍会执行；
+`acceptEdits` 放行其列出的文件编辑工具，其他 Ask 决策失败关闭；`auto` 放行普通 writer
+fallback，但仍拒绝显式 ask 规则；`dontAsk` 拒绝未批准的 writer；`bypassPermissions`
+可越过普通 ask 与 writer fallback，但配置的 deny、Sandbox，以及始终需要人工新鲜批准的
+工具（记忆、plan、沙箱逃逸、受管配置写入）仍然生效。在所有模式下，拥有当前项目 store
+的顶层 controller 仍可创建有界、非敏感、create-only 的 project/reference 记忆；其他
+记忆变更在无人确认时仍会被拒绝。
 
 ## 附加目录
 
 ```sh
-reasonix --add-dir ../shared
-reasonix -p "同时更新两个项目" \
+voltui --add-dir ../shared
+voltui -p "同时更新两个项目" \
   --add-dir ../frontend \
   --add-dir ../backend
 ```
 
-相对路径从 workspace 根目录解析，并且必须是已存在的目录。Reasonix 会解析符号链接、
+相对路径从 workspace 根目录解析，并且必须是已存在的目录。VoltUI 会解析符号链接、
 去重，并在当前会话中扩展文件写入工具和沙盒 Bash 的写入边界。这些目录只在运行时生效，
 不会写入配置。
 
@@ -260,10 +322,10 @@ reasonix -p "同时更新两个项目" \
 
 剪贴板操作按内容类型明确分开。本地 transcript 和输入框选区写入系统剪贴板，并且只有写入
 成功后才提示完成；SSH 会回退到明确标记的 OSC 52 请求。文本粘贴继续走终端的
-bracketed-paste 动作（macOS 通常为 `Cmd+V`，其它平台使用终端自身配置）。Reasonix 接管
+bracketed-paste 动作（macOS 通常为 `Cmd+V`，其它平台使用终端自身配置）。VoltUI 接管
 本地会话的鼠标时，没有选区的右键会读取剪贴板文本并走同一粘贴路径，有选区时右键优先复制。
 SSH 下远端进程无法读取本机剪贴板，请使用终端粘贴快捷键；`/mouse` 可恢复终端原生右键菜单。
-图片粘贴由 Reasonix 接管：macOS/Linux 使用 `Ctrl+V`，Windows 使用 `Alt+V`，也可运行
+图片粘贴由 VoltUI 接管：macOS/Linux 使用 `Ctrl+V`，Windows 使用 `Alt+V`，也可运行
 `/paste-image`；附件标记准备完成前，底栏会显示“正在粘贴图片…”。
 
 ## 会话内命令
@@ -279,6 +341,7 @@ SSH 下远端进程无法读取本机剪贴板，请使用终端粘贴快捷键�
 | `/status` | 显示模型、effort、cache、Git、后台任务，以及工作模式或余额信息。 |
 | `/work-mode [economy\|balanced\|delivery]` | 查看或切换运行时工作模式；`/profile` 是别名。 |
 | `/theme [auto\|light\|dark\|style]` | 查看或切换 CLI 背景模式和强调色。 |
+| `/currency [auto\|CNY\|USD]` | 查看或切换用户全局官方定价货币，并刷新当前运行时。 |
 | `/paste-image` | 读取剪贴板图片并插入可编辑的附件标记。 |
 | `/mouse` | 切换应用内鼠标选区、滚动条和滚轮处理。 |
 | `/effort` | 查看或切换 reasoning effort。 |
@@ -286,9 +349,32 @@ SSH 下远端进程无法读取本机剪贴板，请使用终端粘贴快捷键�
 | `/verbose` | 切换详细 reasoning 显示。 |
 | `/sandbox` | 查看沙盒状态。 |
 | `/goal` | 启动、查看或清除长周期 Goal。 |
-| `/mcp`、`/skills`、`/hooks`、`/memory` | 查看和管理扩展或记忆。 |
+| `/docs [问题]` | 显示内置语料身份，或先本地检索，再让当前配置的 AI 根据版本匹配证据回答。 |
+| `/reasonix:docs [问题]` | 当已有自定义命令或兼容插件/Skill 别名占用 `/docs` 时优先使用的内置后备入口；若这个名称也已被占用，菜单会选择下一个空闲的 `reasonix:` 限定名，不覆盖原命令。 |
+| `/mcp`、`/skills`、`/hooks` | 查看和管理扩展。 |
+| `/remember <note>` | 把常驻 note 追加到项目指令文档；`# <note>` 是快捷方式。 |
+| `/memory [subcommand]` | 查看指令、记忆 provenance、召回、revision 与恢复。 |
 | `/rewind` | 把对话和/或代码恢复到更早的 turn。 |
 | `/tree`、`/branch`、`/switch` | 查看或切换会话分支。 |
 
 切换模型、effort 或工作模式会重建运行时，同时保留当前对话、会话级权限覆盖、附加目录
 访问权限和 session ownership。
+
+### 记忆诊断与恢复
+
+直接运行 `/memory` 会显示全部 project/global active facts，不会隐藏跨 scope 的同名条目。
+每条事实包含稳定 ID、revision、scope、type、freshness 和 description。斜杠补全会提供
+可用子命令、active ID/name，以及当前 store 拥有的 archive path。
+
+| 命令 | 用途 |
+| --- | --- |
+| `/memory instructions` | 显示解析后的指令 precedence、目录、imports 和 diagnostics。 |
+| `/memory recall` | 解释最近一次自动召回的 query、hits、score、原因、freshness 和预算。 |
+| `/memory revisions <id-or-name>` | 显示 active revision 与不可变历史。 |
+| `/memory restore <id-or-name> <revision>` | 把旧内容恢复为一个单调递增的新 revision。 |
+| `/memory archived` | 列出 archive facts 及其受管路径。 |
+| `/memory recover <archive-path>` | 不覆盖 active data，把 archive 恢复为新 revision。 |
+
+这些命令始终作用于当前 session controller。Remote Workbench 使用远程 memory catalog，
+绝不回退读取桌面本机记忆。权限、自动召回、写入确认和迁移行为见
+[Context Engine v2](./SESSION_MEMORY_RETRIEVAL.zh-CN.md)。

@@ -45,7 +45,7 @@ VoltUI 全局 `<VoltUI home>/.env`。项目 `.env`、home `.env`、继承的 she
 
 ```toml
 default_model = "deepseek-flash"   # 执行器；设 [agent].planner_model 可加规划器
-# language    = "zh"               # 界面语言；为空则按 $LANG / $REASONIX_LANG 自动检测
+# language    = "zh"               # 界面语言；为空则按 $LANG / $VOLTUI_LANG 自动检测
 
 [ui]
 # shortcut_layout = "desktop"      # classic|desktop；兼容旧配置
@@ -404,7 +404,7 @@ CLI/TUI 文本输入可通过 `[ui].cursor_shape` 设置光标形状，支持 `u
 | transcript 文本选择 | 复制 transcript 文本 | 应用内拖选松开后，本地会话通过可验证的系统剪贴板路径写入（macOS `pbcopy`、Linux 可用的 Wayland/X11 工具、Windows 系统剪贴板）；SSH 才回退到 OSC 52，并明确标记为回退而不是宣称原生复制成功。`Ctrl+C`/`Super+C`/`Meta+C` 或右键当前选区可再次复制。 |
 | 输入框文本选择 | 选中、复制或替换草稿文本 | 应用内拖选松开后，会通过与 transcript 相同的可验证剪贴板路径复制；输入或粘贴会替换选区，方向键会收起选区。 |
 | 没有活动选区时右键 | 在本地会话粘贴剪贴板文本 | 本地会话开启鼠标接管时，VoltUI 只读取文本并交给正常的 bracketed-paste 处理。SSH 下远端进程无法读取本机剪贴板，请使用终端粘贴快捷键；`/mouse` 可恢复终端原生右键菜单。存在活动选区时，右键仍优先复制该选区。 |
-| `/mouse` | 切换应用内鼠标接管 | 关闭后由终端处理原生拖选和右键菜单，但会失去应用内选区、滚动条和滚轮。可用 `REASONIX_DISABLE_MOUSE=1` 让每次会话默认关闭。 |
+| `/mouse` | 切换应用内鼠标接管 | 关闭后由终端处理原生拖选和右键菜单，但会失去应用内选区、滚动条和滚轮。可用 `VOLTUI_DISABLE_MOUSE=1` 让每次会话默认关闭。 |
 | `Ctrl+C` | 复制、取消、清空或退出 | 有 transcript 或输入框活动选区时优先复制；否则取消运行中的 turn、清空非空输入，或在空输入下连按两次退出。 |
 | `Ctrl+D` | 退出 TUI | 立即退出。 |
 | 终端的文本粘贴快捷键 | 粘贴文本 | 文本保持终端原生 bracketed-paste 路径：macOS 通常是 `Cmd+V`，Linux 通常是 `Ctrl+Shift+V`，其它环境使用终端自身配置。VoltUI 只消费收到的文本粘贴事件，不会先探测图片。 |
@@ -420,7 +420,7 @@ CLI/TUI 文本输入可通过 `[ui].cursor_shape` 设置光标形状，支持 `u
 | `Ctrl+Y` | 切换 YOLO 开/关 | 关闭 YOLO 时会尽量恢复之前的 Ask/Auto 基底。终端若能转发 Command/Super，也可能识别 `Cmd+Y`，但稳定可用的是 `Ctrl+Y`。 |
 | `--yolo`、`--dangerously-skip-permissions` | 启动时进入 YOLO | 和 `Ctrl+Y` 是同一个运行时模式。 |
 | `/work-mode [economy|balanced|delivery]` | 查看或切换当前会话的工作模式 | `/profile` 是兼容别名。切换会原子重建运行时，保留对话和审批姿态；有工作正在进行时会拒绝切换。 |
-| `/theme [auto|light|dark|style]` | 查看或切换 CLI 主题 | 不带参数会列出背景模式和命名配色。选择会保存到用户配置；单次运行可用 `REASONIX_THEME` 和 `REASONIX_THEME_STYLE` 覆盖。 |
+| `/theme [auto|light|dark|style]` | 查看或切换 CLI 主题 | 不带参数会列出背景模式和命名配色。选择会保存到用户配置；单次运行可用 `VOLTUI_THEME` 和 `VOLTUI_THEME_STYLE` 覆盖。 |
 | `Ctrl+O` | 切换详细 reasoning 显示 | 也可通过 `/verbose` 使用。 |
 | `Ctrl+B` | 展开或收起较长 shell 输出 | 较长 shell 输出的提示行也可点击；全屏 TUI 开启鼠标接管时，文本选区由应用内处理。 |
 | `/goal <目标>`、`/goal --research <目标>`、`/goal --simple <目标>`、`/goal status`、`/goal clear` | 启动、查看或清除 Goal | Goal 不进入任何快捷键循环；显式启动 Goal 后，明显长周期目标会自动启用 AutoResearch。 |
@@ -649,7 +649,7 @@ custom path 或包含更多手写结构的 Skill，避免丢失 frontmatter、re
 完整 CLI 参数、Skill 文件格式、模型优先级、安全行为和排障说明见
 [子智能体 Profile](./SUBAGENT_PROFILES.zh-CN.md)。
 
-`/memory` 会同时列出记忆文档（`REASONIX.md` / `AGENTS.md`）和已保存的 auto-memory 条目。
+`/memory` 会同时列出记忆文档（`VOLTUI.md` / `AGENTS.md`）和已保存的 auto-memory 条目。
 在 agent 回合中，只读的 `history` 和 `memory` 工具可以按需检索历史 session 决策、
 compaction archive 和已保存事实；这些动态内容不会被塞进稳定的 system prompt 前缀。
 `/forget <name>` 会把已保存事实归档而不是永久删除；CLI/TUI 和桌面记忆面板能显示归档文件用于追溯，
@@ -704,7 +704,7 @@ AutoResearch 会在这些目标里自动启用：包含“持续”“长期”�
 
 worker/subagent 可以独立探索，但 canonical state 由 orchestrator 负责写入。完成前必须
 对照 `task_spec.md` 的 success criteria 做逐项证据审计；窄范围检查通过不能证明宽范围需求
-完成。动态运行态只写进 `.voltui/autoresearch/...`，不写入 `REASONIX.md`、`AGENTS.md`、
+完成。动态运行态只写进 `.voltui/autoresearch/...`，不写入 `VOLTUI.md`、`AGENTS.md`、
 project memory、tool schema 或 cache-stable system prompt。公开发布、破坏性操作、凭证、
 付款和外部通知仍然遵守正常的 approval、privacy 与 cache gate。
 
@@ -727,7 +727,7 @@ project memory、tool schema 或 cache-stable system prompt。公开发布、破
 planner_model = "deepseek-pro"   # 作为低频规划器
 ```
 
-Planner 会看到已加载的 `REASONIX.md` / `AGENTS.md` 记忆，并拿到一小组只读研究工具，
+Planner 会看到已加载的 `VOLTUI.md` / `AGENTS.md` 记忆，并拿到一小组只读研究工具，
 因此可以先检查相关文件再把计划交给执行器。写入类和流程类工具仍只给执行器使用。
 
 VoltUI 会用确定性规则路由每一轮，不再调用额外的 classifier 模型：问答、短回复、

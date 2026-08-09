@@ -26,7 +26,14 @@ remote-runtime --broker RPC→ Desktop Provider Broker → local Provider / API 
   - `desktop/frontend/src/generated/remoteProtocol.generated.ts`
 - Regenerate: `go run ./cmd/remote-protocol-gen -root .`
 - Check: `go run ./cmd/remote-protocol-gen -check -root .`
-- Handshake compares the complete **Build ID** (`productVersion`, source revision, protocol version, and Schema Hash). Any mismatch is rejected before the Provider Broker is activated. V1 does not auto-install or auto-upgrade the Host CLI.
+- Before the handshake, Desktop probes the Host CLI's complete **Build ID**
+  (`productVersion`, source revision, protocol version, and Schema Hash). With
+  `serve_install = "auto"`, an exact packaged CLI is uploaded for a matching
+  platform; for a different Host platform, Desktop downloads the corresponding
+  immutable official CLI release, verifies `SHA256SUMS`, and atomically uploads
+  it to a build-specific path under `~/.voltui/remote/workbench/`. npm is only
+  the final fallback. `npm`, `upload`, and `never` retain their explicit policy
+  meanings. Any remaining mismatch is rejected before Provider Broker activation.
 
 ## Provider Broker
 
@@ -59,7 +66,7 @@ One-click Remote connections select the Host workspace in this order:
 2. The Host's configured default workspace.
 3. If neither exists, require the user to choose a workspace explicitly in Remote → Server.
 
-`~` and `~/...` are expanded against the remote SSH user's home directory. Reasonix never silently falls back to `/`; users may still choose `/` explicitly, but doing so lets the workbench browse everything that SSH user can read. Configure a project directory as the default workspace. Normal SSH permissions and tool approval rules still apply.
+`~` and `~/...` are expanded against the remote SSH user's home directory. VoltUI never silently falls back to `/`; users may still choose `/` explicitly, but doing so lets the workbench browse everything that SSH user can read. Configure a project directory as the default workspace. Normal SSH permissions and tool approval rules still apply.
 
 ## Explicit non-goals (this integration)
 
@@ -75,9 +82,9 @@ One-click Remote connections select the Host workspace in this order:
 | Platform | Transport |
 | --- | --- |
 | Windows | System `ssh.exe`, AskPass helper, Job Object fail-closed process tree |
-| macOS / Linux | Go SSH client; remote command `reasonix remote attach-workspace --stdio` |
+| macOS / Linux | Go SSH client; remote command `voltui remote attach-workspace --stdio` |
 
-Remote argv is fixed (`reasonix remote attach-workspace --stdio`). Workspace is passed via initialize DTO / env, never free-form shell interpolation of untrusted paths beyond quoting.
+Remote argv is fixed (`voltui remote attach-workspace --stdio`). Workspace is passed via initialize DTO / env, never free-form shell interpolation of untrusted paths beyond quoting.
 
 ## Attach + runtime lifecycle
 
@@ -89,7 +96,7 @@ Remote argv is fixed (`reasonix remote attach-workspace --stdio`). Workspace is 
 
 ## Provider Trust
 
-Durable store: `<Reasonix home>/remote-provider-trust.json`
+Durable store: `<VoltUI home>/remote-provider-trust.json`
 Key: `HostID + fingerprint SHA-256` → allowed provider refs.
 Never stores API keys, base URLs, headers, env names, or passwords.
 New provider refs require re-confirmation; catalog-changed is only sent after re-auth.
@@ -125,12 +132,12 @@ production Broker and runtime:
 
 ```sh
 cd desktop
-REASONIX_HOME="$HOME/.reasonix" REASONIX_REMOTE_WORKBENCH_LIVE=1 \
-  go test -tags 'live reasonix_remote_integration' \
+VOLTUI_HOME="$HOME/.voltui" VOLTUI_REMOTE_WORKBENCH_LIVE=1 \
+  go test -tags 'live voltui_remote_integration' \
   -run '^TestRemoteWorkbenchLiveDesktopBroker$' -count=1 -v .
 ```
 
-Use `REASONIX_REMOTE_WORKBENCH_LIVE_PROVIDER_REF` to select a specific
+Use `VOLTUI_REMOTE_WORKBENCH_LIVE_PROVIDER_REF` to select a specific
 authorized DeepSeek model reference. The test never logs Provider credentials
 or response content.
 

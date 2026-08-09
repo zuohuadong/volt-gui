@@ -377,7 +377,7 @@ func TestVoltUIHomeDirOverridesGlobalVoltUISkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	want := filepath.Join(reasonixHome, SkillsDirname, "created", SkillFile)
+	want := filepath.Join(voltuiHome, SkillsDirname, "created", SkillFile)
 	if path != want {
 		t.Fatalf("created skill path = %q, want %q", path, want)
 	}

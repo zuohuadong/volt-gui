@@ -34,7 +34,11 @@ func TestFleetSchemaStableAndBounds(t *testing.T) {
 
 func TestFleetRejectsSingleTaskAndPathConflict(t *testing.T) {
 	root := t.TempDir()
-	task := newTestTaskTool(t, &mockProvider{name: "sub"}, tool.NewRegistry(), "sys", "", "", nil).
+	task := newTestTaskTool(t, testTaskToolConfig{
+		provider:     &mockProvider{name: "sub"},
+		registry:     tool.NewRegistry(),
+		systemPrompt: "sys",
+	}).
 		WithTranscripts(mustSubagentStore(t), root, "base", "high").
 		WithScheduler(NewSubagentScheduler(6, 3))
 	f := NewFleetTool(task)

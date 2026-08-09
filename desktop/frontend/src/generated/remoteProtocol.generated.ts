@@ -2,7 +2,7 @@
 
 export const REMOTE_SCHEMA_FORMAT = "reasonix.remote.schema.v1" as const;
 export const REMOTE_PROTOCOL_VERSION = "1" as const;
-export const REMOTE_SCHEMA_HASH = "sha256:f4b41feb2e9d64aacbb2b8bf65116d09a2fa4f4e5ea68493876f9a4486229598" as const;
+export const REMOTE_SCHEMA_HASH = "sha256:6f328057ab077644099e3c8850cc876f7a477b171139979aa4c1091f93ad6e3f" as const;
 
 export const REMOTE_FIXED_RESOURCES = {
   "protocol": {
@@ -208,6 +208,7 @@ export type RemoteEventRaw = {
       "cost"?: number;
       "costUsd"?: number;
       "currency"?: string;
+      "estimated"?: boolean;
       "promptTokens": number;
       "reasoningTokens"?: number;
       "sessionCacheHitTokens": number;
@@ -277,6 +278,7 @@ export type RemoteEventRaw = {
     "cost"?: number;
     "costUsd"?: number;
     "currency"?: string;
+    "estimated"?: boolean;
     "promptTokens": number;
     "reasoningTokens"?: number;
     "sessionCacheHitTokens": number;
@@ -357,6 +359,7 @@ export type RemoteEventHydrated = {
       "cost"?: number;
       "costUsd"?: number;
       "currency"?: string;
+      "estimated"?: boolean;
       "promptTokens": number;
       "reasoningTokens"?: number;
       "sessionCacheHitTokens": number;
@@ -426,6 +429,7 @@ export type RemoteEventHydrated = {
     "cost"?: number;
     "costUsd"?: number;
     "currency"?: string;
+    "estimated"?: boolean;
     "promptTokens": number;
     "reasoningTokens"?: number;
     "sessionCacheHitTokens": number;
@@ -3111,6 +3115,7 @@ export type SessionEventRaw = {
         "cost"?: number;
         "costUsd"?: number;
         "currency"?: string;
+        "estimated"?: boolean;
         "promptTokens": number;
         "reasoningTokens"?: number;
         "sessionCacheHitTokens": number;
@@ -3180,6 +3185,7 @@ export type SessionEventRaw = {
       "cost"?: number;
       "costUsd"?: number;
       "currency"?: string;
+      "estimated"?: boolean;
       "promptTokens": number;
       "reasoningTokens"?: number;
       "sessionCacheHitTokens": number;
@@ -3281,6 +3287,7 @@ export type SessionEventHydrated = {
         "cost"?: number;
         "costUsd"?: number;
         "currency"?: string;
+        "estimated"?: boolean;
         "promptTokens": number;
         "reasoningTokens"?: number;
         "sessionCacheHitTokens": number;
@@ -3350,6 +3357,7 @@ export type SessionEventHydrated = {
       "cost"?: number;
       "costUsd"?: number;
       "currency"?: string;
+      "estimated"?: boolean;
       "promptTokens": number;
       "reasoningTokens"?: number;
       "sessionCacheHitTokens": number;
@@ -4355,6 +4363,7 @@ export type SessionSubscribeResultRaw = {
             "cost"?: number;
             "costUsd"?: number;
             "currency"?: string;
+            "estimated"?: boolean;
             "promptTokens": number;
             "reasoningTokens"?: number;
             "sessionCacheHitTokens": number;
@@ -4424,6 +4433,7 @@ export type SessionSubscribeResultRaw = {
           "cost"?: number;
           "costUsd"?: number;
           "currency"?: string;
+          "estimated"?: boolean;
           "promptTokens": number;
           "reasoningTokens"?: number;
           "sessionCacheHitTokens": number;
@@ -4774,6 +4784,7 @@ export type SessionSubscribeResultHydrated = {
             "cost"?: number;
             "costUsd"?: number;
             "currency"?: string;
+            "estimated"?: boolean;
             "promptTokens": number;
             "reasoningTokens"?: number;
             "sessionCacheHitTokens": number;
@@ -4843,6 +4854,7 @@ export type SessionSubscribeResultHydrated = {
           "cost"?: number;
           "costUsd"?: number;
           "currency"?: string;
+          "estimated"?: boolean;
           "promptTokens": number;
           "reasoningTokens"?: number;
           "sessionCacheHitTokens": number;

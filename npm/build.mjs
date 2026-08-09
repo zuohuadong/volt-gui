@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { publishPackages } from "./publish.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -25,6 +26,10 @@ if (!tag) {
 const version = tag.replace(/^(npm-)?v/, "");
 const binaryVersion = `v${version}`;
 const publish = process.argv.includes("--publish");
+const candidateSha = execFileSync("git", ["rev-parse", "HEAD"], {
+  cwd: ROOT,
+  encoding: "utf8",
+}).trim();
 
 rmSync(STAGE, { recursive: true, force: true });
 mkdirSync(STAGE, { recursive: true });
@@ -70,6 +75,7 @@ for (const t of TARGETS) {
           type: "git",
           url: "git+https://github.com/zuohuadong/volt-gui.git",
         },
+        releaseCandidateSha: candidateSha,
       },
       null,
       2,
@@ -87,6 +93,7 @@ const mainPkg = JSON.parse(
   readFileSync(join(HERE, "voltui", "package.json"), "utf8"),
 );
 mainPkg.version = version;
+mainPkg.releaseCandidateSha = candidateSha;
 for (const key of Object.keys(mainPkg.optionalDependencies)) {
   mainPkg.optionalDependencies[key] = version;
 }
@@ -100,21 +107,11 @@ if (!publish) {
   process.exit(0);
 }
 
-// Three independent dist-tags: 0.x stable is the promoted default (`latest`); a
-// `-canary.` build is the opt-in tester channel (`canary`); everything else — the
-// 1.x line and rc prereleases — ships under `next`. Only a `--tag canary` publish
-// moves canary, so `next`/`latest` users never resolve a canary. Promote a 1.x
-// stable to default with a manual `npm dist-tag add voltui@<ver> latest`.
-const distTag = version.includes("-canary.")
-  ? "canary"
-  : version.startsWith("0.") && !version.includes("-")
-    ? "latest"
-    : "next";
-const publishArgs = ["publish", "--access", "public", "--tag", distTag];
-
-for (const sub of subPackages) {
-  console.log(`publish ${sub.name}@${version} (${distTag})`);
-  execFileSync("npm", publishArgs, { cwd: sub.dir, stdio: "inherit" });
-}
-console.log(`publish voltui@${version} (${distTag})`);
-execFileSync("npm", publishArgs, { cwd: mainDir, stdio: "inherit" });
+// Publish every immutable package before advancing the public channel. Recovery
+// reuses packages that already prove the same candidate SHA, fills only missing
+// packages, and never moves latest/next/canary back to an older version.
+publishPackages({
+  packages: [...subPackages, { name: "voltui", dir: mainDir }],
+  version,
+  candidateSha,
+});

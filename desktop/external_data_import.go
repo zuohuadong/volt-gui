@@ -186,7 +186,7 @@ func (a *App) PreviewExternalData(input ExternalDataPreviewInput) (ExternalDataI
 		return ExternalDataImportPreview{}, err
 	}
 	descriptor := adapter.descriptor(a.activeWorkspaceRoot())
-	candidates, messages, err := adapter.scan(root, a.activeWorkspaceRoot(), filepath.Join(config.ReasonixHomeDir(), voltSkill.SkillsDirname))
+	candidates, messages, err := adapter.scan(root, a.activeWorkspaceRoot(), filepath.Join(config.VoltuiHomeDir(), voltSkill.SkillsDirname))
 	if err != nil {
 		return ExternalDataImportPreview{}, err
 	}
@@ -229,7 +229,7 @@ func (a *App) ImportExternalData(input ExternalDataImportInput) (ExternalDataImp
 		return ExternalDataImportResult{}, err
 	}
 	workspaceRoot := a.activeWorkspaceRoot()
-	globalSkillsRoot := filepath.Join(config.ReasonixHomeDir(), voltSkill.SkillsDirname)
+	globalSkillsRoot := filepath.Join(config.VoltuiHomeDir(), voltSkill.SkillsDirname)
 	candidates, messages, err := adapter.scan(root, workspaceRoot, globalSkillsRoot)
 	if err != nil {
 		return ExternalDataImportResult{}, err

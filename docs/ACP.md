@@ -8,7 +8,7 @@
 &nbsp;·&nbsp;
 <a href="https://agentclientprotocol.com/">ACP specification</a>
 
-Reasonix implements Agent Client Protocol (ACP) v1 as an NDJSON JSON-RPC 2.0
+VoltUI implements Agent Client Protocol (ACP) v1 as an NDJSON JSON-RPC 2.0
 agent over standard input and output. Editors and other ACP hosts launch the
 process, open one or more workspace-scoped sessions, and receive streamed
 messages, tool activity, plans, permission requests, and configuration updates.
@@ -18,23 +18,23 @@ messages, tool activity, plans, permission requests, and configuration updates.
 An ACP host should launch one of these commands:
 
 ```sh
-reasonix acp
-reasonix acp --model deepseek-pro
-reasonix acp --profile delivery
+voltui acp
+voltui acp --model deepseek-pro
+voltui acp --profile delivery
 ```
 
 `--model` selects the startup model when the client does not override it.
 `--profile` sets the startup work mode to `economy`, `balanced`, or `delivery`.
 Both remain session-configurable after initialization.
 
-Standard output is reserved for ACP messages. Reasonix sends diagnostics to
-standard error, so hosts must not merge the two streams. Run `reasonix setup`
+Standard output is reserved for ACP messages. VoltUI sends diagnostics to
+standard error, so hosts must not merge the two streams. Run `voltui setup`
 beforehand when no provider is configured; the initialize response also
-advertises a terminal authentication method that launches `reasonix setup`.
+advertises a terminal authentication method that launches `voltui setup`.
 
 ## Initialize and negotiate capabilities
 
-Clients should call `initialize` before opening a session. Reasonix advertises
+Clients should call `initialize` before opening a session. VoltUI advertises
 the following capability shape (irrelevant fields omitted):
 
 ```json
@@ -69,14 +69,14 @@ the following capability shape (irrelevant fields omitted):
 ```
 
 When the client advertises `fs.readTextFile`, `fs.writeTextFile`, or
-`terminal`, Reasonix routes eligible file operations through the editor's
+`terminal`, VoltUI routes eligible file operations through the editor's
 unsaved buffers and eligible foreground commands through a client-owned
 terminal. Without those client capabilities, the normal workspace tools run
-locally inside the Reasonix process.
+locally inside the VoltUI process.
 
 ## Session lifecycle
 
-Each ACP session owns an independent Reasonix controller, workspace root, model,
+Each ACP session owns an independent VoltUI controller, workspace root, model,
 work mode, collaboration mode, approval mode, MCP set, and persisted transcript.
 State does not leak between sessions.
 
@@ -92,13 +92,13 @@ State does not leak between sessions.
 | `session/delete` | Stops the session and removes its persisted ACP history. |
 
 `session/new`, `session/load`, and `session/resume` may include `mcpServers`.
-Reasonix accepts stdio, Streamable HTTP, and legacy SSE servers. ACP's official `[{"name":"...","value":"..."}]`
+VoltUI accepts stdio, Streamable HTTP, and legacy SSE servers. ACP's official `[{"name":"...","value":"..."}]`
 shape is supported for stdio `env` and HTTP `headers`; the older object-map
 shape remains accepted for compatibility.
 
 ## Session controls
 
-Reasonix exposes independent controls instead of combining unrelated choices in
+VoltUI exposes independent controls instead of combining unrelated choices in
 one mode selector:
 
 | Control | Values | Wire surface |
@@ -110,6 +110,25 @@ one mode selector:
 | Tool approval | `ask`, `auto`, `yolo` | `configOptions` with id `tool_approval` |
 
 Use `session/set_config_option` for model, effort, work mode, and tool approval.
+Its parameters are `sessionId`, `configId` and `value`, where `configId` is the
+`id` of the option as advertised in `configOptions`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "session/set_config_option",
+  "params": {
+    "sessionId": "session-id",
+    "configId": "tool_approval",
+    "value": "yolo"
+  }
+}
+```
+
+Note that the field is `configId`, not `optionId`. The result is the full
+refreshed `configOptions` array. An unknown id returns `-32602 InvalidParams`.
+
 Model, effort, and work-mode changes rebuild the session controller while
 preserving its history and the other axes. Tool-approval changes update the
 gate without rebuilding the controller.
@@ -122,7 +141,7 @@ selectors above.
 ## Prompts, updates, and approvals
 
 `session/prompt` accepts text blocks and embedded text resources. Images and
-audio are not advertised. During a turn, Reasonix may send:
+audio are not advertised. During a turn, VoltUI may send:
 
 - agent message and thought chunks;
 - pending and completed tool-call updates;
@@ -132,13 +151,13 @@ audio are not advertised. During a turn, Reasonix may send:
 - `session/request_permission` requests for permission-gated tools and user
   questions.
 
-Hosts should keep the `session/prompt` request open until Reasonix returns its
+Hosts should keep the `session/prompt` request open until VoltUI returns its
 stop reason, while continuing to process requests and notifications in both
 directions.
 
 ## Mid-turn steering extension
 
-Reasonix exposes mid-turn guidance as an ACP v1 vendor extension. It is not a
+VoltUI exposes mid-turn guidance as an ACP v1 vendor extension. It is not a
 core ACP method, and it is not the still-unreleased ACP v2 `session/inject`
 proposal.
 
@@ -172,11 +191,11 @@ Call the advertised method while `session/prompt` is active:
 }
 ```
 
-A successful `{}` result means the active turn accepted the guidance. Reasonix
+A successful `{}` result means the active turn accepted the guidance. VoltUI
 adds it as a user message before the next safe model-call boundary, without
 cancelling the turn or consuming an extra tool-step budget. The message is
 persisted in normal history; transcript replay shows the original user text,
-not Reasonix's internal steer marker.
+not VoltUI's internal steer marker.
 
 | Condition | JSON-RPC result |
 | --- | --- |
@@ -191,7 +210,7 @@ not silently report the failed steer as accepted.
 
 ## Compatibility and cache behavior
 
-| Surface | Older or non-Reasonix clients | Conclusion |
+| Surface | Older or non-VoltUI clients | Conclusion |
 | --- | --- | --- |
 | Existing ACP v1 methods | Their names and response shapes are unchanged. | Compatible |
 | Capability `_meta` | Unknown metadata may be ignored. | Compatible |
@@ -206,12 +225,12 @@ earlier prefix remains reusable.
 
 ## Client integration checklist
 
-1. Launch `reasonix acp` with separate stdin, stdout, and stderr streams.
+1. Launch `voltui acp` with separate stdin, stdout, and stderr streams.
 2. Call `initialize` and honor both standard and `_meta` capabilities.
 3. Open sessions with absolute workspace paths and keep their ids isolated.
 4. Process agent-to-client filesystem, terminal, and permission requests while
    a prompt is running.
-5. Show steer UI only when the Reasonix capability is advertised and a prompt
+5. Show steer UI only when the VoltUI capability is advertised and a prompt
    is active.
 6. Treat a successful steer response as queued guidance, not immediate model
    completion.

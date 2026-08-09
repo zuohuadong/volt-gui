@@ -74,7 +74,7 @@ type PluginMCPServerView struct {
 }
 
 func (a *App) Plugins() []PluginView {
-	st, err := pluginpkg.LoadState(config.ReasonixHomeDir())
+	st, err := pluginpkg.LoadState(config.VoltuiHomeDir())
 	if err != nil {
 		return []PluginView{{Error: err.Error()}}
 	}
@@ -92,7 +92,7 @@ func (a *App) Plugins() []PluginView {
 			Version:      p.Version,
 			Description:  p.Description,
 			Source:       p.Source,
-			Root:         pluginpkg.ResolveRoot(config.ReasonixHomeDir(), p.Root),
+			Root:         pluginpkg.ResolveRoot(config.VoltuiHomeDir(), p.Root),
 			ManifestKind: p.ManifestKind,
 			Enabled:      p.Enabled,
 		}
@@ -228,7 +228,7 @@ func (a *App) SetPluginEnabled(name string, enabled bool) error {
 	if err := a.ensureActiveTabRebuildAllowed("plugins"); err != nil {
 		return err
 	}
-	if err := pluginpkg.SetEnabled(config.ReasonixHomeDir(), strings.TrimSpace(name), enabled); err != nil {
+	if err := pluginpkg.SetEnabled(config.VoltuiHomeDir(), strings.TrimSpace(name), enabled); err != nil {
 		return err
 	}
 	a.invalidateSkillRootsCache()

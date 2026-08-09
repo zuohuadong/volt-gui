@@ -1,8 +1,8 @@
-# Reasonix 工程规格
+# VoltUI 工程规格
 
 <a href="./SPEC.md">English</a>
 
-> Reasonix 是一个 coding agent：由极薄的 harness 驱动多个模型，所有能力都由配置和插件提供。本文是工程契约，代码应遵循它；需要改变行为时，应先更新契约，再修改代码。
+> VoltUI 是一个 coding agent：由极薄的 harness 驱动多个模型，所有能力都由配置和插件提供。本文是工程契约，代码应遵循它；需要改变行为时，应先更新契约，再修改代码。
 
 英文原文是规范性版本；本文按相同章节提供中文说明，代码标识符、配置键和协议名保持原样。
 
@@ -20,14 +20,13 @@
 ## 2. 目录与依赖方向
 
 ```text
-reasonix/
+voltui/
 ├── go.mod / go.sum
 ├── Makefile
 ├── README.md / README.zh-CN.md
-├── reasonix.example.toml
 ├── docs/SPEC.md / docs/SPEC.zh-CN.md
-├── cmd/reasonix/main.go
-├── cmd/reasonix-plugin-example/
+├── cmd/voltui/main.go
+├── cmd/voltui-plugin-example/
 └── internal/
     ├── cli/
     ├── config/
@@ -73,6 +72,7 @@ func New(kind string, cfg Config) (Provider, error)
 - OpenAI-compatible vendor 只是 `kind = "openai"` 的不同配置实例，通过 `base_url`、`model`、`api_key_env` 区分；新增兼容模型通常只需改配置。
 - 一个 provider 表示一个 vendor endpoint，可通过 `models` 暴露多个模型，并以 `default` 指定默认项。`default_model`、`--model` 和桌面端模型选择器都经 `Config.ResolveModel` 解析，可接受 provider 名、裸模型名或 `provider/model`。
 - `context_window` 是 provider 级默认值；`model_overrides.<model>.context_window` 可覆盖单个模型。
+- `max_output_tokens` 是独立的总输出预算，不由客户端 reasoning 字节上限换算。0 表示使用 provider 安全默认值，正数表示显式上限，负数表示在协议允许时省略；混合网关可用 `model_overrides.<model>.max_output_tokens` 覆盖单个模型。Anthropic 因协议要求仍会提供 `max_tokens` 默认值。
 - streaming tool-call delta 在 provider 内按 index 聚合，只向上层发出完整 `ToolCall`。
 
 ### 3.2 Tool 与 registry（`internal/tool`）
@@ -141,7 +141,7 @@ type Tool interface {
 
 ### 3.6 上下文管理
 
-Reasonix 通过低频 compaction 保持 cache-first：
+VoltUI 通过低频 compaction 保持 cache-first：
 
 - 低于 `agent.tool_result_snip_ratio` 时不改写历史；
 - 达到 snip ratio 后，归档并缩短较旧 tool result；
@@ -149,9 +149,22 @@ Reasonix 通过低频 compaction 保持 cache-first：
 - 达到 `agent.compact_force_ratio` 后，可执行强制折叠；
 - `context_window = 0` 会关闭该实例的 compaction。
 
-tool result 的 snip/prune 不删除消息，确保 assistant `tool_calls` 与 tool result 配对。摘要只折叠 assistant/tool 工作；正常大小的用户回合和既有 digest 原样保留。被移除的原文归档到 `reasonix/archive/<timestamp>.jsonl`。
+用户可用 `voltui config compact-ratio [--local] [VALUE]` 查看或修改 65–85% 的自动
+压缩阈值，内置默认值为 80%。项目级设置优先于桌面端与新 CLI 会话共用的用户全局配置。
 
-`history` tool 支持对 session 与归档进行 BM25 搜索；`memory` tool 用于检索自动记忆，`remember` 与 `forget` 负责写入和归档。智能体发起的记忆写操作每次都需要人工确认，不能由 YOLO、自动审查或子智能体代为批准。详细约定见 `SESSION_MEMORY_RETRIEVAL.md`。
+tool result 的 snip/prune 不删除消息，确保 assistant `tool_calls` 与 tool result 配对。摘要只折叠 assistant/tool 工作；正常大小的用户回合和既有 digest 原样保留。被移除的原文归档到 `voltui/archive/<timestamp>.jsonl`。
+
+`history` tool 支持对 session 与归档进行 BM25 搜索；`memory` tool 用于检索自动记忆，
+`remember` 与 `forget` 负责写入和归档。每个真实用户回合前，VoltUI 会用原始用户消息执行
+有预算的 BM25 自动召回，把命中作为低权限 user-turn 后缀追加；泛化请求会被抑制，等价事实优先
+项目级版本，stale 内容会降权。这不会修改稳定 system prompt 或工具 schema。
+
+拥有当前项目 store 的父 controller（包括顶层 headless）只有在新事实有界、非敏感、纯创建，且明确属于 project/reference 时才能
+免确认保存。全局事实、偏好、feedback、更新、重复项、敏感/超长内容和所有 `forget` 仍需
+新鲜人工确认，Auto、YOLO、Guardian、permission hook 或子智能体都不能代为批准；子智能体和
+不拥有该作用域 controller 的 headless surface 会 fail closed。事实带有不变 ID、单调 revision、时间、type 与 scope；更新先快照旧版本，
+restore 与 archive recovery 会创建更高 revision，并拒绝路径逃逸、符号链接、冲突和覆盖。
+详细约定见 [`SESSION_MEMORY_RETRIEVAL.zh-CN.md`](SESSION_MEMORY_RETRIEVAL.zh-CN.md)。
 
 ### 3.7 权限
 
@@ -165,20 +178,22 @@ type Policy struct { Mode Decision; Allow, Ask, Deny []Rule }
 func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Decision
 ```
 
-- rule 可以是 `Tool` 或 `Tool(specifier)`，例如 `Bash(go test:*)`、`Edit(docs/**)`。
+- rule 可以是 `Tool` 或 `Tool(specifier)`，例如 `Bash(go test:*)`、`Edit(docs/**)`；`Bash=<literal>` 是整条 Bash 命令的精确授权格式，其中 glob 与 Shell 元字符都按普通字符匹配。
 - 优先级为 `deny > ask > allow > fallback`；只读工具 fallback 为 Allow，写工具 fallback 使用 `Mode`。
 - 交互模式中的 Ask 由用户选择单次允许、session scope 允许、持久允许或拒绝；显式 Deny 在所有模式下都不可绕过。
-- 安装 MCP server 即授权其全部工具，不再有 server、raw tool、writer 或 destructive 的第二套审批策略；项目 `reasonix.toml` 与 `.mcp.json` 声明同样默认可信，不需要额外启动确认，显式全局 `deny` 仍然优先。全局安装写入用户 `config.toml`，项目声明保留在原项目文件；同名时项目覆盖全局，项目内部 `reasonix.toml` 高于 `.mcp.json`。编辑写回当前生效来源，删除高优先级声明后露出下一层。`readOnlyHint` 与 `destructiveHint` 仅用于调度、Plan/严格只读边界及缓存到实时安全分类复核，不会新增逐调用审批。严格只读子智能体 registry 仍仅暴露已授权且 `readOnlyHint: true`、无 `destructiveHint` 的 MCP；双模型 Planner 通过固定 `use_capability` 代理（从不暴露直接 `mcp__*` schema）调用已授权、非 destructive 的 MCP，不再要求 `readOnlyHint`，destructive 工具留给 Executor。Balanced 双模型的 Executor 使用独立 frontend 复用同一稳定代理，因此 Planner 发现的 capability ID 可在 handoff 后直接执行，同时保持两侧 ledger/audit 隔离。分发前代理会再次复核当前 controller 的 enable、授权和完整运行时连接身份；共享 Host 中仅 server 同名不构成复用权限。
+- 非交互 `voltui run` 与无头子智能体没有审批界面：默认 Ask/manual 对普通 writer fallback 与显式 ask 规则失败关闭；Auto 只放行普通 writer fallback，显式 ask 仍拒绝；YOLO 可越过普通 Ask，但不能越过 deny、Sandbox 或强制新鲜人工审批。无人值守自动化需要普通 writer 自主执行时，使用现有的 `--auto` / `-y`。
+- 动态 Bash 分两级：参数/算术展开、赋值、不含嵌套执行的 heredoc、普通文件重定向与 Shell glob 不能复用裸 `Bash`、前缀或 glob Allow，保存时只生成 `Bash=<literal>`，但仍遵循普通 fallback，因此 Auto 与获批计划窗口可无提示执行。命令/进程替换、动态命令名、无法解析结构，以及 `eval`、`source`、Shell `-c`、PowerShell/cmd 命令字符串、运行时内联代码参数属于嵌套/间接执行；默认情况下交互 Ask/Auto 必须人工批准，Guardian 与 hook allow 不能代替，无头 Ask/Auto/DontAsk 直接拒绝，只有完全相同的 literal 或 YOLO 可以绕过。高级用户可设置 `[permissions] allow_dynamic_bash = true`，让 Allow fallback（包括 Auto）覆盖这类动态命令；显式 `ask` 与 `deny` 规则仍然优先。
+- 安装 MCP server 即授权其全部工具，不再有 server、raw tool、writer 或 destructive 的第二套审批策略；项目 `voltui.toml` 与 `.mcp.json` 声明同样默认可信，不需要额外启动确认，显式全局 `deny` 仍然优先。全局安装写入用户 `config.toml`，项目声明保留在原项目文件；同名时项目覆盖全局，项目内部 `voltui.toml` 高于 `.mcp.json`。编辑写回当前生效来源，删除高优先级声明后露出下一层。`readOnlyHint` 与 `destructiveHint` 仅用于调度、Plan/严格只读边界及缓存到实时安全分类复核，不会新增逐调用审批。严格只读子智能体 registry 仍仅暴露已授权且 `readOnlyHint: true`、无 `destructiveHint` 的 MCP；双模型 Planner 通过固定 `use_capability` 代理（从不暴露直接 `mcp__*` schema）调用已授权、非 destructive 的 MCP，不再要求 `readOnlyHint`，destructive 工具留给 Executor。Balanced 双模型的 Executor 使用独立 frontend 复用同一稳定代理，因此 Planner 发现的 capability ID 可在 handoff 后直接执行，同时保持两侧 ledger/audit 隔离。分发前代理会再次复核当前 controller 的 enable、授权和完整运行时连接身份；共享 Host 中仅 server 同名不构成复用权限。
 - Plan 是协作流程，不等于全工具只读。普通 built-in 与 Bash 仍走 Ask/Auto/YOLO 和 Sandbox；独立双模型 Planner 允许已授权、非 destructive 的 MCP（即使没有 `readOnlyHint`），但在规划阶段持续阻止 destructive 与未授权目标；没有独立 Planner 的单模型 Plan 仍阻止 MCP writer/destructive。
-- Plan 只能由用户显式选择进入，与当前工具审批姿态相互独立；普通聊天不会自动切换到 Plan。Auto/YOLO 不会回答 `ask`，也不会替用户批准 `exit_plan_mode`，获批计划的短期自动执行窗口也不会自动批准后续计划。
-- 桌面端协作模式分为 `normal`、`plan` 和 `goal`。Goal 会持续推进目标，直到完成、同一阻塞状态重复三次、用户停止或达到安全续跑边界。只有用户在输入框中选择 Goal 或运行 `/goal` 显式启动后，长周期研究、调试、优化或实现目标才可启用 AutoResearch；普通聊天不会隐式切换协作模式，也不会创建持久化 AutoResearch 状态。动态状态保存在 `.reasonix/autoresearch/.../`。
+- Plan 只能由用户显式选择进入，与当前工具审批姿态相互独立；普通聊天不会自动切换到 Plan。Auto/YOLO 不会回答 `ask`，也不会替用户批准 `exit_plan_mode`，获批计划的短期自动执行窗口也不会自动批准后续计划或嵌套/间接 Bash。
+- 桌面端协作模式分为 `normal`、`plan` 和 `goal`。Goal 会持续推进目标，直到完成、同一阻塞状态重复三次、用户停止或达到安全续跑边界。只有用户在输入框中选择 Goal 或运行 `/goal` 显式启动后，长周期研究、调试、优化或实现目标才可启用 AutoResearch；普通聊天不会隐式切换协作模式，也不会创建持久化 AutoResearch 状态。动态状态保存在 `.voltui/autoresearch/.../`。
 
 ### 3.8 Slash command
 
 Slash command 分为三类：
 
 - built-in action：`/compact`、`/new`、`/clear`、`/effort`、`/mcp`、`/help`；
-- `.reasonix/commands/*.md` 与用户配置目录中的自定义命令；
+- `.voltui/commands/*.md` 与用户配置目录中的自定义命令；
 - MCP prompt：`/mcp__<server>__<prompt>`。
 
 自定义命令支持简单 frontmatter、`$ARGUMENTS`、`$1…$N` 和 `$$`。加载失败的单个命令会被跳过，不应使应用整体退出。
@@ -197,7 +212,7 @@ Bubble Tea TUI 的 modal overlay 必须隐藏 composer；slash/`@` autocomplete 
 
 子智能体 Profile 是带 `runAs: subagent` 的 Skill。桌面端和 CLI 只允许修改简单、手动调用的 project/global profile；包含 `references/`、`scripts/` 或非托管 frontmatter 的丰富 Skill 不会被编辑器扁平化覆盖。
 
-`reasonix subagent try` 使用只读 Skill runner；`reasonix subagent run` 使用常规权限与 Sandbox。`task` 支持 `profile`、`model`、`effort` 和 `write_paths`；`fleet` 在 session scheduler 上并发调度多个任务。详见[子智能体 Profile](./SUBAGENT_PROFILES.zh-CN.md)。
+`voltui subagent try` 使用只读 Skill runner；`voltui subagent run` 使用常规权限与 Sandbox。`task` 支持 `profile`、`model`、`effort` 和 `write_paths`；`fleet` 在 session scheduler 上并发调度多个任务。详见[子智能体 Profile](./SUBAGENT_PROFILES.zh-CN.md)。
 
 ## 4. 数据类型
 
@@ -208,10 +223,10 @@ provider 层的核心类型包括 `Role`、`Message`、`ToolCall`、`ToolSchema`
 配置优先级：
 
 ```text
-flag > ./reasonix.toml > 用户 config.toml > 内置默认值
+flag > ./voltui.toml > 用户 config.toml > 内置默认值
 ```
 
-从 v1.8.1 起，用户配置位于 macOS/Linux 的 `~/.reasonix/config.toml` 或 Windows 的 `%AppData%\reasonix\config.toml`。provider key 保存在 Reasonix home 的 `.env`；项目 `.env` 只用于 workspace 范围的非 provider 变量展开。完整路径见[配置路径](./CONFIG_PATHS.zh-CN.md)。
+从 v1.8.1 起，用户配置位于 macOS/Linux 的 `~/.voltui/config.toml` 或 Windows 的 `%AppData%\voltui\config.toml`。provider key 保存在 VoltUI home 的 `.env`；项目 `.env` 只用于 workspace 范围的非 provider 变量展开。完整路径见[配置路径](./CONFIG_PATHS.zh-CN.md)。
 
 ```toml
 default_model = "deepseek"
@@ -228,10 +243,12 @@ models         = ["deepseek-v4-flash", "deepseek-v4-pro"]
 default        = "deepseek-v4-flash"
 api_key_env    = "DEEPSEEK_API_KEY"
 context_window = 1000000
+max_output_tokens = 32768  # 正文、reasoning 与工具调用共用的总输出预算；0 使用 provider 默认值
 
 [tools]
 enabled = []
 bash_timeout_seconds = 120
+mcp_startup_timeout_seconds = 30
 mcp_call_timeout_seconds = 300
 
 [permissions]
@@ -248,11 +265,18 @@ allow = ["Bash(go test:*)", "Bash(git status:*)"]
 auth_mode = "none"
 ```
 
-`[sandbox]` 是权限策略之下的强制执行层。file writer 默认限制在 workspace root、Reasonix 用户配置目录和 `allow_write`；`forbid_read` 可阻止读取敏感路径。macOS 使用 Seatbelt，Linux 使用 bubblewrap；若声明 enforce 但平台 backend 不可用，Bash 应拒绝执行而不是静默降级。Windows 当前没有 OS 级 Bash sandbox，file tool 的路径限制仍然生效。
+原生 CLI 更新器始终安装最新的严格 `vX.Y.Z` 正式版。1.x 期间仍解析旧渠道配置与
+参数，但统一指向正式版，并在后续保存配置时省略这些字段。
 
-`[serve]` 控制 `reasonix serve` 的 browser frontend。默认 `auth_mode = "none"` 仅适合 loopback；暴露到其他机器时必须使用 token 或 password。只有位于可信 reverse proxy 后方时才能启用 `behind_proxy`。
+`[sandbox]` 是权限策略之下的强制执行层。file writer 默认限制在 workspace root、VoltUI 用户配置目录和 `allow_write`；`forbid_read` 可阻止读取敏感路径。macOS 使用 Seatbelt，Linux 使用 bubblewrap；若声明 enforce 但平台 backend 不可用，Bash 应拒绝执行而不是静默降级。Windows 当前没有 OS 级 Bash sandbox，file tool 的路径限制仍然生效。
 
-项目根目录的 `.mcp.json` 可使用 Claude Code 的 `mcpServers` schema；与 `reasonix.toml` 同名时，以后者为准。
+`[serve]` 控制 `voltui serve` 的 browser frontend。默认 `auth_mode = "none"` 仅适合 loopback；暴露到其他机器时必须使用 token 或 password。只有位于可信 reverse proxy 后方时才能启用 `behind_proxy`。
+
+项目根目录的 `.mcp.json` 可使用 Claude Code 的 `mcpServers` schema；与 `voltui.toml` 同名时，以后者为准。
+
+MCP 启动与单次工具调用使用不同生命周期。调用方只短暂等待冷启动，而共享的进程启动、授权、
+`initialize`、`tools/list` 可在后台继续，最长由 `mcp_startup_timeout_seconds`（默认 `30`）
+限制；单个服务器可用 `startup_timeout_seconds` 覆盖。MCP 调用超时只在连接就绪后开始计算。
 
 ## 6. 错误处理
 
@@ -270,7 +294,7 @@ auth_mode = "none"
 
 ## 8. 分发
 
-- 构建：`CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=$(VERSION)" -o reasonix ./cmd/reasonix`
+- 构建：`CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=$(VERSION)" -o voltui ./cmd/voltui`
 - 目标矩阵：`darwin|linux|windows × amd64|arm64`
 - 版本通过 ldflags 注入，来源为 `git describe --tags --always`
 - 支持预编译二进制、`go install` 与 Homebrew。
@@ -280,4 +304,4 @@ auth_mode = "none"
 - 完成 Sandbox Phase 1 的 escape prompt：检测 sandbox 不可用或拒绝时，提供一次明确、受权限控制的非 sandbox 重试。
 - MCP long tail：OAuth 2.0、`headersHelper`、更多 `.mcp.json` scope、tool-search 延迟加载、`list_changed`、channel、elicitation、root，以及可提供 provider 的插件。
 - 增加 Anthropic-native provider kind，用于验证 registry 不依赖单一 wire format，并支持原生 prompt cache control。
-- 把“始终允许”规则持久化到项目配置，以及为 `reasonix run` 提供 session 级权限覆盖。
+- 把“始终允许”规则持久化到项目配置，以及为 `voltui run` 提供 session 级权限覆盖。

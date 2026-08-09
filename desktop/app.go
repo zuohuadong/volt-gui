@@ -6186,7 +6186,7 @@ func (a *App) SlashArgs(input string) SlashArgsResult {
 		DisconnectedMCP: ctrl.DisconnectedMCPNames(),
 		CurrentModel:    model,
 	}
-	if names, err := pluginpkg.InstalledNames(config.ReasonixHomeDir()); err == nil {
+	if names, err := pluginpkg.InstalledNames(config.VoltuiHomeDir()); err == nil {
 		data.PluginNames = names
 	}
 	seen := map[string]bool{}

@@ -17,15 +17,15 @@ function splitPackageSpec(spec) {
 }
 
 function fixture(t, version = "1.5.0-canary.42") {
-  const root = mkdtempSync(join(tmpdir(), "reasonix-npm-publish-test-"));
+  const root = mkdtempSync(join(tmpdir(), "voltui-npm-publish-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
-  const packages = ["@reasonix/cli-linux-x64", "reasonix"].map((name, index) => {
+  const packages = ["@voltui/cli-linux-x64", "voltui"].map((name, index) => {
     const dir = join(root, `package-${index}`);
     mkdirSync(dir);
     writeFileSync(
       join(dir, "package.json"),
-      `${JSON.stringify({ name, version, reasonixCandidateSha: candidateSha })}\n`,
+      `${JSON.stringify({ name, version, releaseCandidateSha: candidateSha })}\n`,
     );
     return { name, dir };
   });
@@ -63,8 +63,8 @@ function fixture(t, version = "1.5.0-canary.42") {
       state.versions.set(pkg.version, {
         name: pkg.name,
         version: pkg.version,
-        reasonixCandidateSha: pkg.reasonixCandidateSha,
-        gitHead: pkg.reasonixCandidateSha,
+        releaseCandidateSha: pkg.releaseCandidateSha,
+        gitHead: pkg.releaseCandidateSha,
       });
       state.tags.set(args[args.indexOf("--tag") + 1], pkg.version);
       return "";
@@ -98,7 +98,7 @@ function fixture(t, version = "1.5.0-canary.42") {
     packageState(name).versions.set(publishedVersion, {
       name,
       version: publishedVersion,
-      reasonixCandidateSha: sha,
+      releaseCandidateSha: sha,
       gitHead: sha,
     });
   }

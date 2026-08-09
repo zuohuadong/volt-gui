@@ -1,73 +1,249 @@
 name: Release npm
 
-# npm line. Tag namespace `npm-v<semver>` triggers this — plain `v<semver>` tags
-# are the CLI binary + Homebrew release (release.yml) and intentionally do NOT
-# trigger here (GitHub glob `npm-v*` does not match `v*`). Splitting npm onto its
-# own tag lets a prerelease ship to npm's `next` channel without touching the
-# stable Homebrew cask (and lets a stable cask ship without forcing npm to leave
-# its rc). Bump with:
-#   git tag npm-vX.Y.Z          # stable  -> publishes under `next`
-#   git tag npm-vX.Y.Z-rc.N     # prerelease -> publishes under `next`
-#   git push origin <tag>
-#
-# A manual workflow_dispatch with base_version publishes an opt-in canary to the
-# `canary` dist-tag (npm i voltui@canary) from the current ref; it never moves
-# `next`/`latest`. build.mjs decides the dist-tag: 0.x stable is `latest`; a
-# `-canary.` build is `canary`; the 1.x line and rc prereleases are `next`. Promote
-# a 1.x stable to the default install with `npm dist-tag add voltui@X.Y.Z latest`.
+# npm line. Stable releases are called by release-stable.yml after its single
+# GitHub environment approval. Direct prerelease tag publication is disabled;
+# manual workflow_dispatch recovers only an approved Stable version from an
+# existing tag. Historical canary and next package identities remain readable,
+# but normal publication advances only the official release.
 on:
-  push:
-    tags: ['npm-v*']
   workflow_dispatch:
     inputs:
-      base_version:
-        description: "canary: intended next stable version, e.g. 1.5.0"
+      channel:
+        description: "Standalone npm recovery channel"
         required: true
+        default: stable
+        type: choice
+        options:
+          - stable
+      base_version:
+        description: "Stable version to recover exactly"
+        required: true
+        type: string
+      tag:
+        description: "stable: existing npm tag to publish (for example npm-v1.18.0)"
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      channel:
+        description: "Publish channel selected by the approved release orchestrator"
+        required: true
+        type: string
+      base_version:
+        description: "Version to publish"
+        required: true
+        type: string
+      tag:
+        description: "Existing npm tag to check out for stable publication"
+        required: false
+        default: ""
+        type: string
+      approved_cli_tag:
+        description: "Stable CLI tag recorded by the approved orchestrator"
+        required: true
+        type: string
+      approved_sha:
+        description: "Immutable commit recorded by the approved orchestrator"
+        required: true
+        type: string
+      orchestrated:
+        description: "True only when called by an approved release orchestrator"
+        required: false
+        default: false
+        type: boolean
+      orchestrator:
+        description: "Trusted release orchestrator (legacy Preview calls remain readable)"
+        required: false
+        default: stable
+        type: string
+      preview_number:
+        description: "Legacy Preview ordinal for old workflow-call compatibility"
+        required: false
+        default: ""
         type: string
 
 permissions:
   contents: read
 
+concurrency:
+  # Serialize every publisher for one npm dist-tag. Historical canary calls
+  # remain ordered even though normal publication now uses Stable only.
+  group: release-npm-${{ inputs.channel || 'next' }}
+  cancel-in-progress: false
+
 jobs:
-  cache-guard:
-    name: cache hit guard
+  orchestration-guard:
+    name: verify approved orchestrator
+    if: ${{ inputs.orchestrated }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Verify caller and approved release ref
+        env:
+          ACTUAL_CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          EXPECTED_CALLER_WORKFLOW_REF: ${{ format('{0}/.github/workflows/release-{1}.yml@{2}', github.repository, inputs.orchestrator, github.ref) }}
+          CALLER_EVENT_NAME: ${{ github.event_name }}
+          CALLER_REF: ${{ github.ref }}
+          CALLER_REF_PROTECTED: ${{ github.ref_protected }}
+          CALLER_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          CALLER_SHA: ${{ github.sha }}
+          APPROVED_CLI_TAG: ${{ inputs.approved_cli_tag }}
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          APPROVED_CHANNEL: ${{ inputs.orchestrator }}
+          RELEASE_TAG: ${{ inputs.approved_cli_tag }}
+          VERIFY_RELEASE_CHECKOUT: false
+        run: |
+          bash scripts/verify-release-authorization.sh
+          bash scripts/verify-release-tag.sh
+
+  standalone-candidate:
+    name: resolve standalone npm candidate
+    if: ${{ !inputs.orchestrated }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Resolve immutable stable release set
+        id: release
+        env:
+          BASE_VERSION: ${{ inputs.base_version }}
+          NPM_TAG: ${{ inputs.tag }}
+          CALLER_REF: ${{ github.ref }}
+          CALLER_REF_PROTECTED: ${{ github.ref_protected }}
+          RELEASE_REMOTE: origin
+          ALLOW_STABLE_RECOVERY: true
+        run: |
+          set -euo pipefail
+          if [ "$CALLER_REF" != "refs/heads/main-v2" ] || [ "$CALLER_REF_PROTECTED" != "true" ]; then
+            echo "::error::standalone npm recovery must run from protected main-v2"
+            exit 1
+          fi
+          if [ "$NPM_TAG" != "npm-v${BASE_VERSION}" ]; then
+            echo "::error::npm tag $NPM_TAG does not match requested version npm-v${BASE_VERSION}"
+            exit 1
+          fi
+          RELEASE_TAG="v${BASE_VERSION}" bash scripts/resolve-stable-release.sh
+
+  release-gate:
+    name: approve standalone npm release
+    needs: standalone-candidate
+    if: ${{ always() && !inputs.orchestrated && needs.standalone-candidate.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_SHA: ${{ needs.standalone-candidate.outputs.sha }}
+        run: echo "Approved standalone npm release $RELEASE_TAG at $RELEASE_SHA"
+
+  cache-guard:
+    name: cache hit guard
+    needs: [orchestration-guard, standalone-candidate, release-gate]
+    if: ${{ always() && !cancelled() && ((inputs.orchestrated && needs.orchestration-guard.result == 'success') || (!inputs.orchestrated && needs.standalone-candidate.result == 'success' && needs.release-gate.result == 'success')) }}
+    runs-on: ubuntu-latest
+    outputs:
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.approved_sha || needs.standalone-candidate.outputs.sha }}
+      - name: Record immutable candidate
+        id: candidate
+        env:
+          CANDIDATE_SHA: ${{ inputs.approved_sha || needs.standalone-candidate.outputs.sha }}
+        run: echo "sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
       - run: ./scripts/cache-guard.sh
+      - name: Verify embedded documentation identity
+        env:
+          DOCS_BUILD_VERSION: v${{ inputs.base_version }}
+          DOCS_SOURCE_REVISION: ${{ steps.candidate.outputs.sha }}
+        run: |
+          if [ ! -f scripts/verify-embedded-docs.sh ]; then
+            echo "Legacy candidate predates the embedded docs contract; skipping."
+            exit 0
+          fi
+          revision="$DOCS_SOURCE_REVISION"
+          if [ -z "$revision" ]; then revision="$(git rev-parse HEAD)"; fi
+          bash scripts/verify-embedded-docs.sh "$DOCS_BUILD_VERSION" "$revision"
 
   npm:
     name: publish npm packages
     needs: cache-guard
+    if: ${{ always() && !cancelled() && needs.cache-guard.result == 'success' }}
     runs-on: ubuntu-latest
-    # A tag push (npm-v*) publishes a stable/next release and goes through the
-    # `release` environment (esengine approves); a canary dispatch runs free.
-    environment: ${{ github.event_name == 'workflow_dispatch' && 'canary' || 'release' }}
+    # Orchestrated releases have already passed their GitHub environment
+    # approval. Direct prereleases and manual Stable recovery pass release-gate.
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.cache-guard.outputs.candidate_sha }}
+      - name: Load protected npm publisher control plane
+        env:
+          RECOVERY_CONTROL_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$RECOVERY_CONTROL_SHA"
+          git restore --source="$RECOVERY_CONTROL_SHA" -- \
+            npm/build.mjs \
+            npm/publish.mjs \
+            scripts/resolve-npm-release.sh \
+            scripts/verify-release-tag.sh
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
       - uses: actions/setup-node@v7
         with:
-          node-version: '26'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
-      # Tag push uses the npm-v* tag; a canary dispatch synthesizes a
-      # <base>-canary.<run_number> version. build.mjs strips the leading `npm-`/`v`.
+      # Stable publication uses the exact npm-v* tag. build.mjs strips the
+      # leading `npm-`/`v`; historical Preview inputs remain only for old
+      # workflow-call compatibility and are not reachable from a public entry.
       - name: Resolve version
         id: ver
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            base="${{ inputs.base_version }}"; base="${base#v}"
-            echo "arg=v${base}-canary.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "arg=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          fi
-      - run: node npm/build.mjs "${{ steps.ver.outputs.arg }}" --publish
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          IN_ORCHESTRATED: ${{ inputs.orchestrated }}
+          IN_CHANNEL: ${{ inputs.channel }}
+          IN_BASE_VERSION: ${{ inputs.base_version }}
+          IN_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+          IN_PREVIEW_NUMBER: ${{ inputs.preview_number }}
+        run: bash scripts/resolve-npm-release.sh
+      - name: Revalidate immutable release refs
+        env:
+          APPROVED_CLI_TAG: ${{ inputs.approved_cli_tag }}
+          APPROVED_SHA: ${{ needs.cache-guard.outputs.candidate_sha }}
+          BASE_VERSION: ${{ inputs.base_version }}
+          NPM_TAG: ${{ inputs.tag }}
+          ORCHESTRATED: ${{ inputs.orchestrated }}
+        run: |
+          set -euo pipefail
+          cli_tag="$APPROVED_CLI_TAG"
+          if [ -z "$cli_tag" ]; then cli_tag="v${BASE_VERSION}"; fi
+          RELEASE_TAG="$cli_tag" bash scripts/verify-release-tag.sh
+          if [ "$ORCHESTRATED" != "true" ]; then
+            RELEASE_TAG="$NPM_TAG" bash scripts/verify-release-tag.sh
+          fi
+      - name: Publish or recover immutable npm packages
+        env:
+          VERSION_ARG: ${{ steps.ver.outputs.arg }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: node npm/build.mjs "$VERSION_ARG" --publish

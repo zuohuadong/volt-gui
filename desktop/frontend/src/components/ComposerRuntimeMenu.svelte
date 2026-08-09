@@ -12,6 +12,7 @@
     onCollaborationModeChange,
     onTokenModeChange,
     onGoalChange,
+    onOpenChange,
   }: {
     open?: boolean;
     collaborationMode?: CollaborationMode;
@@ -22,6 +23,7 @@
     onCollaborationModeChange?: (mode: CollaborationMode) => void | Promise<void>;
     onTokenModeChange?: (mode: TokenMode) => void | Promise<void>;
     onGoalChange?: (objective: string) => void | Promise<void>;
+    onOpenChange?: (open: boolean) => void;
   } = $props();
 
   let menuRoot: HTMLDivElement | undefined;
@@ -52,13 +54,18 @@
   function closeOnOutsidePointer(event: PointerEvent) {
     if (!open) return;
     if (event.target instanceof Node && menuRoot?.contains(event.target)) return;
-    open = false;
+    setOpen(false);
   }
 
   function closeOnEscape(event: KeyboardEvent) {
     if (!open || event.key !== "Escape") return;
-    open = false;
+    setOpen(false);
     event.stopPropagation();
+  }
+
+  function setOpen(nextOpen: boolean) {
+    open = nextOpen;
+    onOpenChange?.(nextOpen);
   }
 
   async function selectMode(mode: CollaborationMode) {
@@ -72,11 +79,11 @@
       }
       goalValidation = "";
       await onGoalChange?.(objective);
-      open = false;
+      setOpen(false);
       return;
     }
     await onCollaborationModeChange?.(mode);
-    open = false;
+    setOpen(false);
   }
 
   async function saveGoal() {
@@ -89,13 +96,13 @@
     }
     goalValidation = "";
     await onGoalChange?.(objective);
-    open = false;
+    setOpen(false);
   }
 
   async function clearGoal() {
     if (changing) return;
     await onGoalChange?.("");
-    open = false;
+    setOpen(false);
   }
 
   function changeTokenMode(event: Event) {
@@ -107,7 +114,7 @@
   <svelte:window onpointerdown={closeOnOutsidePointer} onkeydown={closeOnEscape} onresize={() => open && positionPopover()} />
 
 <div class="runtime-menu" bind:this={menuRoot}>
-  <button bind:this={triggerButton} class={["runtime-menu__trigger", collaborationMode !== "normal" && "active"]} type="button" aria-haspopup="dialog" aria-expanded={open} aria-busy={changing} disabled={changing} onclick={() => (open = !open)}>
+  <button bind:this={triggerButton} class={["runtime-menu__trigger", collaborationMode !== "normal" && "active"]} type="button" aria-haspopup="dialog" aria-expanded={open} aria-busy={changing} disabled={changing} onclick={() => setOpen(!open)}>
     {#if collaborationMode === "plan"}<ListChecks size={14} />{:else if collaborationMode === "goal"}<Target size={14} />{:else}<Gauge size={14} />{/if}
     <span>{modeLabel}</span>
     <ChevronDown size={12} />

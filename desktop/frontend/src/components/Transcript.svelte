@@ -4,6 +4,7 @@
   import { BrainCircuit, Check, ChevronDown, HelpCircle, LoaderCircle, ShieldAlert, Terminal, X } from "@lucide/svelte";
   import MarkdownView from "./MarkdownView.svelte";
   import { isToolDetailsOpen, setToolOpenState, type ToolOpenState } from "../lib/tool-open-state";
+  import { groupTranscriptProcessItems } from "../lib/transcript-process-group";
   import { visibleTranscriptText } from "../lib/transcript-visibility";
   import { normalizedToolName, toolErrorPresentation, toolOperationBadge, toolOutputDuplicatesError } from "../lib/tool-presentation";
   import { turnProgress } from "../lib/turn-progress";
@@ -31,7 +32,7 @@
 
   let askInteraction = $state({ askId: "", selectedAnswer: "", deferred: false });
   let nowMs = $state(Date.now());
-  let openToolIDs = $state<ToolOpenState>({});
+  let openDetailIDs = $state<ToolOpenState>({});
 
   const question = $derived(ask?.questions[0]);
   const askId = $derived(ask?.id ?? "");
@@ -51,31 +52,8 @@
   const visibleItems = $derived(
     items.filter((item) => item.role !== "system" && (item.title ?? "").toLowerCase() !== "usage" && !item.id.startsWith("usage-")),
   );
-  type TranscriptRenderEntry =
-    | { kind: "item"; id: string; item: TranscriptItem }
-    | { kind: "file-activity"; id: string; items: TranscriptItem[] };
   const visibleRootItems = $derived(visibleItems.filter((item) => !(item.role === "tool" && item.parentId)));
-  const transcriptEntries = $derived.by(() => {
-    const entries: TranscriptRenderEntry[] = [];
-    for (let index = 0; index < visibleRootItems.length; index += 1) {
-      const item = visibleRootItems[index];
-      if (!isRootFileInspection(item)) {
-        entries.push({ kind: "item", id: item.id, item });
-        continue;
-      }
-      const group = [item];
-      while (index + 1 < visibleRootItems.length && isRootFileInspection(visibleRootItems[index + 1])) {
-        index += 1;
-        group.push(visibleRootItems[index]);
-      }
-      if (group.length > 1) {
-        entries.push({ kind: "file-activity", id: `file-activity-${group[0].id}`, items: group });
-      } else {
-        entries.push({ kind: "item", id: item.id, item });
-      }
-    }
-    return entries;
-  });
+  const transcriptEntries = $derived(groupTranscriptProcessItems(visibleRootItems));
 
   onMount(() => {
     const timer = window.setInterval(() => {
@@ -237,34 +215,30 @@
     };
   }
 
-  function isRootFileInspection(item: TranscriptItem) {
-    if (item.role !== "tool" || item.parentId) return false;
-    return ["read_file", "get_file", "ls", "list", "list_dir", "list_files", "glob", "find_files", "search", "grep", "rg", "search_files", "file_search", "stat_file"].includes(normalizedToolName(item.title ?? ""));
-  }
-
   function formatDuration(ms: number) {
     const seconds = Math.max(0, Math.round(ms / 100) / 10);
     if (seconds < 60) return `${seconds || 0.1} 秒`;
     return `${Math.floor(seconds / 60)} 分 ${Math.round(seconds % 60)} 秒`;
   }
 
-  function fileActivityStatus(group: TranscriptItem[]) {
-    if (group.some((item) => item.pending)) return "正在检查";
-    if (group.some((item) => item.error && !isToolCancellation(item.error))) return "检查失败";
+  function processGroupStatus(group: TranscriptItem[]) {
+    if (group.some((item) => item.pending)) return "执行中";
+    if (group.some((item) => item.error && !isToolCancellation(item.error))) return "有失败";
     const cancelled = group.filter((item) => isToolCancellation(item.error));
     if (cancelled.length === group.length) return "已取消";
     if (cancelled.length > 0) return "部分已取消";
-    return "检查完成";
+    return "已完成";
   }
 
-  function fileActivityLatestTarget(group: TranscriptItem[]) {
-    const latest = group[group.length - 1];
-    if (!latest) return "文件";
-    const tool = toolDisplay(latest);
-    return tool.detail || tool.tool;
+  function processGroupHasPending(group: TranscriptItem[]) {
+    return group.some((item) => item.pending);
   }
 
-  function fileActivityTiming(group: TranscriptItem[]) {
+  function processGroupHasReasoning(group: TranscriptItem[]) {
+    return group.some((item) => item.role === "reasoning");
+  }
+
+  function processGroupTiming(group: TranscriptItem[]) {
     const first = Math.min(...group.map((item) => item.createdAtMs ?? nowMs));
     const last = Math.max(...group.map((item) => item.updatedAtMs ?? item.createdAtMs ?? first));
     if (group.some((item) => item.pending)) return `无进展 ${formatDuration(nowMs - last)}`;
@@ -287,30 +261,40 @@
     return turnProgress(item.role, Boolean(item.body.trim()), pendingElapsedMs(item));
   }
 
-  function handleToolToggle(event: Event, item: TranscriptItem) {
+  function handleDetailToggle(event: Event, detailID: string) {
     const details = event.currentTarget;
-    if (!(details instanceof HTMLDetailsElement)) return;
-    const savedScroll = toolToggleScrollPositions.get(item.id);
-    toolToggleScrollPositions.delete(item.id);
+    if (!(details instanceof HTMLDetailsElement)) return undefined;
+    const savedScroll = detailToggleScrollPositions.get(detailID);
+    detailToggleScrollPositions.delete(detailID);
     const scrollContainer = savedScroll?.container ?? findScrollableAncestor(details);
     const scrollTop = savedScroll?.top ?? scrollContainer?.scrollTop ?? 0;
     const scrollLeft = savedScroll?.left ?? scrollContainer?.scrollLeft ?? 0;
-    openToolIDs = setToolOpenState(openToolIDs, item.id, details.open);
+    openDetailIDs = setToolOpenState(openDetailIDs, detailID, details.open);
     if (scrollContainer) {
       requestAnimationFrame(() => scrollContainer.scrollTo({ top: scrollTop, left: scrollLeft, behavior: "auto" }));
     }
-    if (!details.open || !item.archived || item.archiveLoaded || item.archiveLoading) return;
+    return details.open;
+  }
+
+  function handleToolToggle(event: Event, item: TranscriptItem) {
+    const opened = handleDetailToggle(event, item.id);
+    if (!opened || !item.archived || item.archiveLoaded || item.archiveLoading) return;
     void onLoadArchivedTool?.(item);
   }
 
-  const toolToggleScrollPositions = new SvelteMap<string, { container: HTMLElement; top: number; left: number }>();
+  function handleProcessToggle(event: Event, detailID: string, pending: boolean) {
+    if (pending) return;
+    handleDetailToggle(event, detailID);
+  }
 
-  function captureToolToggleScroll(event: MouseEvent, item: TranscriptItem) {
+  const detailToggleScrollPositions = new SvelteMap<string, { container: HTMLElement; top: number; left: number }>();
+
+  function captureDetailToggleScroll(event: MouseEvent, detailID: string) {
     const summary = event.currentTarget;
     if (!(summary instanceof HTMLElement)) return;
     const container = findScrollableAncestor(summary);
     if (!container) return;
-    toolToggleScrollPositions.set(item.id, { container, top: container.scrollTop, left: container.scrollLeft });
+    detailToggleScrollPositions.set(detailID, { container, top: container.scrollTop, left: container.scrollLeft });
   }
 
   function findScrollableAncestor(node: HTMLElement): HTMLElement | null {
@@ -326,8 +310,8 @@
 
 {#snippet toolEvidence(item: TranscriptItem)}
   {@const tool = toolDisplay(item)}
-  <details class="thinking-card tool-call-card" open={isToolDetailsOpen(openToolIDs, item.id, item.pending)} ontoggle={(event) => handleToolToggle(event, item)}>
-    <summary onclick={(event) => captureToolToggleScroll(event, item)}>
+  <details class="thinking-card tool-call-card" open={isToolDetailsOpen(openDetailIDs, item.id, item.pending)} ontoggle={(event) => handleToolToggle(event, item)}>
+    <summary onclick={(event) => captureDetailToggleScroll(event, item.id)}>
       <span class="thinking-card__icon"><Terminal size={16} /></span>
       <div>
         <strong>{tool.action}</strong>
@@ -362,20 +346,52 @@
 
 <section class="transcript" aria-busy={sending || loading}>
   {#each transcriptEntries as entry (entry.id)}
-    {#if entry.kind === "file-activity"}
-      <article class="message message--tool file-activity" aria-label="文件检查活动">
-        <details class="file-activity__details">
-          <summary>
-            <span class="thinking-card__icon"><Terminal size={16} /></span>
+    {#if entry.kind === "process"}
+      <article class="message message--tool process-group" aria-label="执行过程">
+        <details
+          class="process-group__details"
+          open={isToolDetailsOpen(openDetailIDs, entry.id, processGroupHasPending(entry.items))}
+          ontoggle={(event) => handleProcessToggle(event, entry.id, processGroupHasPending(entry.items))}
+        >
+          <summary onclick={(event) => captureDetailToggleScroll(event, entry.id)}>
+            <span class="thinking-card__icon"><BrainCircuit size={16} /></span>
             <div>
-              <strong>文件检查</strong>
-              <em>{entry.items.length} 项 · {fileActivityStatus(entry.items)} · 最近：{fileActivityLatestTarget(entry.items)} · {fileActivityTiming(entry.items)}</em>
+              <strong>执行过程</strong>
+              <em>{entry.items.length} 项记录 · {processGroupStatus(entry.items)} · {processGroupTiming(entry.items)}</em>
             </div>
             <ChevronDown class="thinking-card__chevron" size={16} />
           </summary>
-          <div class="file-activity__evidence">
-            {#each entry.items as toolItem (toolItem.id)}
-              {@render toolEvidence(toolItem)}
+          <div class="process-group__evidence">
+            {#if processGroupHasReasoning(entry.items)}
+              <p class="process-group__privacy">内部推理内容已隐藏。</p>
+            {/if}
+            {#each entry.items as processItem (processItem.id)}
+              {#if processItem.role === "tool"}
+                {#if processItem.pending && !processItem.body.trim()}
+                  <div class="pending-status pending-status--compact" role="status" aria-live="polite">
+                    <LoaderCircle size={14} />
+                    <strong>{itemProgress(processItem).phase}</strong>
+                  </div>
+                {:else}
+                  {@render toolEvidence(processItem)}
+                {/if}
+                {#if subcallsByParent[processItem.id]?.length}
+                  <div class="tool-subcalls" aria-label={`Subcalls for ${processItem.title || processItem.id}`}>
+                    {#each subcallsByParent[processItem.id] ?? [] as child (child.id)}
+                      <article class={`message message--tool message--subtool${child.pending ? " is-pending" : ""}`} data-parent-tool-id={processItem.id}>
+                        {#if child.pending && !child.body.trim()}
+                          <div class="pending-status pending-status--compact" role="status" aria-live="polite">
+                            <LoaderCircle size={14} />
+                            <strong>{itemProgress(child).phase}</strong>
+                          </div>
+                        {:else}
+                          {@render toolEvidence(child)}
+                        {/if}
+                      </article>
+                    {/each}
+                  </div>
+                {/if}
+              {/if}
             {/each}
           </div>
         </details>
@@ -383,33 +399,13 @@
     {:else}
       {@const item = entry.item}
       {#if !isRawAskPayload(item)}
-        <article class={`message message--${item.role}${item.pending ? " is-pending" : ""}`} data-tool-id={item.role === "tool" ? item.id : undefined}>
+        <article class={`message message--${item.role}${item.pending ? " is-pending" : ""}`}>
           {#if item.pending && !item.body.trim()}
             <div class="pending-status" role="status" aria-live="polite">
               <LoaderCircle size={15} />
               <strong>{itemProgress(item).phase}</strong>
               <em>{pendingElapsedLabel(item)} · {itemProgress(item).hint}</em>
             </div>
-          {:else if item.role === "tool"}
-            {@render toolEvidence(item)}
-          {:else if item.role === "reasoning"}
-            <details class="thinking-card reasoning-card" open={item.pending}>
-              <summary>
-                <span class="thinking-card__icon"><BrainCircuit size={16} /></span>
-                <div>
-                  <strong>思考过程</strong>
-                </div>
-                <ChevronDown class="thinking-card__chevron" size={16} />
-              </summary>
-              <div class="thinking-card__body">
-                <div class="thinking-step">
-                  <span></span>
-                  <div>
-                    <p>内部推理已隐藏；最终回答与可验证工具记录会继续显示。</p>
-                  </div>
-                </div>
-              </div>
-            </details>
           {:else}
             {@const renderedWrite = markdownWriteResult(item)}
             {#if renderedWrite}
@@ -431,22 +427,6 @@
                 </div>
               {/if}
             {/if}
-          {/if}
-          {#if item.role === "tool" && subcallsByParent[item.id]?.length}
-            <div class="tool-subcalls" aria-label={`Subcalls for ${item.title || item.id}`}>
-              {#each subcallsByParent[item.id] ?? [] as child (child.id)}
-                <article class={`message message--tool message--subtool${child.pending ? " is-pending" : ""}`} data-parent-tool-id={item.id}>
-                  {#if child.pending && !child.body.trim()}
-                    <div class="pending-status pending-status--compact" role="status" aria-live="polite">
-                      <LoaderCircle size={14} />
-                      <strong>{itemProgress(child).phase}</strong>
-                    </div>
-                  {:else}
-                    {@render toolEvidence(child)}
-                  {/if}
-                </article>
-              {/each}
-            </div>
           {/if}
         </article>
       {/if}
@@ -570,16 +550,16 @@
     background: transparent;
   }
 
-  .file-activity {
+  .process-group {
     padding-left: 22px;
   }
 
-  .file-activity__details {
+  .process-group__details {
     color: #4b5565;
     font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
 
-  .file-activity__details summary {
+  .process-group__details > summary {
     display: grid;
     grid-template-columns: 22px minmax(0, 1fr) 14px;
     align-items: center;
@@ -590,11 +570,11 @@
     list-style: none;
   }
 
-  .file-activity__details summary::-webkit-details-marker {
+  .process-group__details > summary::-webkit-details-marker {
     display: none;
   }
 
-  .file-activity__details summary strong {
+  .process-group__details > summary strong {
     display: block;
     color: #2f3540;
     font-size: 14px;
@@ -602,7 +582,7 @@
     line-height: 1.35;
   }
 
-  .file-activity__details summary em {
+  .process-group__details > summary em {
     display: block;
     overflow: hidden;
     color: #7c828c;
@@ -613,12 +593,19 @@
     white-space: nowrap;
   }
 
-  .file-activity__evidence {
+  .process-group__evidence {
     display: grid;
     gap: 8px;
     margin: 8px 0 4px 30px;
     padding: 6px 0 4px 14px;
     border-left: 1px solid #d7dee8;
+  }
+
+  .process-group__privacy {
+    margin: 0;
+    color: #7c828c;
+    font-size: 11px;
+    line-height: 1.45;
   }
 
   .pending-status {
@@ -912,39 +899,6 @@
     max-height: 220px;
     overflow: auto;
     padding: 8px 9px;
-  }
-
-  .reasoning-card .thinking-step :global(.md) {
-    color: #5f6774;
-    font-size: 14px;
-    line-height: 1.65;
-  }
-
-  .reasoning-card summary {
-    grid-template-columns: 14px minmax(0, max-content);
-    gap: 6px;
-    min-height: 28px;
-    padding: 5px 10px;
-    border-radius: 7px;
-    background: #eef0f3;
-  }
-
-  .reasoning-card .thinking-card__icon {
-    width: 14px;
-    height: 14px;
-    border-radius: 0;
-    background: transparent;
-    color: #4b5563;
-  }
-
-  .reasoning-card summary strong {
-    color: #3f4652;
-    font-size: 10px;
-    font-weight: 500;
-  }
-
-  .reasoning-card .thinking-card__chevron {
-    display: none;
   }
 
   .tool-call-card--sub {

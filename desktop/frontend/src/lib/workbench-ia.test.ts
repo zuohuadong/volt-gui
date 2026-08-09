@@ -331,7 +331,11 @@ describe("unified workbench IA state", () => {
     expect(template?.prompt).toContain("最终只保留一份干净正文");
     expect(template?.prompt).toContain("连续章节编号");
     expect(template?.prompt).toContain("ONNX");
-    expect(template?.prompt).toContain("结构摘要");
+    expect(template?.prompt).toContain("必须先给完整文档正文");
+    expect(template?.prompt).toContain("正文前不得出现执行计划、结构摘要或运行说明");
+    expect(template?.prompt).toContain("仅在正文后作为简短附注");
+    expect(template?.prompt).toContain("不得输出本地路径、工具回执");
+    expect(template?.prompt).toContain("不得输出本地绝对路径");
     expect(template?.prompt).toContain("核心信息不足时先提问");
     expect(template?.prompt).toContain("输入只给出总数时，不得自行拆分模块数据或补造日期");
     expect(template?.prompt).toContain("统一使用“上线前”");
@@ -342,6 +346,9 @@ describe("unified workbench IA state", () => {
       expect(template.prompt).toContain("最终只能输出一份正文");
       expect(template.prompt).toContain("不得先输出 Markdown 源码再输出渲染版");
       expect(template.prompt).toContain("保存文件后也不得再次完整复述正文");
+      expect(template.prompt).toContain("不得出现工具名、工具调用参数或输出");
+      expect(template.prompt).toContain("todo、receipt、pending/completed/blocked 等内部状态分类");
+      expect(template.prompt).toContain("不得展示逐步思维链或探索性演算过程");
       expect(template.prompt).toContain("输入事实 → 输出事实");
       expect(template.prompt).toContain("前后端主体、状态码和技术判断必须与输入逐字一致");
       expect(template.prompt).toContain("禁止形近错字、乱码、随机字符");
@@ -399,8 +406,11 @@ describe("unified workbench IA state", () => {
     expect(template?.prompt).toContain("负责人姓名必须与原文逐字一致");
     expect(template?.prompt).toContain("“张工”不得改写为“Z工”");
     expect(template?.prompt).toContain("“后端返回 200”不得改写成“前端返回 HTTP 200”或省略");
-    expect(template?.prompt).toContain("待确认事项不得擅自写入固定日期");
+    expect(template?.prompt).toContain("尚待确认的事项不得擅自写入固定日期");
     expect(template?.prompt).toContain("验收日期必须晚于方案提出日期");
+    expect(template?.prompt).toContain("不得出现 pending、completed、blocked、todo、receipt 等内部状态分类");
+    expect(template?.prompt).toContain("会议决策、待办事项、遗留问题、会后通知");
+    expect(template?.prompt).toContain("不得把“已确认决策、讨论结论、未决问题、行动项、待确认事项、跟进消息草稿”作为层级标题");
   });
 
   test("requires tool-backed and independently checked arithmetic", () => {
@@ -411,6 +421,9 @@ describe("unified workbench IA state", () => {
     expect(template?.prompt).toContain("340 × 4.5% = 15.3");
     expect(template?.prompt).toContain("估算约 15 条");
     expect(template?.prompt).toContain("原始值、公式、单位、舍入规则及“估算/约”标识");
+    expect(template?.prompt).toContain("先给 3 至 5 条核心结论");
+    expect(template?.prompt).toContain("集中放在末尾的“计算依据”");
+    expect(template?.prompt).toContain("不得用逐步演算过程淹没结论");
   });
 
   test("keeps planning milestones finite, consistent, and resource-feasible", () => {

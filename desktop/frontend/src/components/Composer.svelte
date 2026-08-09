@@ -52,6 +52,7 @@
     onSteerQueuedMessage,
     onResumeQueuedMessage,
     onQueueActionMenuOpenChange,
+    onMenuOpenChange,
   }: {
     input: string;
     commands: CommandInfo[];
@@ -93,6 +94,7 @@
     onSteerQueuedMessage?: (id: string) => void | Promise<void>;
     onResumeQueuedMessage?: (id: string) => void;
     onQueueActionMenuOpenChange?: (open: boolean) => void;
+    onMenuOpenChange?: (open: boolean) => void;
   } = $props();
 
   let fileMatches = $state<DirEntry[]>([]);
@@ -143,32 +145,44 @@
 
   onMount(() => {
     const unsubscribeDropped = onFilesDropped((paths) => void attachDroppedPaths(paths));
-    const closeMenusOnOutsidePointer = (event: PointerEvent) => {
-      if (!plusMenuOpen && !projectMenuOpen && !permissionMenuOpen) return;
+    const closeMenusOnOutsideInteraction = (event: Event) => {
+      if (!hasOpenMenu()) return;
       const target = event.target;
       if (target instanceof Node && composerRoot?.contains(target)) return;
       closeMenus();
     };
     const closeMenusOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (!plusMenuOpen && !projectMenuOpen && !permissionMenuOpen) return;
+      if (!hasOpenMenu()) return;
       closeMenus();
       event.stopPropagation();
     };
-    window.addEventListener("pointerdown", closeMenusOnOutsidePointer, true);
+    window.addEventListener("pointerdown", closeMenusOnOutsideInteraction, true);
+    window.addEventListener("click", closeMenusOnOutsideInteraction, true);
     window.addEventListener("keydown", closeMenusOnEscape, true);
     return () => {
       unsubscribeDropped();
-      window.removeEventListener("pointerdown", closeMenusOnOutsidePointer, true);
+      window.removeEventListener("pointerdown", closeMenusOnOutsideInteraction, true);
+      window.removeEventListener("click", closeMenusOnOutsideInteraction, true);
       window.removeEventListener("keydown", closeMenusOnEscape, true);
     };
   });
 
   function closeMenus() {
+    const wasOpen = hasOpenMenu();
     plusMenuOpen = false;
     projectMenuOpen = false;
     permissionMenuOpen = false;
     runtimeMenuOpen = false;
+    if (wasOpen) onMenuOpenChange?.(false);
+  }
+
+  function hasOpenMenu() {
+    return plusMenuOpen || projectMenuOpen || permissionMenuOpen || runtimeMenuOpen;
+  }
+
+  function reportMenuState() {
+    onMenuOpenChange?.(hasOpenMenu());
   }
 
   function modelValue(model: ModelInfo) {
@@ -279,12 +293,12 @@
 
   function openFilePicker(accept = "") {
     fileAccept = accept;
-    plusMenuOpen = false;
+    closeMenus();
     requestAnimationFrame(() => fileInput?.click());
   }
 
   function openResources() {
-    plusMenuOpen = false;
+    closeMenus();
     onOpenResources?.();
   }
 
@@ -293,7 +307,9 @@
     if (plusMenuOpen) {
       projectMenuOpen = false;
       permissionMenuOpen = false;
+      runtimeMenuOpen = false;
     }
+    reportMenuState();
   }
 
   function toggleProjectMenu() {
@@ -301,7 +317,9 @@
     if (projectMenuOpen) {
       plusMenuOpen = false;
       permissionMenuOpen = false;
+      runtimeMenuOpen = false;
     }
+    reportMenuState();
   }
 
   function togglePermissionMenu() {
@@ -309,7 +327,19 @@
     if (permissionMenuOpen) {
       plusMenuOpen = false;
       projectMenuOpen = false;
+      runtimeMenuOpen = false;
     }
+    reportMenuState();
+  }
+
+  function runtimeMenuOpenChanged(open: boolean) {
+    runtimeMenuOpen = open;
+    if (open) {
+      plusMenuOpen = false;
+      projectMenuOpen = false;
+      permissionMenuOpen = false;
+    }
+    reportMenuState();
   }
 
   function selectedProjectLabel() {
@@ -322,16 +352,16 @@
 
   function setWorkPermission(value: ComposerToolApprovalMode) {
     if (permissionChanging || value === workPermission) {
-      permissionMenuOpen = false;
+      closeMenus();
       return;
     }
     void onWorkPermissionChange?.(value);
-    permissionMenuOpen = false;
+    closeMenus();
   }
 
   function setProject(value: string) {
     onProjectChange?.(value);
-    projectMenuOpen = false;
+    closeMenus();
   }
 
   async function attachDroppedPaths(paths: string[]) {
@@ -609,6 +639,7 @@
         {onCollaborationModeChange}
         {onTokenModeChange}
         {onGoalChange}
+        onOpenChange={runtimeMenuOpenChanged}
       />
     </div>
   {/if}
@@ -630,6 +661,7 @@
             {onCollaborationModeChange}
             {onTokenModeChange}
             {onGoalChange}
+            onOpenChange={runtimeMenuOpenChanged}
           />
         </div>
       {/if}

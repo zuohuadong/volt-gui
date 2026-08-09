@@ -10,6 +10,7 @@
   }
 
   let { templates, selectedId, onSelect }: Props = $props();
+  let moreTemplatesOpen = $state(false);
   const icons = {
     "write-document": FileText,
     "organize-materials": Files,
@@ -45,27 +46,37 @@
     {/each}
   </div>
   {#if templates.length > 3}
-    <details class="more-templates">
-      <summary>更多模板</summary>
-      <div class="template-grid template-grid--more">
-        {#each templates.slice(3) as template (template.id)}
-          {@const Icon = icons[template.id]}
-          <button
-            class:active={selectedId === template.id}
-            type="button"
-            data-outcome-template={template.id}
-            title={template.summary}
-            aria-label={`${template.title}：${template.summary}`}
-            onclick={() => onSelect(template.id)}
-          >
-            <span class="template-icon"><Icon size={17} /></span>
-            <strong>{template.title}</strong>
-            {#if selectedId === template.id}<Check size={15} />{/if}
-            <span class="template-tooltip" role="tooltip">{template.summary}</span>
-          </button>
-        {/each}
-      </div>
-    </details>
+    <div class="more-templates">
+      <button
+        class="more-templates__trigger"
+        type="button"
+        aria-expanded={moreTemplatesOpen}
+        aria-controls="more-outcome-templates"
+        onclick={() => (moreTemplatesOpen = !moreTemplatesOpen)}
+      >
+        {moreTemplatesOpen ? "收起模板" : "更多模板"}
+      </button>
+      {#if moreTemplatesOpen}
+        <div id="more-outcome-templates" class="template-grid template-grid--more">
+          {#each templates.slice(3) as template (template.id)}
+            {@const Icon = icons[template.id]}
+            <button
+              class:active={selectedId === template.id}
+              type="button"
+              data-outcome-template={template.id}
+              title={template.summary}
+              aria-label={`${template.title}：${template.summary}`}
+              onclick={() => onSelect(template.id)}
+            >
+              <span class="template-icon"><Icon size={17} /></span>
+              <strong>{template.title}</strong>
+              {#if selectedId === template.id}<Check size={15} />{/if}
+              <span class="template-tooltip" role="tooltip">{template.summary}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
   {/if}
 </section>
 
@@ -105,7 +116,7 @@
     overflow: visible;
   }
 
-  button {
+  .template-grid button {
     appearance: none;
     position: relative;
     display: flex;
@@ -125,19 +136,19 @@
     transition: border-color 150ms ease, background 150ms ease;
   }
 
-  button:hover {
+  .template-grid button:hover {
     z-index: 40;
     border-color: color-mix(in srgb, #1f2421 32%, var(--border, #dce1db));
     background: var(--muted, #edf0ec);
   }
 
-  button.active {
+  .template-grid button.active {
     border-color: color-mix(in srgb, var(--foreground, #1f2421) 44%, var(--border, #dce1db));
     background: color-mix(in srgb, var(--card, #fff) 94%, var(--foreground, #1f2421) 6%);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground, #1f2421) 8%, transparent);
   }
 
-  button:focus-visible {
+  .template-grid button:focus-visible {
     z-index: 40;
     outline: 2px solid color-mix(in srgb, var(--foreground, #1f2421) 48%, transparent);
     outline-offset: 2px;
@@ -154,12 +165,12 @@
     color: var(--muted-foreground, #687169);
   }
 
-  button.active .template-icon {
+  .template-grid button.active .template-icon {
     background: color-mix(in srgb, var(--foreground, #1f2421) 10%, var(--card, #fff));
     color: var(--foreground, #1f2421);
   }
 
-  button strong {
+  .template-grid button strong {
     min-width: 0;
     overflow: hidden;
     font-size: 12px;
@@ -194,13 +205,13 @@
     white-space: normal;
   }
 
-  button:hover .template-tooltip,
-  button:focus-visible .template-tooltip {
+  .template-grid button:hover .template-tooltip,
+  .template-grid button:focus-visible .template-tooltip {
     opacity: 1;
     transform: translateY(0);
   }
 
-  button > :global(svg) {
+  .template-grid button > :global(svg) {
     flex: 0 0 auto;
     margin-left: auto;
   }
@@ -210,12 +221,28 @@
     width: 100%;
   }
 
-  .more-templates > summary {
+  .more-templates__trigger {
+    display: block;
     width: max-content;
+    min-height: 32px;
     margin: 0 auto;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
     color: var(--muted-foreground, #687169);
     font-size: 11px;
     cursor: pointer;
+  }
+
+  .more-templates__trigger:hover {
+    background: var(--muted, #edf0ec);
+    color: var(--foreground, #1f2421);
+  }
+
+  .more-templates__trigger:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent, #2d6a4f) 48%, transparent);
+    outline-offset: 2px;
   }
 
   .template-grid--more {
@@ -233,7 +260,7 @@
       grid-template-columns: 1fr;
     }
 
-    button {
+    .template-grid button {
       min-height: 48px;
     }
 
@@ -244,7 +271,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    button {
+    .template-grid button {
       transition: none;
     }
 

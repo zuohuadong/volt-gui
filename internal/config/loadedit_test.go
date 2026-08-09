@@ -77,6 +77,23 @@ func TestMergeTOMLProviderAccessIgnoresProjectOnlyList(t *testing.T) {
 	}
 }
 
+func TestLoadForRootIgnoresProjectOnlyProviderAccess(t *testing.T) {
+	writeUserProviderAccess(t, "default_model = \"deepseek/deepseek-v4-flash\"\n")
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "voltui.toml")
+	if err := os.WriteFile(projectPath, []byte("[desktop]\nprovider_access = [\"deepseek\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadForRoot(root)
+	if err != nil {
+		t.Fatalf("LoadForRoot: %v", err)
+	}
+	if cfg.Desktop.ProviderAccess != nil {
+		t.Fatalf("provider_access = %#v, want user allow-all", cfg.Desktop.ProviderAccess)
+	}
+}
+
 func TestMergeTOMLProviderAccessUnionsWhenUserDeclares(t *testing.T) {
 	userPath := writeUserProviderAccess(t, "[desktop]\nprovider_access = [\"deepseek\"]\n")
 	projectPath := filepath.Join(t.TempDir(), "reasonix.toml")

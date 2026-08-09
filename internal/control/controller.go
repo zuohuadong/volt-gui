@@ -233,13 +233,14 @@ type approvalReply struct {
 }
 
 type pendingApproval struct {
-	tool      string
-	subject   string
-	reason    string
-	guardian  *event.GuardianResult
-	fresh     bool
-	autoDrain bool
-	reply     chan approvalReply
+	tool         string
+	subject      string
+	reason       string
+	guardian     *event.GuardianResult
+	fresh        bool
+	requireHuman bool
+	autoDrain    bool
+	reply        chan approvalReply
 }
 
 // pendingAsk is an in-flight ask question batch. questions is retained so the
@@ -4489,10 +4490,11 @@ func (g gateApprover) Approve(ctx context.Context, tool, subject string, args js
 
 func (g gateApprover) ApproveWithReason(ctx context.Context, tool, subject string, args json.RawMessage) (bool, bool, string, error) {
 	subject = approvalDisplaySubject(tool, subject, args)
-	// requestApproval short-circuits the YOLO / just-approved-plan window and any
-	// session grant before it emits a prompt, so the auto-allow paths need no
-	// special-casing here. Deny rules already bit before this point.
-	if g.c.guardianSess != nil && !g.c.approval.preApproved(tool, subject) {
+	requireHuman := strings.EqualFold(tool, "bash") && permission.BashSubjectRequiresExplicitApproval(subject)
+	if g.c.approval.preApprovedForDecision(tool, subject, approvalDecisionClass{requireHuman: requireHuman}) {
+		return true, false, "", nil
+	}
+	if g.c.guardianSess != nil && !requireHuman {
 		allow, reason, guardianResult, reviewErr := g.c.guardianSess.Review(ctx, tool, args, g.c.executor.Session())
 		if reviewErr != nil {
 			return false, false, "", reviewErr
@@ -4508,6 +4510,10 @@ func (g gateApprover) ApproveWithReason(ctx context.Context, tool, subject strin
 			return false, false, reason, nil
 		}
 		return true, remember, "", nil
+	}
+	if requireHuman {
+		allow, remember, err := g.c.requestApprovalWithOptions(ctx, tool, subject, args, approvalDecisionOptions{requireHuman: true})
+		return allow, remember, "", err
 	}
 	allow, remember, err := g.c.requestApproval(ctx, tool, subject, args)
 	return allow, remember, "", err
@@ -4534,7 +4540,7 @@ func (s sandboxEscapeApprover) ApproveSandboxEscape(ctx context.Context, req san
 }
 
 func (s sandboxEscapeApprover) SandboxEscapeSessionAllowed(_ context.Context, req sandbox.EscapeRequest) bool {
-	return s.c.approval.preApprovedForDecision(SandboxEscapeApprovalTool, sandboxEscapeApprovalSubject(req.Command), true)
+	return s.c.approval.preApprovedForDecision(SandboxEscapeApprovalTool, sandboxEscapeApprovalSubject(req.Command), approvalDecisionClass{fresh: true})
 }
 
 func sandboxEscapeApprovalSubject(command string) string {
@@ -4579,7 +4585,7 @@ func (m managedConfigWriteApprover) ApproveManagedConfigWrite(ctx context.Contex
 }
 
 func (m managedConfigWriteApprover) ManagedConfigWriteSessionAllowed(_ context.Context, req tool.ConfigWriteRequest) bool {
-	return m.c.approval.preApprovedForDecision(ManagedConfigWriteApprovalTool, managedConfigWriteApprovalSubject(req.Path), true)
+	return m.c.approval.preApprovedForDecision(ManagedConfigWriteApprovalTool, managedConfigWriteApprovalSubject(req.Path), approvalDecisionClass{fresh: true})
 }
 
 func managedConfigWriteApprovalSubject(path string) string {
@@ -4617,7 +4623,7 @@ func (t trustedIntranetApprover) ApproveTrustedIntranet(ctx context.Context, req
 }
 
 func (t trustedIntranetApprover) TrustedIntranetSessionAllowed(_ context.Context, req tool.TrustedIntranetRequest) bool {
-	return t.c.approval.preApprovedForDecision(TrustedIntranetApprovalTool, trustedIntranetApprovalSubject(req), true)
+	return t.c.approval.preApprovedForDecision(TrustedIntranetApprovalTool, trustedIntranetApprovalSubject(req), approvalDecisionClass{fresh: true})
 }
 
 func trustedIntranetApprovalSubject(req tool.TrustedIntranetRequest) string {
@@ -5102,6 +5108,20 @@ func (c *Controller) requestApprovalWithGuardian(ctx context.Context, tool, subj
 	return r.allow, false, nil
 }
 
+func (c *Controller) requestApprovalWithOptions(ctx context.Context, tool, subject string, args json.RawMessage, opts approvalDecisionOptions) (bool, bool, error) {
+	r, err := c.requestApprovalDecisionWithOptions(ctx, tool, subject, args, "", opts)
+	if err != nil {
+		return false, false, err
+	}
+	if r.allow && r.session {
+		c.approval.grantSession(tool, subject)
+	}
+	if r.allow && r.persist && c.onRemember != nil {
+		c.emitRememberResult(c.onRemember(permission.RememberRuleForScope(tool, subject)))
+	}
+	return r.allow, false, nil
+}
+
 func (c *Controller) requestApprovalDecision(ctx context.Context, tool, subject string, args json.RawMessage, reason string) (approvalReply, error) {
 	return c.requestApprovalDecisionWithOptions(ctx, tool, subject, args, reason, approvalDecisionOptions{})
 }
@@ -5114,15 +5134,19 @@ type approvalDecisionOptions struct {
 	// fresh marks a user trust/business decision rather than an ordinary tool
 	// permission. It may reuse an explicit session grant, but YOLO/auto approval
 	// must not answer or drain the prompt.
-	fresh    bool
-	guardian *event.GuardianResult
+	fresh bool
+	// requireHuman keeps the ordinary four-choice prompt, but Auto, an approved
+	// plan, and Guardian cannot answer it. YOLO remains an explicit bypass.
+	requireHuman bool
+	guardian     *event.GuardianResult
 }
 
 func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, tool, subject string, args json.RawMessage, reason string, opts approvalDecisionOptions) (approvalReply, error) {
 	// YOLO/full access and the just-approved-plan execution window auto-allow
 	// approval-gated tools without prompting. Plan approval is a user decision,
 	// not a tool permission, so it deliberately stays interactive.
-	if c.approval.preApprovedForDecision(tool, subject, opts.fresh) {
+	class := approvalDecisionClass{fresh: opts.fresh, requireHuman: opts.requireHuman}
+	if c.approval.preApprovedForDecision(tool, subject, class) {
 		return approvalReply{allow: true}, nil
 	}
 
@@ -5131,16 +5155,14 @@ func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, too
 
 	// Re-check: a session grant may have landed while we queued behind another
 	// prompt for the same subject.
-	if c.approval.preApprovedForDecision(tool, subject, opts.fresh) {
+	if c.approval.preApprovedForDecision(tool, subject, class) {
 		return approvalReply{allow: true}, nil
 	}
 	var id string
 	var reply chan approvalReply
-	if opts.fresh {
-		id, reply = c.approval.registerDecisionWithGuardian(tool, subject, reason, true, opts.guardian)
-	} else {
-		id, reply = c.approval.registerDecisionWithGuardian(tool, subject, reason, false, opts.guardian)
-	}
+	id, reply = c.approval.registerDecision(tool, subject, reason, pendingApprovalOptions{
+		fresh: opts.fresh, requireHuman: opts.requireHuman, guardian: opts.guardian,
+	})
 
 	c.sink.Emit(event.Event{Kind: event.ApprovalRequest, Approval: event.Approval{ID: id, Tool: tool, Subject: subject, Reason: reason, Guardian: opts.guardian}})
 	if hookSubject, hookArgs, ok := permissionRequestHookPayload(tool, subject, args); ok {

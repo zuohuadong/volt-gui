@@ -88,26 +88,30 @@ func (g *freshHumanHeadlessGate) Check(ctx context.Context, toolName string, arg
 	if RequiresFreshHumanApprovalTool(toolName) {
 		return false, "this tool requires fresh human approval and cannot run in a non-interactive session. Use an interactive session or a user-initiated memory command.", nil
 	}
+	if strings.EqualFold(toolName, "bash") && permission.BashSubjectRequiresExplicitApproval(permission.Subject(args)) {
+		if g.gate.Policy.Decide(toolName, readOnly, args) != permission.Allow {
+			return false, "this dynamic shell command requires human approval and cannot run in a non-interactive session. Use an interactive session.", nil
+		}
+	}
 	return g.gate.Check(ctx, toolName, args, readOnly)
 }
 
-// preApproved reports whether a tool call can skip the prompt — either the
-// posture bypasses it (YOLO / plan-execution window) or a session grant already
-// covers the scope.
-func (a *approvalManager) preApproved(tool, subject string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.bypassAllowsLocked(tool) || a.sessionGrantAllowsLocked(tool, subject)
+type approvalDecisionClass struct {
+	fresh        bool
+	requireHuman bool
 }
 
 // preApprovedForDecision reports whether a prompt can be skipped for a decision
 // class. Fresh user decisions may reuse an explicit session grant, but they are
 // never answered by YOLO/full-access or the approved-plan execution window.
-func (a *approvalManager) preApprovedForDecision(tool, subject string, fresh bool) bool {
+func (a *approvalManager) preApprovedForDecision(tool, subject string, class approvalDecisionClass) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if fresh {
+	if class.fresh {
 		return a.sessionGrantAllowsLocked(tool, subject)
+	}
+	if class.requireHuman {
+		return a.toolApprovalMode == ToolApprovalYolo || a.sessionGrantAllowsLocked(tool, subject)
 	}
 	return a.bypassAllowsLocked(tool) || a.sessionGrantAllowsLocked(tool, subject)
 }
@@ -115,27 +119,30 @@ func (a *approvalManager) preApprovedForDecision(tool, subject string, fresh boo
 // register allocates an approval ID, records the pending prompt, and returns the
 // reply channel the resolve path will signal.
 func (a *approvalManager) register(tool, subject, reason string) (string, chan approvalReply) {
-	return a.registerDecisionWithGuardian(tool, subject, reason, false, nil)
+	return a.registerDecision(tool, subject, reason, pendingApprovalOptions{})
 }
 
-// registerDecision allocates an approval ID for either an ordinary tool
-// permission or a fresh user decision. Fresh decisions are not auto-drained when
-// the user switches to auto/yolo tool approval while the prompt is visible.
-func (a *approvalManager) registerDecision(tool, subject, reason string, fresh bool) (string, chan approvalReply) {
-	return a.registerDecisionWithGuardian(tool, subject, reason, fresh, nil)
+type pendingApprovalOptions struct {
+	fresh        bool
+	requireHuman bool
+	guardian     *event.GuardianResult
 }
 
-func (a *approvalManager) registerDecisionWithGuardian(tool, subject, reason string, fresh bool, guardian *event.GuardianResult) (string, chan approvalReply) {
+// registerDecision allocates an ordinary, fresh, or human-required approval.
+func (a *approvalManager) registerDecision(tool, subject, reason string, opts pendingApprovalOptions) (string, chan approvalReply) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.nextID++
 	id := strconv.Itoa(a.nextID)
 	reply := make(chan approvalReply, 1)
 	autoDrain := false
-	if !fresh {
+	if !opts.fresh && !opts.requireHuman {
 		autoDrain = a.autoApprovalWouldAllowLocked(tool, subject)
 	}
-	a.approvals[id] = pendingApproval{tool: tool, subject: subject, reason: reason, guardian: guardian, fresh: fresh, autoDrain: autoDrain, reply: reply}
+	a.approvals[id] = pendingApproval{
+		tool: tool, subject: subject, reason: reason, guardian: opts.guardian,
+		fresh: opts.fresh, requireHuman: opts.requireHuman, autoDrain: autoDrain, reply: reply,
+	}
 	return id, reply
 }
 
@@ -329,6 +336,9 @@ func (a *approvalManager) drainLocked(includeExplicitAsk bool) []chan approvalRe
 	pending := make([]chan approvalReply, 0, len(a.approvals))
 	for id, approval := range a.approvals {
 		if approval.fresh || requiresFreshApprovalTool(approval.tool) {
+			continue
+		}
+		if approval.requireHuman && !includeExplicitAsk {
 			continue
 		}
 		if !includeExplicitAsk && !approval.autoDrain {

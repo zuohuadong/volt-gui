@@ -85,6 +85,11 @@ git fetch --no-tags upstream "$UPSTREAM_BRANCH"
 LAST_SYNC=$(cat "$MARKER_FILE" 2>/dev/null || echo "")
 UPSTREAM_HEAD=$(git rev-parse "upstream/$UPSTREAM_BRANCH")
 
+if [[ -n "$LAST_SYNC" ]] && ! git cat-file -e "$LAST_SYNC^{commit}" 2>/dev/null; then
+  echo "ERROR: $MARKER_FILE does not name a fetched commit: $LAST_SYNC" >&2
+  exit 2
+fi
+
 if [ "$LAST_SYNC" = "$UPSTREAM_HEAD" ]; then
   echo "Already up to date (sync marker = $UPSTREAM_HEAD)"
   exit 0

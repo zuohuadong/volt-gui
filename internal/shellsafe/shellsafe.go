@@ -119,22 +119,14 @@ func ClassifyReadOnlyCommand(command string) (base, sub string, fields []string,
 	if len(fields) == 0 {
 		return "", "", nil, false
 	}
-	base = strings.ToLower(fields[0])
-	if ReadOnlyCommands[base] {
-		if hasResolvedSubstitution(fields) && !substitutionSafeCommands[base] {
-			return "", "", nil, false
-		}
-		return base, "", fields, true
+	base, sub, ok = readOnlyFields(fields)
+	if !ok || !readOnlyArgsSafe(base, sub, fields) {
+		return "", "", nil, false
 	}
-	if len(fields) > 1 {
-		if subs, prefixed := ReadOnlyPrefixes[base]; prefixed {
-			sub = strings.ToLower(fields[1])
-			if subs[sub] {
-				return base, sub, fields, true
-			}
-		}
+	if hasResolvedSubstitution(fields) && !substitutionSafeCommands[base] {
+		return "", "", nil, false
 	}
-	return "", "", nil, false
+	return base, sub, fields, true
 }
 
 const resolvedSubstitutionPlaceholder = "__voltui_read_only_substitution__"
@@ -192,7 +184,7 @@ func resolvedReadOnlyStmt(stmt *syntax.Stmt, nested bool) ([]string, bool, bool)
 		dynamic = dynamic || wordDynamic
 	}
 	base, sub, tableOK := readOnlyFields(fields)
-	if !tableOK || (nested && (!substitutionSafeCommands[base] || !nestedReadOnlyArgsSafe(base, sub, fields))) {
+	if !tableOK || !readOnlyArgsSafe(base, sub, fields) || (nested && !substitutionSafeCommands[base]) {
 		return nil, false, false
 	}
 	return fields, dynamic, true
@@ -266,7 +258,7 @@ func readOnlyFields(fields []string) (base, sub string, ok bool) {
 	return "", "", false
 }
 
-func nestedReadOnlyArgsSafe(base, sub string, fields []string) bool {
+func readOnlyArgsSafe(base, sub string, fields []string) bool {
 	args := fields[1:]
 	if sub != "" && len(args) > 0 {
 		args = args[1:]

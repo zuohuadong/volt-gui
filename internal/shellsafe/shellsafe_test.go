@@ -7,6 +7,7 @@ func TestCommandIsReadOnly(t *testing.T) {
 		// git read-only subcommands (the #5341 set, beyond status/diff/log/show).
 		"git status", "git diff HEAD", "git log --oneline", "git show",
 		"git rev-parse HEAD", "git describe --tags", "git reflog",
+		"git tag", "git tag -l", "git tag --list",
 		"git for-each-ref", "git cat-file -p HEAD", "git ls-tree HEAD",
 		"git rev-list --count HEAD", "git shortlog", "git name-rev HEAD",
 		`git log "2>/dev/null"`, `git log 2\>/dev/null`,
@@ -34,6 +35,7 @@ func TestCommandIsReadOnly(t *testing.T) {
 		// write-capable commands / subcommands.
 		"rm -rf /", "git push", "git commit -m x", "git checkout main",
 		"git reset --hard", "git branch -d feature", "git remote add o url",
+		"git tag v1", "git tag -d v1", "git tag -f v1",
 		"go build ./...", "go test ./...", "npm install", "docker rm x",
 		"kubectl apply -f x.yaml", "mv a b", "chmod 777 x",
 		// shell syntax can smuggle a write past a read-only base word.

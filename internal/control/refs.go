@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"voltui/internal/fileref"
+	"voltui/internal/memory"
 	"voltui/internal/proc"
 )
 
@@ -780,6 +782,7 @@ func (c *Controller) resolveRefs(ctx context.Context, line string, scopedOnly bo
 	refs := c.detectRefsMode(line, scopedOnly)
 	refs = resolveBareNames(refs, c.workspaceRoot)
 	var b strings.Builder
+	instructions := c.includedInstructions()
 	for _, r := range refs {
 		switch r.kind {
 		case refResource:
@@ -799,6 +802,9 @@ func (c *Controller) resolveRefs(ctx context.Context, line string, scopedOnly bo
 				errs = append(errs, "@"+r.raw+" — "+err.Error())
 				continue
 			}
+			if delta := c.referencedInstructionDelta(r, baseDir, instructions); delta != "" {
+				appendRefBlock(&b, "path-instructions", `target="`+html.EscapeString(displayPathForRef(r))+`"`, delta)
+			}
 			tag := "file"
 			if isDir {
 				tag = "dir"
@@ -813,6 +819,122 @@ func (c *Controller) resolveRefs(ctx context.Context, line string, scopedOnly bo
 		}
 	}
 	return b.String(), errs
+}
+
+type referencedInstructions struct {
+	root   string
+	paths  map[string]bool
+	bodies map[string]bool
+	docs   []memory.Source
+}
+
+func (c *Controller) includedInstructions() *referencedInstructions {
+	instructions := &referencedInstructions{
+		root:   c.workspaceRoot,
+		paths:  map[string]bool{},
+		bodies: map[string]bool{},
+	}
+	if current := c.memory.current(); current != nil {
+		for _, doc := range current.Docs {
+			instructions.paths[cleanAbsPath(doc.Path)] = true
+			instructions.bodies[doc.Body] = true
+		}
+	}
+	return instructions
+}
+
+func (c *Controller) referencedInstructionDelta(r ref, baseDir string, instructions *referencedInstructions) string {
+	current := c.memory.current()
+	if current == nil || strings.TrimSpace(c.workspaceRoot) == "" || r.baseDir != "" {
+		return ""
+	}
+	targetDir, ok := referencedTargetDir(r.path, baseDir, c.workspaceRoot)
+	if !ok {
+		return ""
+	}
+	start := len(instructions.docs)
+	for _, dir := range nestedDirectories(c.workspaceRoot, targetDir) {
+		instructions.recordNewSources(memory.LoadConfinedDir(dir, c.workspaceRoot), dir)
+	}
+	return renderPathInstructions(instructions.docs[start:], c.workspaceRoot)
+}
+
+func referencedTargetDir(path, baseDir, workspaceRoot string) (string, bool) {
+	absPath, absBase, ok := resolveAbsRef(path, baseDir)
+	if !ok || cleanAbsPath(absBase) != cleanAbsPath(workspaceRoot) {
+		return "", false
+	}
+	if info, err := os.Stat(absPath); err == nil && info.IsDir() {
+		return absPath, true
+	}
+	return filepath.Dir(absPath), true
+}
+
+func nestedDirectories(root, target string) []string {
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == "." || !filepath.IsLocal(rel) {
+		return nil
+	}
+	dirs := make([]string, 0, len(strings.Split(rel, string(filepath.Separator))))
+	dir := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		dir = filepath.Join(dir, part)
+		dirs = append(dirs, dir)
+	}
+	return dirs
+}
+
+func (instructions *referencedInstructions) recordNewSources(docs []memory.Source, dir string) {
+	for _, doc := range docs {
+		pathKey := cleanAbsPath(doc.Path)
+		if cleanAbsPath(filepath.Dir(doc.Path)) != cleanAbsPath(dir) || instructions.paths[pathKey] || instructions.bodies[doc.Body] || !instructionPathWithinRoot(doc.Path, instructions.root) {
+			continue
+		}
+		instructions.paths[pathKey] = true
+		instructions.bodies[doc.Body] = true
+		instructions.docs = append(instructions.docs, doc)
+	}
+}
+
+func instructionPathWithinRoot(path, root string) bool {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(resolvedRoot, resolved)
+	return err == nil && filepath.IsLocal(rel)
+}
+
+func renderPathInstructions(docs []memory.Source, workspaceRoot string) string {
+	if len(docs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("# Instructions\n")
+	for _, doc := range docs {
+		rel, _ := filepath.Rel(workspaceRoot, doc.Path)
+		fmt.Fprintf(&b, "\n## workspace/%s (%s)\n\n%s\n", filepath.ToSlash(rel), doc.Scope, strings.TrimSpace(doc.Body))
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func displayPathForRef(r ref) string {
+	if r.displayPath != "" {
+		return r.displayPath
+	}
+	return r.path
+}
+
+func cleanAbsPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return filepath.Clean(abs)
 }
 
 func appendRefBlock(b *strings.Builder, tag, attr, body string) {

@@ -182,13 +182,13 @@ jobs:
         if: ${{ inputs.orchestrated }}
         uses: actions/download-artifact@v8
         with:
-          name: stable-reviewed-release-notes
-          path: /tmp/stable-reviewed-release-notes
+          name: orchestrator-reviewed-release-notes
+          path: /tmp/orchestrator-reviewed-release-notes
       - name: Use orchestrator-reviewed release notes
         if: ${{ inputs.orchestrated }}
         run: |
-          test -s /tmp/stable-reviewed-release-notes/release-notes.md
-          cp /tmp/stable-reviewed-release-notes/release-notes.md /tmp/release-notes.md
+          test -s /tmp/orchestrator-reviewed-release-notes/release-notes.md
+          cp /tmp/orchestrator-reviewed-release-notes/release-notes.md /tmp/release-notes.md
       - name: Render reviewed release notes
         if: ${{ !inputs.orchestrated }}
         env:

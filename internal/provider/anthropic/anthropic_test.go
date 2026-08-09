@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"voltui/internal/provider"
@@ -73,6 +75,43 @@ func TestBuildRequest(t *testing.T) {
 	// Conversation cache breakpoint on the last block of the last message.
 	if last.Content[len(last.Content)-1].CacheControl == nil {
 		t.Fatal("last message block should carry cache_control")
+	}
+}
+
+func TestStreamUsageCountsHeaderRetries(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) == 1 {
+			http.Error(w, "retry", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `event: message_start
+data: {"type":"message_start","message":{"usage":{"input_tokens":2,"output_tokens":0}}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`)
+	}))
+	defer server.Close()
+
+	client := &client{name: "anthropic", baseURL: server.URL, model: "claude-test", http: server.Client()}
+	chunks, err := client.Stream(context.Background(), provider.Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var usage *provider.Usage
+	for chunk := range chunks {
+		if chunk.Type == provider.ChunkUsage {
+			usage = chunk.Usage
+		}
+	}
+	if usage == nil || usage.RequestCount != 2 {
+		t.Fatalf("usage = %+v, want RequestCount 2", usage)
 	}
 }
 

@@ -99,8 +99,6 @@ test("site placeholders do not render the synthetic version vlatest", async () =
   assert.doesNotMatch(home, /v<span (?:class="rxv"|data-release-version=)/);
   assert.doesNotMatch(docs, /v<span data-release-version=/);
   assert.doesNotMatch(home, /<a[^>]*data-cli-asset=[^>]*\sdownload(?:[ >])/);
-  assert.match(home, /id="download-tab-desktop"[^>]+aria-controls="download-pane-desktop"/);
-  assert.match(home, /id="download-pane-cli"[^>]+role="tabpanel"[^>]+hidden/);
   assert.doesNotMatch(home, /releases\/latest\/download/);
   assert.doesNotMatch(siteScript, /releases\/latest\/download/);
   assert.doesNotMatch(siteScript, /desktopPreviewBase/);

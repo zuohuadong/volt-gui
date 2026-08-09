@@ -1,9 +1,14 @@
 package memory
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"voltui/internal/fileutil"
+	fileencoding "voltui/internal/fileutil/encoding"
 )
 
 // quickAddHeading marks the section quick-added notes accumulate under, so
@@ -21,41 +26,115 @@ func AppendDoc(path, note string) error {
 	if note == "" {
 		return nil
 	}
-	if dir := filepath.Dir(path); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
+	if err := ensureDocParent(path); err != nil {
+		return err
 	}
+	snapshot, err := readDocSnapshot(path)
+	if err != nil {
+		return err
+	}
+	out := appendNote(string(snapshot.body), "- "+note)
+	return publishDoc(path, []byte(out), snapshot.mode)
+}
 
-	existing, _ := os.ReadFile(path) // missing → new file
-	body := string(existing)
-	bullet := "- " + note
-
-	var out string
+func appendNote(body, bullet string) string {
 	switch {
 	case strings.TrimSpace(body) == "":
-		out = "# Project memory\n\n" + quickAddHeading + "\n\n" + bullet + "\n"
+		return "# Project memory\n\n" + quickAddHeading + "\n\n" + bullet + "\n"
 	case strings.Contains(body, quickAddHeading):
 		// Insert the bullet at the end of the existing Notes section (before the
 		// next heading, or at EOF), keeping additions chronological.
-		out = insertUnderHeading(body, quickAddHeading, bullet)
+		return insertUnderHeading(body, quickAddHeading, bullet)
 	default:
-		out = strings.TrimRight(body, "\n") + "\n\n" + quickAddHeading + "\n\n" + bullet + "\n"
+		return strings.TrimRight(body, "\n") + "\n\n" + quickAddHeading + "\n\n" + bullet + "\n"
 	}
-	return os.WriteFile(path, []byte(out), 0o644)
 }
 
 // writeDocFile overwrites path with body, creating the parent directory and
 // ensuring a single trailing newline. Used by Set.WriteDoc for the panel's
 // in-place editor (path validation happens in the caller).
 func writeDocFile(path, body string) error {
-	if dir := filepath.Dir(path); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
+	if err := ensureDocParent(path); err != nil {
+		return err
+	}
+	mode, err := destinationMode(path)
+	if err != nil {
+		return err
 	}
 	out := strings.TrimRight(body, "\n") + "\n"
-	return os.WriteFile(path, []byte(out), 0o644)
+	return publishDoc(path, []byte(out), mode)
+}
+
+func ensureDocParent(path string) error {
+	if dir := filepath.Dir(path); dir != "" {
+		return os.MkdirAll(dir, 0o755)
+	}
+	return nil
+}
+
+type docSnapshot struct {
+	body []byte
+	mode os.FileMode
+}
+
+func readDocSnapshot(path string) (docSnapshot, error) {
+	expected, exists, err := destinationInfo(path)
+	if err != nil {
+		return docSnapshot{}, err
+	}
+	if !exists {
+		return docSnapshot{mode: 0o644}, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return docSnapshot{}, err
+	}
+	defer file.Close()
+	return readOpenedDocSnapshot(path, file, expected)
+}
+
+func readOpenedDocSnapshot(path string, file *os.File, expectedInfo os.FileInfo) (docSnapshot, error) {
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return docSnapshot{}, err
+	}
+	if !os.SameFile(expectedInfo, openedInfo) {
+		return docSnapshot{}, fmt.Errorf("memory destination changed while opening %q", path)
+	}
+	body, err := io.ReadAll(file)
+	if err != nil {
+		return docSnapshot{}, err
+	}
+	return docSnapshot{body: fileencoding.DecodeToUTF8(body), mode: openedInfo.Mode().Perm()}, nil
+}
+
+func destinationMode(path string) (os.FileMode, error) {
+	fileInfo, exists, err := destinationInfo(path)
+	if err != nil {
+		return 0, err
+	}
+	if !exists {
+		return 0o644, nil
+	}
+	return fileInfo.Mode().Perm(), nil
+}
+
+func destinationInfo(path string) (os.FileInfo, bool, error) {
+	fileInfo, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if fileInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, false, fmt.Errorf("refusing to write %q through a symlink", path)
+	}
+	return fileInfo, true, nil
+}
+
+func publishDoc(path string, body []byte, mode os.FileMode) error {
+	return fileutil.AtomicWriteFileStrict(path, body, mode)
 }
 
 // insertUnderHeading appends bullet to the end of the section started by heading

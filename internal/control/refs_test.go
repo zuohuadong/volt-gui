@@ -53,6 +53,78 @@ func TestResolveRefsInjectsOnlyNewNestedInstructionsOnce(t *testing.T) {
 	}
 }
 
+func TestResolveRefsConfinesNestedInstructionImports(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+	service := filepath.Join(root, "services", "api")
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(service, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(parent, "secret.md")
+	if err := os.WriteFile(outside, []byte("OUTSIDE SECRET"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(root, "services", "linked.md")
+	if err := os.Symlink(outside, linked); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "services", "rules.md"), []byte("NESTED SAFE\n@linked.md"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	instructions := "SERVICES RULE\n@../../secret.md\n@" + outside + "\n@rules.md"
+	if err := os.WriteFile(filepath.Join(root, "services", "AGENTS.md"), []byte(instructions), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(service, "handler.go"), []byte("package api"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := New(Options{WorkspaceRoot: root, Memory: memory.Load(memory.Options{CWD: root})})
+	block, errs := c.ResolveRefs(context.Background(), "review @services/api/handler.go")
+	if len(errs) != 0 {
+		t.Fatalf("ResolveRefs errors = %v", errs)
+	}
+	for _, safe := range []string{"SERVICES RULE", "NESTED SAFE", "package api"} {
+		if !strings.Contains(block, safe) {
+			t.Fatalf("resolved block missing %q:\n%s", safe, block)
+		}
+	}
+	if strings.Contains(block, "OUTSIDE SECRET") {
+		t.Fatalf("external import entered path instructions:\n%s", block)
+	}
+}
+
+func TestResolveRefsRejectsNestedInstructionSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	service := filepath.Join(root, "services", "api")
+	if err := os.MkdirAll(service, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(outside, "secret.md")
+	if err := os.WriteFile(secret, []byte("OUTSIDE SECRET"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(root, "services", "AGENTS.md")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(service, "handler.go"), []byte("package api"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := New(Options{WorkspaceRoot: root, Memory: memory.Load(memory.Options{CWD: root})})
+	block, errs := c.ResolveRefs(context.Background(), "review @services/api/handler.go")
+	if len(errs) != 0 {
+		t.Fatalf("ResolveRefs errors = %v", errs)
+	}
+	if strings.Contains(block, "OUTSIDE SECRET") || strings.Contains(block, "path-instructions") {
+		t.Fatalf("external instruction symlink entered resolved block:\n%s", block)
+	}
+}
+
 func TestFileRefLine(t *testing.T) {
 	dir := t.TempDir()
 	pdf := filepath.Join(dir, "report.pdf")

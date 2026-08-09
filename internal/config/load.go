@@ -104,9 +104,12 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 		cfg.providerSources = providerSources
 		cfg.shadowedProjectProviders = shadowedProjectProviders
 	}
-	if access, ok, err := mergeTOMLProviderAccess(tomlSources); err != nil {
+	if access, _, err := mergeTOMLProviderAccess(tomlSources); err != nil {
 		return nil, err
-	} else if ok {
+	} else {
+		// A nil result means the user did not declare a restriction. Clear any
+		// project-only list decoded above so an untrusted repository cannot turn
+		// the user's allow-all posture into an allowlist.
 		cfg.Desktop.ProviderAccess = access
 	}
 
@@ -457,6 +460,7 @@ func mergeTOMLProviderAccess(paths []string) ([]string, bool, error) {
 	var merged []string
 	seen := map[string]bool{}
 	saw := false
+	userDeclared := false
 	for _, path := range paths {
 		if _, err := os.Stat(path); err != nil {
 			continue
@@ -469,7 +473,13 @@ func mergeTOMLProviderAccess(paths []string) ([]string, bool, error) {
 		if !meta.IsDefined("desktop", "provider_access") {
 			continue
 		}
+		if !saw {
+			merged = []string{}
+		}
 		saw = true
+		if isUserConfigPath(path) {
+			userDeclared = true
+		}
 		for _, name := range f.Desktop.ProviderAccess {
 			name = strings.TrimSpace(name)
 			if name == "" || seen[name] {
@@ -478,6 +488,9 @@ func mergeTOMLProviderAccess(paths []string) ([]string, bool, error) {
 			seen[name] = true
 			merged = append(merged, name)
 		}
+	}
+	if saw && !userDeclared {
+		return nil, false, nil
 	}
 	return merged, saw, nil
 }
@@ -535,7 +548,7 @@ func DesktopProviderAccessDeclared(path string) (bool, error) {
 // of resetting to defaults. VoltUI's global .env is loaded so api_key_env
 // resolution works while the wizard decides which keys are still missing.
 func LoadForEdit(path string) *Config {
-	return loadForEdit(path, true, true)
+	return loadForEdit(path, true, false)
 }
 
 // LoadForEditReadOnlyStrict is the error-returning commit-time variant. It must
@@ -580,7 +593,7 @@ func loadForEdit(path string, loadCredentials, persistMigrations bool) *Config {
 }
 
 func LoadForEditWithoutCredentials(path string) *Config {
-	return loadForEdit(path, false, true)
+	return loadForEdit(path, false, false)
 }
 
 func LoadForView(path string) *Config {

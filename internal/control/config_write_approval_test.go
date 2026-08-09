@@ -1,7 +1,6 @@
 package control
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -22,45 +21,22 @@ func TestManagedConfigWriteApprovalIsFreshHuman(t *testing.T) {
 
 	a := newApprovalManager(permission.Policy{}, ToolApprovalYolo, time.Minute)
 	subject := "write VoltUI config: /home/u/.voltui/config.toml"
-	if a.preApprovedForDecision(ManagedConfigWriteApprovalTool, subject, nil, true) {
+	if a.preApprovedForDecision(ManagedConfigWriteApprovalTool, subject, nil, approvalDecisionClass{fresh: true}) {
 		t.Fatal("YOLO posture must not pre-approve a managed config write")
 	}
 	a.grantSession(ManagedConfigWriteApprovalTool, subject)
-	if !a.preApprovedForDecision(ManagedConfigWriteApprovalTool, subject, nil, true) {
+	if !a.preApprovedForDecision(ManagedConfigWriteApprovalTool, subject, nil, approvalDecisionClass{fresh: true}) {
 		t.Fatal("an explicit session grant should cover the same subject")
 	}
 	// Session grants for fresh decisions are tool-wide (mirroring
 	// sandbox_escape): one "allow for this session" covers the rest of the
 	// repair flow across the handful of managed config files.
-	if !a.preApprovedForDecision(ManagedConfigWriteApprovalTool, "write VoltUI config: /other/path", nil, true) {
+	if !a.preApprovedForDecision(ManagedConfigWriteApprovalTool, "write VoltUI config: /other/path", nil, approvalDecisionClass{fresh: true}) {
 		t.Fatal("session grant should cover the repair flow tool-wide")
 	}
 	// But it must never leak to a different fresh-decision tool.
-	if a.preApprovedForDecision(SandboxEscapeApprovalTool, "run unconfined once: rm -rf /", nil, true) {
+	if a.preApprovedForDecision(SandboxEscapeApprovalTool, "run unconfined once: rm -rf /", nil, approvalDecisionClass{fresh: true}) {
 		t.Fatal("config_write session grant must not answer sandbox_escape decisions")
-	}
-}
-
-func TestApprovedPlanAutoAllowsFallbackButPreservesExplicitRules(t *testing.T) {
-	a := newApprovalManager(
-		permission.New("ask", nil, []string{"sensitive_writer", "Edit(secret.txt)"}, []string{"denied_writer"}),
-		ToolApprovalAsk,
-		time.Minute,
-	)
-	a.setPlanAutoApprove(true)
-
-	if !a.preApproved("ordinary_writer", "ordinary.txt", json.RawMessage(`{"path":"ordinary.txt"}`)) {
-		t.Fatal("an approved plan should auto-allow the ordinary writer fallback")
-	}
-	if a.preApproved("sensitive_writer", "sensitive.txt", json.RawMessage(`{"path":"sensitive.txt"}`)) {
-		t.Fatal("an approved plan must not bypass an explicit ask rule")
-	}
-	moveArgs := json.RawMessage(`{"source_path":"ordinary.txt","destination_path":"secret.txt"}`)
-	if a.preApproved("move_file", "ordinary.txt", moveArgs) {
-		t.Fatal("an approved plan must evaluate every subject before bypassing an explicit ask rule")
-	}
-	if a.preApproved("denied_writer", "denied.txt", json.RawMessage(`{"path":"denied.txt"}`)) {
-		t.Fatal("an approved plan must not pre-approve an explicit deny rule")
 	}
 }
 

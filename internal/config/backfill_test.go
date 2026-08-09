@@ -153,7 +153,7 @@ func TestNormalizeLegacyStepFunBaseURLsMigratesPresetProviders(t *testing.T) {
 	}
 }
 
-func TestLoadForEditPersistsLegacyStepFunBaseURLMigration(t *testing.T) {
+func TestLoadForEditKeepsLegacyStepFunMigrationInMemoryUntilSave(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	cfg := Default()
 	stepfun, ok := CuratedProviderPreset("stepfun")
@@ -184,7 +184,17 @@ func TestLoadForEditPersistsLegacyStepFunBaseURLMigration(t *testing.T) {
 
 	var disk Config
 	if _, err := toml.DecodeFile(path, &disk); err != nil {
-		t.Fatalf("decode persisted config: %v", err)
+		t.Fatalf("decode config after read-only load: %v", err)
+	}
+	if got, _ := disk.Provider("stepfun"); got == nil || got.BaseURL != legacyStepFunOpenAIBaseURL {
+		t.Fatalf("read-only LoadForEdit rewrote stepfun = %+v, want legacy base URL preserved on disk", got)
+	}
+	if err := loaded.SaveTo(path); err != nil {
+		t.Fatalf("explicit SaveTo: %v", err)
+	}
+	disk = Config{}
+	if _, err := toml.DecodeFile(path, &disk); err != nil {
+		t.Fatalf("decode explicitly saved config: %v", err)
 	}
 	if got, _ := disk.Provider("stepfun"); got == nil || got.BaseURL != officialStepFunOpenAIBaseURL {
 		t.Fatalf("persisted stepfun = %+v, want official base URL", got)

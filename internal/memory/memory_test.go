@@ -162,6 +162,55 @@ func TestImportCycleDoesNotHang(t *testing.T) {
 	}
 }
 
+func TestProjectInstructionsRejectEscapingImports(t *testing.T) {
+	parent := t.TempDir()
+	project := filepath.Join(parent, "repo")
+	mustMkdir(t, filepath.Join(project, ".git"))
+	mustWrite(t, filepath.Join(parent, "secret.md"), "OUTSIDE SECRET")
+	if err := os.Symlink(filepath.Join(parent, "secret.md"), filepath.Join(project, "linked.md")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	mustWrite(t, filepath.Join(project, "nested.md"), "NESTED SAFE\n@linked.md")
+	mustWrite(t, filepath.Join(project, "AGENTS.md"), strings.Join([]string{
+		"PROJECT SAFE",
+		"@../secret.md",
+		"@" + filepath.Join(parent, "secret.md"),
+		"@nested.md",
+	}, "\n"))
+
+	set := Load(Options{CWD: project})
+	if len(set.Docs) != 1 {
+		t.Fatalf("project docs = %+v, want one confined AGENTS.md", set.Docs)
+	}
+	body := set.Docs[0].Body
+	for _, safe := range []string{"PROJECT SAFE", "NESTED SAFE"} {
+		if !strings.Contains(body, safe) {
+			t.Fatalf("confined body missing %q:\n%s", safe, body)
+		}
+	}
+	if strings.Contains(body, "OUTSIDE SECRET") {
+		t.Fatalf("external import entered project instructions:\n%s", body)
+	}
+	if got := strings.Count(body, "<!-- rejected: import_"); got != 3 {
+		t.Fatalf("rejected imports = %d, want traversal, absolute, and symlink rejections:\n%s", got, body)
+	}
+}
+
+func TestProjectInstructionsRejectDirectExternalSymlink(t *testing.T) {
+	project := t.TempDir()
+	outside := t.TempDir()
+	mustMkdir(t, filepath.Join(project, ".git"))
+	mustWrite(t, filepath.Join(outside, "secret.md"), "OUTSIDE SECRET")
+	if err := os.Symlink(filepath.Join(outside, "secret.md"), filepath.Join(project, "AGENTS.md")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	set := Load(Options{CWD: project})
+	if len(set.Docs) != 0 {
+		t.Fatalf("external instruction symlink was loaded: %+v", set.Docs)
+	}
+}
+
 // TestImportTargetClassification guards the "@mention vs @import" heuristic.
 func TestImportTargetClassification(t *testing.T) {
 	cases := []struct {

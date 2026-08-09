@@ -5232,13 +5232,30 @@ func loadTopicCreatedAtsForUpdate(workspaceRoot string) (map[string]int64, error
 	return loadInt64MapForUpdate(topicCreatedAtsPath(workspaceRoot))
 }
 
+func ensureTopicStateDir(workspaceRoot, path string) error {
+	root := strings.TrimSpace(workspaceRoot)
+	if root == "" {
+		return os.MkdirAll(filepath.Dir(path), 0o755)
+	}
+	workspace, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("workspace root %q no longer exists: %w", root, err)
+	}
+	defer workspace.Close()
+	stateDir, err := filepath.Rel(root, filepath.Dir(path))
+	if err != nil || !filepath.IsLocal(stateDir) {
+		return fmt.Errorf("topic state directory %q is outside workspace root %q", filepath.Dir(path), root)
+	}
+	return workspace.MkdirAll(stateDir, 0o755)
+}
+
 func saveTopicTitles(workspaceRoot string, m map[string]string) error {
 	b, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
 	}
 	path := topicTitlesPath(workspaceRoot)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := ensureTopicStateDir(workspaceRoot, path); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
@@ -5254,7 +5271,7 @@ func saveTopicTitleSources(workspaceRoot string, m map[string]string) error {
 		return err
 	}
 	path := topicTitleSourcesPath(workspaceRoot)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := ensureTopicStateDir(workspaceRoot, path); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
@@ -5270,7 +5287,7 @@ func saveTopicCreatedAts(workspaceRoot string, m map[string]int64) error {
 		return err
 	}
 	path := topicCreatedAtsPath(workspaceRoot)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := ensureTopicStateDir(workspaceRoot, path); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
@@ -5286,7 +5303,7 @@ func saveTopicAutoTitleMeta(workspaceRoot string, m map[string]topicAutoTitleMet
 		return err
 	}
 	path := topicAutoTitleMetaPath(workspaceRoot)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := ensureTopicStateDir(workspaceRoot, path); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"

@@ -915,10 +915,13 @@ func (m *Manager) RunningForSession(parentSession string) []View {
 		if !sessionMatches(parentSession, j.SessionID) {
 			continue
 		}
-		j.mu.Lock()
-		if j.status == Running {
-			out = append(out, View{ID: j.ID, Kind: j.Kind, Label: j.Label, Status: string(j.status), StartedAt: j.startedAt})
+		select {
+		case <-j.done:
+			continue
+		default:
 		}
+		j.mu.Lock()
+		out = append(out, View{ID: j.ID, Kind: j.Kind, Label: j.Label, Status: string(Running), StartedAt: j.startedAt})
 		j.mu.Unlock()
 	}
 	return out

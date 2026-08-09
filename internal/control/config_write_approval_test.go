@@ -21,21 +21,21 @@ func TestManagedConfigWriteApprovalIsFreshHuman(t *testing.T) {
 
 	a := newApprovalManager(permission.Policy{}, ToolApprovalYolo, time.Minute)
 	subject := "write VoltUI config: /home/u/.voltui/config.toml"
-	if a.preApprovedForDecision(ManagedConfigWriteApprovalTool, subject, true) {
+	if a.preApprovedForDecision(ManagedConfigWriteApprovalTool, subject, approvalDecisionClass{fresh: true}) {
 		t.Fatal("YOLO posture must not pre-approve a managed config write")
 	}
 	a.grantSession(ManagedConfigWriteApprovalTool, subject)
-	if !a.preApprovedForDecision(ManagedConfigWriteApprovalTool, subject, true) {
+	if !a.preApprovedForDecision(ManagedConfigWriteApprovalTool, subject, approvalDecisionClass{fresh: true}) {
 		t.Fatal("an explicit session grant should cover the same subject")
 	}
 	// Session grants for fresh decisions are tool-wide (mirroring
 	// sandbox_escape): one "allow for this session" covers the rest of the
 	// repair flow across the handful of managed config files.
-	if !a.preApprovedForDecision(ManagedConfigWriteApprovalTool, "write VoltUI config: /other/path", true) {
+	if !a.preApprovedForDecision(ManagedConfigWriteApprovalTool, "write VoltUI config: /other/path", approvalDecisionClass{fresh: true}) {
 		t.Fatal("session grant should cover the repair flow tool-wide")
 	}
 	// But it must never leak to a different fresh-decision tool.
-	if a.preApprovedForDecision(SandboxEscapeApprovalTool, "run unconfined once: rm -rf /", true) {
+	if a.preApprovedForDecision(SandboxEscapeApprovalTool, "run unconfined once: rm -rf /", approvalDecisionClass{fresh: true}) {
 		t.Fatal("config_write session grant must not answer sandbox_escape decisions")
 	}
 }

@@ -10,6 +10,7 @@
   }
 
   let { templates, selectedId, onSelect }: Props = $props();
+  let moreTemplatesOpen = $state(false);
   const icons = {
     "write-document": FileText,
     "organize-materials": Files,
@@ -48,26 +49,36 @@
     {/each}
   </div>
   {#if templates.length > 3}
-    <details class="more-templates">
-      <summary>更多模板</summary>
-      <div class="template-grid template-grid--more">
-        {#each templates.slice(3) as template (template.id)}
-          {@const Icon = icons[template.id]}
-          <button
-            class:active={selectedId === template.id}
-            type="button"
-            data-outcome-template={template.id}
-            aria-label={`${template.title}：${template.summary}`}
-            onclick={() => onSelect(template.id)}
-          >
-            <span class="template-icon"><Icon size={16} /></span>
-            {#if selectedId === template.id}<span class="template-check"><Check size={13} /></span>{/if}
-            <strong>{template.title}</strong>
-            <em>{template.summary}</em>
-          </button>
-        {/each}
-      </div>
-    </details>
+    <div class="more-templates">
+      <button
+        class="more-templates__trigger"
+        type="button"
+        aria-expanded={moreTemplatesOpen}
+        aria-controls="more-outcome-templates"
+        onclick={() => (moreTemplatesOpen = !moreTemplatesOpen)}
+      >
+        {moreTemplatesOpen ? "收起模板" : "更多模板"}
+      </button>
+      {#if moreTemplatesOpen}
+        <div id="more-outcome-templates" class="template-grid template-grid--more">
+          {#each templates.slice(3) as template (template.id)}
+            {@const Icon = icons[template.id]}
+            <button
+              class:active={selectedId === template.id}
+              type="button"
+              data-outcome-template={template.id}
+              aria-label={`${template.title}：${template.summary}`}
+              onclick={() => onSelect(template.id)}
+            >
+              <span class="template-icon"><Icon size={16} /></span>
+              {#if selectedId === template.id}<span class="template-check"><Check size={13} /></span>{/if}
+              <strong>{template.title}</strong>
+              <em>{template.summary}</em>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
   {/if}
 </section>
 
@@ -121,7 +132,7 @@
     gap: 10px;
   }
 
-  button {
+  .template-grid button {
     appearance: none;
     position: relative;
     display: grid;
@@ -140,19 +151,19 @@
     transition: border-color 160ms ease, background 160ms ease;
   }
 
-  button:hover {
+  .template-grid button:hover {
     z-index: 2;
     border-color: color-mix(in srgb, var(--accent, #2d6a4f) 34%, var(--border, #dce1db));
     background: var(--muted, #edf0ec);
   }
 
-  button.active {
+  .template-grid button.active {
     border-color: color-mix(in srgb, var(--accent, #2d6a4f) 52%, var(--border, #dce1db));
     background: color-mix(in srgb, var(--accent, #2d6a4f) 5%, var(--card, #fff));
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #2d6a4f) 18%, transparent);
   }
 
-  button:focus-visible {
+  .template-grid button:focus-visible {
     z-index: 2;
     outline: 2px solid color-mix(in srgb, var(--accent, #2d6a4f) 48%, transparent);
     outline-offset: 2px;
@@ -189,7 +200,7 @@
     color: #fff;
   }
 
-  button strong {
+  .template-grid button strong {
     min-width: 0;
     overflow: hidden;
     font-size: 12.5px;
@@ -199,7 +210,7 @@
     white-space: nowrap;
   }
 
-  button em {
+  .template-grid button em {
     display: -webkit-box;
     overflow: hidden;
     color: var(--muted-foreground, #687169);
@@ -217,12 +228,28 @@
     width: 100%;
   }
 
-  .more-templates > summary {
+  .more-templates__trigger {
+    display: block;
     width: max-content;
+    min-height: 28px;
     margin: 0 auto;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
     color: var(--muted-foreground, #687169);
     font-size: 11px;
     cursor: pointer;
+  }
+
+  .more-templates__trigger:hover {
+    background: var(--muted, #edf0ec);
+    color: var(--foreground, #1f2421);
+  }
+
+  .more-templates__trigger:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent, #2d6a4f) 48%, transparent);
+    outline-offset: 2px;
   }
 
   .template-grid--more {
@@ -245,7 +272,7 @@
       grid-template-columns: 1fr;
     }
 
-    button {
+    .template-grid button {
       min-height: 0;
     }
   }

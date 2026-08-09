@@ -578,6 +578,7 @@
   let externalDataImportOpen = $state(false);
   let resourceSearch = $state("");
   let agentSelectorOpen = $state(false);
+  let agentRuntimeDisclosureOpen = $state(false);
   let userPanelDialog = $state<UserPanelDialog | undefined>();
   let brand = $state<BrandInfo>(defaultBrand);
   let appVersion = $state("");
@@ -9427,7 +9428,10 @@ function openGovernanceCenter() {
                   <section class="agent-compose-card" aria-label="新建对话输入区">
                     <div class="agent-compose-meta" aria-label="任务运行信息">
                       <div class="agent-selector">
-                        <button class="agent-selector__trigger" type="button" title={`${currentAgent.name}：${currentAgent.role}`} aria-label={`执行者：${currentAgent.name}，点击更换`} onclick={() => (agentSelectorOpen = !agentSelectorOpen)}>
+                        <button class="agent-selector__trigger" type="button" title={`${currentAgent.name}：${currentAgent.role}`} aria-label={`执行者：${currentAgent.name}，点击更换`} onclick={() => {
+                          agentRuntimeDisclosureOpen = false;
+                          agentSelectorOpen = !agentSelectorOpen;
+                        }}>
                           <span class="agent-selector__label">
                             <em>执行者：</em>
                             <strong>{currentAgent.name}</strong>
@@ -9453,7 +9457,7 @@ function openGovernanceCenter() {
                         {/if}
                       </div>
 
-                      <details class="agent-runtime-disclosure">
+                      <details class="agent-runtime-disclosure" bind:open={agentRuntimeDisclosureOpen}>
                         <summary title="查看模型、能力、权限与记忆">
                           <span>运行配置</span>
                           <em>{appliedAgentProfile ? "已应用" : "发送时应用"}</em>
@@ -9515,6 +9519,9 @@ function openGovernanceCenter() {
                       onSteerQueuedMessage={steerQueuedThreadMessage}
                       onResumeQueuedMessage={resumeQueuedThreadMessage}
                       onQueueActionMenuOpenChange={(open) => (queueActionMenuOpen = open)}
+                      onMenuOpenChange={(open) => {
+                        if (open) agentRuntimeDisclosureOpen = false;
+                      }}
                     />
                   </section>
 
@@ -25213,11 +25220,10 @@ function openGovernanceCenter() {
   .agent-assistant-shell {
     display: grid;
     grid-template-columns: minmax(0, var(--agent-assistant-content-width));
-    grid-template-rows: minmax(0, 1fr) auto auto;
+    grid-template-rows: minmax(min-content, 1fr) auto auto;
     align-content: stretch;
     gap: 12px;
-    height: 100dvh;
-    min-height: 100dvh;
+    min-height: 100%;
     padding: clamp(24px, 4vh, 44px) clamp(16px, 4vw, 48px) 22px;
   }
 

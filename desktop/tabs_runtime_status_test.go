@@ -27,7 +27,10 @@ func TestProjectTreeShowsDetachedRuntimeStatus(t *testing.T) {
 	if err := setTopicTitle("", topicID, topicTitle); err != nil {
 		t.Fatalf("set topic title: %v", err)
 	}
-	path := writeTopicSessionWithPrompt(t, dir, "detached.jsonl", topicID, topicTitle, "", "detached prompt", time.Now())
+	path := writeTopicSessionWithPrompt(t, topicSessionFixture{
+		directory: dir, filename: "detached.jsonl", topicID: topicID, topicTitle: topicTitle,
+		prompt: "detached prompt", updatedAt: time.Now(),
+	})
 
 	app := NewApp()
 	sink := &tabEventSink{tabID: "detached", app: app}
@@ -73,8 +76,14 @@ func TestProjectTreeSplitsMultipleRuntimeSessionsInSameTopic(t *testing.T) {
 	if err := setTopicTitle("", topicID, topicTitle); err != nil {
 		t.Fatalf("set topic title: %v", err)
 	}
-	sessionA := writeTopicSessionWithPrompt(t, dir, "session-a.jsonl", topicID, topicTitle, "", "session A prompt", time.Now().Add(-time.Hour))
-	sessionB := writeTopicSessionWithPrompt(t, dir, "session-b.jsonl", topicID, topicTitle, "", "session B prompt", time.Now())
+	sessionA := writeTopicSessionWithPrompt(t, topicSessionFixture{
+		directory: dir, filename: "session-a.jsonl", topicID: topicID, topicTitle: topicTitle,
+		prompt: "session A prompt", updatedAt: time.Now().Add(-time.Hour),
+	})
+	sessionB := writeTopicSessionWithPrompt(t, topicSessionFixture{
+		directory: dir, filename: "session-b.jsonl", topicID: topicID, topicTitle: topicTitle,
+		prompt: "session B prompt", updatedAt: time.Now(),
+	})
 
 	app := NewApp()
 	runnerA := &blockingRunner{started: make(chan struct{}), release: make(chan struct{})}
@@ -157,7 +166,10 @@ func TestProjectTreeShowsBackgroundJobStatus(t *testing.T) {
 	if err := setTopicTitle("", topicID, topicTitle); err != nil {
 		t.Fatalf("set topic title: %v", err)
 	}
-	path := writeTopicSessionWithPrompt(t, dir, "job.jsonl", topicID, topicTitle, "", "job prompt", time.Now())
+	path := writeTopicSessionWithPrompt(t, topicSessionFixture{
+		directory: dir, filename: "job.jsonl", topicID: topicID, topicTitle: topicTitle,
+		prompt: "job prompt", updatedAt: time.Now(),
+	})
 
 	jm := jobs.NewManager(event.Discard)
 	release := make(chan struct{})

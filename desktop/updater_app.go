@@ -162,7 +162,7 @@ func (a *App) installDebUpdate(meta *cachedUpdate) error {
 	// Ensure installing was shown even if a phase line was missed (older helper).
 	a.emitProgress("installing", meta.Size, meta.Size, "")
 	a.emitProgress("done", meta.Size, meta.Size, "")
-	a.shutdown(a.ctx)
+	a.shutdownForUpdate()
 	_ = relaunchThroughGuard()
 	os.Exit(0)
 	return nil
@@ -215,12 +215,19 @@ func (a *App) installPortableUpdate(meta *cachedUpdate, data []byte) error {
 	// Persist the conversation and stop subprocesses before handing off (same as
 	// shutdown). On Linux the binary is now replaced, so relaunch it; on Windows and
 	// macOS the installer/helper we launched takes over once we exit.
-	a.shutdown(a.ctx)
+	a.shutdownForUpdate()
 	if runtime.GOOS == "linux" {
 		_ = relaunchThroughGuard()
 	}
 	os.Exit(0)
 	return nil
+}
+
+func (a *App) shutdownForUpdate() {
+	// Update exits bypass Wails OnBeforeClose, so the native window is still
+	// available and must be captured before the ordinary shutdown work.
+	a.saveWindowStateSync(a.ctx)
+	a.shutdown(a.ctx)
 }
 
 // ApplyUpdate is kept for older frontend bindings and tests. New UI code uses the

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -66,21 +68,38 @@ func (a *App) SaveWindowState(state DesktopWindowState) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// saveWindowStateSync saves the current window geometry from the Go side (called
-// during shutdown so the last-known state is persisted even if the frontend's
-// beforeunload promise hasn't resolved).
-func (a *App) saveWindowStateSync() {
-	if a.ctx == nil {
+// saveWindowStateSync persists the geometry while Wails still owns a valid
+// native window. OnShutdown is too late because Wails destroys the window first.
+func (a *App) saveWindowStateSync(ctx context.Context) {
+	if ctx == nil {
 		return
 	}
-	w, h := runtime.WindowGetSize(a.ctx)
-	x, y := runtime.WindowGetPosition(a.ctx)
-	max := runtime.WindowIsMaximised(a.ctx)
-	_ = a.SaveWindowState(DesktopWindowState{
+	state, ok := a.currentWindowState(ctx)
+	if !ok {
+		return
+	}
+	if err := a.SaveWindowState(state); err != nil {
+		slog.Warn("desktop: save window state failed", "err", err)
+	}
+}
+
+func (a *App) currentWindowState(ctx context.Context) (state DesktopWindowState, ok bool) {
+	defer func() {
+		if recover() != nil {
+			slog.Warn("desktop: skipped window state capture because native window is unavailable")
+			ok = false
+		}
+	}()
+	if a.windowStateSnapshotHook != nil {
+		return a.windowStateSnapshotHook(ctx), true
+	}
+	w, h := runtime.WindowGetSize(ctx)
+	x, y := runtime.WindowGetPosition(ctx)
+	return DesktopWindowState{
 		Width:     w,
 		Height:    h,
 		X:         x,
 		Y:         y,
-		Maximised: max,
-	})
+		Maximised: runtime.WindowIsMaximised(ctx),
+	}, true
 }

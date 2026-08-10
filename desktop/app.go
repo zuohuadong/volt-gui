@@ -116,6 +116,9 @@ type App struct {
 	tabOrder    []string
 	activeTabID string
 	readyHook   func()
+	// Keep native window reads behind a per-App seam so lifecycle tests do not
+	// require a real Wails window.
+	windowStateSnapshotHook func(context.Context) DesktopWindowState
 
 	// tabsRestored is closed when restoreOrBuildTabs has finished populating
 	// a.tabs from desktop-tabs.json (or built the first-launch tab). Startup
@@ -471,6 +474,9 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) beforeClose(ctx context.Context) bool {
+	// Wails invokes OnShutdown after destroying the native window. Capture the
+	// geometry here while the window handle is still valid.
+	a.saveWindowStateSync(ctx)
 	if a.forceQuit.Swap(false) || consumeSystemQuitRequested() {
 		return false
 	}
@@ -483,7 +489,6 @@ func (a *App) beforeClose(ctx context.Context) bool {
 			return false
 		}
 		a.backgroundMaximised.Store(runtime.WindowIsMaximised(ctx))
-		a.saveWindowStateSync()
 		a.snapshotAllTabs()
 		hideForBackground(ctx)
 		return true
@@ -798,7 +803,7 @@ func (a *App) snapshotAllTabs() {
 	}
 }
 
-// shutdown snapshots all tabs, saves the final window geometry, and closes tabs.
+// shutdown snapshots all tabs and closes their runtimes.
 func (a *App) shutdown(context.Context) {
 	a.stopDeferredRebuildRetry()
 	a.stopMainThreadWatchdog()
@@ -811,9 +816,6 @@ func (a *App) shutdown(context.Context) {
 	a.stopBotRuntime()
 	a.stopRemoteRuntime()
 	a.stopTray()
-	// Save window geometry synchronously from Go so it's persisted even if the
-	// frontend's beforeunload promise hasn't resolved yet.
-	a.saveWindowStateSync()
 	// Serialize shutdown with controller rebuilds and runtime mutations.
 	a.runtimeRebuildMu.Lock()
 	defer a.runtimeRebuildMu.Unlock()

@@ -722,7 +722,7 @@ func TestResetOfficialProviderPricingOnUpgradeRunsOnce(t *testing.T) {
 	}
 }
 
-func TestApplyUserConfigUpgradesOnStartupVersion3NonWindowsAdvancesToV5(t *testing.T) {
+func TestApplyUserConfigUpgradesOnStartupVersion3NonWindowsAdvancesToCurrent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	setRuntimeGOOS(t, "darwin")
 
@@ -753,8 +753,8 @@ func TestApplyUserConfigUpgradesOnStartupVersion3NonWindowsAdvancesToV5(t *testi
 	if _, err := toml.DecodeFile(path, &got); err != nil {
 		t.Fatalf("decode migrated config: %v", err)
 	}
-	if got.ConfigVersion != 5 {
-		t.Fatalf("config_version = %d, want 5", got.ConfigVersion)
+	if got.ConfigVersion != Default().ConfigVersion {
+		t.Fatalf("config_version = %d, want %d", got.ConfigVersion, Default().ConfigVersion)
 	}
 	deepseek, _ := got.Provider("deepseek")
 	if p := deepseek.Prices["deepseek-v4-flash"]; p == nil || p.Output != 4 || p.Currency != "$" {
@@ -877,7 +877,7 @@ temperature = 0.4
 		t.Fatalf("second ApplyUserConfigUpgradesOnStartup: %v", err)
 	}
 	if again {
-		t.Fatal("v5 config should not migrate again")
+		t.Fatal("current config should not migrate again")
 	}
 }
 
@@ -927,14 +927,17 @@ func TestApplyUserConfigUpgradesOnStartupMigratesLegacyBundledvoltStep(t *testin
 		t.Fatal("v5 OEM config should migrate the legacy Step route to the canonical vlm provider")
 	}
 	got := LoadForEditWithoutCredentials(path)
-	if got.ConfigVersion != 5 {
-		t.Fatalf("config_version = %d, want 5", got.ConfigVersion)
+	if got.ConfigVersion != Default().ConfigVersion {
+		t.Fatalf("config_version = %d, want %d", got.ConfigVersion, Default().ConfigVersion)
 	}
 	if _, ok := got.Provider(legacyvoltStepProvider); ok {
 		t.Fatalf("legacy bundled Step provider remains after migration: %+v", got.Providers)
 	}
 	if vlm, ok := got.Provider("vlm"); !ok || vlm.Model != "step-3.7-flash/step-3.7-flash" {
 		t.Fatalf("vlm provider = %+v, ok=%v", vlm, ok)
+	}
+	if xllm, ok := got.Provider("xllm"); !ok || xllm.Model != "glm-5.2/glm-5.2" {
+		t.Fatalf("xllm provider = %+v, ok=%v", xllm, ok)
 	}
 	for field, ref := range map[string]string{
 		"default": got.DefaultModel, "planner": got.Agent.PlannerModel, "recovery": got.Agent.RecoveryModel,
@@ -949,7 +952,7 @@ func TestApplyUserConfigUpgradesOnStartupMigratesLegacyBundledvoltStep(t *testin
 	if got.Agent.SubagentModels["custom"] != "custom/model" {
 		t.Fatalf("custom subagent ref changed: %q", got.Agent.SubagentModels["custom"])
 	}
-	if want := []string{"vlm", "custom"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
+	if want := []string{"vlm", "custom", "xllm"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
 		t.Fatalf("provider_access = %+v, want %+v", got.Desktop.ProviderAccess, want)
 	}
 
@@ -1017,10 +1020,13 @@ func TestApplyUserConfigUpgradesOnStartupPreservesCustomStepProvider(t *testing.
 	}
 
 	changed, err := ApplyUserConfigUpgradesOnStartup(path)
-	if err != nil || changed {
-		t.Fatalf("custom provider migration = changed:%v err:%v, want no-op", changed, err)
+	if err != nil || !changed {
+		t.Fatalf("custom provider migration = changed:%v err:%v, want version marker only", changed, err)
 	}
 	got := LoadForEditWithoutCredentials(path)
+	if got.ConfigVersion != Default().ConfigVersion {
+		t.Fatalf("config_version = %d, want %d", got.ConfigVersion, Default().ConfigVersion)
+	}
 	custom, ok := got.Provider(legacyvoltStepProvider)
 	if !ok || custom.BaseURL != "https://custom.example/v1" || custom.APIKeyEnv != "CUSTOM_STEP_KEY" {
 		t.Fatalf("custom Step provider changed: %+v, ok=%v", custom, ok)
@@ -1090,7 +1096,7 @@ func TestApplyUserConfigUpgradesOnStartupMigratesLegacyBundledvoltGLM(t *testing
 	}
 	got := LoadForEditWithoutCredentials(path)
 	xllm, ok := got.Provider("xllm")
-	if !ok || xllm.Model != "glm-5.2/glm-5.2" {
+	if !ok || xllm.Model != "glm-5.2/glm-5.2" || xllm.DisplayLabel() != "xllm" {
 		t.Fatalf("xllm provider = %+v, ok=%v, want model glm-5.2/glm-5.2", xllm, ok)
 	}
 	if got.DefaultModel != "xllm" {
@@ -1100,6 +1106,94 @@ func TestApplyUserConfigUpgradesOnStartupMigratesLegacyBundledvoltGLM(t *testing
 	again, err := ApplyUserConfigUpgradesOnStartup(path)
 	if err != nil || again {
 		t.Fatalf("second migration = changed:%v err:%v, want no-op", again, err)
+	}
+}
+
+func TestApplyUserConfigUpgradesOnStartupRestoresMissingBundledVLM(t *testing.T) {
+	const baseURL = "http://gateway.internal.test:9010/v1"
+	useBundledvoltGateway(t, baseURL)
+
+	path := UserConfigPath()
+	cfg := Default()
+	cfg.ConfigVersion = 5
+	cfg.DefaultModel = "xllm"
+	cfg.Desktop.ProviderAccess = []string{"xllm", "custom"}
+	cfg.Providers = []ProviderEntry{
+		{Name: "xllm", Kind: "openai", BaseURL: baseURL, Model: "glm-5.2/glm-5.2", APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, NoProxy: true},
+		{Name: "custom", Kind: "openai", BaseURL: "https://custom.example/v1", Model: "custom-model", APIKeyEnv: "CUSTOM_KEY"},
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	changed, err := ApplyUserConfigUpgradesOnStartup(path)
+	if err != nil || !changed {
+		t.Fatalf("bundled catalog migration = changed:%v err:%v, want changed", changed, err)
+	}
+	got := LoadForEditWithoutCredentials(path)
+	vlm, ok := got.Provider("vlm")
+	if !ok || vlm.DisplayLabel() != "vlm" || vlm.Model != "step-3.7-flash/step-3.7-flash" || !vlm.Vision {
+		t.Fatalf("vlm provider = %+v, ok=%v", vlm, ok)
+	}
+	xllm, ok := got.Provider("xllm")
+	if !ok || xllm.DisplayLabel() != "xllm" {
+		t.Fatalf("xllm provider label = %+v, ok=%v", xllm, ok)
+	}
+	if got.DefaultModel != "xllm" {
+		t.Fatalf("default model = %q, want xllm preserved", got.DefaultModel)
+	}
+	if want := []string{"xllm", "custom", "vlm"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
+		t.Fatalf("provider_access = %+v, want %+v", got.Desktop.ProviderAccess, want)
+	}
+	custom, ok := got.Provider("custom")
+	if !ok || custom.BaseURL != "https://custom.example/v1" || custom.Model != "custom-model" {
+		t.Fatalf("custom provider changed: %+v, ok=%v", custom, ok)
+	}
+
+	again, err := ApplyUserConfigUpgradesOnStartup(path)
+	if err != nil || again {
+		t.Fatalf("second migration = changed:%v err:%v, want no-op", again, err)
+	}
+}
+
+func TestApplyUserConfigUpgradesOnStartupPreservesCustomVLMNameCollision(t *testing.T) {
+	const baseURL = "http://gateway.internal.test:9010/v1"
+	useBundledvoltGateway(t, baseURL)
+
+	path := UserConfigPath()
+	cfg := Default()
+	cfg.ConfigVersion = 5
+	cfg.DefaultModel = "xllm"
+	cfg.Desktop.ProviderAccess = []string{"xllm", "vlm"}
+	cfg.Providers = []ProviderEntry{
+		{Name: "xllm", DisplayName: "客户文本模型", Kind: "openai", BaseURL: baseURL, Model: "glm-5.2/glm-5.2", APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, NoProxy: true},
+		{Name: "vlm", Kind: "openai", BaseURL: "https://custom.example/v1", Model: "custom-vision", APIKeyEnv: "CUSTOM_VLM_KEY", Vision: true},
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	changed, err := ApplyUserConfigUpgradesOnStartup(path)
+	if err != nil || !changed {
+		t.Fatalf("bundled catalog migration = changed:%v err:%v, want version marker", changed, err)
+	}
+	got := LoadForEditWithoutCredentials(path)
+	vlm, ok := got.Provider("vlm")
+	if !ok || vlm.BaseURL != "https://custom.example/v1" || vlm.Model != "custom-vision" || vlm.APIKeyEnv != "CUSTOM_VLM_KEY" {
+		t.Fatalf("custom vlm provider changed: %+v, ok=%v", vlm, ok)
+	}
+	count := 0
+	for _, provider := range got.Providers {
+		if provider.Name == "vlm" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("vlm provider count = %d, want 1", count)
+	}
+	xllm, ok := got.Provider("xllm")
+	if !ok || xllm.DisplayLabel() != "客户文本模型" {
+		t.Fatalf("custom xllm display name changed: %+v, ok=%v", xllm, ok)
 	}
 }
 

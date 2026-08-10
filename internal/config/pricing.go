@@ -138,6 +138,7 @@ const (
 	deepSeekPricingResetConfigVersion      = 3
 	windowsBashSandboxDefaultConfigVersion = 4
 	retiredAutoPlanConfigVersion           = 5
+	bundledvoltCatalogConfigVersion        = 6
 )
 
 // ApplyUserConfigUpgradesOnStartup applies one-time startup migrations. It
@@ -165,6 +166,11 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 	}
 	cfg := LoadForEdit(path)
 	changed := migrateLegacyBundledvoltRoutes(cfg)
+	if header.ConfigVersion < bundledvoltCatalogConfigVersion {
+		changed = restoreBundledvoltCatalog(cfg) || changed
+		// Mark every pre-v6 config once so a later user removal remains authoritative.
+		changed = true
+	}
 	if header.ConfigVersion < deepSeekPricingResetConfigVersion {
 		resetOfficialProviderPricingDefaults(cfg)
 		changed = true
@@ -287,6 +293,78 @@ func migrateLegacyBundledvoltRoutes(c *Config) bool {
 		}
 	}
 	return changed
+}
+
+func restoreBundledvoltCatalog(c *Config) bool {
+	if c == nil {
+		return false
+	}
+	_, bundled := bundledvoltProviderDefaults()
+	if len(bundled) == 0 || !hasCurrentBundledvoltProvider(c, bundled) {
+		return false
+	}
+	displayNamesChanged := backfillBundledvoltDisplayNames(c, bundled)
+	providersAdded := appendMissingBundledvoltProviders(c, bundled)
+	return displayNamesChanged || providersAdded
+}
+
+func backfillBundledvoltDisplayNames(c *Config, bundled []ProviderEntry) bool {
+	changed := false
+	for _, canonical := range bundled {
+		configured, exists := c.Provider(canonical.Name)
+		if !exists || !sameBundledvoltRoute(*configured, canonical) || configured.DisplayLabel() != "" {
+			continue
+		}
+		configured.DisplayName = canonical.DisplayName
+		changed = true
+	}
+	return changed
+}
+
+func appendMissingBundledvoltProviders(c *Config, bundled []ProviderEntry) bool {
+	grantAccess := len(c.Desktop.ProviderAccess) > 0 && explicitBundledvoltProviderAccess(c.Desktop.ProviderAccess, bundled)
+	changed := false
+	for _, canonical := range bundled {
+		if _, exists := c.Provider(canonical.Name); exists {
+			continue
+		}
+		c.Providers = append(c.Providers, canonical)
+		if grantAccess {
+			c.Desktop.ProviderAccess = appendMissingProviderAccess(c.Desktop.ProviderAccess, canonical.Name)
+		}
+		changed = true
+	}
+	return changed
+}
+
+func hasCurrentBundledvoltProvider(c *Config, bundled []ProviderEntry) bool {
+	for _, canonical := range bundled {
+		configured, ok := c.Provider(canonical.Name)
+		if ok && sameBundledvoltRoute(*configured, canonical) {
+			return true
+		}
+	}
+	return false
+}
+
+func explicitBundledvoltProviderAccess(access []string, bundled []ProviderEntry) bool {
+	for _, allowed := range access {
+		for _, canonical := range bundled {
+			if strings.TrimSpace(allowed) == canonical.Name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func appendMissingProviderAccess(access []string, name string) []string {
+	for _, allowed := range access {
+		if strings.TrimSpace(allowed) == name {
+			return access
+		}
+	}
+	return append(access, name)
 }
 
 func migrateLegacyvoltAgentRefs(c *Config, from, to string) {

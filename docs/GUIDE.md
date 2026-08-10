@@ -629,6 +629,19 @@ Exit code `0` allows warnings/info; `1` means at least one `error` (or a live
 start failure); `2` is bad flags. This is separate from `voltui doctor`
 (providers/sandbox) and `voltui plugin doctor <name>` (one package).
 
+### Local diagnostic logs
+
+Desktop and CLI/TUI diagnostics are stored under the user `logs` directory:
+`%AppData%\reasonix\logs` on Windows and `~/.reasonix/logs` on macOS/Linux.
+Desktop files are named `desktop-*.log`; CLI/TUI files use `cli-tui-*.log`.
+Each log is capped at 4 MiB and files older than seven days are pruned.
+Provider stream diagnostics record only provider/model, the response request ID,
+SSE line number, invalid-byte offset, frame length, and SHA-256; when the upstream
+already sent `U+FFFD`, they also record its count. They never record
+prompts, response text, tool arguments, API keys, or raw SSE frames. Use the
+`diagnostic_id` shown in the chat error to find the matching local entry. Logs can
+still contain other local runtime details, so inspect them before sharing.
+
 ## Plugins (MCP)
 
 VoltUI is an MCP client. A `[[plugins]]` entry's `type` selects the transport:

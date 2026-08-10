@@ -655,3 +655,34 @@ func TestRegistered(t *testing.T) {
 	}
 	_ = context.Background()
 }
+
+func TestReadStreamRejectsInvalidUTF8BeforeJSONDecode(t *testing.T) {
+	stream := append([]byte("data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\""), 0xff)
+	stream = append(stream, []byte("\"}}\n\n")...)
+	response := &http.Response{
+		Header: http.Header{"X-Request-Id": []string{"request-test"}},
+		Body:   io.NopCloser(strings.NewReader(string(stream))),
+	}
+	chunks := make(chan provider.Chunk, 1)
+	(&client{name: "gateway", model: "claude"}).readStream(context.Background(), response, chunks)
+
+	chunk := <-chunks
+	var invalid *provider.InvalidStreamUTF8Error
+	if chunk.Type != provider.ChunkError || !errors.As(chunk.Err, &invalid) {
+		t.Fatalf("chunk = %+v, want InvalidStreamUTF8Error", chunk)
+	}
+	if _, open := <-chunks; open {
+		t.Fatal("readStream did not close after rejecting malformed UTF-8")
+	}
+}
+
+func TestStreamEventCountsReplacementRunesAcrossDecodedFields(t *testing.T) {
+	var event streamEvent
+	raw := []byte(`{"type":"content_block_delta","content_block":{"name":"�"},"delta":{"text":"�","partial_json":"�"},"error":{"message":"�"}}`)
+	if err := json.Unmarshal(raw, &event); err != nil {
+		t.Fatalf("unmarshal stream event: %v", err)
+	}
+	if got := event.replacementRuneCount(); got != 4 {
+		t.Fatalf("replacementRuneCount = %d, want 4", got)
+	}
+}

@@ -436,11 +436,21 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	streamContext := provider.StreamUTF8Context{
+		Provider: c.name, Model: c.model, Protocol: "anthropic", RequestID: provider.StreamRequestID(resp.Header),
+	}
 
+	lineNumber := 0
 	for scanner.Scan() {
+		lineNumber++
 		select { // ping the idle watchdog; non-blocking so a full buffer is fine
 		case activity <- struct{}{}:
 		default:
+		}
+		streamContext.Line = lineNumber
+		if err := provider.ValidateStreamUTF8(streamContext, scanner.Bytes()); err != nil {
+			send(provider.Chunk{Type: provider.ChunkError, Err: err})
+			return
 		}
 		line := strings.TrimSpace(scanner.Text())
 		// SSE carries `event:` and `data:` lines; the data JSON's own `type` field
@@ -458,6 +468,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 			send(provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("%s: decode stream: %w", c.name, err)})
 			return
 		}
+		provider.LogStreamReplacementRunes(streamContext, scanner.Bytes(), ev.replacementRuneCount())
 
 		switch ev.Type {
 		case "message_start":
@@ -701,6 +712,20 @@ type streamEvent struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+func (e *streamEvent) replacementRuneCount() int {
+	count := 0
+	if e.ContentBlock != nil {
+		count += provider.CountReplacementRunes(e.ContentBlock.ID, e.ContentBlock.Name)
+	}
+	if e.Delta != nil {
+		count += provider.CountReplacementRunes(e.Delta.Text, e.Delta.Thinking, e.Delta.Signature, e.Delta.PartialJSON, e.Delta.StopReason)
+	}
+	if e.Error != nil {
+		count += provider.CountReplacementRunes(e.Error.Type, e.Error.Message)
+	}
+	return count
 }
 
 type wireUsage struct {

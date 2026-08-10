@@ -1172,6 +1172,8 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input, Images: userImages(ctx)})
 
 	finalReadinessBlocks := 0
+	officeOutputContract := requiresOfficeOutputPolish(input)
+	officeOutputPolishPasses := 0
 	emptyFinalBlocks := 0
 	handoffNudges := 0
 	usedAnyTool := false
@@ -1179,6 +1181,10 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	providerStreamStarted := false
 	graceRound := false
 	executorHandoff := a.executorHandoffGuard && strings.Contains(input, executorHandoffMarker)
+	assistantSink := a.sink
+	if officeOutputContract {
+		assistantSink = event.Discard
+	}
 	for step := 0; a.maxSteps <= 0 || step < a.maxSteps || graceRound; step++ {
 		// Consume a queued steer and persist it to the session so it
 		// survives tab switches and history replay. The model sees it as
@@ -1202,7 +1208,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 		}
 
 		providerStreamStarted = true
-		text, reasoning, signature, calls, usage, interrupted, partialToolStarted, err := a.stream(ctx, step+1)
+		text, reasoning, signature, calls, usage, interrupted, partialToolStarted, err := a.stream(ctx, step+1, assistantSink)
 		if err != nil {
 			if interrupted && streamRecoveries < maxStreamRecoveries {
 				streamRecoveries++
@@ -1255,6 +1261,16 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 		})
 
 		if len(calls) == 0 {
+			if officeOutputContract {
+				qualityIssue := officeOutputQualityIssue(text)
+				if officeOutputPolishPasses == 0 || (qualityIssue != "" && officeOutputPolishPasses < maxOfficeOutputPolishPasses) {
+					officeOutputPolishPasses++
+					a.session.Add(provider.Message{Role: provider.RoleUser, Content: a.withTurnPreferences(officeOutputPolishMessage(qualityIssue))})
+					a.maybeCompact(ctx, usage)
+					step-- // host-owned proofreading does not consume the tool-round budget
+					continue
+				}
+			}
 			readiness := a.finalReadinessCheck()
 			if readiness.reason != "" {
 				finalReadinessBlocks++
@@ -1292,6 +1308,9 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			}
 			if a.steerQueueLen() > 0 {
 				continue
+			}
+			if officeOutputContract {
+				a.emitOfficeOutput(text)
 			}
 			// A final-answer turn otherwise skips compaction, so a large context
 			// carries into the next turn un-folded and can overflow the model window.
@@ -1910,7 +1929,7 @@ func streamRecoveryMessage(hasPartialText, hadPartialTool bool) string {
 // stream so a sink can re-render the streamed raw text as styled markdown. The
 // accumulated text and reasoning are also returned so the caller can round-trip
 // reasoning on the next turn.
-func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, []provider.ToolCall, *provider.Usage, bool, bool, error) {
+func (a *Agent) stream(ctx context.Context, turn int, assistantSink event.Sink) (string, string, string, []provider.ToolCall, *provider.Usage, bool, bool, error) {
 	ctx = provider.WithRetryNotify(ctx, func(info provider.RetryInfo) {
 		a.sink.Emit(event.Event{Kind: event.Retrying, RetryAttempt: info.Attempt, RetryMax: info.Max})
 	})
@@ -1940,7 +1959,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 		if transformReasoning && original != "" {
 			display = a.hooks.PostLLMCall(ctx, original, turn)
 			if display != "" {
-				a.sink.Emit(event.Event{Kind: event.Reasoning, Text: display})
+				assistantSink.Emit(event.Event{Kind: event.Reasoning, Text: display})
 			}
 		}
 		stored = display
@@ -1963,7 +1982,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 				}
 				stored, display := finishReasoning()
 				if text.Len() > 0 || display != "" {
-					a.sink.Emit(event.Event{
+					assistantSink.Emit(event.Event{
 						Kind:            event.Message,
 						Text:            StripGoalMarkers(text.String()),
 						Reasoning:       display,
@@ -1981,11 +2000,11 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 				signature = chunk.Signature
 			}
 			if chunk.Text != "" && !transformReasoning {
-				a.sink.Emit(event.Event{Kind: event.Reasoning, Text: chunk.Text})
+				assistantSink.Emit(event.Event{Kind: event.Reasoning, Text: chunk.Text})
 			}
 		case provider.ChunkText:
 			text.WriteString(chunk.Text)
-			a.sink.Emit(event.Event{Kind: event.Text, Text: chunk.Text})
+			assistantSink.Emit(event.Event{Kind: event.Text, Text: chunk.Text})
 		case provider.ChunkToolCallStart:
 			partialToolStarted = true
 			// Surface the tool card as soon as the call begins — before its

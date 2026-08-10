@@ -2,8 +2,8 @@
 // persists it via SaveWindowState so the next launch restores the same size and
 // position. No-op in browser dev (no window.runtime).
 //
-// The Go shutdown hook (app.saveWindowStateSync) provides the authoritative
-// final save; this hook covers moves/resizes during the session.
+// The Go OnBeforeClose hook provides the authoritative final save while the
+// native window still exists; this hook covers moves/resizes during the session.
 //
 // NOTE: navigator.sendBeacon or a sync XHR would let us block beforeunload,
 // but Wails bindings are async (Go IPC). We accept that the very last resize
@@ -55,8 +55,8 @@ export function useWindowStatePersistence() {
     // Periodic poll every 5s for moves/maximise that don't trigger resize.
     timer = setInterval(save, 5000);
 
-    // Best-effort save before the page unloads. The Go shutdown hook
-    // (saveWindowStateSync) is the authoritative final persist.
+    // Best-effort save before the page unloads. Go's OnBeforeClose hook is the
+    // authoritative final persist.
     window.addEventListener("beforeunload", save);
 
     return () => {

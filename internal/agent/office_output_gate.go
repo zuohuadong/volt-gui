@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -56,4 +57,15 @@ func (a *Agent) emitOfficeOutput(text string) {
 		Text:            visibleText,
 		MemoryCitations: a.memoryCitations(),
 	})
+}
+
+func (a *Agent) revealOfficeOutput(messageIndex int) error {
+	messages := a.session.Snapshot()
+	if messageIndex < 0 || messageIndex >= len(messages) {
+		return fmt.Errorf("office output message index %d is outside session length %d", messageIndex, len(messages))
+	}
+	messages[messageIndex].DisplayHidden = false
+	messages[messageIndex].DisplayToolsOnly = false
+	a.session.Rewrite(messages)
+	return nil
 }

@@ -47,6 +47,16 @@ func TestOfficeOutputGateRequiresBoundedFinalProofread(t *testing.T) {
 			t.Fatalf("assistant display leaked draft or reasoning: %+v", current)
 		}
 	}
+	messages := a.Session().Snapshot()
+	if len(messages) != 5 {
+		t.Fatalf("session messages = %+v, want system, user, hidden draft, hidden proofread, final", messages)
+	}
+	if !messages[2].DisplayHidden || !messages[3].DisplayHidden {
+		t.Fatalf("draft/proofread visibility = %+v / %+v, want hidden", messages[2], messages[3])
+	}
+	if messages[4].DisplayHidden || messages[4].DisplayToolsOnly {
+		t.Fatalf("final assistant visibility = %+v, want fully visible", messages[4])
+	}
 }
 
 func TestOfficeOutputGateRetriesInternalNarrationOnceMore(t *testing.T) {

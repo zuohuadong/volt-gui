@@ -1219,6 +1219,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 						ReasoningContent:   reasoning,
 						ReasoningSignature: signature,
 						MemoryCitations:    a.memoryCitations(),
+						DisplayHidden:      officeOutputContract,
 					})
 				}
 				a.session.Add(provider.Message{
@@ -1251,6 +1252,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 		// input for no cache or coherence gain.
 		calls = a.withPreviewFileDiffs(calls)
 		a.warnMissingToolCallReasoning(calls, reasoning)
+		assistantMessageIndex := a.session.Len()
 		a.session.Add(provider.Message{
 			Role:               provider.RoleAssistant,
 			Content:            text,
@@ -1258,6 +1260,8 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			ReasoningSignature: signature,
 			ToolCalls:          calls,
 			MemoryCitations:    a.memoryCitations(),
+			DisplayHidden:      officeOutputContract && len(calls) == 0,
+			DisplayToolsOnly:   officeOutputContract && len(calls) > 0,
 		})
 
 		if len(calls) == 0 {
@@ -1265,7 +1269,11 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 				qualityIssue := officeOutputQualityIssue(text)
 				if officeOutputPolishPasses == 0 || (qualityIssue != "" && officeOutputPolishPasses < maxOfficeOutputPolishPasses) {
 					officeOutputPolishPasses++
-					a.session.Add(provider.Message{Role: provider.RoleUser, Content: a.withTurnPreferences(officeOutputPolishMessage(qualityIssue))})
+					a.session.Add(provider.Message{
+						Role:          provider.RoleUser,
+						Content:       a.withTurnPreferences(officeOutputPolishMessage(qualityIssue)),
+						DisplayHidden: true,
+					})
 					a.maybeCompact(ctx, usage)
 					step-- // host-owned proofreading does not consume the tool-round budget
 					continue
@@ -1310,6 +1318,9 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 				continue
 			}
 			if officeOutputContract {
+				if err := a.revealOfficeOutput(assistantMessageIndex); err != nil {
+					return err
+				}
 				a.emitOfficeOutput(text)
 			}
 			// A final-answer turn otherwise skips compaction, so a large context

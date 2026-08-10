@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.2](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.16.1...desktop-v0.16.2) (2026-08-10)
+
+
+### Chores
+
+* **sync:** review latest Reasonix boundaries ([36e18b8](https://github.com/zuohuadong/volt-gui/commit/36e18b8beff1113cd6574df25c8c7b7c8a000dab))
+
 ## [0.16.1](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.16.0...desktop-v0.16.1) (2026-08-10)
 
 

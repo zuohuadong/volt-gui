@@ -1935,15 +1935,35 @@ func bundledXiguProviderDefaults() (string, []ProviderEntry) {
 	// label from the underlying gateway model ID. When the backend model changes,
 	// only the Model field below needs updating — the provider name stays fixed.
 	return "vlm", []ProviderEntry{
-		{Name: "xllm", Kind: "openai", BaseURL: baseURL, Model: "glm-5.2/glm-5.2", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true},
-		{Name: "vlm", Kind: "openai", BaseURL: baseURL, Model: "step-3.7-flash/step-3.7-flash", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 262_144, Vision: true, NoProxy: true},
+		{Name: "xllm", DisplayName: "xllm", Kind: "openai", BaseURL: baseURL, Model: "glm-5.2/glm-5.2", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true},
+		{Name: "vlm", DisplayName: "vlm", Kind: "openai", BaseURL: baseURL, Model: "step-3.7-flash/step-3.7-flash", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 262_144, Vision: true, NoProxy: true},
 	}
+}
+
+// IsBundledXiguCatalogProvider reports whether name still uses one of the
+// exact OEM routes injected by this build. The live gateway also publishes raw
+// aliases, which must not expand this curated two-model catalog.
+func (c *Config) IsBundledXiguCatalogProvider(name string) bool {
+	if c == nil {
+		return false
+	}
+	configured, ok := c.Provider(name)
+	if !ok {
+		return false
+	}
+	_, bundled := bundledXiguProviderDefaults()
+	for _, canonical := range bundled {
+		if sameBundledXiguRoute(*configured, canonical) {
+			return true
+		}
+	}
+	return false
 }
 
 // Default returns the built-in default configuration.
 func Default() *Config {
 	cfg := &Config{
-		ConfigVersion:    5,
+		ConfigVersion:    6,
 		DefaultModel:     "deepseek-flash",
 		Brand:            BrandConfig{Name: "VoltUI"},
 		Auth:             AuthConfig{Scope: "openid profile email", CallbackMinPort: 42000, CallbackMaxPort: 42099},

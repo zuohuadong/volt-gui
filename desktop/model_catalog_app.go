@@ -21,6 +21,12 @@ type modelCatalogProbeOutcome struct {
 type modelCatalogProvider struct {
 	name       string
 	namespaces map[string]bool
+	curated    bool
+}
+
+type modelCatalogProviderProbe struct {
+	key     string
+	curated bool
 }
 
 type desktopModelResolution struct {
@@ -52,18 +58,18 @@ func (a *App) RefreshModelsForTab(tabID string) []ModelInfo {
 	if err != nil {
 		return markModelCatalogUnknown(configured, "模型目录暂时无法读取，当前显示静态配置。")
 	}
-	probes, providerProbeKeys := modelCatalogProbes(cfg)
+	probes, providerProbes := modelCatalogProbes(cfg)
 	if len(probes) == 0 {
 		return configured
 	}
 	outcomesByProbe := a.fetchModelCatalogs(workspaceRoot, probes)
-	return reconcileModelCatalog(configured, providerProbeKeys, outcomesByProbe)
+	return reconcileModelCatalog(configured, providerProbes, outcomesByProbe)
 }
 
-func modelCatalogProbes(cfg *config.Config) (map[string]config.ProviderEntry, map[string]string) {
+func modelCatalogProbes(cfg *config.Config) (map[string]config.ProviderEntry, map[string]modelCatalogProviderProbe) {
 	access := providerAccessSet(cfg.Desktop.ProviderAccess)
 	probes := map[string]config.ProviderEntry{}
-	providerProbeKeys := map[string]string{}
+	providerProbes := map[string]modelCatalogProviderProbe{}
 	for i := range cfg.Providers {
 		provider := cfg.Providers[i]
 		if !modelProviderAccessAllowed(access, provider.Name) || !provider.Configured() || len(provider.ChatModelList()) == 0 {
@@ -73,9 +79,12 @@ func modelCatalogProbes(cfg *config.Config) (map[string]config.ProviderEntry, ma
 		if _, exists := probes[key]; !exists {
 			probes[key] = provider
 		}
-		providerProbeKeys[provider.Name] = key
+		providerProbes[provider.Name] = modelCatalogProviderProbe{
+			key:     key,
+			curated: cfg.IsBundledXiguCatalogProvider(provider.Name),
+		}
 	}
-	return probes, providerProbeKeys
+	return probes, providerProbes
 }
 
 func (a *App) fetchModelCatalogs(workspaceRoot string, probes map[string]config.ProviderEntry) map[string]modelCatalogProbeOutcome {
@@ -97,16 +106,16 @@ func (a *App) fetchModelCatalogs(workspaceRoot string, probes map[string]config.
 	return outcomesByProbe
 }
 
-func reconcileModelCatalog(configured []ModelInfo, providerProbeKeys map[string]string, outcomesByProbe map[string]modelCatalogProbeOutcome) []ModelInfo {
-	refreshed := reconcileConfiguredCatalog(configured, providerProbeKeys, outcomesByProbe)
-	return appendDiscoveredCatalogModels(refreshed, configured, providerProbeKeys, outcomesByProbe)
+func reconcileModelCatalog(configured []ModelInfo, providerProbes map[string]modelCatalogProviderProbe, outcomesByProbe map[string]modelCatalogProbeOutcome) []ModelInfo {
+	refreshed := reconcileConfiguredCatalog(configured, providerProbes, outcomesByProbe)
+	return appendDiscoveredCatalogModels(refreshed, configured, providerProbes, outcomesByProbe)
 }
 
-func reconcileConfiguredCatalog(configured []ModelInfo, providerProbeKeys map[string]string, outcomesByProbe map[string]modelCatalogProbeOutcome) []ModelInfo {
+func reconcileConfiguredCatalog(configured []ModelInfo, providerProbes map[string]modelCatalogProviderProbe, outcomesByProbe map[string]modelCatalogProbeOutcome) []ModelInfo {
 	refreshed := make([]ModelInfo, 0, len(configured))
 	for _, model := range configured {
-		key := providerProbeKeys[model.Provider]
-		outcome, ok := outcomesByProbe[key]
+		probe := providerProbes[model.Provider]
+		outcome, ok := outcomesByProbe[probe.key]
 		if updated, keep := reconcileConfiguredModel(model, outcome, ok); keep {
 			refreshed = append(refreshed, updated)
 		}
@@ -143,12 +152,12 @@ func unavailableCurrentCatalogModel(model ModelInfo, reason string) (ModelInfo, 
 	return model, true
 }
 
-func appendDiscoveredCatalogModels(refreshed, configured []ModelInfo, providerProbeKeys map[string]string, outcomesByProbe map[string]modelCatalogProbeOutcome) []ModelInfo {
+func appendDiscoveredCatalogModels(refreshed, configured []ModelInfo, providerProbes map[string]modelCatalogProviderProbe, outcomesByProbe map[string]modelCatalogProbeOutcome) []ModelInfo {
 	seenModels := catalogModelPairs(refreshed)
-	providersByProbe := catalogProvidersByProbe(configured, providerProbeKeys)
+	providersByProbe := catalogProvidersByProbe(configured, providerProbes)
 	visitedProbes := map[string]bool{}
 	for _, configuredModel := range configured {
-		probeKey := providerProbeKeys[configuredModel.Provider]
+		probeKey := providerProbes[configuredModel.Provider].key
 		if probeKey == "" || visitedProbes[probeKey] {
 			continue
 		}
@@ -196,44 +205,46 @@ func catalogModelPairs(models []ModelInfo) map[string]bool {
 	return seenModels
 }
 
-func catalogProvidersByProbe(configured []ModelInfo, providerProbeKeys map[string]string) map[string][]modelCatalogProvider {
+func catalogProvidersByProbe(configured []ModelInfo, providerProbes map[string]modelCatalogProviderProbe) map[string][]modelCatalogProvider {
 	providersByProbe := map[string][]modelCatalogProvider{}
 	providerIndexes := map[string]int{}
 	for _, model := range configured {
-		probeKey := providerProbeKeys[model.Provider]
-		if probeKey == "" {
+		probe := providerProbes[model.Provider]
+		if probe.key == "" {
 			continue
 		}
-		indexCatalogProvider(providersByProbe, providerIndexes, probeKey, model)
+		indexCatalogProvider(providersByProbe, providerIndexes, probe, model)
 	}
 	return providersByProbe
 }
 
-func indexCatalogProvider(providersByProbe map[string][]modelCatalogProvider, providerIndexes map[string]int, probeKey string, model ModelInfo) {
-	providerKey := modelCatalogPairKey(probeKey, model.Provider)
+func indexCatalogProvider(providersByProbe map[string][]modelCatalogProvider, providerIndexes map[string]int, probe modelCatalogProviderProbe, model ModelInfo) {
+	providerKey := modelCatalogPairKey(probe.key, model.Provider)
 	index, exists := providerIndexes[providerKey]
 	if !exists {
-		index = len(providersByProbe[probeKey])
+		index = len(providersByProbe[probe.key])
 		providerIndexes[providerKey] = index
-		providersByProbe[probeKey] = append(providersByProbe[probeKey], modelCatalogProvider{
+		providersByProbe[probe.key] = append(providersByProbe[probe.key], modelCatalogProvider{
 			name:       model.Provider,
 			namespaces: map[string]bool{},
+			curated:    probe.curated,
 		})
 	}
 	if namespace := modelCatalogNamespace(model.Model); namespace != "" {
-		providersByProbe[probeKey][index].namespaces[namespace] = true
+		providersByProbe[probe.key][index].namespaces[namespace] = true
 	}
 }
 
 func liveCatalogProviders(providers []modelCatalogProvider, liveModel string) []string {
-	for _, provider := range providers {
+	discoverable := discoverableCatalogProviders(providers)
+	for _, provider := range discoverable {
 		if provider.name == liveModel {
 			return []string{provider.name}
 		}
 	}
 	liveNamespace := modelCatalogNamespace(liveModel)
 	namespaceMatches := []string{}
-	for _, provider := range providers {
+	for _, provider := range discoverable {
 		if liveNamespace != "" && provider.namespaces[liveNamespace] {
 			namespaceMatches = append(namespaceMatches, provider.name)
 		}
@@ -244,10 +255,20 @@ func liveCatalogProviders(providers []modelCatalogProvider, liveModel string) []
 	// A single namespaced provider must not absorb unrelated models merely
 	// because it is the only provider using this gateway. That would make a
 	// qwen-gpu4 provider expose glm-primary (and other) catalog entries.
-	if len(providers) == 1 && len(providers[0].namespaces) == 0 {
-		return []string{providers[0].name}
+	if len(discoverable) == 1 && len(discoverable[0].namespaces) == 0 {
+		return []string{discoverable[0].name}
 	}
 	return nil
+}
+
+func discoverableCatalogProviders(providers []modelCatalogProvider) []modelCatalogProvider {
+	discoverable := make([]modelCatalogProvider, 0, len(providers))
+	for _, provider := range providers {
+		if !provider.curated {
+			discoverable = append(discoverable, provider)
+		}
+	}
+	return discoverable
 }
 
 func modelCatalogPairKey(provider, model string) string {
@@ -318,7 +339,11 @@ func liveCatalogProvidersForProbe(cfg *config.Config, workspaceRoot, probeKey st
 		if len(models) == 0 {
 			continue
 		}
-		catalogProvider := modelCatalogProvider{name: provider.Name, namespaces: map[string]bool{}}
+		catalogProvider := modelCatalogProvider{
+			name:       provider.Name,
+			namespaces: map[string]bool{},
+			curated:    cfg.IsBundledXiguCatalogProvider(provider.Name),
+		}
 		for _, model := range models {
 			if namespace := modelCatalogNamespace(model); namespace != "" {
 				catalogProvider.namespaces[namespace] = true

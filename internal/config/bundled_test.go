@@ -83,7 +83,7 @@ func TestDefaultUsesBundledXiguGateway(t *testing.T) {
 		if !ok {
 			t.Fatalf("bundled provider %q is missing", name)
 		}
-		if entry.BaseURL != baseURL || entry.Model != expected.model || entry.APIKeyEnv != "XIGU_API_KEY" || entry.Vision != expected.vision || !entry.NoProxy {
+		if entry.DisplayLabel() != name || entry.BaseURL != baseURL || entry.Model != expected.model || entry.APIKeyEnv != "XIGU_API_KEY" || entry.Vision != expected.vision || !entry.NoProxy {
 			t.Errorf("provider %q = %+v", name, entry)
 		}
 	}
@@ -91,5 +91,22 @@ func TestDefaultUsesBundledXiguGateway(t *testing.T) {
 		if _, ok := cfg.Provider(retired); ok {
 			t.Errorf("retired bundled provider %q is still configured", retired)
 		}
+	}
+}
+
+func TestBundledXiguCatalogProviderRecognitionUsesRouteIdentity(t *testing.T) {
+	const baseURL = "http://gateway.internal.test/v1"
+	useBundledXiguGateway(t, baseURL)
+
+	cfg := Default()
+	for _, name := range []string{"xllm", "vlm"} {
+		if !cfg.IsBundledXiguCatalogProvider(name) {
+			t.Fatalf("bundled provider %q was not recognized", name)
+		}
+	}
+	xllm, _ := cfg.Provider("xllm")
+	xllm.BaseURL = "https://custom.example/v1"
+	if cfg.IsBundledXiguCatalogProvider("xllm") {
+		t.Fatal("custom xllm route was recognized as the bundled catalog")
 	}
 }

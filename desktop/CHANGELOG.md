@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.1](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.16.0...desktop-v0.16.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* **desktop:** keep office drafts out of final output ([#94](https://github.com/zuohuadong/volt-gui/issues/94)) ([cbb105d](https://github.com/zuohuadong/volt-gui/commit/cbb105d22da190579c58d0ef0e619b446df0479f))
+
+
+### Chores
+
+* **main:** release desktop v0.16.0 ([#92](https://github.com/zuohuadong/volt-gui/issues/92)) ([98803e1](https://github.com/zuohuadong/volt-gui/commit/98803e14dca12f3eaebd9aabd48c7efa9bd4925b))
+
 ## [0.16.0](https://github.com/zuohuadong/volt-gui/compare/desktop-v0.15.5...desktop-v0.16.0) (2026-08-09)
 
 

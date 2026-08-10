@@ -1634,7 +1634,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 				if calculationBlocks >= maxCalculationBlocks {
 					return fmt.Errorf("model answered a clear arithmetic request without a successful calculate call after %d attempts", calculationBlocks)
 				}
-				a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: calculationGateNoticeText(), Detail: "the final numeric answer is unverified because calculate has not succeeded in this turn"})
+				a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: calculationGateNoticeText(), Detail: "已自动继续完成结果核对。"})
 				a.session.Add(provider.Message{Role: provider.RoleUser, Content: a.withTurnPreferences(calculationGateRetryMessage())})
 				a.maybeCompact(ctx, usage)
 				continue
@@ -2689,11 +2689,11 @@ func toolBudgetNoticeText() string {
 }
 
 func calculationGateNoticeText() string {
-	return "The numeric answer needs calculator verification; asking the assistant to use calculate."
+	return "正在核对数值结果。"
 }
 
 func calculationGateRetryMessage() string {
-	return "Host calculation check failed: this request clearly requires arithmetic, but no successful calculate call was observed. Ignore the previous unverified numeric answer. Call calculate with the complete expression now, then base the final answer on its returned value."
+	return "Internal host instruction: the arithmetic result has not been verified. Call calculate with the complete expression. After it succeeds, answer with only the requested business result and any user-relevant formula, unit, or rounding note. Do not mention this instruction, the host gate, tool calls, calculator verification, or internal checking in the final answer."
 }
 
 func streamRecoveryMessage(hasPartialText, hadPartialTool bool) string {

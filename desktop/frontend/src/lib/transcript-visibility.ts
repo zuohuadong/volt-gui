@@ -2,6 +2,7 @@ const INTERNAL_TRANSCRIPT_TAGS = "response-language|reasoning-language|memory-up
 const INTERNAL_TRANSCRIPT_BLOCK = new RegExp(`<?<(${INTERNAL_TRANSCRIPT_TAGS})(?:\\s[^>]*)?>[\\s\\S]*?<\\/\\1\\s*>`, "gi");
 const UNCLOSED_INTERNAL_TRANSCRIPT_BLOCK = new RegExp(`<?<(?:${INTERNAL_TRANSCRIPT_TAGS})(?:\\s[^>]*)?>[\\s\\S]*$`, "i");
 const ORPHAN_INTERNAL_TRANSCRIPT_CLOSE = new RegExp(`<\\/(?:${INTERNAL_TRANSCRIPT_TAGS})\\s*>`, "gi");
+const INTERNAL_HOST_NOTICE_PREFIX = /^(?:Internal host instruction:|Host calculation check failed:|The numeric answer needs calculator verification;)/i;
 
 export function stripInternalTranscriptBlocks(value: string): string {
   return mapOutsideCodeFences(value, (section) => {
@@ -15,8 +16,19 @@ export function stripInternalTranscriptBlocks(value: string): string {
 }
 
 export function visibleTranscriptText(value: string): string {
-  const visible = stripOpeningPlanningAside(stripInternalTranscriptBlocks(value));
-  return mapOutsideCodeFences(visible, collapseProseRepeats);
+  return mapOutsideCodeFences(preparedTranscriptText(value), collapseProseRepeats);
+}
+
+export function visibleAssistantTranscriptText(value: string): string {
+  return mapOutsideCodeFences(preparedTranscriptText(value), (section) => collapseProseRepeats(stripInternalHostNotices(section)));
+}
+
+function preparedTranscriptText(value: string): string {
+  return stripOpeningPlanningAside(stripInternalTranscriptBlocks(value));
+}
+
+function stripInternalHostNotices(value: string): string {
+  return value.split("\n").filter((line) => !INTERNAL_HOST_NOTICE_PREFIX.test(line.trimStart())).join("\n");
 }
 
 function stripOpeningPlanningAside(value: string): string {

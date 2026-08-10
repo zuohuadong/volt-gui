@@ -412,6 +412,27 @@ func TestLoadSessionUserMessagesSeesEventLogTurns(t *testing.T) {
 	}
 }
 
+func TestLoadSessionUserMessagesPreservesDisplayHidden(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	s := NewSession("sys")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "visible"})
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot: %v", err)
+	}
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "internal", DisplayHidden: true})
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot hidden: %v", err)
+	}
+
+	users, err := LoadSessionUserMessages(path)
+	if err != nil {
+		t.Fatalf("LoadSessionUserMessages: %v", err)
+	}
+	if len(users) != 2 || users[0].DisplayHidden || !users[1].DisplayHidden {
+		t.Fatalf("user visibility = %+v, want visible then hidden", users)
+	}
+}
+
 func TestSessionContentModTimeTracksEventLog(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	s := sessionWithTurns(t, path, 1)

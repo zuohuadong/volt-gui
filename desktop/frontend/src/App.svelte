@@ -1033,6 +1033,7 @@
   const workspaceOptions = $derived(deriveWorkspaceOptions(tabs, []));
   const activeWorkspace = $derived(workspaceOptions.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaceOptions[0]);
   const selectedOutcomeTemplate = $derived(OUTCOME_TEMPLATES.find((template) => template.id === selectedOutcomeTemplateId) ?? OUTCOME_TEMPLATES[0]);
+  const officeOutputActive = $derived(activityMode === "work" && WORK_OUTCOME_TEMPLATES.some((template) => template.id === selectedOutcomeTemplateId));
   const filteredProjects = $derived(projectCards.filter((project) => {
     const keyword = projectSearch.trim().toLowerCase();
     const matchSearch = !keyword || [project.name, project.code, project.client, project.owner, project.stage, project.desc, project.category, project.court, project.priority, project.risk, project.agent].some((value) => value.toLowerCase().includes(keyword));
@@ -8991,6 +8992,7 @@ function openGovernanceCenter() {
                 {sending}
                 approval={pendingApproval}
                 ask={pendingAsk}
+                officeOutput={officeOutputActive}
                 onApprove={answerApproval}
                 onAnswerAsk={answerAsk}
                 onLoadArchivedTool={loadArchivedToolEvidence}

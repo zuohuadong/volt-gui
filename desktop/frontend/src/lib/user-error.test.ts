@@ -76,7 +76,7 @@ describe("user-facing errors", () => {
 
   test("distinguishes the turn protection limit from a model network timeout", () => {
     expect(formatUserError("turn reached the configured protection limit; completed results were kept"))
-      .toBe("本次任务已达到运行保护上限并自动停止；已完成结果已保留，可继续当前任务。");
+      .toBe("本次任务已达到运行保护上限并自动停止；已完成结果已保留，请发送“继续当前任务”以完成交付。");
   });
 
   test("is idempotent for already-safe recovery messages", () => {

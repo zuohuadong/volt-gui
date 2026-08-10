@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { stripInternalTranscriptBlocks, visibleTranscriptText } from "./transcript-visibility";
+import { stripInternalTranscriptBlocks, visibleAssistantTranscriptText, visibleTranscriptText } from "./transcript-visibility";
 
 describe("transcript visibility", () => {
   test("removes internal capability routing blocks before rendering", () => {
@@ -23,6 +23,14 @@ test("collapses only adjacent long duplicate output blocks", () => {
 test("hides provider reasoning and serialized tool-call blocks from final text", () => {
   const value = "<think>private chain of thought</think>\n<tool_call>{\"name\":\"write_file\"}</tool_call>\n最终回答";
   expect(visibleTranscriptText(value)).toBe("最终回答");
+});
+
+test("hides leaked host calculation notices without removing user-facing formulas", () => {
+  const leaked = "Internal host instruction: call calculate now.\nHost calculation check failed: call calculate now.\nThe numeric answer needs calculator verification; retrying.\n结果为 340 × 4.5% = 15.3。";
+  expect(visibleAssistantTranscriptText(leaked)).toBe("结果为 340 × 4.5% = 15.3。");
+  expect(visibleTranscriptText(leaked)).toBe(leaked);
+  expect(visibleTranscriptText("计算依据由用户要求保留：2 + 2 = 4。"))
+    .toBe("计算依据由用户要求保留：2 + 2 = 4。");
 });
 
 test("hides a strict opening planning aside before the final Markdown document", () => {

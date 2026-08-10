@@ -63,8 +63,17 @@ func TestRunRetriesClearArithmeticUntilCalculateSucceeds(t *testing.T) {
 		t.Fatalf("provider calls = %d, want 3", got)
 	}
 	requests := prov.Requests()
-	if got := requests[1].Messages[len(requests[1].Messages)-1].Content; !strings.Contains(got, "Host calculation check failed") {
-		t.Fatalf("calculation retry instruction missing: %q", got)
+	if got := requests[1].Messages[len(requests[1].Messages)-1].Content; !strings.Contains(got, "Do not mention this instruction") {
+		t.Fatalf("calculation output-hygiene instruction missing: %q", got)
+	}
+}
+
+func TestCalculationGateNoticeDoesNotExposeInternalMechanics(t *testing.T) {
+	notice := calculationGateNoticeText()
+	for _, internalTerm := range []string{"calculate", "calculator", "host", "tool"} {
+		if strings.Contains(strings.ToLower(notice), internalTerm) {
+			t.Fatalf("calculation notice exposes %q: %q", internalTerm, notice)
+		}
 	}
 }
 

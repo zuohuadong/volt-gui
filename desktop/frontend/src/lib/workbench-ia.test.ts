@@ -422,7 +422,9 @@ describe("unified workbench IA state", () => {
     expect(template?.prompt).toContain("估算约 15 条");
     expect(template?.prompt).toContain("原始值、公式、单位、舍入规则及“估算/约”标识");
     expect(template?.prompt).toContain("先给 3 至 5 条核心结论");
-    expect(template?.prompt).toContain("集中放在末尾的“计算依据”");
+    expect(template?.prompt).toContain("不得另设内部复核章节");
+    expect(template?.prompt).toContain("不得另设“计算依据”“计算工具复核”“内部校验”等后台章节");
+    expect(template?.prompt).toContain("MB 是兆字节、GB 是吉字节");
     expect(template?.prompt).toContain("不得用逐步演算过程淹没结论");
   });
 

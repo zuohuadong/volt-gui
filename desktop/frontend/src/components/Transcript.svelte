@@ -5,7 +5,7 @@
   import MarkdownView from "./MarkdownView.svelte";
   import { isToolDetailsOpen, setToolOpenState, type ToolOpenState } from "../lib/tool-open-state";
   import { groupTranscriptProcessItems } from "../lib/transcript-process-group";
-  import { visibleTranscriptText } from "../lib/transcript-visibility";
+  import { visibleAssistantTranscriptText, visibleTranscriptText } from "../lib/transcript-visibility";
   import { normalizedToolName, toolErrorPresentation, toolOperationBadge, toolOutputDuplicatesError } from "../lib/tool-presentation";
   import { turnProgress } from "../lib/turn-progress";
   import type { QuestionAnswer, TranscriptItem, WireApproval, WireAsk } from "../lib/types";
@@ -183,32 +183,33 @@
 
   function toolDisplay(item: TranscriptItem) {
     const name = item.title ?? "tool";
+    const isPrivateCalculation = normalizedToolName(name) === "calculate";
     const { args, output } = parseLeadingToolArgs(item);
     const command = typeof args?.command === "string" ? args.command : "";
     const path = typeof args?.path === "string" ? args.path : typeof args?.file === "string" ? args.file : "";
     const query = typeof args?.query === "string" ? args.query : typeof args?.pattern === "string" ? args.pattern : "";
-    const actionName = shortToolName(name);
-    const action = command ? commandAction(command) : query ? `${actionName}：${query}` : actionName;
-    const detail = command ? compactCommand(command) : path || query || item.toolSubject || "";
+    const actionName = isPrivateCalculation ? "数值校验" : shortToolName(name);
+    const action = isPrivateCalculation ? "数值校验" : command ? commandAction(command) : query ? `${actionName}：${query}` : actionName;
+    const detail = isPrivateCalculation ? "" : command ? compactCommand(command) : path || query || item.toolSubject || "";
     const candidateOutput = item.toolOutput ?? output;
-    const renderedOutput = toolOutputDuplicatesError(candidateOutput, item.error) ? "" : candidateOutput;
+    const renderedOutput = isPrivateCalculation || toolOutputDuplicatesError(candidateOutput, item.error) ? "" : candidateOutput;
     const cancelled = isToolCancellation(item.error);
     const failure = item.error && !cancelled ? toolErrorPresentation(item.error, sending) : undefined;
-    const status = item.pending ? "正在执行" : cancelled ? "已取消" : item.error ? "失败" : renderedOutput || item.toolSummary ? "已完成" : "已记录";
+    const status = item.pending ? "正在执行" : cancelled ? "已取消" : item.error ? "失败" : isPrivateCalculation || renderedOutput || item.toolSummary ? "已完成" : "已记录";
     return {
       action,
       detail,
       output: renderedOutput,
       status,
-      tool: actionName,
+      tool: isPrivateCalculation ? "后台校验" : actionName,
       badge: toolOperationBadge(name, item.readOnly),
-      summary: item.toolSummary,
-      errorSummary: cancelled ? "操作已取消。" : failure?.summary,
-      errorDetail: failure?.detail,
+      summary: isPrivateCalculation ? undefined : item.toolSummary,
+      errorSummary: cancelled ? "操作已取消。" : isPrivateCalculation && item.error ? "数值校验失败，请重试。" : failure?.summary,
+      errorDetail: isPrivateCalculation ? undefined : failure?.detail,
       cancelled,
       durationMs: item.durationMs,
-      truncated: item.truncated,
-      archived: item.archived,
+      truncated: isPrivateCalculation ? false : item.truncated,
+      archived: isPrivateCalculation ? false : item.archived,
       archiveLoading: item.archiveLoading,
       archiveLoaded: item.archiveLoaded,
       archiveLoadError: item.archiveLoadError,
@@ -418,7 +419,7 @@
                 </footer>
               </div>
             {:else}
-              <MarkdownView text={visibleTranscriptText(item.body)} />
+              <MarkdownView text={item.role === "assistant" || item.role === "notice" ? visibleAssistantTranscriptText(item.body) : visibleTranscriptText(item.body)} />
               {#if item.pending && item.role === "assistant"}
                 <div class="pending-inline-status" role="status" aria-live="polite">
                   <LoaderCircle size={13} />

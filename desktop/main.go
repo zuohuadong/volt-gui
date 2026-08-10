@@ -107,6 +107,8 @@ func main() {
 	if handled, exitCode := RunRemoteAskPassHelper(context.Background(), os.Args[1:], os.Getenv, os.Stdout); handled {
 		os.Exit(exitCode)
 	}
+	diagnostics := startDesktopDiagnostics(config.MemoryUserDir())
+	defer diagnostics.Close()
 	capturePreviousFatalCrash()
 	installFatalCrashOutput()
 

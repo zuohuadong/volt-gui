@@ -515,6 +515,16 @@ voltui doctor capabilities --live --timeout 5s
 
 退出码：`0` 允许 warning/info；`1` 表示存在 `error`（或 live 启动失败）；`2` 为参数错误。与 `voltui doctor`（provider/沙箱）以及 `voltui plugin doctor <name>`（单个插件包）相互独立。
 
+### 本地诊断日志
+
+桌面端和 CLI/TUI 都会把运行诊断写入用户目录下的 `logs`：Windows 为
+`%AppData%\reasonix\logs`，macOS/Linux 为 `~/.reasonix/logs`。桌面端文件名为
+`desktop-*.log`，CLI/TUI 为 `cli-tui-*.log`；单个日志最多 4 MiB，超过 7 天自动清理。
+Provider 流诊断只记录 provider/model、响应 request ID、SSE 行号、非法字节偏移、帧长度
+和 SHA-256；上游已发送 `U+FFFD` 时还会记录替换字符计数。日志不记录 prompt、响应正文、工具参数、API key 或原始 SSE 帧。聊天中的
+`diagnostic_id` 可用于在本机日志中定位同一次失败。日志仍可能包含其他本地运行信息，
+分享前应先检查内容。
+
 ## 插件（MCP）
 
 VoltUI 是一个 MCP 客户端。`[[plugins]]` 的 `type` 选择传输：`stdio`（默认）启动本地子进

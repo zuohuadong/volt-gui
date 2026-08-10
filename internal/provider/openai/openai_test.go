@@ -1401,3 +1401,35 @@ func TestBuildRequestDefaultsEmptyToolParameters(t *testing.T) {
 		t.Fatalf("nil parameters should default to %s, got %s in %s", want, got, body)
 	}
 }
+
+func TestReadStreamRejectsInvalidUTF8BeforeJSONDecode(t *testing.T) {
+	stream := append([]byte("data: {\"choices\":[{\"delta\":{\"content\":\""), 0xff)
+	stream = append(stream, []byte("\"}}]}\n\n")...)
+	response := &http.Response{
+		Header: http.Header{"X-Request-Id": []string{"request-test"}},
+		Body:   io.NopCloser(strings.NewReader(string(stream))),
+	}
+	chunks := make(chan provider.Chunk, 1)
+	emitted, err := (&client{name: "gateway", model: "glm-5.2"}).readStream(context.Background(), response, chunks)
+	var invalid *provider.InvalidStreamUTF8Error
+	if !errors.As(err, &invalid) {
+		t.Fatalf("readStream error = %T %v, want InvalidStreamUTF8Error", err, err)
+	}
+	if emitted {
+		t.Fatal("readStream reported output before rejecting the first malformed frame")
+	}
+	if len(chunks) != 0 {
+		t.Fatalf("chunks = %d, want none", len(chunks))
+	}
+}
+
+func TestStreamResponseCountsReplacementRunesAcrossDecodedFields(t *testing.T) {
+	var response streamResponse
+	raw := []byte(`{"choices":[{"delta":{"content":"�","reasoning_content":"�","tool_calls":[{"function":{"name":"tool","arguments":"�"}}]}}],"error":{"message":"�"}}`)
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatalf("unmarshal stream response: %v", err)
+	}
+	if got := response.replacementRuneCount(); got != 4 {
+		t.Fatalf("replacementRuneCount = %d, want 4", got)
+	}
+}

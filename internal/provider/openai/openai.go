@@ -660,11 +660,20 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	streamContext := provider.StreamUTF8Context{
+		Provider: c.name, Model: c.model, Protocol: "openai", RequestID: provider.StreamRequestID(resp.Header),
+	}
 
+	lineNumber := 0
 	for scanner.Scan() {
+		lineNumber++
 		select { // ping the idle watchdog; non-blocking so a full buffer is fine
 		case activity <- struct{}{}:
 		default:
+		}
+		streamContext.Line = lineNumber
+		if err := provider.ValidateStreamUTF8(streamContext, scanner.Bytes()); err != nil {
+			return emitted, err
 		}
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || !strings.HasPrefix(line, "data:") {
@@ -680,6 +689,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 		if err := json.Unmarshal([]byte(data), &sr); err != nil {
 			return emitted, fmt.Errorf("%s: decode stream: %w", c.name, err)
 		}
+		provider.LogStreamReplacementRunes(streamContext, scanner.Bytes(), sr.replacementRuneCount())
 		if sr.Error != nil {
 			return emitted, fmt.Errorf("%s: %s", c.name, sr.Error.Message)
 		}
@@ -959,6 +969,20 @@ type streamResponse struct {
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+func (r *streamResponse) replacementRuneCount() int {
+	count := 0
+	if r.Error != nil {
+		count += provider.CountReplacementRunes(r.Error.Message)
+	}
+	for _, choice := range r.Choices {
+		count += provider.CountReplacementRunes(choice.Delta.Content, choice.Delta.ReasoningContent, choice.Delta.Reasoning)
+		for _, toolCall := range choice.Delta.ToolCalls {
+			count += provider.CountReplacementRunes(toolCall.Function.Name, toolCall.Function.Arguments)
+		}
+	}
+	return count
 }
 
 // wireUsage covers both DeepSeek's top-level cache fields and the

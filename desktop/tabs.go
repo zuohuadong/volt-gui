@@ -1377,7 +1377,7 @@ func (s *tabEventSink) eventTabAndController() (*WorkspaceTab, control.SessionAP
 
 func lastUserMessageContent(msgs []provider.Message) string {
 	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == provider.RoleUser {
+		if msgs[i].Role == provider.RoleUser && !msgs[i].DisplayHidden {
 			return msgs[i].Content
 		}
 	}
@@ -3753,6 +3753,9 @@ func topicTitleUserTurnsFromSession(path string) []string {
 	}
 	var users []string
 	for _, msg := range msgs {
+		if msg.DisplayHidden {
+			continue
+		}
 		content := control.StripComposePrefixes(agent.HandoffTask(msg.Text))
 		content = control.StripReferencedContextPrefix(content)
 		if strings.TrimSpace(content) != "" {
@@ -6072,7 +6075,7 @@ func restoredSessionTopicTitle(dir, sessionPath string, meta agent.BranchMeta) s
 	}
 	if s, err := agent.LoadSession(sessionPath); err == nil {
 		for _, msg := range s.Messages {
-			if msg.Role == provider.RoleUser {
+			if msg.Role == provider.RoleUser && !msg.DisplayHidden {
 				if title := topicTitleFromText(control.StripComposePrefixes(agent.HandoffTask(msg.Content))); title != "" {
 					return title
 				}

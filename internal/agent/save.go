@@ -1820,7 +1820,7 @@ func SessionPreviewFromMessages(msgs []provider.Message) (string, int) {
 	first := ""
 	turns := 0
 	for _, m := range msgs {
-		if m.Role == provider.RoleUser {
+		if m.Role == provider.RoleUser && !m.DisplayHidden {
 			turns++
 			if first == "" {
 				first = truncatePreview(UserPreviewText(m.Content))
@@ -1841,7 +1841,7 @@ func previewSession(path string) (string, int) {
 	first := ""
 	turns := 0
 	for _, m := range msgs {
-		if m.Role == provider.RoleUser {
+		if m.Role == provider.RoleUser && !m.DisplayHidden {
 			turns++
 			if first == "" {
 				first = truncatePreview(UserPreviewText(m.Content))

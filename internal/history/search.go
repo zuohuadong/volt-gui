@@ -256,7 +256,11 @@ func (s *Searcher) Around(ctx context.Context, req AroundRequest) ([]MessageCont
 	}
 	out := make([]MessageContext, 0, end-start)
 	for i := start; i < end; i++ {
-		out = append(out, MessageContext{Index: i, Text: renderMessage(i, msgs[i])})
+		msg, visible := provider.DisplayMessage(msgs[i])
+		if !visible {
+			continue
+		}
+		out = append(out, MessageContext{Index: i, Text: renderMessage(i, msg)})
 	}
 	return out, nil
 }
@@ -379,6 +383,11 @@ func loadMessages(path string) ([]provider.Message, error) {
 func extractDocuments(src sourceFile, msgs []provider.Message, kinds map[Kind]bool, toolName string) []document {
 	var docs []document
 	for i, msg := range msgs {
+		var visible bool
+		msg, visible = provider.DisplayMessage(msg)
+		if !visible {
+			continue
+		}
 		switch msg.Role {
 		case provider.RoleUser:
 			if kinds[KindUserText] && strings.TrimSpace(msg.Content) != "" {

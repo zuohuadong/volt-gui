@@ -3760,6 +3760,9 @@ func collectEventLogUserPrompts(path string, info os.FileInfo, resolveUserConten
 	fallbackAt := promptHistoryFallbackMillis(path, info)
 	turn := 0
 	for _, user := range users {
+		if user.DisplayHidden {
+			continue
+		}
 		text := strings.TrimSpace(resolveUserContent(strings.TrimSpace(user.Text)))
 		if text == "" || control.IsSyntheticUserMessage(text) {
 			continue
@@ -3806,6 +3809,9 @@ func collectJSONLUserPrompts(path string, info os.FileInfo, resolveUserContent f
 		kindOrType := strings.TrimSpace(rec.Kind)
 		if kindOrType == "" {
 			kindOrType = strings.TrimSpace(rec.Type)
+		}
+		if rec.DisplayHidden {
+			continue
 		}
 		if kindOrType == "user.message" {
 			text = strings.TrimSpace(rec.Text)
@@ -4464,7 +4470,7 @@ func (a *App) HistoryCheckpointTurnsForTab(tabID string) []int {
 func historyCheckpointTurns(msgs []provider.Message, resolveUserContent func(string) string, checkpointTurns map[int]int) []int {
 	out := make([]int, 0)
 	for index, msg := range msgs {
-		if msg.Role != provider.RoleUser {
+		if msg.Role != provider.RoleUser || msg.DisplayHidden {
 			continue
 		}
 		if _, isSteer := agent.SteerText(msg.Content); isSteer {
@@ -4503,6 +4509,11 @@ func historyMessagesWithPlannerDisplaysAndLookups(
 	out := make([]HistoryMessage, 0, len(msgs))
 	plannerByUserHash := plannerTurnsByUserHash(plannerTurns)
 	for index, m := range msgs {
+		var visible bool
+		m, visible = provider.DisplayMessage(m)
+		if !visible {
+			continue
+		}
 		content := m.Content
 		var checkpointTurn *int
 		if m.Role == provider.RoleUser {
@@ -4613,7 +4624,7 @@ func visibleHistoryUserTurns(msgs []provider.Message, resolveUserContent func(st
 }
 
 func isVisibleHistoryUser(msg provider.Message, resolveUserContent func(string) string) bool {
-	if msg.Role != provider.RoleUser {
+	if msg.Role != provider.RoleUser || msg.DisplayHidden {
 		return false
 	}
 	if _, isSteer := agent.SteerText(msg.Content); isSteer {
@@ -5043,6 +5054,7 @@ type previewEventRecord struct {
 	Text             string                    `json:"text"`
 	Detail           string                    `json:"detail"`
 	Content          string                    `json:"content"`
+	DisplayHidden    bool                      `json:"displayHidden"`
 	Reasoning        string                    `json:"reasoning"`
 	ReasoningContent string                    `json:"reasoningContent"`
 	MemoryCitations  []provider.MemoryCitation `json:"memoryCitations"`

@@ -193,3 +193,55 @@ func TestSlashExportDoesNotWriteEmptyMarkdown(t *testing.T) {
 		})
 	}
 }
+
+func TestOfficeDisplayMetadataProtectsReplayCopyAndExport(t *testing.T) {
+	dir := t.TempDir()
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Content: "visible request"},
+		{Role: provider.RoleAssistant, Content: "hidden draft one", DisplayHidden: true},
+		{Role: provider.RoleUser, Content: "hidden proofreading prompt", DisplayHidden: true},
+		{
+			Role:             provider.RoleAssistant,
+			Content:          "tools-only draft two",
+			ReasoningContent: "tools-only reasoning",
+			ToolCalls:        []provider.ToolCall{{ID: "call_1", Name: "read_file", Arguments: `{"path":"report.md"}`}},
+			DisplayToolsOnly: true,
+		},
+		{Role: provider.RoleTool, ToolCallID: "call_1", Name: "read_file", Content: "tool result"},
+		{Role: provider.RoleAssistant, Content: "visible final"},
+	}
+	m := newTestChatTUIWithMessages(t, dir, msgs...)
+
+	replay := strings.Join(replaySectionsFor(msgs, 80, m.renderer), "\n")
+	if !strings.Contains(replay, "visible request") || !strings.Contains(replay, "visible final") {
+		t.Fatalf("replay lost visible dialogue:\n%s", replay)
+	}
+	for _, hidden := range []string{"hidden draft one", "hidden proofreading prompt", "tools-only draft two", "tools-only reasoning"} {
+		if strings.Contains(replay, hidden) {
+			t.Fatalf("replay leaked %q:\n%s", hidden, replay)
+		}
+	}
+
+	if got, want := copyAssistantParts(msgs), []string{"visible final"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("copy parts = %#v, want %#v", got, want)
+	}
+
+	m.runExportCommand("/export")
+	exported := sessionExportFiles(t, dir)
+	if len(exported) != 1 {
+		t.Fatalf("exported files = %v, want one", exported)
+	}
+	data, err := os.ReadFile(exported[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	markdown := string(data)
+	if !strings.Contains(markdown, "visible request") || !strings.Contains(markdown, "visible final") {
+		t.Fatalf("export lost visible dialogue:\n%s", markdown)
+	}
+	for _, hidden := range []string{"hidden draft one", "hidden proofreading prompt", "tools-only draft two", "tools-only reasoning"} {
+		if strings.Contains(markdown, hidden) {
+			t.Fatalf("export leaked %q:\n%s", hidden, markdown)
+		}
+	}
+}

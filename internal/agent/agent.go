@@ -512,7 +512,7 @@ type Agent struct {
 	// under archiveDir. compactStuck latches when compaction can't get the prompt
 	// under the window (consecutiveCompacts crosses the limit), so auto-compaction
 	// pauses instead of looping. softCompactNoticed gates the one-shot soft-ratio
-	// notice so it fires once per approach, not every turn.
+	// diagnostic so it is recorded once per approach, not every turn.
 	contextWindow       int
 	softCompactRatio    float64
 	toolResultSnipRatio float64

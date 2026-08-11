@@ -339,6 +339,9 @@ describe("unified workbench IA state", () => {
     expect(template?.prompt).toContain("核心信息不足时先提问");
     expect(template?.prompt).toContain("输入只给出总数时，不得自行拆分模块数据或补造日期");
     expect(template?.prompt).toContain("统一使用“上线前”");
+    expect(template?.prompt).toContain("首次创建新文档时可一次完整写入");
+    expect(template?.prompt).toContain("已有文档或已写入的初稿在校对时只能局部修正");
+    expect(template?.prompt).not.toContain("替换整份文档时优先使用完整写入");
   });
 
   test("applies the shared office-output quality gate to every office template", () => {
@@ -382,6 +385,11 @@ describe("unified workbench IA state", () => {
       expect(template.prompt).toContain("不得把上一任务的正文、标题、称谓或格式带入本次交付");
       expect(template.prompt).toContain("最多调用一轮");
       expect(template.prompt).toContain("不得为自检反复调用工具");
+      expect(template.prompt).toContain("可额外重读一次最新文件");
+      expect(template.prompt).toContain("最多一次 multi_edit 或 edit_file");
+      expect(template.prompt).toContain("匹配失败不等于编码损坏或乱码");
+      expect(template.prompt).toContain("匹配仍失败时保留当前产物并指出待处理段落");
+      expect(template.prompt).not.toContain("文件编辑失败时改用整份重写");
     }
   });
 

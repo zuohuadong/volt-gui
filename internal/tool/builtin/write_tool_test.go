@@ -265,8 +265,14 @@ func TestEditFileOldStringNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for old_string not found")
 	}
-	if !strings.Contains(err.Error(), "Re-read the current file") {
-		t.Fatalf("not-found error should include recovery hint, got: %v", err)
+	for _, want := range []string{
+		"Re-read the current file",
+		"does not indicate encoding corruption",
+		"do not fall back to rewriting the whole file",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("not-found error should include %q, got: %v", want, err)
+		}
 	}
 	// File should be unchanged.
 	got, _ := os.ReadFile(f)
@@ -294,7 +300,13 @@ func TestEditFileNotUniqueReportsMatchingLines(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected not-unique error")
 	}
-	for _, want := range []string{"not unique", "matching lines include 1, 3, 5", "repeated separator lines"} {
+	for _, want := range []string{
+		"not unique",
+		"matching lines include 1, 3, 5",
+		"repeated separator lines",
+		"does not indicate encoding corruption",
+		"do not fall back to rewriting the whole file",
+	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error should mention %q: %v", want, err)
 		}
@@ -427,7 +439,12 @@ func TestMultiEditStepNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing edit step")
 	}
-	for _, want := range []string{"edit 2", "Re-read the current file"} {
+	for _, want := range []string{
+		"edit 2",
+		"Re-read the current file",
+		"does not indicate encoding corruption",
+		"do not fall back to rewriting the whole file",
+	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("multi_edit error should mention %q, got: %v", want, err)
 		}

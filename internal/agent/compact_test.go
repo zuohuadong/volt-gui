@@ -750,7 +750,8 @@ func TestMaybeCompactThreshold(t *testing.T) {
 		t.Errorf("below threshold should not compact, len = %d", len(sess.Messages))
 	}
 
-	// At/above 50% only emits a soft notice; it does not rewrite the cache prefix.
+	// At/above 50% only records an internal diagnostic; it does not rewrite the
+	// cache prefix or emit a user-visible notice.
 	sess = newSess()
 	prov := &fakeProvider{reply: "s"}
 	var notices []event.Event
@@ -766,12 +767,12 @@ func TestMaybeCompactThreshold(t *testing.T) {
 	if len(prov.got) != 0 {
 		t.Fatalf("soft threshold called summarizer: %+v", prov.got)
 	}
-	if len(notices) != 1 || notices[0].Text != "Context is getting large; preserving cache until cleanup is needed." || !strings.Contains(notices[0].Detail, "context reached 50%") {
-		t.Fatalf("soft threshold notice = %+v", notices)
+	if len(notices) != 0 {
+		t.Fatalf("soft threshold emitted user-visible notices: %+v", notices)
 	}
 	a.maybeCompact(context.Background(), &provider.Usage{PromptTokens: 60})
-	if len(notices) != 1 {
-		t.Fatalf("soft threshold notice should only emit once, got %d", len(notices))
+	if len(notices) != 0 {
+		t.Fatalf("soft threshold emitted repeated user-visible notices: %+v", notices)
 	}
 
 	// At/above 80%: compacts when the fold is economically worthwhile. The

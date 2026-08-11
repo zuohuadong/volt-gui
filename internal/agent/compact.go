@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,7 +23,7 @@ import (
 // fraction of the window, so a huge window still compacts rarely while a small
 // one still lands below the trigger (which is what stops the re-compaction loop).
 const (
-	defaultSoftCompactRatio    = 0.5   // report growing context here, but keep the cache-stable prefix intact
+	defaultSoftCompactRatio    = 0.5   // record growing context here, but keep the cache-stable prefix intact
 	defaultToolResultSnipRatio = 0.6   // rewrite stale tool results cheaply before summary compaction
 	defaultCompactRatio        = 0.8   // trigger: prompt at this fraction of the window compacts
 	defaultCompactForceRatio   = 0.9   // force compaction at this high-water mark even for low-value folds
@@ -92,12 +93,14 @@ func (a *Agent) maybeCompact(ctx context.Context, u *provider.Usage) {
 	high := int(float64(a.contextWindow) * a.compactRatio)
 	snip := int(float64(a.contextWindow) * a.toolResultSnipRatio)
 	soft := int(float64(a.contextWindow) * a.softCompactRatio)
-	// Between the soft ratio and the trigger, report growing context once without
-	// rewriting the prefix — a compaction here would needlessly crater the cache.
+	// Between the soft ratio and the trigger, record growth once without rewriting
+	// the prefix. This cache diagnostic requires no user action, so keep it out of
+	// the user-visible event stream.
 	if u.PromptTokens >= soft && u.PromptTokens < snip && !a.softCompactNoticed {
 		a.softCompactNoticed = true
-		detail := fmt.Sprintf("context reached %.0f%% of window; keeping cache-first prefix until compact threshold %.0f%%", a.softCompactRatio*100, a.compactRatio*100)
-		a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "Context is getting large; preserving cache until cleanup is needed.", Detail: detail})
+		slog.Debug("agent: context approaching automatic cleanup",
+			"used_percent", float64(u.PromptTokens)/float64(a.contextWindow)*100,
+			"compact_percent", a.compactRatio*100)
 		return
 	}
 	if u.PromptTokens >= snip && u.PromptTokens < high {

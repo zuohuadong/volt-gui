@@ -8,6 +8,8 @@ import (
 	fileenc "voltui/internal/fileutil/encoding"
 )
 
+const localEditRecoveryHint = " This edit matching error does not indicate encoding corruption. Re-read the current file, retry at most once with current exact local context, and do not fall back to rewriting the whole file."
+
 // readFileEncoded reads a file and decodes its encoding to UTF-8.
 // Returns the decoded content and the detected encoding kind so callers
 // can re-encode on write to preserve the original charset.
@@ -176,24 +178,24 @@ func oldStringNotFoundError(path, oldString, content string) error {
 }
 
 func oldStringNotFoundHint(oldString, content string) string {
-	base := " Re-read the current file before retrying; if several related edits target the same area, combine the final replacements in one multi_edit call."
+	base := localEditRecoveryHint + " If several related replacements target the same area, combine them into that single multi_edit retry."
 	if !strings.Contains(content, "\r\n") {
 		return base
 	}
 	normalizedContent := strings.ReplaceAll(content, "\r\n", "\n")
 	normalizedOld := strings.ReplaceAll(oldString, "\r\n", "\n")
 	if strings.Contains(normalizedContent, normalizedOld) {
-		return " The target file uses CRLF line endings; edit_file/multi_edit normally normalize LF-only old_string for CRLF files, so this is likely stale context. Re-read the current file before retrying."
+		return " The target file uses CRLF line endings; edit_file/multi_edit normally normalize LF-only old_string for CRLF files, so this is likely stale context." + base
 	}
-	return " The target file uses CRLF line endings, but edit_file/multi_edit already tolerate LF-only old_string for CRLF files; check for stale, incomplete, or non-unique context before retrying."
+	return " The target file uses CRLF line endings, but edit_file/multi_edit already tolerate LF-only old_string for CRLF files; check for stale, incomplete, or non-unique context before retrying." + base
 }
 
 func oldStringNotUniqueError(path, oldString, content string, matches int, replaceAllHint bool) error {
 	lineHint := oldStringMatchLineSummary(oldString, content, 5)
 	if replaceAllHint {
-		return fmt.Errorf("old_string is not unique in %s (%d matches)%s; add nearby unique code, not just repeated separator lines, or set replace_all if every match should change", path, matches, lineHint)
+		return fmt.Errorf("old_string is not unique in %s (%d matches)%s; add nearby unique code, not just repeated separator lines, or set replace_all if every match should change.%s", path, matches, lineHint, localEditRecoveryHint)
 	}
-	return fmt.Errorf("old_string is not unique in %s (%d matches)%s; add nearby unique code, not just repeated separator lines", path, matches, lineHint)
+	return fmt.Errorf("old_string is not unique in %s (%d matches)%s; add nearby unique code, not just repeated separator lines.%s", path, matches, lineHint, localEditRecoveryHint)
 }
 
 type lineSegment struct {

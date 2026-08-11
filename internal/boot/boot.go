@@ -981,6 +981,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			MaxSubagentDepth:    maxSubagentDepth,
 			DeliveryProfile:     tokenDelivery,
 			WorkspaceLease:      workspaceLease,
+			WriteWorkspaceRoot:  root,
 		}
 	}
 	readOnlySkillRunner := func(sctx context.Context, sk skill.Skill, task string, runOpts skill.SubagentRunOptions) (string, error) {

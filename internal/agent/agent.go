@@ -580,6 +580,12 @@ type Agent struct {
 	// stormSig: a model keeps doing the same successful write, so there is no
 	// error for the failure-only storm breaker to see.
 	repeatSuccessCounts map[string]int
+
+	// fullWriteTargetCounts bounds whole-file rewrites even when the model changes
+	// the content on every attempt. Exact-argument matching cannot see that office
+	// document loop; one initial write plus one correction is enough before the
+	// agent must preserve the latest artifact and deliver.
+	fullWriteTargetCounts map[string]int
 }
 
 // KeepPolicy is a bitmask controlling which messages are preserved beyond the
@@ -1507,6 +1513,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	// once; the user's raw text remains the classifier source above.
 	rawInput = withInterruptedRecovery(rawInput, a.pendingInterruptedRecovery())
 	a.repeatSuccessCounts = nil
+	a.fullWriteTargetCounts = nil
 	a.blockedTurnStreak = 0
 	a.readOnlyChurnRounds = 0
 	a.loopGuardArmed = false
@@ -3408,17 +3415,28 @@ func (a *Agent) applyStormBreaker(calls []provider.ToolCall, outcomes []toolOutc
 		}
 	}
 
-	// Read-only churn: every call in the round succeeded and was read-only,
-	// so neither the failure signature nor the blocked streak can see the
-	// loop. A mutating, failing, or blocked round is real progress (or a real
-	// blocker) and resets the counter; bookkeeping tools such as todo_write
-	// are not read-only, so they break the run the same way.
+	// Read-only churn: every substantive call in the round succeeded and was
+	// read-only, so neither the failure signature nor the blocked streak can see
+	// the loop. Todo tools are neutral unless the canonical task list advances:
+	// bookkeeping and renewal sign-offs must not erase a proofreading run.
 	churnRound := len(calls) > 0 && len(calls) == len(outcomes)
+	hasReadOnlyInspection := false
+	todoOnly := churnRound
 	for i, outcome := range outcomes {
 		if outcome.blocked || outcome.errMsg != "" {
 			churnRound = false
+			todoOnly = false
 			break
 		}
+		if calls[i].Name == "todo_write" || calls[i].Name == "complete_step" {
+			if outcome.todoProgressed {
+				churnRound = false
+				todoOnly = false
+				break
+			}
+			continue
+		}
+		todoOnly = false
 		// resolvedReadOnly is only populated for CallResolver tools; fall back
 		// to the registry entry, honouring any dispatch-time override.
 		readOnly := outcome.resolved && outcome.resolvedReadOnly
@@ -3433,10 +3451,14 @@ func (a *Agent) applyStormBreaker(calls []provider.ToolCall, outcomes []toolOutc
 			churnRound = false
 			break
 		}
+		hasReadOnlyInspection = true
 	}
-	if churnRound {
+	switch {
+	case churnRound && hasReadOnlyInspection:
 		a.readOnlyChurnRounds++
-	} else {
+	case churnRound && todoOnly:
+		// Preserve the current streak across bookkeeping-only rounds.
+	default:
 		a.readOnlyChurnRounds = 0
 	}
 
@@ -3469,7 +3491,7 @@ func (a *Agent) applyStormBreaker(calls []provider.ToolCall, outcomes []toolOutc
 		// tail and re-trigger compaction, cratering the prompt cache (the
 		// failure mode compactStuck exists to prevent). A reset run may fire
 		// again once it reaches the threshold.
-		if churnRound && a.readOnlyChurnRounds == readOnlyChurnBreakThreshold {
+		if churnRound && hasReadOnlyInspection && a.readOnlyChurnRounds == readOnlyChurnBreakThreshold {
 			guard := fmt.Sprintf(
 				"[loop guard] the last %d tool rounds were all read-only inspections with no write, edit, completion, or delivered result. Re-reading, re-searching, or re-counting the same material — for example proofreading with repeated grep/bash/python calls — does not improve the output and burns the turn budget. Verification belongs inside the answer: stop tool-based self-checking now and deliver the final result, or name the concrete blocker.",
 				a.readOnlyChurnRounds)
@@ -3569,6 +3591,7 @@ type toolOutcome struct {
 	resolvedName     string
 	capabilityID     string
 	resolvedReadOnly bool
+	todoProgressed   bool
 	// recoveryGeneration is the gate generation captured before execution so
 	// ObserveResult can ignore stale results after a mode switch.
 	recoveryGeneration uint64
@@ -4041,6 +4064,10 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) (out too
 	cctx = tool.WithProgress(cctx, func(chunk string) {
 		a.sink.Emit(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: callID, Output: chunk}})
 	})
+	todoProgressBefore, trackingTodoBefore := 0, false
+	if call.Name == "todo_write" || call.Name == "complete_step" {
+		todoProgressBefore, trackingTodoBefore = a.canonicalTodoProgress()
+	}
 	var result string
 	var images []string
 	var err error
@@ -4061,6 +4088,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) (out too
 	} else {
 		result, err = runTool.Execute(cctx, runArgs)
 	}
+	todoProgressed := false
 	if a.evidence != nil {
 		// Always record the model-visible call for audit, then the real target
 		// attributes for mutation/read classification when they differ.
@@ -4069,6 +4097,8 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) (out too
 			a.evidence.Record(rec)
 			if err == nil {
 				a.advanceCanonicalTodo(rec.Step)
+				todoProgressAfter, trackingTodoAfter := a.canonicalTodoProgress()
+				todoProgressed = todoProgressAfter > todoProgressBefore || (!trackingTodoBefore && trackingTodoAfter)
 			}
 		} else if evidenceName != call.Name {
 			// Proxy: meta receipt (non-mutation) + real target receipt.
@@ -4082,6 +4112,8 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) (out too
 			a.evidence.Record(rec)
 			if err == nil && call.Name == "todo_write" {
 				a.setTodoState(rec.Todos)
+				todoProgressAfter, trackingTodoAfter := a.canonicalTodoProgress()
+				todoProgressed = todoProgressAfter > todoProgressBefore || (!trackingTodoBefore && trackingTodoAfter)
 				if len(rec.Todos) > 0 {
 					a.deliveryCriteriaEstablished = true
 				}
@@ -4122,7 +4154,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) (out too
 		a.hooks.SubagentStop(ctx, result)
 	}
 	body, truncMsg := truncateToolOutput(result)
-	return toolOutcome{output: body, images: images, truncated: truncMsg != "", truncMsg: truncMsg, recoveryGeneration: recoveryGen}
+	return toolOutcome{output: body, images: images, truncated: truncMsg != "", truncMsg: truncMsg, todoProgressed: todoProgressed, recoveryGeneration: recoveryGen}
 }
 
 // recoveryPlanTransition detects structural rewrites of an active canonical
@@ -4374,6 +4406,13 @@ func planModeUntrustedReadOnly(target tool.Tool) bool {
 }
 
 func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (string, bool) {
+	if message, blocked := a.repeatedArgumentSuccessBlock(call, t); blocked {
+		return message, true
+	}
+	return a.repeatedFullWriteBlock(call, t)
+}
+
+func (a *Agent) repeatedArgumentSuccessBlock(call provider.ToolCall, t tool.Tool) (string, bool) {
 	sig, ok := repeatSuccessSignature(call, t)
 	if !ok || a.repeatSuccessCounts == nil {
 		return "", false
@@ -4385,6 +4424,20 @@ func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (strin
 	return fmt.Sprintf(
 		"blocked: [loop guard] %q has already succeeded %d times with the same write-like arguments in this user turn. Re-running it is unlikely to help and may burn tokens or repeat file writes. Change approach: use edit_file or multi_edit for file changes, verify with a read/test command, or explain the blocker in your final answer.",
 		call.Name, count), true
+}
+
+func (a *Agent) repeatedFullWriteBlock(call provider.ToolCall, t tool.Tool) (string, bool) {
+	target, ok := a.fullWriteTarget(call, t)
+	if !ok || a.fullWriteTargetCounts == nil {
+		return "", false
+	}
+	count := a.fullWriteTargetCounts[target]
+	if count < repeatSuccessBreakThreshold {
+		return "", false
+	}
+	return fmt.Sprintf(
+		"blocked: [loop guard] %q has already written %q %d times in this user turn. Preserve the latest successful version and deliver it now; do not rewrite the whole file again. If text still looks uncertain, identify the exact passage for user review instead of guessing another replacement.",
+		call.Name, target, count), true
 }
 
 func (a *Agent) staleAnchorEditBlock(call provider.ToolCall) (string, bool) {
@@ -4419,6 +4472,11 @@ func anchorBasedEditTool(name string) bool {
 }
 
 func (a *Agent) recordRepeatSuccess(call provider.ToolCall, t tool.Tool) {
+	a.recordArgumentSuccess(call, t)
+	a.recordFullWriteSuccess(call, t)
+}
+
+func (a *Agent) recordArgumentSuccess(call provider.ToolCall, t tool.Tool) {
 	sig, ok := repeatSuccessSignature(call, t)
 	if !ok {
 		return
@@ -4427,6 +4485,38 @@ func (a *Agent) recordRepeatSuccess(call provider.ToolCall, t tool.Tool) {
 		a.repeatSuccessCounts = make(map[string]int)
 	}
 	a.repeatSuccessCounts[sig]++
+}
+
+func (a *Agent) recordFullWriteSuccess(call provider.ToolCall, t tool.Tool) {
+	target, ok := a.fullWriteTarget(call, t)
+	if !ok {
+		return
+	}
+	if a.fullWriteTargetCounts == nil {
+		a.fullWriteTargetCounts = make(map[string]int)
+	}
+	a.fullWriteTargetCounts[target]++
+}
+
+func (a *Agent) fullWriteTarget(call provider.ToolCall, t tool.Tool) (string, bool) {
+	if t.ReadOnly() || call.Name != "write_file" {
+		return "", false
+	}
+	var args struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
+		return "", false
+	}
+	target := strings.TrimSpace(args.Path)
+	if target == "" {
+		return "", false
+	}
+	resolved, err := resolveWriteClaimPath(a.writeWorkspaceRoot, target)
+	if err != nil {
+		return "", false
+	}
+	return foldPathKey(resolved), true
 }
 
 func repeatSuccessSignature(call provider.ToolCall, t tool.Tool) (string, bool) {

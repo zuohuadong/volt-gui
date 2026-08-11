@@ -146,36 +146,37 @@ func (b *displayTurnBuffer) materialize() []HistoryMessage {
 // memory, permissions) scoped to a workspace root, so multiple projects and
 // topics can be active concurrently without interfering.
 type WorkspaceTab struct {
-	ID                    string               // stable random id
-	Scope                 string               // "project" | "global"
-	WorkspaceRoot         string               // project root dir (empty for global)
-	SharedHostKey         string               // opaque key for the shared plugin host (set by buildTabController)
-	TopicID               string               // topic within the project
-	TopicTitle            string               // display title
-	SessionPath           string               // exact .jsonl file this tab continues
-	AgentProfileID        string               // selected runtime profile for this thread
-	AgentProfileName      string               // audit/display snapshot; ID remains canonical
-	AgentProfileBaseModel string               // inherited thread model restored when profile clears
-	MemoryContext         scopedmemory.Context // layered memory ownership for this thread
-	MemoryScopes          []string             // non-isolated layers injected into the current runtime
-	MemorySourceIDs       []string             // exact entry ids injected into the current runtime
-	MemoryUpdatedAt       string               // last runtime memory snapshot update
-	ReadOnly              bool                 // true for external channel transcripts opened for browsing
-	Ctrl                  control.SessionAPI   // nil while booting / on error
-	Label                 string               // model label (for the tab badge)
-	Ready                 bool                 // true once boot.Build completes
-	StartupErr            string               // build error, surfaced to the frontend
-	StartupErrLeaseHeld   bool                 // true when StartupErr can be retried after a session lease releases
-	sessionLease          *agent.SessionLease
-	sessionLeaseMu        sync.Mutex
-	sessionLeaseView      atomic.Pointer[agent.SessionLease]
-	sink                  *tabEventSink      // routes events with this tab's ID
-	buildCancel           context.CancelFunc // cancels in-flight boot for tabs removed before Ready
-	buildGeneration       uint64             // identifies the current in-flight build
-	removed               bool               // set when the visible tab is pruned/closed before build completes
-	reconcileMu           sync.Mutex         // serializes stale controller workspace repair for this tab
-	turnStartMu           sync.Mutex         // serializes bridge turn admission with runtime mutations
-	runtimeID             string             // process-local session runtime identity
+	ID                      string               // stable random id
+	Scope                   string               // "project" | "global"
+	WorkspaceRoot           string               // project root dir (empty for global)
+	SharedHostKey           string               // opaque key for the shared plugin host (set by buildTabController)
+	TopicID                 string               // topic within the project
+	TopicTitle              string               // display title
+	SessionPath             string               // exact .jsonl file this tab continues
+	AgentProfileID          string               // selected runtime profile for this thread
+	AgentProfileName        string               // audit/display snapshot; ID remains canonical
+	AgentProfileBaseModel   string               // inherited thread model restored when profile clears
+	MemoryContext           scopedmemory.Context // layered memory ownership for this thread
+	MemoryScopes            []string             // non-isolated layers injected into the current runtime
+	MemorySourceIDs         []string             // exact entry ids injected into the current runtime
+	MemoryUpdatedAt         string               // last runtime memory snapshot update
+	ReadOnly                bool                 // true for external channel transcripts opened for browsing
+	Ctrl                    control.SessionAPI   // nil while booting / on error
+	Label                   string               // model label (for the tab badge)
+	Ready                   bool                 // true once boot.Build completes
+	StartupErr              string               // build error, surfaced to the frontend
+	StartupErrLeaseHeld     bool                 // true when StartupErr can be retried after a session lease releases
+	sessionLease            *agent.SessionLease
+	sessionLeaseMu          sync.Mutex
+	sessionLeaseView        atomic.Pointer[agent.SessionLease]
+	sink                    *tabEventSink      // routes events with this tab's ID
+	buildCancel             context.CancelFunc // cancels in-flight boot for tabs removed before Ready
+	buildGeneration         uint64             // identifies the current in-flight build
+	removed                 bool               // set when the visible tab is pruned/closed before build completes
+	reconcileMu             sync.Mutex         // serializes stale controller workspace repair for this tab
+	sessionBindingNoticeKey string             // restore paths converge here; warn only once for one resolved binding
+	turnStartMu             sync.Mutex         // serializes bridge turn admission with runtime mutations
+	runtimeID               string             // process-local session runtime identity
 
 	ActivityStatus string // transient project-tree status for the in-flight turn
 
@@ -1357,6 +1358,15 @@ func (s *tabEventSink) context() context.Context {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.ctx
+}
+
+func (s *tabEventSink) canDeliverEvent() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ctx != nil || s.botSink != nil
 }
 
 func (s *tabEventSink) emitRuntimeEvent(name string, payload ...interface{}) {
@@ -3089,6 +3099,12 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	if a.tabBuildSuperseded(tab, buildGeneration) {
 		return
 	}
+	a.mu.RLock()
+	tabSink := tab.sink
+	a.mu.RUnlock()
+	if tabSink != nil {
+		tabSink.setContext(wailsCtx)
+	}
 
 	a.reconcileTabWithPinnedSessionMeta(tab)
 
@@ -3104,7 +3120,6 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	tabModel := tab.model
 	tabAgentProfileID := tab.AgentProfileID
 	tabMemoryContext := tab.MemoryContext
-	tabSink := tab.sink
 	a.mu.RUnlock()
 
 	root := tabWorkspaceRoot
@@ -3156,10 +3171,6 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 	if a.tabBuildSuperseded(tab, buildGeneration) {
 		return
 	}
-	if tabSink != nil {
-		tabSink.setContext(wailsCtx)
-	}
-
 	sessionDir := desktopSessionDir(root)
 	topicID := strings.TrimSpace(tabTopicID)
 
@@ -3564,12 +3575,18 @@ func (a *App) applySessionBindingToTab(tab *WorkspaceTab, binding sessionBinding
 	}
 	oldScope := tab.Scope
 	oldWorkspaceRoot := tab.WorkspaceRoot
+	noticeKey := canonicalTabSessionPath(binding.path) + "\x00" + scope + "\x00" + workspaceRoot
 	changed := tab.Scope != scope ||
 		tab.WorkspaceRoot != workspaceRoot ||
 		canonicalTabSessionPath(tab.SessionPath) != canonicalTabSessionPath(binding.path)
 	// Spelling-only root updates still persist above, but an equivalent root is
 	// the same workspace — do not warn the user about a switch.
 	workspaceChanged := tab.Scope != scope || !sameProjectRoot(tab.WorkspaceRoot, workspaceRoot)
+	sink := tab.sink
+	emitWorkspaceNotice := workspaceChanged && tab.sessionBindingNoticeKey != noticeKey && sink.canDeliverEvent()
+	if emitWorkspaceNotice {
+		tab.sessionBindingNoticeKey = noticeKey
+	}
 	tab.Scope = scope
 	tab.WorkspaceRoot = workspaceRoot
 	tab.SessionPath = canonicalTabSessionPath(binding.path)
@@ -3584,9 +3601,8 @@ func (a *App) applySessionBindingToTab(tab *WorkspaceTab, binding sessionBinding
 	if changed && current == tab {
 		a.saveTabsLocked()
 	}
-	sink := tab.sink
 	a.mu.Unlock()
-	if workspaceChanged && sink != nil {
+	if emitWorkspaceNotice {
 		sink.Emit(event.Event{
 			Kind:  event.Notice,
 			Level: event.LevelWarn,

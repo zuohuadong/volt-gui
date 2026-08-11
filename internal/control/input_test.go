@@ -1307,6 +1307,16 @@ func TestIsSyntheticUserMessage(t *testing.T) {
 			want:  true,
 		},
 		{
+			name:  "calculation gate retry",
+			input: "Internal host instruction: the arithmetic result has not been verified. Call calculate with the complete expression.",
+			want:  true,
+		},
+		{
+			name:  "unrelated internal instruction text",
+			input: "Internal host instruction: explain what this phrase means.",
+			want:  false,
+		},
+		{
 			name:  "executor handoff",
 			input: "You are already in the executor phase. The planner's read-only limitations do not apply to you.",
 			want:  true,

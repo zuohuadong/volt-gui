@@ -40,6 +40,17 @@ func TestTaskWriterWithoutPathsClaimsWholeWorkspace(t *testing.T) {
 	}
 }
 
+func TestTaskSubagentOptionsPreserveWorkspaceRoot(t *testing.T) {
+	root := t.TempDir()
+	task := NewTaskTool(&mockProvider{name: "sub"}, nil, tool.NewRegistry(), 20, 0, 0, 0, 0, 0, 0, 0.0, "", "sys", nil, 0, "", "", nil).
+		WithTranscripts(mustSubagentStore(t), root, "base", "high")
+
+	opts := task.subagentOptions(context.Background(), 20, nil, 0, 1, "task")
+	if opts.WriteWorkspaceRoot != root {
+		t.Fatalf("subagent workspace root = %q, want %q", opts.WriteWorkspaceRoot, root)
+	}
+}
+
 func TestTaskUnknownProfileRejected(t *testing.T) {
 	root := t.TempDir()
 	task := NewTaskTool(&mockProvider{name: "sub"}, nil, tool.NewRegistry(), 20, 0, 0, 0, 0, 0, 0, 0.0, "", "sys", nil, 0, "", "", nil).

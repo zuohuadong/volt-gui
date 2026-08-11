@@ -416,4 +416,7 @@ func TestPreviewStripsDeliveryMarkerAndSyntheticTurns(t *testing.T) {
 	if !IsSyntheticUserText(finalReadinessRetryMessage("x")) {
 		t.Fatal("readiness retry not detected as synthetic")
 	}
+	if !IsSyntheticUserText(calculationGateRetryMessage()) {
+		t.Fatal("calculation gate retry not detected as synthetic")
+	}
 }

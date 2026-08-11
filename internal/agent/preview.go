@@ -143,6 +143,7 @@ func UserPreviewText(content string) string {
 var SyntheticUserPrefixes = []string{
 	"Plan approved — plan mode is off",
 	"Host final-answer readiness check failed",
+	"Internal host instruction: the arithmetic result has not been verified.",
 	"You are already in the executor phase",
 	"The previous assistant response was interrupted while a tool call",
 	"The previous assistant response was interrupted during streaming",

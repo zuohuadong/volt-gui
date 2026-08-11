@@ -687,6 +687,9 @@ func historyMessages(msgs []provider.Message) []historyMessage {
 				out = append(out, historyMessage{Role: "notice", Content: "↪ " + steerText})
 				continue
 			}
+			if control.IsSyntheticUserMessage(m.Content) {
+				continue
+			}
 		}
 		hm := historyMessage{Role: string(m.Role), Content: m.Content}
 		if m.Role == provider.RoleAssistant {

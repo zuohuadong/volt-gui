@@ -161,6 +161,20 @@ func TestHistoryMessagesPreserveToolDetails(t *testing.T) {
 	}
 }
 
+func TestHistoryMessagesHideCalculationGateRetry(t *testing.T) {
+	got := historyMessages([]provider.Message{
+		{Role: provider.RoleUser, Content: "计算总价"},
+		{Role: provider.RoleUser, Content: "Internal host instruction: the arithmetic result has not been verified. Call calculate with the complete expression."},
+		{Role: provider.RoleAssistant, Content: "总价为 100 元。"},
+	})
+	if len(got) != 2 {
+		t.Fatalf("history length = %d, want 2 after hiding the calculation retry", len(got))
+	}
+	if got[0].Content != "计算总价" || got[1].Role != "assistant" {
+		t.Fatalf("history = %+v, want user input followed by assistant answer", got)
+	}
+}
+
 func TestSessionsListPreviewStripsTransientReasoningLanguageBlock(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")

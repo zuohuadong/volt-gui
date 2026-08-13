@@ -182,5 +182,22 @@ function ev(s: typeof initialState, e: WireEvent) {
   eq(s.retry, undefined, "fresh idle snapshot clears the retry indicator");
 }
 
+// --- 5. stream recovery removes only unfinished output from the failed attempt ---
+{
+  let s = ev({ ...initialState }, { kind: "turn_started" } as WireEvent);
+  s = ev(s, { kind: "text", text: "异常开头" } as WireEvent);
+  s = ev(s, { kind: "tool_dispatch", tool: { id: "partial", name: "write_file", readOnly: false, partial: true } } as WireEvent);
+  s = ev(s, { kind: "tool_dispatch", tool: { id: "complete", name: "read_file", args: '{"path":"a"}', readOnly: true } } as WireEvent);
+  s = ev(s, { kind: "tool_result", tool: { id: "complete", name: "read_file", readOnly: true, output: "done" } } as WireEvent);
+  s = ev(s, { kind: "notice", code: "stream_recovery", level: "info", text: "检测到模型输出异常，正在重新生成。" } as WireEvent);
+  eq(s.items.some((entry) => entry.kind === "assistant" && entry.streaming), false, "stream recovery removes the incomplete assistant output");
+  eq(s.items.some((entry) => entry.kind === "tool" && entry.id === "partial"), false, "stream recovery removes the partial tool card");
+  eq(s.items.some((entry) => entry.kind === "tool" && entry.id === "complete"), true, "stream recovery keeps completed tool evidence");
+  eq(s.items.some((entry) => entry.kind === "notice" && entry.text.includes("正在重新生成")), true, "stream recovery keeps one visible retry status");
+
+  s = ev(s, { kind: "notice", code: "stream_recovery", level: "warn" } as WireEvent);
+  eq(s.items.filter((entry) => entry.kind === "notice").length, 1, "silent discard does not create an empty notice card");
+}
+
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);

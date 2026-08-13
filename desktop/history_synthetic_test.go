@@ -24,3 +24,38 @@ func TestHistoryMessagesHideCalculationGateRetry(t *testing.T) {
 		}
 	}
 }
+
+func TestHistoryMessagesHideDiscardedLocalOnlyStreamOutput(t *testing.T) {
+	messages := []provider.Message{
+		{Role: provider.RoleUser, Content: "修复问题"},
+		{
+			Role: provider.RoleTool, ToolCallID: provider.LocalOnlyToolID, Name: provider.LocalOnlyToolName,
+			Content: "异常重复输出", LocalOnly: true,
+			InterruptedTurn: &provider.InterruptedTurnRecovery{DroppedPartialText: true},
+		},
+		{Role: provider.RoleAssistant, Content: "恢复后的完整回答"},
+		{
+			Role: provider.RoleTool, ToolCallID: provider.LocalOnlyToolID, Name: provider.LocalOnlyToolName,
+			Content: "用户主动取消时保留的局部输出", LocalOnly: true,
+			InterruptedTurn: &provider.InterruptedTurnRecovery{Pending: true},
+		},
+		{
+			Role: provider.RoleTool, ToolCallID: provider.LocalOnlyToolID, Name: provider.LocalOnlyToolName,
+			Content: "第二次异常重复输出", LocalOnly: true,
+			InterruptedTurn: &provider.InterruptedTurnRecovery{Pending: true, DroppedPartialText: true},
+		},
+	}
+
+	history := historyMessages(messages, func(content string) string { return content })
+	if len(history) != 3 {
+		t.Fatalf("history messages = %d, want user, recovered answer, and pending local display: %+v", len(history), history)
+	}
+	for _, message := range history {
+		if message.Content == "异常重复输出" || message.Content == "第二次异常重复输出" {
+			t.Fatalf("discarded stream output leaked into history: %+v", history)
+		}
+	}
+	if history[2].Role != string(provider.RoleTool) || history[2].ToolCallID != provider.LocalOnlyToolID {
+		t.Fatalf("pending local display record was unexpectedly hidden: %+v", history)
+	}
+}

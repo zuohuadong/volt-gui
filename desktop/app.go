@@ -4862,6 +4862,9 @@ func historyMessagesWithPlannerDisplaysAndLookups(
 	out := make([]HistoryMessage, 0, len(msgs))
 	plannerByUserHash := plannerTurnsByUserHash(plannerTurns)
 	for index, m := range msgs {
+		if hiddenLocalOnlyStreamOutput(m) {
+			continue
+		}
 		content := m.Content
 		var checkpointTurn *int
 		if m.Role == provider.RoleUser {
@@ -5074,12 +5077,19 @@ func historyToolCall(tc provider.ToolCall, args string, result provider.Message)
 func historyToolResultsByID(msgs []provider.Message) map[string]provider.Message {
 	out := map[string]provider.Message{}
 	for _, msg := range msgs {
-		if msg.Role != provider.RoleTool || msg.ToolCallID == "" {
+		if msg.Role != provider.RoleTool || msg.ToolCallID == "" || hiddenLocalOnlyStreamOutput(msg) {
 			continue
 		}
 		out[msg.ToolCallID] = msg
 	}
 	return out
+}
+
+func hiddenLocalOnlyStreamOutput(msg provider.Message) bool {
+	if !msg.LocalOnly || msg.InterruptedTurn == nil {
+		return false
+	}
+	return msg.InterruptedTurn.DroppedPartialText || msg.InterruptedTurn.DroppedPartialReasoning
 }
 
 func historyToolResultContent(content string, canArchive bool) (display string, archived bool, errPreview string) {

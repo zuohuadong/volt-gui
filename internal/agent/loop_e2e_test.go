@@ -299,32 +299,71 @@ func TestRunGenericStreamErrorPersistsLocalDisplayAndInjectsBoundedRecovery(t *t
 	}
 }
 
-func TestRunDoesNotAutomaticallyReplayDegenerateStream(t *testing.T) {
+func TestRunRecoversDegenerateStreamOnceWithoutLeakingPartialOutput(t *testing.T) {
 	degeneration := &provider.StreamDegenerationError{
-		Provider: "gateway", Model: "glm-5.2/glm-5.2", Signal: "repeated_cjk_rune", Count: 32,
+		Provider: "gateway", Model: "any-model", Signal: "repeated_cjk_rune", Count: 32,
 	}
 	mp := testutil.NewMock("m",
 		testutil.Turn{Text: "正常开头", ChunkError: degeneration},
-		testutil.Turn{Text: "must not be requested automatically"},
+		testutil.Turn{Text: "恢复后的完整回答"},
 	)
 	sink := &recordSink{}
 	session := NewSession("system")
 	a := New(mp, echoRegistry(), session, Options{}, sink)
+
+	if err := a.Run(context.Background(), "修复项目计划生成代码"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := mp.CallCount(); got != 2 {
+		t.Fatalf("provider calls = %d, want 2", got)
+	}
+	retries := sink.kinds(event.Retrying)
+	if len(retries) != 1 || retries[0].RetryAttempt != 1 || retries[0].RetryMax != maxStreamDegenerationRecoveries {
+		t.Fatalf("retry events = %+v, want one degeneration recovery", retries)
+	}
+	notices := sink.kinds(event.Notice)
+	if len(notices) != 1 || notices[0].Code != event.NoticeCodeStreamRecovery || notices[0].Text != "检测到模型输出异常，正在重新生成。" {
+		t.Fatalf("recovery notices = %+v, want one visible stream-recovery notice", notices)
+	}
+	for _, message := range mp.Requests()[1].Messages {
+		if message.LocalOnly || strings.Contains(message.Content, "正常开头") || strings.Contains(message.ReasoningContent, "正常开头") {
+			t.Fatalf("partial output leaked into recovery request: %+v", mp.Requests()[1].Messages)
+		}
+	}
+	var interrupted provider.Message
+	for _, message := range session.Snapshot() {
+		if message.LocalOnly {
+			interrupted = message
+		}
+	}
+	if !interrupted.LocalOnly || interrupted.InterruptedTurn == nil || interrupted.InterruptedTurn.Pending || !interrupted.InterruptedTurn.DroppedPartialText {
+		t.Fatalf("degenerate output was not retained as consumed local-only recovery: %+v", interrupted)
+	}
+}
+
+func TestRunStopsAfterSecondDegenerateStream(t *testing.T) {
+	degeneration := &provider.StreamDegenerationError{Provider: "gateway", Model: "any-model", Signal: "repeated_cjk_rune", Count: 32}
+	mp := testutil.NewMock("m",
+		testutil.Turn{Text: "第一次异常", ChunkError: degeneration},
+		testutil.Turn{Text: "第二次异常", ChunkError: degeneration},
+	)
+	sink := &recordSink{}
+	a := New(mp, echoRegistry(), NewSession("system"), Options{}, sink)
 
 	err := a.Run(context.Background(), "修复项目计划生成代码")
 	var safetyErr *ResponseSafetyError
 	if !errors.As(err, &safetyErr) || !errors.Is(err, degeneration) {
 		t.Fatalf("Run error = %T %v, want wrapped ResponseSafetyError", err, err)
 	}
-	if got := mp.CallCount(); got != 1 {
-		t.Fatalf("provider calls = %d, want 1 without transport recovery", got)
+	if got := mp.CallCount(); got != 2 {
+		t.Fatalf("provider calls = %d, want exactly 2", got)
 	}
-	if len(sink.kinds(event.Retrying)) != 0 {
-		t.Fatalf("degeneration emitted transport retry: %+v", sink.kinds(event.Retrying))
+	if len(sink.kinds(event.Retrying)) != 1 {
+		t.Fatalf("retry events = %+v, want one recovery", sink.kinds(event.Retrying))
 	}
-	last := session.Snapshot()[len(session.Snapshot())-1]
-	if !last.LocalOnly || last.InterruptedTurn == nil || !last.InterruptedTurn.Pending {
-		t.Fatalf("degenerate output was not retained outside model context: %+v", last)
+	notices := sink.kinds(event.Notice)
+	if len(notices) != 2 || notices[0].Code != event.NoticeCodeStreamRecovery || notices[1].Code != event.NoticeCodeStreamRecovery || notices[1].Text != "" {
+		t.Fatalf("recovery notices = %+v, want visible recovery then silent partial-output discard", notices)
 	}
 }
 

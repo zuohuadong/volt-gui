@@ -14,6 +14,7 @@ import "voltui/internal/event"
 type wireEvent struct {
 	Kind          string             `json:"kind"`
 	Text          string             `json:"text,omitempty"`
+	Code          string             `json:"code,omitempty"`
 	Reasoning     string             `json:"reasoning,omitempty"`
 	Level         string             `json:"level,omitempty"`
 	Tool          *wireTool          `json:"tool,omitempty"`
@@ -155,6 +156,7 @@ func toWire(e event.Event) wireEvent {
 	w := wireEvent{Kind: kindNames[e.Kind], Text: e.Text, Reasoning: e.Reasoning}
 	switch e.Kind {
 	case event.Notice:
+		w.Code = e.Code
 		if e.Level == event.LevelWarn {
 			w.Level = "warn"
 		} else {

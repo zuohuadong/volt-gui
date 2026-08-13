@@ -639,7 +639,6 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	if reasoningTimeout <= 0 {
 		reasoningTimeout = reasoningOnlyTimeLimit
 	}
-	guardEnabled := modelNeedsStreamDegenerationGuard(c.model)
 	done := make(chan struct{})
 	defer close(done)
 	activity := make(chan struct{}, 1)
@@ -723,9 +722,6 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 		}
 	}
 	observeReasoning := func(delta string) error {
-		if !guardEnabled {
-			return nil
-		}
 		if reasoningStartedAt.IsZero() {
 			reasoningStartedAt = time.Now()
 			select {
@@ -744,14 +740,11 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	}
 	observeText := func(delta string) error {
 		markValidOutput()
-		if guardEnabled {
-			if signal, count, degenerated := textGuard.observe(delta); degenerated {
-				return streamDegenerationError(streamContext, signal, count)
-			}
+		if signal, count, degenerated := textGuard.observe(delta); degenerated {
+			return streamDegenerationError(streamContext, signal, count)
 		}
 		return nil
 	}
-
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
@@ -881,7 +874,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	if stalled.Load() {
 		return emitted, fmt.Errorf("%s: stream stalled — no data for %s, connection likely dropped", c.name, idleTimeout)
 	}
-	if guardEnabled && reasoningTimedOut.Load() && !validOutputObserved.Load() {
+	if reasoningTimedOut.Load() && !validOutputObserved.Load() {
 		return emitted, &provider.ReasoningLimitError{
 			Model: streamContext.Model, RequestID: streamContext.RequestID,
 			Bytes: reasoningBytes, Duration: time.Since(reasoningStartedAt), Limit: "duration",

@@ -48,6 +48,7 @@ const maxFinalReadinessBlocksWithProgress = 6
 const maxCalculationBlocks = 3
 const maxEmptyFinalBlocks = 3
 const maxStreamRecoveries = 3
+const maxStreamDegenerationRecoveries = 1
 const maxDocumentQualityRetries = 1
 const maxExecutorHandoffNudges = 1
 const memoryCompilerInjectionMax = 5
@@ -1545,6 +1546,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	handoffNudges := 0
 	usedAnyTool := false
 	streamRecoveries := 0
+	streamDegenerationRecoveries := 0
 	documentQualityRetries := 0
 	providerStreamStarted := false
 	graceRound := false
@@ -1586,17 +1588,40 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			displayText, displayReasoning := safeInterruptedDisplay(completionPolicy, text, reasoning)
 			droppedText, droppedReasoning := interruptedOutputDropped(completionPolicy, text, reasoning)
 			if provider.IsStreamDegeneration(err) {
+				if streamDegenerationRecoveries < maxStreamDegenerationRecoveries {
+					streamDegenerationRecoveries++
+					a.recordInterruptedDisplay(interruptedDisplayRecord{
+						text: displayText, reasoning: displayReasoning, calls: partialCalls, pending: false,
+						workDurationMs:   workDurationMs(),
+						droppedText:      strings.TrimSpace(text) != "" || droppedText,
+						droppedReasoning: strings.TrimSpace(reasoning) != "" || droppedReasoning,
+					})
+					a.session.Add(provider.Message{
+						Role:    provider.RoleUser,
+						Content: a.withTurnPreferences(streamDegenerationRecoveryMessage(partialToolStarted)),
+					})
+					a.sink.Emit(event.Event{
+						Kind:  event.Notice,
+						Level: event.LevelInfo,
+						Code:  event.NoticeCodeStreamRecovery,
+						Text:  "检测到模型输出异常，正在重新生成。",
+					})
+					a.sink.Emit(event.Event{Kind: event.Retrying, RetryAttempt: streamDegenerationRecoveries, RetryMax: maxStreamDegenerationRecoveries})
+					step--
+					continue
+				}
 				a.recordInterruptedDisplay(interruptedDisplayRecord{
 					text: displayText, reasoning: displayReasoning, calls: partialCalls, pending: true,
-					workDurationMs: workDurationMs(), droppedText: droppedText, droppedReasoning: droppedReasoning,
+					workDurationMs:   workDurationMs(),
+					droppedText:      strings.TrimSpace(text) != "" || droppedText,
+					droppedReasoning: strings.TrimSpace(reasoning) != "" || droppedReasoning,
 				})
 				a.sink.Emit(event.Event{
-					Kind:   event.Notice,
-					Level:  event.LevelWarn,
-					Text:   "检测到模型输出异常重复，已停止本次生成以避免继续污染内容。",
-					Detail: err.Error(),
+					Kind:  event.Notice,
+					Level: event.LevelWarn,
+					Code:  event.NoticeCodeStreamRecovery,
 				})
-				return &ResponseSafetyError{Reason: "模型输出异常重复", Detail: err.Error(), Cause: err}
+				return &ResponseSafetyError{Reason: "模型输出异常，自动恢复后仍失败", Detail: err.Error(), Cause: err}
 			}
 			if provider.IsReasoningLimit(err) {
 				a.recordInterruptedDisplay(interruptedDisplayRecord{
@@ -2771,6 +2796,13 @@ func streamRecoveryMessage(hasPartialText, hadPartialTool bool) string {
 	default:
 		return "The previous assistant response was interrupted during streaming before visible answer text was completed. Continue the same task now and provide the next useful response."
 	}
+}
+
+func streamDegenerationRecoveryMessage(hadPartialTool bool) string {
+	if hadPartialTool {
+		return "The previous assistant response was stopped after abnormal repetition while a tool call was streaming. Start the same task over with a fresh complete tool call if one is needed. Do not reuse partial tool-call arguments or rely on any partial response, which was excluded from model context."
+	}
+	return "The previous assistant response was stopped after abnormal repetition. Answer the same task again from the beginning with one concise, complete response. Do not repeat characters, short phrases, or internal markers, and do not rely on the partial response, which was excluded from model context."
 }
 
 // stream runs one completion, emitting reasoning and text deltas as typed

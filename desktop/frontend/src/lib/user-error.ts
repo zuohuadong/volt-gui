@@ -4,6 +4,8 @@ const AUTH_FAILURE_PATTERN = /(?:authentication failed|authorization failed|auth
 const CONTEXT_LIMIT_PATTERN = /(?:context.{0,32}(?:limit|length|window|exceed|too long)|maximum context|prompt.{0,20}too long|token limit|max(?:imum)?[_ -]?tokens?[^\n]{0,48}\b0\b|上下文.{0,12}(?:限制|超出|已满))/i;
 const TOOL_ARGUMENT_PATTERN = /(?:(?:tool|write_file|arguments?|parameters?).{0,48}(?:json|parse|invalid|unexpected end)|invalid character.{0,32}json|unexpected end of json)/i;
 const NETWORK_PATTERN = /(?:timed? out|timeout|connection (?:failed|refused|reset)|network error|no such host|temporary failure)/i;
+const OUTPUT_SAFETY_PATTERN = /(?:response stopped by the client safety guard|模型输出异常重复|推理输出超过客户端安全上限|模型长时间只输出推理内容)/i;
+const DOCUMENT_QUALITY_PATTERN = /(?:document generation stopped because the model could not preserve|document quality check failed|文档未通过文本一致性检查|文档生成.*(?:一致性|质量).*(?:失败|停止))/i;
 
 const FALLBACK_USER_ERROR = "操作失败，请稍后重试；若问题持续，请查看任务日志。";
 
@@ -51,6 +53,8 @@ export function formatUserError(error: unknown): string {
   if (/agent profile "[^"]+" model is unavailable because provider "[^"]+" is not added/i.test(detail) || detail.startsWith("Agent 依赖的模型渠道尚未添加")) return "Agent 依赖的模型渠道尚未添加，请前往模型设置。";
   if (/agent profile base model "[^"]+" is unavailable/i.test(detail) || detail.startsWith("Agent 基础模型当前不可用")) return "Agent 基础模型当前不可用，请前往模型设置。";
   if (TOOL_ARGUMENT_PATTERN.test(detail) || detail.startsWith("工具参数不完整，")) return "工具参数不完整，本次调用已停止，请重试；若仍失败，请缩短要写入的内容。";
+  if (OUTPUT_SAFETY_PATTERN.test(detail)) return "模型输出异常，已停止展示不完整内容；请重试，或切换模型后再试。";
+  if (DOCUMENT_QUALITY_PATTERN.test(detail)) return "文档内容未通过一致性检查，异常草稿未保存；请重试，或减少模板/上下文后再试。";
   if (/turn reached the configured protection limit/i.test(detail)) return "本次任务已达到运行保护上限并自动停止；已完成结果已保留，请发送“继续当前任务”以完成交付。";
   if (isModelConnectionError(detail)) return "模型服务连接失败或响应超时，请检查网络和渠道状态后重试。";
   if (/(?:turn already running|上一轮任务仍在运行)/i.test(detail)) return "上一轮任务仍在运行，请等待完成或停止后重试。";

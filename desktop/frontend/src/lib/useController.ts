@@ -1016,8 +1016,11 @@ function applyEvent(s: State, e: WireEvent): State {
       // arguments, so drop the live estimate rather than double-count it.
       return { ...s, usage, context: { ...s.context, used, sessionTokens }, turnTokens, turnTotalTokens, turnCost, turnArgChars: 0, sessionTokens, sessionCost, sessionCurrency, usageSeq: s.usageSeq + 1 };
     }
-    case "notice":
-      return appendNoticeToState(s, e.level ?? "info", e.text ?? "", e.detail, e.code);
+    case "notice": {
+      const next = e.code === "stream_recovery" ? discardIncompleteStreamOutput(s) : s;
+      if (!e.text?.trim()) return next;
+      return appendNoticeToState(next, e.level ?? "info", e.text, e.detail, e.code);
+    }
     case "phase":
       return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "phase", id: `p${s.seq}`, text: e.text ?? "" }] };
     case "compaction_started":
@@ -1707,6 +1710,19 @@ function appendNoticeItem(items: Item[], seq: number, id: string, level: "info" 
 function appendNoticeToState(s: State, level: "info" | "warn", text: string, detail?: string, code?: string): State {
   const next = appendNoticeItem(s.items, s.seq, `n${s.seq}`, level, text, detail, code);
   return { ...s, running: s.turnActive ? s.running : false, seq: next.seq, items: next.items };
+}
+
+function discardIncompleteStreamOutput(s: State): State {
+  return {
+    ...s,
+    items: s.items.filter((entry) =>
+      !(entry.kind === "assistant" && entry.streaming) &&
+      !(entry.kind === "tool" && entry.status === "running"),
+    ),
+    currentAssistant: undefined,
+    live: undefined,
+    turnArgChars: 0,
+  };
 }
 
 function localizedSessionAction(action: string): string {

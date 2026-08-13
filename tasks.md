@@ -73,6 +73,20 @@
 | ANYONG-RELEASE-20260713 | local | aizhuliren/volt/anyong-agent | user-request | 提交 push 并发布 upstream Node 26 同步新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/volt/anyong-agent/-/releases/download/desktop-v0.9.1/latest.json |
 | ANYONG-REVIEW-PR7-20260714 | cnb | aizhuliren/volt/anyong-agent | https://cnb.cool/aizhuliren/volt/anyong-agent/-/issues/6 | 审查并合并 Linux runner prerequisites ZIP 修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | fix/desktop-build-linux-prerequisites-zip | https://cnb.cool/aizhuliren/volt/anyong-agent/-/pull/7 |
 | ANYONG-PREREQUISITES-RELEASE-20260714 | cnb | aizhuliren/volt/anyong-agent | user-request | 将 Windows prerequisites 解耦为独立版本与 Release | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/volt/anyong-agent/-/releases/tag/prerequisites-v1.0.0 |
+| ANYONG-STREAM-RECOVERY-20260813 | cnb | aizhuliren/volt/anyong-agent | user-screenshot | 修复 Windows 桌面端重复输出保护直接失败 | high | medium | done | codex | gpt-5.6 | - | review-medium | main | - |
+
+### ANYONG-STREAM-RECOVERY-20260813 Task Contract
+
+- 目标：修复 Windows 桌面端在模型流输出触发重复保护时直接终止用户请求的问题：以通用、有限的一次恢复替代首次失败，并确保被判定为异常的流片段不会进入后续模型上下文。
+- 非目标：不按 issue、提示词、请求 ID 或模型名称特判；不禁用 UTF-8 或重复保护；不改模型权重、网关配置、凭据、Windows 打包流程或 CNB 发布策略。
+- 验收标准：OpenAI-compatible 流对所有模型执行相同重复检测；首次重复检测后自动重试一次且不把局部文本/推理/工具参数回传；第二次重复检测仍安全终止；重复窗口内的异常尾部不显示；Go 与前端提示回归测试通过。
+- orchestration.mode：`managed`（风险 medium）。唯一 writer 为 orchestrator；完成实现后派一名 isolated、只读 verifier。共享范围仅限本 Contract、候选 diff、`internal/provider/openai`、`internal/agent`、`desktop/frontend/src/lib` 和测试输出；不传递凭据或原始模型输出。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`go-service-development`、`clean-code-guard`；沿用 Go/Wails 现有模块与 Conventional Commits。
+- 影响范围：`internal/provider/openai/stream_degeneration.go`、`internal/provider/openai/openai.go`、`internal/agent/agent.go`、相关 Go 测试，以及必要的 `desktop/frontend/src/lib/user-error.*` 测试；不新增依赖。
+- 风险与回滚：流式恢复会影响用户可见响应时序；仅保留固定大小确认窗口并且至多重试一次。若发现回归，以普通 follow-up `fix:` 回滚该恢复路径，不重写历史或 tag。
+- 验证计划：先跑定向 red/green，再执行 `gofmt`、`go test ./internal/agent ./internal/provider/openai -count=1`、`go test ./... -count=1`、`go vet ./...`、前端 unit/check/build 与 `git diff --check`；独立 verifier 复核无模型名/请求特判、隔离语义和测试证据。
+- interruption_recovery：初始 verifier `.mailbox/011-stream-recovery-verifier.md` 与重派 `.mailbox/012-stream-recovery-verifier-rerun.md` 均因运行时超时而无有效结论；已按恢复策略使用仍在当前会话的 isolated verifier 完成只读复核，`.mailbox/013-stream-recovery-native-verifier.md` 为 PASS。稳定证据为本 Contract、候选 diff、主进程确定性测试输出与该独立报告。
+- completion_evidence：根模块 `go test ./... -count=1`、`go vet ./...` 通过；桌面相关定向 Go test/vet 通过；前端 unit 33 files/174 tests、`svelte-check` 0 errors、Vite build 通过；Windows amd64 的 update-helper/windows-resource/cnbrelease/sign 交叉编译通过；`git diff --check` 通过。独立 verifier `.mailbox/013-stream-recovery-native-verifier.md` PASS。`cd desktop && go test ./...` 仍有 7 个现存打包/签名契约失败（旧 VoltUI 名称、已移除 workflow 与旧 portable fixture），四个相关测试文件和被断言的 release 脚本在本任务基线 `0a63ca806` 中均未改动，故不归因于本次候选 diff。
 
 ### ANYONG-PREREQUISITES-RELEASE-20260714 Task Contract
 

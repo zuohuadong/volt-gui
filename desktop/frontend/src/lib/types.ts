@@ -1500,6 +1500,7 @@ export interface WireEvent {
   kind: WireEventKind;
   text?: string;
   detail?: string;
+  code?: string;
   reasoning?: string;
   memoryCitations?: MemoryCitation[];
   memoryCompiler?: MemoryCompilerStats;

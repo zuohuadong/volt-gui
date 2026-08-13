@@ -20,11 +20,6 @@ type streamDegenerationGuard struct {
 	observedRunes int
 }
 
-func modelNeedsStreamDegenerationGuard(model string) bool {
-	model = strings.ToLower(strings.TrimSpace(model))
-	return strings.Contains(model, "glm-5.2") || strings.Contains(model, "step-3.7-flash")
-}
-
 func (g *streamDegenerationGuard) observe(delta string) (string, int, bool) {
 	for _, currentRune := range []rune(delta) {
 		g.observeFence(currentRune)

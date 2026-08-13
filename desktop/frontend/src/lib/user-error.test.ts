@@ -22,7 +22,7 @@ describe("user-facing errors", () => {
 
   test("maps output safety and document quality failures to recovery guidance", () => {
     expect(formatUserError("response stopped by the client safety guard: 模型输出异常重复"))
-      .toBe("模型输出异常，已停止展示不完整内容；请重试，或切换模型后再试。");
+      .toBe("模型输出异常，已自动重试一次仍未完成；请重试，或切换模型后再试。");
     expect(formatUserError("document generation stopped because the model could not preserve the supplied text after one retry"))
       .toBe("文档内容未通过一致性检查，异常草稿未保存；请重试，或减少模板/上下文后再试。");
     expect(formatUserError("document quality check failed: empty=0 encoding=0 repetition=1"))

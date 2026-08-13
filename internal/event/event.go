@@ -313,6 +313,7 @@ const (
 	NoticeCodeLoopGuard       = "loop_guard"
 	NoticeCodeWorkspaceLease  = "workspace_lease"
 	NoticeCodeCancelledTurn   = "cancelled_turn_display"
+	NoticeCodeStreamRecovery  = "stream_recovery"
 )
 
 // BrowserPrompt carries metadata for a browser credential/verification

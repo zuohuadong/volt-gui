@@ -36,6 +36,20 @@ func TestToWireNoticeInfo(t *testing.T) {
 	}
 }
 
+func TestToWireNoticeCarriesCode(t *testing.T) {
+	w := toWire(event.Event{Kind: event.Notice, Level: event.LevelInfo, Code: event.NoticeCodeStreamRecovery})
+	if w.Code != event.NoticeCodeStreamRecovery {
+		t.Fatalf("notice code = %q, want %q", w.Code, event.NoticeCodeStreamRecovery)
+	}
+	b, err := json.Marshal(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"code":"stream_recovery"`) {
+		t.Fatalf("notice JSON = %s, want stream recovery code", b)
+	}
+}
+
 func TestToWireNoticeWarn(t *testing.T) {
 	e := event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "warn"}
 	w := toWire(e)

@@ -53,7 +53,7 @@ export function formatUserError(error: unknown): string {
   if (/agent profile "[^"]+" model is unavailable because provider "[^"]+" is not added/i.test(detail) || detail.startsWith("Agent 依赖的模型渠道尚未添加")) return "Agent 依赖的模型渠道尚未添加，请前往模型设置。";
   if (/agent profile base model "[^"]+" is unavailable/i.test(detail) || detail.startsWith("Agent 基础模型当前不可用")) return "Agent 基础模型当前不可用，请前往模型设置。";
   if (TOOL_ARGUMENT_PATTERN.test(detail) || detail.startsWith("工具参数不完整，")) return "工具参数不完整，本次调用已停止，请重试；若仍失败，请缩短要写入的内容。";
-  if (OUTPUT_SAFETY_PATTERN.test(detail)) return "模型输出异常，已停止展示不完整内容；请重试，或切换模型后再试。";
+  if (OUTPUT_SAFETY_PATTERN.test(detail)) return "模型输出异常，已自动重试一次仍未完成；请重试，或切换模型后再试。";
   if (DOCUMENT_QUALITY_PATTERN.test(detail)) return "文档内容未通过一致性检查，异常草稿未保存；请重试，或减少模板/上下文后再试。";
   if (/turn reached the configured protection limit/i.test(detail)) return "本次任务已达到运行保护上限并自动停止；已完成结果已保留，请发送“继续当前任务”以完成交付。";
   if (isModelConnectionError(detail)) return "模型服务连接失败或响应超时，请检查网络和渠道状态后重试。";

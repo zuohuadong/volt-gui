@@ -3384,6 +3384,14 @@
     scrollConversationToBottom("auto");
   }
 
+  function discardIncompleteStreamOutput() {
+    pendingTextBuffer = "";
+    pendingTextTabId = "";
+    transcript = transcript.filter((item) => !(item.pending && ["assistant", "reasoning", "tool"].includes(item.role)));
+    saveActiveSidebarConversationTranscript();
+    scrollConversationToBottom("auto");
+  }
+
   function ensurePendingAssistant() {
     const existing = transcript.some((item) => item.role === "assistant" && item.pending && !item.body.trim());
     if (existing) return;
@@ -7389,6 +7397,9 @@ function openGovernanceCenter() {
       });
     }
     if (!shouldDisplayWireEvent(event)) return;
+    if (event.kind === "notice" && event.code === "stream_recovery") {
+      discardIncompleteStreamOutput();
+    }
     if (event.kind === "turn_started") {
       if (event.tabId) {
         tabs = tabs.map((tab) => (tab.id === event.tabId ? { ...tab, running: true } : tab));

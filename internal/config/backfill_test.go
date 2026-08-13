@@ -945,8 +945,12 @@ func TestApplyUserConfigUpgradesOnStartupMigratesLegacyBundledXiguStep(t *testin
 		"bot": got.Bot.Model, "qq": got.Bot.QQ.Model, "route": got.Bot.Routes[0].Model,
 		"connection": got.Bot.Connections[0].Model,
 	} {
-		if ref != "vlm" {
-			t.Errorf("%s model = %q, want vlm", field, ref)
+		want := "vlm"
+		if field == "default" {
+			want = "xllm"
+		}
+		if ref != want {
+			t.Errorf("%s model = %q, want %s", field, ref, want)
 		}
 	}
 	if got.Agent.SubagentModels["custom"] != "custom/model" {
@@ -996,11 +1000,82 @@ func TestApplyUserConfigUpgradesOnStartupDeduplicatesLegacyStep(t *testing.T) {
 	if vlmCount != 1 {
 		t.Fatalf("bundled vlm provider count = %d, want 1", vlmCount)
 	}
-	if got.DefaultModel != "vlm" {
-		t.Fatalf("default model = %q, want vlm", got.DefaultModel)
+	if got.DefaultModel != "xllm" {
+		t.Fatalf("default model = %q, want xllm", got.DefaultModel)
 	}
 	if want := []string{"vlm", "glm-5.2", "custom"}; !reflect.DeepEqual(got.Desktop.ProviderAccess, want) {
 		t.Fatalf("provider_access = %+v, want %+v", got.Desktop.ProviderAccess, want)
+	}
+}
+
+func TestApplyUserConfigUpgradesOnStartupMovesBundledVLMDefaultToText(t *testing.T) {
+	const baseURL = "http://gateway.internal.test:9010/v1"
+	useBundledXiguGateway(t, baseURL)
+
+	path := UserConfigPath()
+	cfg := Default()
+	cfg.ConfigVersion = 6
+	cfg.DefaultModel = "vlm"
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	changed, err := ApplyUserConfigUpgradesOnStartup(path)
+	if err != nil || !changed {
+		t.Fatalf("v6 default migration = changed:%v err:%v, want changed", changed, err)
+	}
+	got := LoadForEditWithoutCredentials(path)
+	if got.ConfigVersion != 7 || got.DefaultModel != "xllm" {
+		t.Fatalf("migrated config = version:%d default:%q, want version 7 default xllm", got.ConfigVersion, got.DefaultModel)
+	}
+}
+
+func TestApplyUserConfigUpgradesOnStartupPreservesExplicitVLMDefaultAfterV7(t *testing.T) {
+	const baseURL = "http://gateway.internal.test:9010/v1"
+	useBundledXiguGateway(t, baseURL)
+
+	path := UserConfigPath()
+	cfg := Default()
+	cfg.DefaultModel = "vlm"
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	changed, err := ApplyUserConfigUpgradesOnStartup(path)
+	if err != nil || changed {
+		t.Fatalf("explicit v7 default = changed:%v err:%v, want no-op", changed, err)
+	}
+	if got := LoadForEditWithoutCredentials(path).DefaultModel; got != "vlm" {
+		t.Fatalf("explicit v7 default = %q, want vlm", got)
+	}
+}
+
+func TestApplyUserConfigUpgradesOnStartupPreservesCustomVLMDefaultBeforeV7(t *testing.T) {
+	const baseURL = "http://gateway.internal.test:9010/v1"
+	useBundledXiguGateway(t, baseURL)
+
+	path := UserConfigPath()
+	cfg := Default()
+	cfg.ConfigVersion = 6
+	cfg.DefaultModel = "vlm"
+	cfg.Providers = []ProviderEntry{
+		{Name: "xllm", Kind: "openai", BaseURL: baseURL, Model: "glm-5.2/glm-5.2", APIKeyEnv: "XIGU_API_KEY"},
+		{Name: "vlm", Kind: "openai", BaseURL: "https://custom.example/v1", Model: "custom-vision", APIKeyEnv: "CUSTOM_VLM_KEY", Vision: true},
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	changed, err := ApplyUserConfigUpgradesOnStartup(path)
+	if err != nil || !changed {
+		t.Fatalf("v6 custom default migration = changed:%v err:%v, want version-only upgrade", changed, err)
+	}
+	got := LoadForEditWithoutCredentials(path)
+	if got.ConfigVersion != 7 || got.DefaultModel != "vlm" {
+		t.Fatalf("migrated config = version:%d default:%q, want version 7 default vlm", got.ConfigVersion, got.DefaultModel)
+	}
+	if vlm, ok := got.Provider("vlm"); !ok || vlm.Model != "custom-vision" || vlm.BaseURL != "https://custom.example/v1" {
+		t.Fatalf("custom default vlm changed: %+v, ok=%v", vlm, ok)
 	}
 }
 
@@ -1069,8 +1144,8 @@ func TestApplyUserConfigUpgradesOnStartupMigratesLegacyStepPreservingCustomGLM(t
 	if vlm, ok := got.Provider("vlm"); !ok || vlm.Model != "step-3.7-flash/step-3.7-flash" {
 		t.Fatalf("vlm provider = %+v, ok=%v", vlm, ok)
 	}
-	if got.DefaultModel != "vlm" {
-		t.Fatalf("default model = %q, want vlm", got.DefaultModel)
+	if got.DefaultModel != "xllm" {
+		t.Fatalf("default model = %q, want xllm", got.DefaultModel)
 	}
 }
 

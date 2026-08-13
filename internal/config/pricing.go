@@ -139,6 +139,7 @@ const (
 	windowsBashSandboxDefaultConfigVersion = 4
 	retiredAutoPlanConfigVersion           = 5
 	bundledXiguCatalogConfigVersion        = 6
+	bundledXiguTextDefaultConfigVersion    = 7
 )
 
 // ApplyUserConfigUpgradesOnStartup applies one-time startup migrations. It
@@ -166,6 +167,10 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 	}
 	cfg := LoadForEdit(path)
 	changed := migrateLegacyBundledXiguRoutes(cfg)
+	if header.ConfigVersion < bundledXiguTextDefaultConfigVersion {
+		changed = migrateBundledXiguDefaultToText(cfg) || changed
+		changed = true
+	}
 	if header.ConfigVersion < bundledXiguCatalogConfigVersion {
 		changed = restoreBundledXiguCatalog(cfg) || changed
 		// Mark every pre-v6 config once so a later user removal remains authoritative.
@@ -306,6 +311,26 @@ func restoreBundledXiguCatalog(c *Config) bool {
 	displayNamesChanged := backfillBundledXiguDisplayNames(c, bundled)
 	providersAdded := appendMissingBundledXiguProviders(c, bundled)
 	return displayNamesChanged || providersAdded
+}
+
+func migrateBundledXiguDefaultToText(c *Config) bool {
+	if c == nil || strings.TrimSpace(c.DefaultModel) != "vlm" {
+		return false
+	}
+	_, bundled := bundledXiguProviderDefaults()
+	var bundledVLM *ProviderEntry
+	for i := range bundled {
+		if bundled[i].Name == "vlm" {
+			bundledVLM = &bundled[i]
+			break
+		}
+	}
+	configuredVLM, exists := c.Provider("vlm")
+	if bundledVLM == nil || !exists || !sameBundledXiguRoute(*configuredVLM, *bundledVLM) {
+		return false
+	}
+	c.DefaultModel = "xllm"
+	return true
 }
 
 func backfillBundledXiguDisplayNames(c *Config, bundled []ProviderEntry) bool {

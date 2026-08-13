@@ -45,6 +45,11 @@ import (
 // would race other streams' watchdogs.
 const defaultStreamIdleTimeout = 120 * time.Second
 
+const (
+	reasoningOnlyByteLimit = 256 * 1024
+	reasoningOnlyTimeLimit = 90 * time.Second
+)
+
 func init() {
 	provider.Register("openai", New)
 }
@@ -182,26 +187,27 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		return nil, fmt.Errorf("openai: network: %w", err)
 	}
 	return &client{
-		name:         name,
-		apiKey:       cfg.APIKey,
-		keyEnv:       keyEnv,
-		keySource:    keySource,
-		baseURL:      strings.TrimRight(cfg.BaseURL, "/"),
-		chatURL:      chatURL,
-		headers:      cleanCustomHeaders(headers),
-		extraBody:    cleanExtraBody(extraBody),
-		model:        cfg.Model,
-		deepseek:     deepseek,
-		minimax:      minimax,
-		zhipu:        zhipu,
-		longcat:      longcat,
-		mimo:         IsMiMo(cfg.BaseURL),
-		thinkingType: thinkingType,
-		vision:       vision,
-		visionDetail: visionDetail,
-		effort:       effort,
-		http:         httpClient,
-		idleTimeout:  defaultStreamIdleTimeout,
+		name:             name,
+		apiKey:           cfg.APIKey,
+		keyEnv:           keyEnv,
+		keySource:        keySource,
+		baseURL:          strings.TrimRight(cfg.BaseURL, "/"),
+		chatURL:          chatURL,
+		headers:          cleanCustomHeaders(headers),
+		extraBody:        cleanExtraBody(extraBody),
+		model:            cfg.Model,
+		deepseek:         deepseek,
+		minimax:          minimax,
+		zhipu:            zhipu,
+		longcat:          longcat,
+		mimo:             IsMiMo(cfg.BaseURL),
+		thinkingType:     thinkingType,
+		vision:           vision,
+		visionDetail:     visionDetail,
+		effort:           effort,
+		http:             httpClient,
+		idleTimeout:      defaultStreamIdleTimeout,
+		reasoningTimeout: reasoningOnlyTimeLimit,
 	}, nil
 }
 
@@ -216,27 +222,28 @@ func newHTTPClient(cfg provider.Config) (*http.Client, error) {
 }
 
 type client struct {
-	name         string
-	apiKey       string
-	keyEnv       string // api_key_env name, surfaced in auth errors
-	keySource    string // source of keyEnv, surfaced in auth errors
-	baseURL      string
-	chatURL      string
-	headers      map[string]string
-	extraBody    map[string]any
-	model        string
-	http         *http.Client
-	deepseek     bool
-	minimax      bool          // true for api.minimaxi.com — emits MiniMax-M3's thinking knob instead of reasoning_effort
-	zhipu        bool          // true for Zhipu GLM (bigmodel.cn / z.ai) — gates thinking via thinking.type, ignores reasoning_effort
-	longcat      bool          // true for LongCat — gates thinking via thinking.type, ignores reasoning_effort
-	mimo         bool          // true for MiMo — upgrades legacy tuple schemas to Draft 2020-12
-	thinkingType string        // explicit `thinking` config override (enabled|disabled); "" = no override
-	vision       bool          // model accepts image input — embed attached images as image_url parts
-	visionDetail string        // image_url detail hint (low|high); "" = auto/omit
-	effort       string        // reasoning_effort for OpenAI; thinking.type for MiniMax; "" = auto/provider default
-	idleTimeout  time.Duration // SSE stall watchdog window; defaultStreamIdleTimeout unless a test overrides
-	authed       atomic.Bool   // a request has succeeded — gate transient-401 retry
+	name             string
+	apiKey           string
+	keyEnv           string // api_key_env name, surfaced in auth errors
+	keySource        string // source of keyEnv, surfaced in auth errors
+	baseURL          string
+	chatURL          string
+	headers          map[string]string
+	extraBody        map[string]any
+	model            string
+	http             *http.Client
+	deepseek         bool
+	minimax          bool          // true for api.minimaxi.com — emits MiniMax-M3's thinking knob instead of reasoning_effort
+	zhipu            bool          // true for Zhipu GLM (bigmodel.cn / z.ai) — gates thinking via thinking.type, ignores reasoning_effort
+	longcat          bool          // true for LongCat — gates thinking via thinking.type, ignores reasoning_effort
+	mimo             bool          // true for MiMo — upgrades legacy tuple schemas to Draft 2020-12
+	thinkingType     string        // explicit `thinking` config override (enabled|disabled); "" = no override
+	vision           bool          // model accepts image input — embed attached images as image_url parts
+	visionDetail     string        // image_url detail hint (low|high); "" = auto/omit
+	effort           string        // reasoning_effort for OpenAI; thinking.type for MiniMax; "" = auto/provider default
+	idleTimeout      time.Duration // SSE stall watchdog window; defaultStreamIdleTimeout unless a test overrides
+	reasoningTimeout time.Duration // reasoning-only watchdog window; reasoningOnlyTimeLimit unless a test overrides
+	authed           atomic.Bool   // a request has succeeded — gate transient-401 retry
 }
 
 func (c *client) Name() string { return c.name }
@@ -418,6 +425,14 @@ func (c *client) streamWithReconnect(ctx context.Context, resp *http.Response, n
 	for attempt := 0; ; attempt++ {
 		emitted, err := c.readStream(ctx, resp, out)
 		if err == nil {
+			return
+		}
+		if provider.IsStreamDegeneration(err) {
+			sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkError, Err: err})
+			return
+		}
+		if provider.IsReasoningLimit(err) {
+			sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkError, Err: err})
 			return
 		}
 		if !provider.IsConnReset(err) {
@@ -620,13 +635,29 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	if idleTimeout <= 0 { // zero-value client (constructed without New)
 		idleTimeout = defaultStreamIdleTimeout
 	}
+	reasoningTimeout := c.reasoningTimeout
+	if reasoningTimeout <= 0 {
+		reasoningTimeout = reasoningOnlyTimeLimit
+	}
+	guardEnabled := modelNeedsStreamDegenerationGuard(c.model)
 	done := make(chan struct{})
 	defer close(done)
 	activity := make(chan struct{}, 1)
+	reasoningStarted := make(chan struct{}, 1)
+	validOutputStarted := make(chan struct{}, 1)
 	var stalled atomic.Bool
+	var reasoningTimedOut atomic.Bool
+	var validOutputObserved atomic.Bool
 	go func() {
 		idle := time.NewTimer(idleTimeout)
 		defer idle.Stop()
+		var reasoningTimer *time.Timer
+		var reasoningDeadline <-chan time.Time
+		defer func() {
+			if reasoningTimer != nil {
+				reasoningTimer.Stop()
+			}
+		}()
 		for {
 			select {
 			case <-ctx.Done():
@@ -644,6 +675,27 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 					}
 				}
 				idle.Reset(idleTimeout)
+			case <-reasoningStarted:
+				if reasoningTimer == nil {
+					reasoningTimer = time.NewTimer(reasoningTimeout)
+					reasoningDeadline = reasoningTimer.C
+				}
+			case <-validOutputStarted:
+				if reasoningTimer != nil && !reasoningTimer.Stop() {
+					select {
+					case <-reasoningTimer.C:
+					default:
+					}
+				}
+				reasoningDeadline = nil
+			case <-reasoningDeadline:
+				if validOutputObserved.Load() {
+					reasoningDeadline = nil
+					continue
+				}
+				reasoningTimedOut.Store(true)
+				resp.Body.Close()
+				return
 			case <-done:
 				return
 			}
@@ -657,12 +709,51 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	var lastFinishReason string
 	var sawDone bool
 	var think thinkSplitter
-
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	var textGuard, reasoningGuard streamDegenerationGuard
+	var reasoningStartedAt time.Time
+	var reasoningBytes int
 	streamContext := provider.StreamUTF8Context{
 		Provider: c.name, Model: c.model, Protocol: "openai", RequestID: provider.StreamRequestID(resp.Header),
 	}
+	markValidOutput := func() {
+		validOutputObserved.Store(true)
+		select {
+		case validOutputStarted <- struct{}{}:
+		default:
+		}
+	}
+	observeReasoning := func(delta string) error {
+		if !guardEnabled {
+			return nil
+		}
+		if reasoningStartedAt.IsZero() {
+			reasoningStartedAt = time.Now()
+			select {
+			case reasoningStarted <- struct{}{}:
+			default:
+			}
+		}
+		reasoningBytes += len(delta)
+		if err := reasoningOnlyLimitError(streamContext, reasoningStartedAt, reasoningBytes, validOutputObserved.Load()); err != nil {
+			return err
+		}
+		if signal, count, degenerated := reasoningGuard.observe(delta); degenerated {
+			return streamDegenerationError(streamContext, "reasoning_"+signal, count)
+		}
+		return nil
+	}
+	observeText := func(delta string) error {
+		markValidOutput()
+		if guardEnabled {
+			if signal, count, degenerated := textGuard.observe(delta); degenerated {
+				return streamDegenerationError(streamContext, signal, count)
+			}
+		}
+		return nil
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	lineNumber := 0
 	for scanner.Scan() {
@@ -715,6 +806,9 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 			reasoningDelta = delta.Reasoning
 		}
 		if reasoningDelta != "" {
+			if err := observeReasoning(reasoningDelta); err != nil {
+				return emitted, err
+			}
 			emitted = true
 			if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkReasoning, Text: reasoningDelta}) {
 				return emitted, ctx.Err()
@@ -723,12 +817,18 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 		if delta.Content != "" {
 			r, txt := think.push(delta.Content)
 			if r != "" {
+				if err := observeReasoning(r); err != nil {
+					return emitted, err
+				}
 				emitted = true
 				if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkReasoning, Text: r}) {
 					return emitted, ctx.Err()
 				}
 			}
 			if txt != "" {
+				if err := observeText(txt); err != nil {
+					return emitted, err
+				}
 				emitted = true
 				if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkText, Text: txt}) {
 					return emitted, ctx.Err()
@@ -736,6 +836,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 			}
 		}
 		for _, tc := range delta.ToolCalls {
+			markValidOutput()
 			cur, ok := acc[tc.Index]
 			if !ok {
 				cur = &provider.ToolCall{}
@@ -780,6 +881,12 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	if stalled.Load() {
 		return emitted, fmt.Errorf("%s: stream stalled — no data for %s, connection likely dropped", c.name, idleTimeout)
 	}
+	if guardEnabled && reasoningTimedOut.Load() && !validOutputObserved.Load() {
+		return emitted, &provider.ReasoningLimitError{
+			Model: streamContext.Model, RequestID: streamContext.RequestID,
+			Bytes: reasoningBytes, Duration: time.Since(reasoningStartedAt), Limit: "duration",
+		}
+	}
 	if err := scanner.Err(); err != nil {
 		return emitted, fmt.Errorf("%s: read stream: %w", c.name, err)
 	}
@@ -792,11 +899,17 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 
 	if r, txt := think.flush(); r != "" || txt != "" {
 		if r != "" {
+			if err := observeReasoning(r); err != nil {
+				return emitted, err
+			}
 			if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkReasoning, Text: r}) {
 				return emitted, ctx.Err()
 			}
 		}
 		if txt != "" {
+			if err := observeText(txt); err != nil {
+				return emitted, err
+			}
 			if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkText, Text: txt}) {
 				return emitted, ctx.Err()
 			}
@@ -820,6 +933,36 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 		return emitted, ctx.Err()
 	}
 	return emitted, nil
+}
+
+func streamDegenerationError(streamContext provider.StreamUTF8Context, signal string, count int) error {
+	return &provider.StreamDegenerationError{
+		Provider:  streamContext.Provider,
+		Model:     streamContext.Model,
+		RequestID: streamContext.RequestID,
+		Signal:    signal,
+		Count:     count,
+	}
+}
+
+func reasoningOnlyLimitError(streamContext provider.StreamUTF8Context, startedAt time.Time, reasoningBytes int, validOutputObserved bool) error {
+	if validOutputObserved || startedAt.IsZero() {
+		return nil
+	}
+	duration := time.Since(startedAt)
+	limit := ""
+	if reasoningBytes > reasoningOnlyByteLimit {
+		limit = "bytes"
+	} else if duration > reasoningOnlyTimeLimit {
+		limit = "duration"
+	}
+	if limit == "" {
+		return nil
+	}
+	return &provider.ReasoningLimitError{
+		Model: streamContext.Model, RequestID: streamContext.RequestID,
+		Bytes: reasoningBytes, Duration: duration, Limit: limit,
+	}
 }
 
 // normaliseUsage folds the two cache-hit shapes the OpenAI-compatible ecosystem

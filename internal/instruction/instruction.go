@@ -31,6 +31,24 @@ var calculationCueTerms = []string{
 
 var dateQuestionTerms = []string{"日期", "星期", "周几", "几号", "date", "day of week"}
 
+var documentCompositionTerms = []string{
+	"起草", "撰写", "编写", "草拟", "拟定", "写一份", "生成一份", "制定一份", "整理成", "输出一份",
+	"draft", "write a report", "write a plan", "compose", "prepare a report",
+}
+
+var documentRevisionTerms = []string{
+	"润色", "改写", "续写", "修改这份", "修改以上", "调整这份", "调整以上",
+	"rewrite", "revise this", "edit this report",
+}
+
+var explicitCalculationTerms = []string{
+	"计算", "算一下", "算出", "求值", "核算", "校验金额", "校验预算", "calculate", "compute", "work out", "verify the total",
+}
+
+var codeTaskTerms = []string{
+	"代码", "源码", "函数", "接口", "组件", "单元测试", "仓库", "脚本", "bug", "code", "function", "component", "repository", "shell", "python", "golang", "javascript", "typescript", "sql",
+}
+
 // WithCalculationPolicy appends the standing policy without duplicating it on
 // prompts that pass through more than one construction layer.
 func WithCalculationPolicy(prompt string) string {
@@ -58,7 +76,29 @@ func ClearlyRequiresCalculation(input string) bool {
 	if numericDateInTextPattern.MatchString(normalized) && containsAnyTerm(normalized, dateQuestionTerms) {
 		return false
 	}
+	if containsDocumentTerm(normalized) && !containsAnyTerm(normalized, explicitCalculationTerms) {
+		return false
+	}
 	return containsAnyTerm(normalized, calculationRequestTerms) && containsAnyTerm(normalized, calculationCueTerms)
+}
+
+// IsDocumentCompositionRequest reports explicit prose-document creation tasks.
+// It deliberately excludes generic mentions of reports or plans so diagnostics
+// about document code keep the full agent protocol.
+func IsDocumentCompositionRequest(input string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(input))
+	return containsDocumentTerm(normalized) && !containsAnyTerm(normalized, codeTaskTerms)
+}
+
+// IsDocumentRevisionRequest reports follow-ups that need the latest completed
+// document as source context rather than an isolated new-document request.
+func IsDocumentRevisionRequest(input string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(input))
+	return containsAnyTerm(normalized, documentRevisionTerms) && !containsAnyTerm(normalized, codeTaskTerms)
+}
+
+func containsDocumentTerm(normalized string) bool {
+	return containsAnyTerm(normalized, documentCompositionTerms) || containsAnyTerm(normalized, documentRevisionTerms)
 }
 
 func containsASCIIDigit(s string) bool {

@@ -33,6 +33,38 @@ type RecoveryPauseError struct {
 	Detail string
 }
 
+// ResponseSafetyError is a non-retryable client boundary for a model stream
+// that is producing unbounded reasoning or repeated output.
+type ResponseSafetyError struct {
+	Reason string
+	Detail string
+	Cause  error
+}
+
+func (e *ResponseSafetyError) Error() string {
+	if e == nil || strings.TrimSpace(e.Reason) == "" {
+		return "response stopped by the client safety guard"
+	}
+	return "response stopped by the client safety guard: " + e.Reason
+}
+
+func (e *ResponseSafetyError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+// DocumentQualityError reports that the one bounded rewrite still failed the
+// deterministic source-consistency checks. The rejected draft is not saved.
+type DocumentQualityError struct {
+	Detail string
+}
+
+func (e *DocumentQualityError) Error() string {
+	return "document generation stopped because the model could not preserve the supplied text after one retry"
+}
+
 func (e *RecoveryPauseError) Error() string {
 	if e == nil {
 		return "automatic retries paused"

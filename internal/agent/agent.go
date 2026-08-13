@@ -48,6 +48,7 @@ const maxFinalReadinessBlocksWithProgress = 6
 const maxCalculationBlocks = 3
 const maxEmptyFinalBlocks = 3
 const maxStreamRecoveries = 3
+const maxDocumentQualityRetries = 1
 const maxExecutorHandoffNudges = 1
 const memoryCompilerInjectionMax = 5
 const memoryCompilerInjectionCooldown = 30 * time.Second
@@ -274,6 +275,7 @@ type Agent struct {
 	prov        provider.Provider
 	tools       *tool.Registry
 	session     *Session
+	modelRef    string
 	sessMu      sync.Mutex // guards the session pointer for external Session()/SetSession
 	maxSteps    int
 	maxStepsKey string
@@ -1086,6 +1088,9 @@ func (a *Agent) CompactNow(ctx context.Context, instructions string) error {
 // Options configures an Agent.
 type Options struct {
 	MaxSteps int
+	// ModelRef identifies the selected provider/model route for bounded
+	// compatibility policies that cannot be inferred from Provider.Name alone.
+	ModelRef string
 	// MaxStepsKey names the explicit runtime control shown when the MaxSteps guard
 	// is hit. Empty defaults to the generic max_steps tool/runtime parameter.
 	MaxStepsKey string
@@ -1284,6 +1289,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		prov:                       prov,
 		tools:                      tools,
 		session:                    session,
+		modelRef:                   strings.TrimSpace(opts.ModelRef),
 		maxSteps:                   opts.MaxSteps,
 		maxStepsKey:                maxStepsKey,
 		temperature:                opts.Temperature,
@@ -1487,6 +1493,8 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	a.deliveryMutationExpected = deliveryTaskNeedsMutation(classifierInput) && registryHasWriterTools(a.tools)
 	calculationRequired := a.calculationToolRequired(classifierInput)
 	a.recoveryTaskSummary = boundedRecoveryTaskSummary(classifierInput)
+	images := userImages(ctx)
+	completionPolicy := a.completionPolicy(rawInput, images)
 	memoryCompilerInput := rawInput
 	if sourceInput, ok := MemoryCompilerSourceInputFromContext(ctx); ok {
 		memoryCompilerInput = sourceInput
@@ -1527,7 +1535,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	a.activeTurnCreatedAt.Store(userCreatedAt)
 	defer a.activeTurnCreatedAt.Store(0)
 	turnStartMessages := a.session.Snapshot()
-	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input, Images: userImages(ctx), CreatedAt: userCreatedAt})
+	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input, Images: images, CreatedAt: userCreatedAt})
 
 	finalReadinessBlocks := 0
 	calculationBlocks := 0
@@ -1537,6 +1545,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	handoffNudges := 0
 	usedAnyTool := false
 	streamRecoveries := 0
+	documentQualityRetries := 0
 	providerStreamStarted := false
 	graceRound := false
 	recoveryGraceRound := false
@@ -1565,18 +1574,49 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			return err
 		}
 		schemas := a.tools.Schemas()
-		prefixShape := a.capturePrefixShape(schemas)
+		prefixShape := completionPolicy.prefixShape(a, schemas)
 		prevPrefixShape := a.lastPrefixShape
 		if !a.haveLastPrefixShape {
 			prevPrefixShape = prefixShape
 		}
 
 		providerStreamStarted = true
-		text, reasoning, signature, calls, usage, interrupted, partialToolStarted, partialCalls, err := a.stream(ctx, step+1)
+		text, reasoning, signature, calls, usage, interrupted, partialToolStarted, partialCalls, err := a.stream(ctx, step+1, completionPolicy)
 		if err != nil {
+			displayText, displayReasoning := safeInterruptedDisplay(completionPolicy, text, reasoning)
+			droppedText, droppedReasoning := interruptedOutputDropped(completionPolicy, text, reasoning)
+			if provider.IsStreamDegeneration(err) {
+				a.recordInterruptedDisplay(interruptedDisplayRecord{
+					text: displayText, reasoning: displayReasoning, calls: partialCalls, pending: true,
+					workDurationMs: workDurationMs(), droppedText: droppedText, droppedReasoning: droppedReasoning,
+				})
+				a.sink.Emit(event.Event{
+					Kind:   event.Notice,
+					Level:  event.LevelWarn,
+					Text:   "检测到模型输出异常重复，已停止本次生成以避免继续污染内容。",
+					Detail: err.Error(),
+				})
+				return &ResponseSafetyError{Reason: "模型输出异常重复", Detail: err.Error(), Cause: err}
+			}
+			if provider.IsReasoningLimit(err) {
+				a.recordInterruptedDisplay(interruptedDisplayRecord{
+					text: displayText, reasoning: displayReasoning, calls: partialCalls, pending: true,
+					workDurationMs: workDurationMs(), droppedText: droppedText, droppedReasoning: droppedReasoning,
+				})
+				a.sink.Emit(event.Event{
+					Kind:   event.Notice,
+					Level:  event.LevelWarn,
+					Text:   "模型长时间只输出推理内容，已停止本次生成。",
+					Detail: err.Error(),
+				})
+				return &ResponseSafetyError{Reason: "推理输出超过客户端安全上限", Detail: err.Error(), Cause: err}
+			}
 			if interrupted && streamRecoveries < maxStreamRecoveries {
 				streamRecoveries++
-				a.recordInterruptedDisplay(text, reasoning, partialCalls, false, workDurationMs())
+				a.recordInterruptedDisplay(interruptedDisplayRecord{
+					text: displayText, reasoning: displayReasoning, calls: partialCalls, pending: false,
+					workDurationMs: workDurationMs(), droppedText: droppedText, droppedReasoning: droppedReasoning,
+				})
 				a.session.Add(provider.Message{
 					Role:    provider.RoleUser,
 					Content: a.withTurnPreferences(streamRecoveryMessage(hasVisibleFinalAnswer(text), partialToolStarted)),
@@ -1585,10 +1625,29 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 				step-- // recovery retries do not consume the tool-round maxSteps budget
 				continue
 			}
-			a.recordInterruptedDisplay(text, reasoning, partialCalls, true, workDurationMs())
+			a.recordInterruptedDisplay(interruptedDisplayRecord{
+				text: displayText, reasoning: displayReasoning, calls: partialCalls, pending: true,
+				workDurationMs: workDurationMs(), droppedText: droppedText, droppedReasoning: droppedReasoning,
+			})
 			return err
 		}
 		streamRecoveries = 0
+		if completionPolicy.bufferOutput && len(calls) == 0 {
+			issues := validateDocumentOutput(completionPolicy.documentSource, text)
+			if len(issues) > 0 {
+				if documentQualityRetries < maxDocumentQualityRetries {
+					documentQualityRetries++
+					completionPolicy.retryInstruction = documentQualityRetryMessage(issues)
+					a.sink.Emit(event.Event{Kind: event.Retrying, RetryAttempt: documentQualityRetries, RetryMax: maxDocumentQualityRetries})
+					step--
+					continue
+				}
+				detail := documentQualityDetail(issues)
+				a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "文档未通过文本一致性检查，已停止展示异常草稿。", Detail: detail})
+				return &DocumentQualityError{Detail: detail}
+			}
+			a.emitBufferedCompletion(text, reasoning)
+		}
 		cacheDiagnostics := CompareShape(prevPrefixShape, prefixShape, usage)
 		a.lastPrefixShape = prefixShape
 		a.haveLastPrefixShape = true
@@ -1770,7 +1829,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 		// If the context was cancelled during tool execution, return after storing
 		// the batch results so the session keeps paired tool-call history.
 		if ctx.Err() != nil {
-			a.recordInterruptedDisplay("", "", nil, true, workDurationMs())
+			a.recordInterruptedDisplay(interruptedDisplayRecord{pending: true, workDurationMs: workDurationMs()})
 			return ctx.Err()
 		}
 		if !a.planMode.Load() {
@@ -2719,7 +2778,7 @@ func streamRecoveryMessage(hasPartialText, hadPartialTool bool) string {
 // stream so a sink can re-render the streamed raw text as styled markdown. The
 // accumulated text and reasoning are also returned so the caller can round-trip
 // reasoning on the next turn.
-func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, []provider.ToolCall, *provider.Usage, bool, bool, []provider.ToolCall, error) {
+func (a *Agent) stream(ctx context.Context, turn int, policy completionRequestPolicy) (string, string, string, []provider.ToolCall, *provider.Usage, bool, bool, []provider.ToolCall, error) {
 	ctx = provider.WithRetryNotify(ctx, func(info provider.RetryInfo) {
 		a.sink.Emit(event.Event{Kind: event.Retrying, RetryAttempt: info.Attempt, RetryMax: info.Max})
 	})
@@ -2730,9 +2789,10 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	for i := range requestMessages {
 		requestMessages[i].CreatedAt = 0
 	}
+	requestMessages, requestTools := policy.request(requestMessages, a.tools.Schemas())
 	ch, err := a.prov.Stream(ctx, provider.Request{
 		Messages:    requestMessages,
-		Tools:       a.tools.Schemas(),
+		Tools:       requestTools,
 		Temperature: provider.OptionalTemperature(a.temperature),
 	})
 	if err != nil {
@@ -2757,7 +2817,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 		display = original
 		if transformReasoning && original != "" {
 			display = a.hooks.PostLLMCall(ctx, original, turn)
-			if display != "" {
+			if display != "" && !policy.bufferOutput {
 				a.sink.Emit(event.Event{Kind: event.Reasoning, Text: display})
 			}
 		}
@@ -2780,7 +2840,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 					return text.String(), stored, signature, calls, usage, false, partialToolStarted, partialCalls, err
 				}
 				stored, display := finishReasoning()
-				if text.Len() > 0 || display != "" {
+				if !policy.bufferOutput && (text.Len() > 0 || display != "") {
 					a.sink.Emit(event.Event{
 						Kind:            event.Message,
 						Text:            StripGoalMarkers(text.String()),
@@ -2798,12 +2858,14 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 			if chunk.Signature != "" {
 				signature = chunk.Signature
 			}
-			if chunk.Text != "" && !transformReasoning {
+			if chunk.Text != "" && !transformReasoning && !policy.bufferOutput {
 				a.sink.Emit(event.Event{Kind: event.Reasoning, Text: chunk.Text})
 			}
 		case provider.ChunkText:
 			text.WriteString(chunk.Text)
-			a.sink.Emit(event.Event{Kind: event.Text, Text: chunk.Text})
+			if !policy.bufferOutput {
+				a.sink.Emit(event.Event{Kind: event.Text, Text: chunk.Text})
+			}
 		case provider.ChunkToolCallStart:
 			partialToolStarted = true
 			// Surface the tool card as soon as the call begins — before its
@@ -2851,6 +2913,29 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	}
 }
 
+func (a *Agent) emitBufferedCompletion(text, reasoning string) {
+	if reasoning != "" {
+		a.sink.Emit(event.Event{Kind: event.Reasoning, Text: reasoning})
+	}
+	if text != "" {
+		a.sink.Emit(event.Event{Kind: event.Text, Text: text})
+	}
+	if text != "" || reasoning != "" {
+		a.sink.Emit(event.Event{Kind: event.Message, Text: StripGoalMarkers(text), Reasoning: reasoning, MemoryCitations: a.memoryCitations()})
+	}
+}
+
+func safeInterruptedDisplay(policy completionRequestPolicy, text, reasoning string) (string, string) {
+	if policy.bufferOutput {
+		return "", ""
+	}
+	return text, reasoning
+}
+
+func interruptedOutputDropped(policy completionRequestPolicy, text, reasoning string) (bool, bool) {
+	return policy.bufferOutput && strings.TrimSpace(text) != "", policy.bufferOutput && strings.TrimSpace(reasoning) != ""
+}
+
 func upsertPartialToolCall(calls []provider.ToolCall, call provider.ToolCall) []provider.ToolCall {
 	for i := range calls {
 		if call.ID != "" && calls[i].ID == call.ID {
@@ -2861,11 +2946,19 @@ func upsertPartialToolCall(calls []provider.ToolCall, call provider.ToolCall) []
 	return append(calls, call)
 }
 
-func (a *Agent) recordInterruptedDisplay(text, reasoning string, calls []provider.ToolCall, pending bool, workDurationMs int64) {
-	displayCalls := make([]provider.ToolCall, 0, len(calls))
-	interrupted := make([]string, 0, len(calls))
-	seen := make(map[string]struct{}, len(calls))
-	for _, call := range calls {
+type interruptedDisplayRecord struct {
+	text, reasoning               string
+	calls                         []provider.ToolCall
+	pending                       bool
+	workDurationMs                int64
+	droppedText, droppedReasoning bool
+}
+
+func (a *Agent) recordInterruptedDisplay(record interruptedDisplayRecord) {
+	displayCalls := make([]provider.ToolCall, 0, len(record.calls))
+	interrupted := make([]string, 0, len(record.calls))
+	seen := make(map[string]struct{}, len(record.calls))
+	for _, call := range record.calls {
 		name := strings.TrimSpace(call.Name)
 		key := call.ID + "\x00" + name
 		if _, ok := seen[key]; ok {
@@ -2879,18 +2972,18 @@ func (a *Agent) recordInterruptedDisplay(text, reasoning string, calls []provide
 	}
 	a.session.Add(provider.Message{
 		Role:             provider.RoleTool,
-		Content:          text,
-		ReasoningContent: reasoning,
+		Content:          record.text,
+		ReasoningContent: record.reasoning,
 		ToolCalls:        displayCalls,
 		ToolCallID:       provider.LocalOnlyToolID,
 		Name:             provider.LocalOnlyToolName,
-		WorkDurationMs:   workDurationMs,
+		WorkDurationMs:   record.workDurationMs,
 		LocalOnly:        true,
 		InterruptedTurn: &provider.InterruptedTurnRecovery{
-			Pending:                 pending,
+			Pending:                 record.pending,
 			InterruptedTools:        interrupted,
-			DroppedPartialText:      strings.TrimSpace(text) != "",
-			DroppedPartialReasoning: strings.TrimSpace(reasoning) != "",
+			DroppedPartialText:      strings.TrimSpace(record.text) != "" || record.droppedText,
+			DroppedPartialReasoning: strings.TrimSpace(record.reasoning) != "" || record.droppedReasoning,
 		},
 	})
 }

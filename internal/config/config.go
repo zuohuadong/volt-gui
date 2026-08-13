@@ -1934,7 +1934,7 @@ func bundledvoltProviderDefaults() (string, []ProviderEntry) {
 	// Stable logical names (xllm = 纯文本, vlm = 多模态) decouple the dropdown
 	// label from the underlying gateway model ID. When the backend model changes,
 	// only the Model field below needs updating — the provider name stays fixed.
-	return "vlm", []ProviderEntry{
+	return "xllm", []ProviderEntry{
 		{Name: "xllm", DisplayName: "xllm", Kind: "openai", BaseURL: baseURL, Model: "glm-5.2/glm-5.2", APIKeyEnv: "volt_API_KEY", ContextWindow: 131_072, NoProxy: true},
 		{Name: "vlm", DisplayName: "vlm", Kind: "openai", BaseURL: baseURL, Model: "step-3.7-flash/step-3.7-flash", APIKeyEnv: "volt_API_KEY", ContextWindow: 262_144, Vision: true, NoProxy: true},
 	}
@@ -1963,7 +1963,7 @@ func (c *Config) IsBundledvoltCatalogProvider(name string) bool {
 // Default returns the built-in default configuration.
 func Default() *Config {
 	cfg := &Config{
-		ConfigVersion:    6,
+		ConfigVersion:    7,
 		DefaultModel:     "deepseek-flash",
 		Brand:            BrandConfig{Name: "VoltUI"},
 		Auth:             AuthConfig{Scope: "openid profile email", CallbackMinPort: 42000, CallbackMaxPort: 42099},

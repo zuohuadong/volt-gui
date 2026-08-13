@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"voltui/internal/nilutil"
@@ -691,6 +692,54 @@ func (e *StreamInterruptedError) Unwrap() error {
 func IsStreamInterrupted(err error) bool {
 	var interrupted *StreamInterruptedError
 	return errors.As(err, &interrupted)
+}
+
+// StreamDegenerationError marks model output that crossed a conservative
+// repetition boundary. It is intentionally distinct from a transport cut:
+// replaying the same request automatically tends to produce another flood.
+// Signal and Count are safe diagnostics; response text is never retained here.
+type StreamDegenerationError struct {
+	Provider  string
+	Model     string
+	RequestID string
+	Signal    string
+	Count     int
+}
+
+func (e *StreamDegenerationError) Error() string {
+	if e == nil {
+		return "model response stopped after repeated output"
+	}
+	return fmt.Sprintf("%s: model response stopped after repeated output (model=%s signal=%s count=%d request_id=%s)",
+		e.Provider, e.Model, e.Signal, e.Count, e.RequestID)
+}
+
+func IsStreamDegeneration(err error) bool {
+	var degeneration *StreamDegenerationError
+	return errors.As(err, &degeneration)
+}
+
+// ReasoningLimitError marks a stream canceled after reasoning continued without
+// any visible answer beyond the client's bounded time or byte allowance.
+type ReasoningLimitError struct {
+	Model     string
+	RequestID string
+	Bytes     int
+	Duration  time.Duration
+	Limit     string
+}
+
+func (e *ReasoningLimitError) Error() string {
+	if e == nil {
+		return "model response stopped after the reasoning-only safety limit"
+	}
+	return fmt.Sprintf("model response stopped after the reasoning-only safety limit (model=%s limit=%s reasoning_bytes=%d duration_ms=%d request_id=%s)",
+		e.Model, e.Limit, e.Bytes, e.Duration.Milliseconds(), e.RequestID)
+}
+
+func IsReasoningLimit(err error) bool {
+	var limit *ReasoningLimitError
+	return errors.As(err, &limit)
 }
 
 // Provider is a chat-capable model backend.

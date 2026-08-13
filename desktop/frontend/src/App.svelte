@@ -168,7 +168,9 @@
     trimLiveTranscript,
   } from "./lib/history-pagination";
   import {
-    isConversationNearBottom,
+    conversationPinAfterScroll,
+    conversationMovedUp,
+    isConversationScrollable,
     scrollConversationToTop,
     shouldAutoScrollConversation,
   } from "./lib/conversation-scroll";
@@ -681,6 +683,8 @@
   let activeConversationTabId = $state("");
   let conversationScrollEl = $state<HTMLDivElement | null>(null);
   let conversationPinnedToBottom = $state(true);
+  let conversationManualScrollIntent = false;
+  let conversationLastScrollTop: number | undefined;
   let conversationScrollFrame: number | undefined;
   let backToTopTarget = $state<HTMLElement | null>(null);
   let backToTopVisible = $state(false);
@@ -3275,16 +3279,40 @@
 
   function scrollConversationToBottom(behavior: ScrollBehavior = "smooth", force = false) {
     if (typeof window === "undefined") return;
-    if (!shouldAutoScrollConversation(conversationPinnedToBottom, force)) return;
+    if (force) conversationManualScrollIntent = false;
+    if (!shouldAutoScrollConversation(conversationPinnedToBottom, force, conversationManualScrollIntent)) return;
+    if (conversationScrollEl) conversationLastScrollTop = conversationScrollEl.scrollTop;
     void tick().then(() => {
       const el = conversationScrollEl;
       if (!el || !showActiveTranscript) return;
       if (conversationScrollFrame !== undefined) window.cancelAnimationFrame(conversationScrollFrame);
       conversationScrollFrame = window.requestAnimationFrame(() => {
         conversationScrollFrame = undefined;
+        if (!shouldAutoScrollConversation(conversationPinnedToBottom, force, conversationManualScrollIntent)) return;
         el.scrollTo({ top: el.scrollHeight, behavior });
       });
     });
+  }
+
+  function releaseConversationAutoScroll() {
+    conversationManualScrollIntent = true;
+    conversationPinnedToBottom = false;
+    if (conversationScrollFrame !== undefined) {
+      window.cancelAnimationFrame(conversationScrollFrame);
+      conversationScrollFrame = undefined;
+    }
+  }
+
+  function updateConversationPin(el: HTMLDivElement) {
+    const pin = conversationPinAfterScroll(el, conversationManualScrollIntent);
+    conversationPinnedToBottom = pin.pinnedToBottom;
+    conversationManualScrollIntent = pin.manualScrollIntent;
+  }
+
+  function handleConversationWheel(event: WheelEvent) {
+    if (event.ctrlKey || event.deltaY >= 0 || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    if (!conversationScrollEl || !isConversationScrollable(conversationScrollEl)) return;
+    releaseConversationAutoScroll();
   }
 
   function scheduleTextFlush() {
@@ -6995,6 +7023,8 @@ function openGovernanceCenter() {
   async function hydrateHistory(tab: TabMeta, options: { preserveLocalWhenEmpty?: boolean } = {}) {
     const generation = ++historyPageGeneration;
     conversationPinnedToBottom = true;
+    conversationManualScrollIntent = false;
+    conversationLastScrollTop = undefined;
     historyPageTabId = tab.id;
     historyPageStartTurn = 0;
     historyPageTotalTurns = 0;
@@ -7066,7 +7096,9 @@ function openGovernanceCenter() {
   function handleConversationScroll() {
     const el = conversationScrollEl;
     if (el) {
-      conversationPinnedToBottom = isConversationNearBottom(el);
+      if (conversationMovedUp(conversationLastScrollTop, el.scrollTop)) releaseConversationAutoScroll();
+      conversationLastScrollTop = el.scrollTop;
+      updateConversationPin(el);
       backToTopTarget = el;
       backToTopVisible = el.scrollTop > 480;
     }
@@ -7080,7 +7112,6 @@ function openGovernanceCenter() {
     if (!(target instanceof HTMLElement) || !target.matches(".aorist-page, .workbench, .conversation")) return;
     backToTopTarget = target;
     backToTopVisible = target.scrollTop > 480;
-    if (target === conversationScrollEl) conversationPinnedToBottom = isConversationNearBottom(target);
   }
 
   function scrollActivePageToTop() {
@@ -8998,7 +9029,7 @@ function openGovernanceCenter() {
             {/if}
             </div>
             {/if}
-            <div class="conversation" bind:this={conversationScrollEl} onscroll={handleConversationScroll}>
+            <div class="conversation" bind:this={conversationScrollEl} onwheel={handleConversationWheel} onscroll={handleConversationScroll}>
               {#if historyPageTabId === currentTranscriptTabId()}
                 <HistoryPaginationStatus
                   hasOlder={historyPageHasOlder}

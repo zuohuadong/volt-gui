@@ -1562,6 +1562,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	executor := agent.New(execProv, reg, execSess, agent.Options{
 		MaxSteps:    maxSteps,
 		MaxStepsKey: opts.MaxStepsKey,
+		ModelRef:    modelRef,
 		Temperature: cfg.Agent.Temperature,
 		Pricing:     entry.Price,
 		Gate:        headlessGate,

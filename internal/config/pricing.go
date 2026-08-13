@@ -139,6 +139,7 @@ const (
 	windowsBashSandboxDefaultConfigVersion = 4
 	retiredAutoPlanConfigVersion           = 5
 	bundledvoltCatalogConfigVersion        = 6
+	bundledvoltTextDefaultConfigVersion    = 7
 )
 
 // ApplyUserConfigUpgradesOnStartup applies one-time startup migrations. It
@@ -166,6 +167,10 @@ func ApplyUserConfigUpgradesOnStartup(path string) (bool, error) {
 	}
 	cfg := LoadForEdit(path)
 	changed := migrateLegacyBundledvoltRoutes(cfg)
+	if header.ConfigVersion < bundledvoltTextDefaultConfigVersion {
+		changed = migrateBundledvoltDefaultToText(cfg) || changed
+		changed = true
+	}
 	if header.ConfigVersion < bundledvoltCatalogConfigVersion {
 		changed = restoreBundledvoltCatalog(cfg) || changed
 		// Mark every pre-v6 config once so a later user removal remains authoritative.
@@ -306,6 +311,26 @@ func restoreBundledvoltCatalog(c *Config) bool {
 	displayNamesChanged := backfillBundledvoltDisplayNames(c, bundled)
 	providersAdded := appendMissingBundledvoltProviders(c, bundled)
 	return displayNamesChanged || providersAdded
+}
+
+func migrateBundledvoltDefaultToText(c *Config) bool {
+	if c == nil || strings.TrimSpace(c.DefaultModel) != "vlm" {
+		return false
+	}
+	_, bundled := bundledvoltProviderDefaults()
+	var bundledVLM *ProviderEntry
+	for i := range bundled {
+		if bundled[i].Name == "vlm" {
+			bundledVLM = &bundled[i]
+			break
+		}
+	}
+	configuredVLM, exists := c.Provider("vlm")
+	if bundledVLM == nil || !exists || !sameBundledvoltRoute(*configuredVLM, *bundledVLM) {
+		return false
+	}
+	c.DefaultModel = "xllm"
+	return true
 }
 
 func backfillBundledvoltDisplayNames(c *Config, bundled []ProviderEntry) bool {

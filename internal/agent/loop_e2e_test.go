@@ -299,6 +299,59 @@ func TestRunGenericStreamErrorPersistsLocalDisplayAndInjectsBoundedRecovery(t *t
 	}
 }
 
+func TestRunDoesNotAutomaticallyReplayDegenerateStream(t *testing.T) {
+	degeneration := &provider.StreamDegenerationError{
+		Provider: "gateway", Model: "glm-5.2/glm-5.2", Signal: "repeated_cjk_rune", Count: 32,
+	}
+	mp := testutil.NewMock("m",
+		testutil.Turn{Text: "正常开头", ChunkError: degeneration},
+		testutil.Turn{Text: "must not be requested automatically"},
+	)
+	sink := &recordSink{}
+	session := NewSession("system")
+	a := New(mp, echoRegistry(), session, Options{}, sink)
+
+	err := a.Run(context.Background(), "修复项目计划生成代码")
+	var safetyErr *ResponseSafetyError
+	if !errors.As(err, &safetyErr) || !errors.Is(err, degeneration) {
+		t.Fatalf("Run error = %T %v, want wrapped ResponseSafetyError", err, err)
+	}
+	if got := mp.CallCount(); got != 1 {
+		t.Fatalf("provider calls = %d, want 1 without transport recovery", got)
+	}
+	if len(sink.kinds(event.Retrying)) != 0 {
+		t.Fatalf("degeneration emitted transport retry: %+v", sink.kinds(event.Retrying))
+	}
+	last := session.Snapshot()[len(session.Snapshot())-1]
+	if !last.LocalOnly || last.InterruptedTurn == nil || !last.InterruptedTurn.Pending {
+		t.Fatalf("degenerate output was not retained outside model context: %+v", last)
+	}
+}
+
+func TestRunDoesNotAutomaticallyReplayReasoningLimit(t *testing.T) {
+	limit := &provider.ReasoningLimitError{
+		Model: "step-3.7-flash", RequestID: "request-limit", Bytes: 262145, Limit: "bytes",
+	}
+	mp := testutil.NewMock("m",
+		testutil.Turn{Reasoning: "bounded partial reasoning", ChunkError: limit},
+		testutil.Turn{Text: "must not be requested automatically"},
+	)
+	sink := &recordSink{}
+	a := New(mp, echoRegistry(), NewSession("system"), Options{}, sink)
+
+	err := a.Run(context.Background(), "修复响应循环")
+	var safetyErr *ResponseSafetyError
+	if !errors.As(err, &safetyErr) || !errors.Is(err, limit) {
+		t.Fatalf("Run error = %T %v, want wrapped reasoning safety error", err, err)
+	}
+	if got := mp.CallCount(); got != 1 {
+		t.Fatalf("provider calls = %d, want 1 without replay", got)
+	}
+	if len(sink.kinds(event.Retrying)) != 0 {
+		t.Fatalf("reasoning limit emitted transport retry: %+v", sink.kinds(event.Retrying))
+	}
+}
+
 func TestRunRecoveryKeepsCompletedToolPairAndSummarizesChangedFile(t *testing.T) {
 	session := NewSession("system")
 	session.Add(provider.Message{Role: provider.RoleUser, Content: "update config"})

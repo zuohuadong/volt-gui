@@ -65,8 +65,8 @@ func TestDefaultUsesBundledvoltGateway(t *testing.T) {
 	t.Cleanup(func() { bundledEnvPath = previousPath })
 
 	cfg := Default()
-	if cfg.DefaultModel != "vlm" {
-		t.Fatalf("default model = %q, want vlm", cfg.DefaultModel)
+	if cfg.DefaultModel != "xllm" {
+		t.Fatalf("default model = %q, want xllm", cfg.DefaultModel)
 	}
 	want := map[string]struct {
 		model  string

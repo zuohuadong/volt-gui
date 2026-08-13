@@ -20,6 +20,15 @@ describe("user-facing errors", () => {
     expect(formatUserError("connection refused: dial tcp 127.0.0.1:9000")).toContain("模型服务连接失败");
   });
 
+  test("maps output safety and document quality failures to recovery guidance", () => {
+    expect(formatUserError("response stopped by the client safety guard: 模型输出异常重复"))
+      .toBe("模型输出异常，已停止展示不完整内容；请重试，或切换模型后再试。");
+    expect(formatUserError("document generation stopped because the model could not preserve the supplied text after one retry"))
+      .toBe("文档内容未通过一致性检查，异常草稿未保存；请重试，或减少模板/上下文后再试。");
+    expect(formatUserError("document quality check failed: empty=0 encoding=0 repetition=1"))
+      .toBe("文档内容未通过一致性检查，异常草稿未保存；请重试，或减少模板/上下文后再试。");
+  });
+
   test("classifies model connection failures for runtime availability state", () => {
     expect(isModelConnectionError("dial tcp: connection refused")).toBe(true);
     expect(isModelConnectionError("模型服务连接失败或响应超时，请检查网络和渠道状态后重试。")).toBe(true);

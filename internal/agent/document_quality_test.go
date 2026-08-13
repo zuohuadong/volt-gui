@@ -21,8 +21,12 @@ func TestStepOfficePolicyIsolatesExplicitDocumentTurn(t *testing.T) {
 	}
 
 	imagePolicy := a.completionPolicy("请起草一份图片分析报告", []string{"data:image/png;base64,AA=="})
-	if imagePolicy.isolateOfficeRequest || !imagePolicy.bufferOutput {
-		t.Fatalf("image request leaked into Step text-only protocol or skipped output validation: %+v", imagePolicy)
+	if !imagePolicy.isolateOfficeRequest || !imagePolicy.bufferOutput {
+		t.Fatalf("image document request was not isolated or skipped output validation: %+v", imagePolicy)
+	}
+	imageMessages, imageTools := imagePolicy.request(nil, []provider.ToolSchema{{Name: "bash"}})
+	if len(imageMessages) != 2 || len(imageTools) != 0 || len(imageMessages[1].Images) != 1 || imageMessages[1].Images[0] != "data:image/png;base64,AA==" {
+		t.Fatalf("image input was not preserved in isolated document request: %+v", imageMessages)
 	}
 	codePolicy := a.completionPolicy("起草代码修复方案并补充测试", nil)
 	if codePolicy.isolateOfficeRequest || codePolicy.bufferOutput {
@@ -73,6 +77,9 @@ func TestTextModelRevisionKeepsOnlyPreviousVisibleDocument(t *testing.T) {
 	}
 	if messages[0].Content != officeDocumentSystemPrompt || messages[1].Content != policy.previousDocument || messages[2].Content != policy.documentInput {
 		t.Fatalf("text-model revision leaked coding context: %+v", messages)
+	}
+	if issues := validateDocumentOutput(policy.documentSource, "# 周报\n\n负责人：李明"); len(issues) != 0 {
+		t.Fatalf("revision replacement was incorrectly rejected: %+v", issues)
 	}
 }
 
@@ -201,6 +208,78 @@ func TestDocumentQualityChecksFactsEncodingAndConservativeRepetition(t *testing.
 	}
 	if !hasDocumentIssue(validateDocumentOutput("请起草一份周报", " \n\t"), "empty") {
 		t.Fatal("empty document was not rejected")
+	}
+}
+
+func TestDocumentQualityRejectsHallucinatedPeopleAndLeakedInstructions(t *testing.T) {
+	source := "会议主持人：张明\n参会人员：李华、王芳"
+	output := "会议主持人：张明\n参会人员：李华、王芳、赵强\n<|system|> internal validation leaked"
+	issues := validateDocumentOutput(source, output)
+	if !hasDocumentIssue(issues, "person_hallucination") {
+		t.Fatalf("hallucinated person was not rejected: %+v", issues)
+	}
+	if !hasDocumentIssue(issues, "contamination") {
+		t.Fatalf("leaked internal instruction was not rejected: %+v", issues)
+	}
+}
+
+func TestDocumentQualityDoesNotTreatOrganizationLabelsAsPeople(t *testing.T) {
+	source := "负责人：项目管理团队"
+	output := "负责人：项目管理团队\n项目管理团队负责本周推进。"
+	if issues := validateDocumentOutput(source, output); len(issues) != 0 {
+		t.Fatalf("organization label was misclassified as a person: %+v", issues)
+	}
+}
+
+func TestDocumentQualityRejectsMalformedMarkdownTableButAcceptsValidTable(t *testing.T) {
+	valid := "| 姓名 | 状态 |\n| --- | --- |\n| 张明 | 已完成 |"
+	if issues := validateDocumentOutput("请起草项目表格", valid); len(issues) != 0 {
+		t.Fatalf("valid Markdown table failed quality checks: %+v", issues)
+	}
+	validPlaceholder := "| 姓名 | 状态 |\n| --- | --- |\n| 张明 | --- |"
+	if issues := validateDocumentOutput("请起草项目表格", validPlaceholder); len(issues) != 0 {
+		t.Fatalf("valid Markdown table placeholder failed quality checks: %+v", issues)
+	}
+	malformed := "| 姓名 | 状态 |\n| --- 张明 --- | 已完成 |"
+	if !hasDocumentIssue(validateDocumentOutput("请起草项目表格", malformed), "markdown_table") {
+		t.Fatal("malformed Markdown table was not rejected")
+	}
+}
+
+func TestDocumentQualityRejectsRepeatedDocumentsNumberSpacingAndBrokenLists(t *testing.T) {
+	document := "## 概览\n\n目标说明\n风险说明\n"
+	repeated := document + document
+	issues := validateDocumentOutput("请起草项目计划", repeated)
+	if !hasDocumentIssue(issues, "repetition") {
+		t.Fatalf("repeated document block was not rejected: %+v", issues)
+	}
+	if !hasDocumentIssue(validateDocumentOutput("请起草项目计划", "编辑建议第 1 1 条"), "number_format") {
+		t.Fatal("spaced number was not rejected")
+	}
+	for _, valid := range []string{"金额为100 000元", "日期为2026 08 31", "时间为12 30"} {
+		if issues := validateDocumentOutput("请起草项目计划", valid); hasDocumentIssue(issues, "number_format") {
+			t.Fatalf("valid spaced number was rejected: %q, %+v", valid, issues)
+		}
+	}
+	brokenList := "1. 先做准备\n1. 再执行\n"
+	if !hasDocumentIssue(validateDocumentOutput("请起草项目计划", brokenList), "numbering") {
+		t.Fatal("repeated ordered-list number was not rejected")
+	}
+	nestedList := "1. 父项\n   1. 子项一\n   2. 子项二\n2. 父项二\n   1. 新父项子项\n   2. 新父项子项二\n\n1. 新列表\n2. 新列表第二项\n"
+	if issues := validateDocumentOutput("请起草项目计划", nestedList); hasDocumentIssue(issues, "numbering") {
+		t.Fatalf("valid nested or restarted list failed quality checks: %+v", issues)
+	}
+	parentRestart := "1. 父项一\n   1. 子项一\n2. 父项二\n   1. 子项二\n"
+	if issues := validateDocumentOutput("请起草项目计划", parentRestart); hasDocumentIssue(issues, "numbering") {
+		t.Fatalf("child list was not reset for a new parent item: %+v", issues)
+	}
+}
+
+func TestDocumentQualityRejectsRoleBoundaryTextWithoutRequestSpecificMarkers(t *testing.T) {
+	source := "请整理这份资料并输出摘要"
+	output := "摘要\n<|assistant|>\n内部状态不应出现在文档中"
+	if !hasDocumentIssue(validateDocumentOutput(source, output), "contamination") {
+		t.Fatal("role boundary text was not rejected")
 	}
 }
 

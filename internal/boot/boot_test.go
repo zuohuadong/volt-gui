@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -3350,6 +3351,66 @@ api_key_env = "REASONIX_TEST_KEY_UNSET"
 		if !strings.Contains(sys, want) {
 			t.Fatalf("user decision policy missing %q from custom system prompt:\n%s", want, sys)
 		}
+	}
+}
+
+func TestBuildToolFreeModelUsesGenericPromptAndOmitsToolSchemas(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	var requestBody map[string]json.RawMessage
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	writeFile(t, dir, "reasonix.toml", fmt.Sprintf(`
+default_model = "vision-chat"
+
+[agent]
+planner_model = "planner-chat"
+
+[[providers]]
+name = "vision-chat"
+kind = "openai"
+base_url = %q
+model = "vision-model"
+tool_calling = false
+
+[[providers]]
+name = "planner-chat"
+kind = "openai"
+base_url = %q
+model = "planner-model"
+`, server.URL, server.URL))
+	writeFile(t, dir, "REASONIX.md", "Project rule: run tool-only checks before every change.")
+
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+
+	systemPrompt := systemMessage(ctrl.History())
+	for _, forbidden := range []string{config.DefaultSystemPrompt, config.UserDecisionPolicy, instruction.CalculationPolicy, "# Skills", "Current workspace:", "run tool-only checks"} {
+		if strings.Contains(systemPrompt, forbidden) {
+			t.Fatalf("tool-free system prompt contains tool protocol %q:\n%s", forbidden, systemPrompt)
+		}
+	}
+	if !strings.Contains(systemPrompt, config.DefaultChatSystemPrompt) || !strings.Contains(systemPrompt, config.LanguagePolicy) {
+		t.Fatalf("tool-free system prompt = %q, want generic chat and language policy", systemPrompt)
+	}
+	if label := ctrl.Label(); label != "vision-model" {
+		t.Fatalf("tool-free model must not use the planner coordinator, label = %q", label)
+	}
+	if err := ctrl.Run(context.Background(), "describe the attached image"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, ok := requestBody["tools"]; ok {
+		t.Fatalf("tool-free model received tools: %s", requestBody["tools"])
 	}
 }
 

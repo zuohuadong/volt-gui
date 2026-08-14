@@ -1397,6 +1397,9 @@ type ProviderEntry struct {
 	// (the field is omitted). "low" caps an image to a fixed ~85 tokens for cheap
 	// coarse reads; ignored by providers without the knob (e.g. anthropic).
 	VisionDetail string `toml:"vision_detail"`
+	// ToolCalling declares whether this provider/model implements the tool-call
+	// protocol. Nil preserves the historical enabled default for custom providers.
+	ToolCalling *bool `toml:"tool_calling"`
 	// ReasoningProtocol selects the request shape for OpenAI-compatible reasoning
 	// models. Empty/auto uses the model capability registry plus endpoint
 	// heuristics; none disables automatic reasoning controls for this provider.
@@ -1414,8 +1417,9 @@ type ProviderEntry struct {
 	// concrete model from a multi-model provider. Use it when a gateway exposes
 	// mixed DeepSeek/OpenAI/no-reasoning or mixed vision/text models under one
 	// base_url/key.
-	ModelOverrides map[string]ProviderModelOverride `toml:"model_overrides"`
-	visionOverride *bool
+	ModelOverrides      map[string]ProviderModelOverride `toml:"model_overrides"`
+	visionOverride      *bool
+	toolCallingOverride *bool
 	// NoProxy reaches this provider's base_url directly, never through the proxy.
 	// For China-only endpoints a foreign-exit proxy resets the TLS handshake (#2803).
 	NoProxy bool `toml:"no_proxy"`
@@ -1426,6 +1430,7 @@ type ProviderModelOverride struct {
 	SupportedEfforts  []string `toml:"supported_efforts"`
 	DefaultEffort     string   `toml:"default_effort"`
 	Vision            *bool    `toml:"vision"`
+	ToolCalling       *bool    `toml:"tool_calling"`
 	// ContextWindow overrides the provider-wide context budget for this model.
 	// Zero inherits ProviderEntry.ContextWindow so existing configurations keep
 	// their current compaction behavior.
@@ -1620,6 +1625,9 @@ func (e *ProviderEntry) applyModelOverride() {
 	}
 	if ov.Vision != nil {
 		e.visionOverride = ov.Vision
+	}
+	if ov.ToolCalling != nil {
+		e.toolCallingOverride = ov.ToolCalling
 	}
 	if ov.ContextWindow > 0 {
 		e.ContextWindow = ov.ContextWindow
@@ -1907,6 +1915,11 @@ const DefaultSystemPrompt = `You are VoltUI, a coding agent.
 Use the available tools when they help you complete the user's request.
 Keep changes focused and responses concise.`
 
+// DefaultChatSystemPrompt is used for models that explicitly do not implement
+// tool calling. It intentionally contains no coding-agent or tool instructions.
+const DefaultChatSystemPrompt = `You are VoltUI, a helpful assistant.
+Answer the user's request directly and concisely.`
+
 // UserDecisionPolicy is appended to every system prompt, including user-custom
 // prompts, so custom personas cannot accidentally remove the `ask` UI contract.
 const UserDecisionPolicy = `User-owned choices: when a consequential decision has no safe, obvious default, call the ask tool so the user can choose. Otherwise proceed with a sensible reversible default. Do not ask in prose when ask is available. In non-interactive runs, state the assumption and take the safest reversible path.`
@@ -1934,9 +1947,10 @@ func bundledXiguProviderDefaults() (string, []ProviderEntry) {
 	// Stable logical names (xllm = 纯文本, vlm = 多模态) decouple the dropdown
 	// label from the underlying gateway model ID. When the backend model changes,
 	// only the Model field below needs updating — the provider name stays fixed.
+	toolCalling := false
 	return "xllm", []ProviderEntry{
 		{Name: "xllm", DisplayName: "xllm", Kind: "openai", BaseURL: baseURL, Model: "glm-5.2/glm-5.2", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 131_072, NoProxy: true},
-		{Name: "vlm", DisplayName: "vlm", Kind: "openai", BaseURL: baseURL, Model: "step-3.7-flash/step-3.7-flash", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 262_144, Vision: true, NoProxy: true},
+		{Name: "vlm", DisplayName: "vlm", Kind: "openai", BaseURL: baseURL, Model: "step-3.7-flash/step-3.7-flash", APIKeyEnv: "XIGU_API_KEY", ContextWindow: 262_144, Vision: true, ToolCalling: &toolCalling, NoProxy: true},
 	}
 }
 
@@ -2284,6 +2298,15 @@ func (c *Config) ResolveSystemPromptForRoot(root string) (string, error) {
 		return c.ApplyBrandName(DefaultSystemPrompt), nil
 	}
 	return c.ApplyBrandName(c.Agent.SystemPrompt), nil
+}
+
+// ResolveSystemPromptForToolCalling selects the protocol-neutral default for a
+// tool-free model while preserving a prompt explicitly supplied by the user.
+func (c *Config) ResolveSystemPromptForToolCalling(root string, toolCalling bool) (string, error) {
+	if toolCalling || c.Agent.SystemPromptFile != "" || (strings.TrimSpace(c.Agent.SystemPrompt) != "" && c.Agent.SystemPrompt != DefaultSystemPrompt) {
+		return c.ResolveSystemPromptForRoot(root)
+	}
+	return c.ApplyBrandName(DefaultChatSystemPrompt), nil
 }
 
 // Validate checks that the selected model's provider is usable.

@@ -84,13 +84,24 @@ func TestDesktopBrokerAuthorizationMustSucceedBeforeActivation(t *testing.T) {
 }
 
 func TestDescriptorFromProviderPreservesCompactionAndPricingMetadata(t *testing.T) {
-	descriptor := DescriptorFromProvider(
-		"local/model", "Local", "model", stubProvider{}, []string{"high"}, "high", true,
-		1_000_000, &provider.Pricing{CacheHit: 0.1, Input: 1.25, Output: 4.5, Currency: "$"},
-	)
+	descriptor := DescriptorFromProvider(ProviderDescriptorOptions{
+		Ref: "local/model", DisplayName: "Local", Model: "model", Provider: stubProvider{},
+		Efforts: []string{"high"}, DefaultEffort: "high", Vision: true, ToolCalling: true,
+		ContextWindow: 1_000_000, Pricing: &provider.Pricing{CacheHit: 0.1, Input: 1.25, Output: 4.5, Currency: "$"},
+	})
 	if descriptor.ContextWindow != 1_000_000 || descriptor.PricingCurrency != "$" ||
-		descriptor.CacheHitPerMillion != 0.1 || descriptor.InputPerMillion != 1.25 || descriptor.OutputPerMillion != 4.5 {
+		descriptor.CacheHitPerMillion != 0.1 || descriptor.InputPerMillion != 1.25 || descriptor.OutputPerMillion != 4.5 ||
+		!descriptor.SupportsToolCalling {
 		t.Fatalf("descriptor metadata = %+v", descriptor)
+	}
+}
+
+func TestDescriptorFromProviderPreservesToolCallingCapability(t *testing.T) {
+	descriptor := DescriptorFromProvider(ProviderDescriptorOptions{
+		Ref: "local/chat", Model: "chat", Provider: stubProvider{}, ToolCalling: false,
+	})
+	if descriptor.SupportsToolCalling {
+		t.Fatalf("descriptor advertised tools for a tool-free provider: %+v", descriptor)
 	}
 }
 
@@ -242,7 +253,11 @@ func TestDesktopBrokerCatalogAndStreamRoundTrip(t *testing.T) {
 	d, err := Attach(desktopConn, Options{
 		Catalog: func(ctx context.Context, allowed map[string]struct{}) ([]protocol.BrokerProviderDescriptor, error) {
 			return []protocol.BrokerProviderDescriptor{
-				DescriptorFromProvider("deepseek/chat", "DeepSeek", "chat", prov, nil, "", false, 128_000, &provider.Pricing{CacheHit: 0.1, Input: 1, Output: 2, Currency: "$"}),
+				DescriptorFromProvider(ProviderDescriptorOptions{
+					Ref: "deepseek/chat", DisplayName: "DeepSeek", Model: "chat", Provider: prov,
+					ToolCalling: true, ContextWindow: 128_000,
+					Pricing: &provider.Pricing{CacheHit: 0.1, Input: 1, Output: 2, Currency: "$"},
+				}),
 			}, nil
 		},
 		Open: func(ctx context.Context, ref, effort string, req provider.Request) (<-chan provider.Chunk, error) {

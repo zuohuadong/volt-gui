@@ -171,17 +171,7 @@ func (h *Host) catalogFor(ctx context.Context) ([]provider.Descriptor, error) {
 	}
 	out := make([]provider.Descriptor, 0, len(result.Providers))
 	for _, item := range result.Providers {
-		out = append(out, provider.Descriptor{
-			Ref: item.Ref, DisplayName: item.DisplayName, Model: item.Model,
-			ContextWindow: item.ContextWindow, PricingCurrency: item.PricingCurrency,
-			CacheHitPerMillion: item.CacheHitPerMillion, InputPerMillion: item.InputPerMillion, OutputPerMillion: item.OutputPerMillion,
-			Vision: item.SupportsVision, Tools: true,
-			Reasoning:                      len(item.SupportedEfforts) > 0 || item.ToolCallReasoning,
-			Efforts:                        append([]string(nil), item.SupportedEfforts...),
-			DefaultEffort:                  item.DefaultEffort,
-			ToolCallReasoning:              item.ToolCallReasoning,
-			WarnOnMissingToolCallReasoning: item.WarnOnMissingToolCallReasoning,
-		})
+		out = append(out, descriptorFromBroker(item))
 	}
 	h.mu.Lock()
 	if h.conn == conn {
@@ -189,6 +179,20 @@ func (h *Host) catalogFor(ctx context.Context) ([]provider.Descriptor, error) {
 	}
 	h.mu.Unlock()
 	return out, nil
+}
+
+func descriptorFromBroker(item protocol.BrokerProviderDescriptor) provider.Descriptor {
+	return provider.Descriptor{
+		Ref: item.Ref, DisplayName: item.DisplayName, Model: item.Model,
+		ContextWindow: item.ContextWindow, PricingCurrency: item.PricingCurrency,
+		CacheHitPerMillion: item.CacheHitPerMillion, InputPerMillion: item.InputPerMillion, OutputPerMillion: item.OutputPerMillion,
+		Vision: item.SupportsVision, Tools: item.SupportsToolCalling,
+		Reasoning:                      len(item.SupportedEfforts) > 0 || item.ToolCallReasoning,
+		Efforts:                        append([]string(nil), item.SupportedEfforts...),
+		DefaultEffort:                  item.DefaultEffort,
+		ToolCallReasoning:              item.ToolCallReasoning,
+		WarnOnMissingToolCallReasoning: item.WarnOnMissingToolCallReasoning,
+	}
 }
 
 func (h *Host) Resolve(selection provider.Selection) (provider.Provider, error) {

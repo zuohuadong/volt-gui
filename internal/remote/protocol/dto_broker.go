@@ -30,6 +30,7 @@ type BrokerProviderDescriptor struct {
 	InputPerMillion                float64  `json:"inputPerMillion,omitempty" validate:"min=0"`
 	OutputPerMillion               float64  `json:"outputPerMillion,omitempty" validate:"min=0"`
 	SupportsVision                 bool     `json:"supportsVision,omitempty"`
+	SupportsToolCalling            bool     `json:"supportsToolCalling,omitempty"`
 	SupportedEfforts               []string `json:"supportedEfforts,omitempty"`
 	DefaultEffort                  string   `json:"defaultEffort,omitempty"`
 	ToolCallReasoning              bool     `json:"toolCallReasoning,omitempty"`

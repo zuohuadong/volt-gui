@@ -16,6 +16,7 @@ func TestRemoteResolverMetadataOverridesHostProviderWithSameRef(t *testing.T) {
 		Ref: "shared/model", DisplayName: "shared", Model: "model",
 		ContextWindow: 1_000_000, PricingCurrency: "$",
 		CacheHitPerMillion: 0.1, InputPerMillion: 1.25, OutputPerMillion: 4.5,
+		Tools: false,
 	}}}
 
 	entry, ref, err := resolveModelEntry(Options{ProviderResolver: resolver}, cfg, "shared/model")
@@ -27,5 +28,8 @@ func TestRemoteResolverMetadataOverridesHostProviderWithSameRef(t *testing.T) {
 	}
 	if entry.Price == nil || entry.Price.CacheHit != 0.1 || entry.Price.Input != 1.25 || entry.Price.Output != 4.5 || entry.Price.Currency != "$" {
 		t.Fatalf("resolved pricing = %+v", entry.Price)
+	}
+	if config.EffectiveToolCalling(entry) {
+		t.Fatalf("resolved remote entry unexpectedly enabled tool calling: %+v", entry)
 	}
 }

@@ -1017,13 +1017,15 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 				"mode": "fast",
 			},
 		},
-		AuthHeader: true,
+		AuthHeader:  true,
+		ToolCalling: boolPtr(false),
 		ModelOverrides: map[string]ProviderModelOverride{
 			"deepseek-v4-flash": {
 				ReasoningProtocol: ReasoningProtocolDeepSeek,
 				SupportedEfforts:  []string{"high", "max"},
 				DefaultEffort:     "high",
 				Vision:            boolPtr(false),
+				ToolCalling:       boolPtr(true),
 				ContextWindow:     262_144,
 			},
 		},
@@ -1038,6 +1040,9 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 	}
 	if !strings.Contains(rendered, `auth_header = true`) {
 		t.Fatalf("rendered TOML missing auth_header:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `tool_calling = false`) || !strings.Contains(rendered, `tool_calling = true`) {
+		t.Fatalf("rendered TOML missing tool calling declarations:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, `model_overrides`) || !strings.Contains(rendered, `reasoning_protocol = "deepseek"`) || !strings.Contains(rendered, `context_window = 262144`) {
 		t.Fatalf("rendered TOML missing model overrides:\n%s", rendered)
@@ -1060,6 +1065,9 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 	if !p.AuthHeader {
 		t.Fatal("auth_header after round trip = false, want true")
 	}
+	if p.ToolCalling == nil || *p.ToolCalling {
+		t.Fatalf("tool_calling after round trip = %v, want false", p.ToolCalling)
+	}
 	if p.DisplayLabel() != "Gateway Chat" {
 		t.Fatalf("display name after round trip = %q", p.DisplayLabel())
 	}
@@ -1068,7 +1076,7 @@ func TestRenderTOMLRoundTripsProviderHeadersAndModelOverrides(t *testing.T) {
 		t.Fatalf("extra_body metadata after round trip = %+v", p.ExtraBody["metadata"])
 	}
 	ov := p.ModelOverrides["deepseek-v4-flash"]
-	if ov.ReasoningProtocol != ReasoningProtocolDeepSeek || !reflect.DeepEqual(ov.SupportedEfforts, []string{"high", "max"}) || ov.DefaultEffort != "high" || ov.Vision == nil || *ov.Vision || ov.ContextWindow != 262_144 {
+	if ov.ReasoningProtocol != ReasoningProtocolDeepSeek || !reflect.DeepEqual(ov.SupportedEfforts, []string{"high", "max"}) || ov.DefaultEffort != "high" || ov.Vision == nil || *ov.Vision || ov.ToolCalling == nil || !*ov.ToolCalling || ov.ContextWindow != 262_144 {
 		t.Fatalf("model override after round trip = %+v", ov)
 	}
 

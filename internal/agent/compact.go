@@ -193,10 +193,7 @@ func (a *Agent) preflightContext() error {
 	if a.contextWindow <= 0 {
 		return nil
 	}
-	schemas := []provider.ToolSchema(nil)
-	if a.tools != nil {
-		schemas = a.tools.Schemas()
-	}
+	schemas := a.requestTools()
 	fixed := estimatePreflightMessagesTokens(a.fixedPromptMessages())
 	if len(schemas) > 0 {
 		if encoded, err := json.Marshal(schemas); err == nil {

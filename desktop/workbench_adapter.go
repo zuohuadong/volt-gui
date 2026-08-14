@@ -726,10 +726,19 @@ func catalogDescriptors(cfg *config.Config, allowed, filter map[string]struct{})
 		}
 		p, err := boot.NewProviderWithProxy(pe, cfg.NetworkProxySpec())
 		if err != nil {
-			out = append(out, protocol.BrokerProviderDescriptor{Ref: ref, DisplayName: pe.DisplayNameOrName(), Model: pe.Model})
+			out = append(out, protocol.BrokerProviderDescriptor{
+				Ref: ref, DisplayName: pe.DisplayNameOrName(), Model: pe.Model,
+				SupportsToolCalling: config.EffectiveToolCalling(pe),
+			})
 			continue
 		}
-		out = append(out, broker.DescriptorFromProvider(ref, pe.DisplayNameOrName(), pe.Model, p, pe.SupportedEfforts, config.EffectiveEffort(pe), config.EffectiveVision(pe), pe.ContextWindow, pe.Price))
+		descriptor := broker.DescriptorFromProvider(broker.ProviderDescriptorOptions{
+			Ref: ref, DisplayName: pe.DisplayNameOrName(), Model: pe.Model, Provider: p,
+			Efforts: pe.SupportedEfforts, DefaultEffort: config.EffectiveEffort(pe),
+			Vision: config.EffectiveVision(pe), ToolCalling: config.EffectiveToolCalling(pe),
+			ContextWindow: pe.ContextWindow, Pricing: pe.Price,
+		})
+		out = append(out, descriptor)
 	}
 	return out, nil
 }

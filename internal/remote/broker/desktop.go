@@ -298,25 +298,41 @@ func (d *Desktop) operationContext(request context.Context) (context.Context, co
 	}
 }
 
+// ProviderDescriptorOptions contains the non-secret provider metadata exposed
+// through the Desktop Broker catalog.
+type ProviderDescriptorOptions struct {
+	Ref           string
+	DisplayName   string
+	Model         string
+	Provider      provider.Provider
+	Efforts       []string
+	DefaultEffort string
+	Vision        bool
+	ToolCalling   bool
+	ContextWindow int
+	Pricing       *provider.Pricing
+}
+
 // DescriptorFromProvider builds a non-secret catalog row from a live Provider
-// and a configured model ref. Does not include base URLs or credentials.
-func DescriptorFromProvider(ref, display, model string, p provider.Provider, efforts []string, defaultEffort string, vision bool, contextWindow int, pricing *provider.Pricing) protocol.BrokerProviderDescriptor {
+// and configured metadata. It does not include base URLs or credentials.
+func DescriptorFromProvider(opts ProviderDescriptorOptions) protocol.BrokerProviderDescriptor {
 	descriptor := protocol.BrokerProviderDescriptor{
-		Ref:                            ref,
-		DisplayName:                    display,
-		Model:                          model,
-		SupportsVision:                 vision,
-		SupportedEfforts:               append([]string(nil), efforts...),
-		DefaultEffort:                  defaultEffort,
-		ToolCallReasoning:              provider.RequiresToolCallReasoning(p),
-		WarnOnMissingToolCallReasoning: provider.WarnOnMissingToolCallReasoning(p),
-		ContextWindow:                  contextWindow,
+		Ref:                            opts.Ref,
+		DisplayName:                    opts.DisplayName,
+		Model:                          opts.Model,
+		SupportsVision:                 opts.Vision,
+		SupportsToolCalling:            opts.ToolCalling,
+		SupportedEfforts:               append([]string(nil), opts.Efforts...),
+		DefaultEffort:                  opts.DefaultEffort,
+		ToolCallReasoning:              provider.RequiresToolCallReasoning(opts.Provider),
+		WarnOnMissingToolCallReasoning: provider.WarnOnMissingToolCallReasoning(opts.Provider),
+		ContextWindow:                  opts.ContextWindow,
 	}
-	if pricing != nil {
-		descriptor.PricingCurrency = pricing.Currency
-		descriptor.CacheHitPerMillion = pricing.CacheHit
-		descriptor.InputPerMillion = pricing.Input
-		descriptor.OutputPerMillion = pricing.Output
+	if opts.Pricing != nil {
+		descriptor.PricingCurrency = opts.Pricing.Currency
+		descriptor.CacheHitPerMillion = opts.Pricing.CacheHit
+		descriptor.InputPerMillion = opts.Pricing.Input
+		descriptor.OutputPerMillion = opts.Pricing.Output
 	}
 	return descriptor
 }

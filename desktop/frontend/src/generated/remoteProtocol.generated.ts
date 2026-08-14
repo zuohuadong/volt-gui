@@ -2,7 +2,7 @@
 
 export const REMOTE_SCHEMA_FORMAT = "reasonix.remote.schema.v1" as const;
 export const REMOTE_PROTOCOL_VERSION = "1" as const;
-export const REMOTE_SCHEMA_HASH = "sha256:6f328057ab077644099e3c8850cc876f7a477b171139979aa4c1091f93ad6e3f" as const;
+export const REMOTE_SCHEMA_HASH = "sha256:9911a6fbc2b334a9e1b3f1d7a2b6f941c48d1ff5b6a9bc5325cfe11c67a13226" as const;
 
 export const REMOTE_FIXED_RESOURCES = {
   "protocol": {
@@ -864,6 +864,7 @@ export type BrokerCatalogResultRaw = {
     "pricingCurrency"?: string;
     "ref": string;
     "supportedEfforts"?: Array<string>;
+    "supportsToolCalling"?: boolean;
     "supportsVision"?: boolean;
     "toolCallReasoning"?: boolean;
     "warnOnMissingToolCallReasoning"?: boolean;
@@ -881,6 +882,7 @@ export type BrokerCatalogResultHydrated = {
     "pricingCurrency"?: string;
     "ref": string;
     "supportedEfforts"?: Array<string>;
+    "supportsToolCalling"?: boolean;
     "supportsVision"?: boolean;
     "toolCallReasoning"?: boolean;
     "warnOnMissingToolCallReasoning"?: boolean;

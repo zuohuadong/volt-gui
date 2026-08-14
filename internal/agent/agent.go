@@ -49,7 +49,6 @@ const maxCalculationBlocks = 3
 const maxEmptyFinalBlocks = 3
 const maxStreamRecoveries = 3
 const maxStreamDegenerationRecoveries = 1
-const maxDocumentQualityRetries = 1
 const maxExecutorHandoffNudges = 1
 const memoryCompilerInjectionMax = 5
 const memoryCompilerInjectionCooldown = 30 * time.Second
@@ -275,6 +274,7 @@ type ToolHooks interface {
 type Agent struct {
 	prov        provider.Provider
 	tools       *tool.Registry
+	toolCalling bool
 	session     *Session
 	modelRef    string
 	sessMu      sync.Mutex // guards the session pointer for external Session()/SetSession
@@ -1098,6 +1098,9 @@ type Options struct {
 	Temperature float64
 	Pricing     *provider.Pricing // optional, for per-turn cost display
 	UsageSource string            // optional billable usage source; default executor
+	// ToolCalling enforces a provider capability boundary on every request.
+	// Nil preserves the historical behavior of exposing the supplied registry.
+	ToolCalling *bool
 
 	// Gate is the per-call permission gate. nil disables gating.
 	Gate Gate
@@ -1166,7 +1169,8 @@ type Options struct {
 
 	// DeliveryProfile enforces acceptance criteria before mutations and requires
 	// post-change review, verification, and evidence-backed sign-off before a
-	// final answer. It changes host control flow, not tool schemas.
+	// final answer. It requires tool calling and is disabled for chat-only
+	// providers.
 	DeliveryProfile bool
 
 	// ClassifierTaskText, when non-empty, is the pristine task text delivery
@@ -1244,6 +1248,11 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if nilutil.IsNil(sink) {
 		sink = event.Discard
 	}
+	toolCalling := true
+	if opts.ToolCalling != nil {
+		toolCalling = *opts.ToolCalling
+	}
+	deliveryProfile := opts.DeliveryProfile && toolCalling
 	gate := opts.Gate
 	if nilutil.IsNil(gate) {
 		gate = nil
@@ -1289,6 +1298,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	a := &Agent{
 		prov:                       prov,
 		tools:                      tools,
+		toolCalling:                toolCalling,
 		session:                    session,
 		modelRef:                   strings.TrimSpace(opts.ModelRef),
 		maxSteps:                   opts.MaxSteps,
@@ -1315,7 +1325,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		workspaceLease:             opts.WorkspaceLease,
 		evidence:                   evidence.NewLedger(),
 		projectChecks:              append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
-		deliveryProfile:            opts.DeliveryProfile,
+		deliveryProfile:            deliveryProfile,
 		classifierTaskText:         opts.ClassifierTaskText,
 		capabilityLedger:           opts.CapabilityLedger,
 		capabilityAudit:            opts.CapabilityAudit,
@@ -1490,12 +1500,11 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			classifierInput = rawInput
 		}
 	}
-	a.deliveryTaskExpected = deliveryTaskNeedsEvidence(classifierInput)
-	a.deliveryMutationExpected = deliveryTaskNeedsMutation(classifierInput) && registryHasWriterTools(a.tools)
+	a.deliveryTaskExpected = a.toolCalling && deliveryTaskNeedsEvidence(classifierInput)
+	a.deliveryMutationExpected = a.toolCalling && deliveryTaskNeedsMutation(classifierInput) && registryHasWriterTools(a.tools)
 	calculationRequired := a.calculationToolRequired(classifierInput)
 	a.recoveryTaskSummary = boundedRecoveryTaskSummary(classifierInput)
 	images := userImages(ctx)
-	completionPolicy := a.completionPolicy(rawInput, images)
 	memoryCompilerInput := rawInput
 	if sourceInput, ok := MemoryCompilerSourceInputFromContext(ctx); ok {
 		memoryCompilerInput = sourceInput
@@ -1547,7 +1556,6 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	usedAnyTool := false
 	streamRecoveries := 0
 	streamDegenerationRecoveries := 0
-	documentQualityRetries := 0
 	providerStreamStarted := false
 	graceRound := false
 	recoveryGraceRound := false
@@ -1575,18 +1583,18 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			}
 			return err
 		}
-		schemas := a.tools.Schemas()
-		prefixShape := completionPolicy.prefixShape(a, schemas)
+		schemas := a.requestTools()
+		prefixShape := a.capturePrefixShape(schemas)
 		prevPrefixShape := a.lastPrefixShape
 		if !a.haveLastPrefixShape {
 			prevPrefixShape = prefixShape
 		}
 
 		providerStreamStarted = true
-		text, reasoning, signature, calls, usage, interrupted, partialToolStarted, partialCalls, err := a.stream(ctx, step+1, completionPolicy)
+		text, reasoning, signature, calls, usage, interrupted, partialToolStarted, partialCalls, err := a.stream(ctx, step+1)
 		if err != nil {
-			displayText, displayReasoning := safeInterruptedDisplay(completionPolicy, text, reasoning)
-			droppedText, droppedReasoning := interruptedOutputDropped(completionPolicy, text, reasoning)
+			displayText, displayReasoning := text, reasoning
+			droppedText, droppedReasoning := false, false
 			if provider.IsStreamDegeneration(err) {
 				if streamDegenerationRecoveries < maxStreamDegenerationRecoveries {
 					streamDegenerationRecoveries++
@@ -1657,22 +1665,6 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 			return err
 		}
 		streamRecoveries = 0
-		if completionPolicy.bufferOutput && len(calls) == 0 {
-			issues := validateDocumentOutput(completionPolicy.documentSource, text)
-			if len(issues) > 0 {
-				if documentQualityRetries < maxDocumentQualityRetries {
-					documentQualityRetries++
-					completionPolicy.retryInstruction = documentQualityRetryMessage(issues)
-					a.sink.Emit(event.Event{Kind: event.Retrying, RetryAttempt: documentQualityRetries, RetryMax: maxDocumentQualityRetries})
-					step--
-					continue
-				}
-				detail := documentQualityDetail(issues)
-				a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "文档未通过文本一致性检查，已停止展示异常草稿。", Detail: detail})
-				return &DocumentQualityError{Detail: detail}
-			}
-			a.emitBufferedCompletion(text, reasoning)
-		}
 		cacheDiagnostics := CompareShape(prevPrefixShape, prefixShape, usage)
 		a.lastPrefixShape = prefixShape
 		a.haveLastPrefixShape = true
@@ -2401,7 +2393,7 @@ func registryHasWriterTools(reg *tool.Registry) bool {
 }
 
 func (a *Agent) calculationToolRequired(input string) bool {
-	if a == nil || a.tools == nil || !instruction.ClearlyRequiresCalculation(input) {
+	if a == nil || !a.toolCalling || a.tools == nil || !instruction.ClearlyRequiresCalculation(input) {
 		return false
 	}
 	_, ok := a.tools.Get("calculate")
@@ -2409,19 +2401,8 @@ func (a *Agent) calculationToolRequired(input string) bool {
 }
 
 func deliveryTaskNeedsEvidence(input string) bool {
-	// A document draft can be a valid final answer without touching the
-	// workspace. Do not make the delivery gate invent a host-observable write
-	// for a prose-only request; persistence/export wording keeps the normal
-	// evidence contract in place.
-	normalized := strings.ToLower(strings.TrimSpace(input))
-	if containsAnySubstring(normalized, proseDocumentDraftTerms) {
-		return containsAnySubstring(normalized, proseDocumentPersistenceTerms)
-	}
 	return heuristicInputIsTask(input)
 }
-
-var proseDocumentDraftTerms = []string{"起草", "撰写", "写一份", "写一个", "生成一份", "拟定", "draft", "write a document", "compose"}
-var proseDocumentPersistenceTerms = []string{"保存", "写入", "导出", "下载", "附件", "文件", "路径", ".docx", ".md", ".txt", ".pdf", "save", "export", "download", "file", "path"}
 
 func deliveryTaskNeedsMutation(input string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(input))
@@ -2810,10 +2791,12 @@ func streamDegenerationRecoveryMessage(hadPartialTool bool) string {
 // stream so a sink can re-render the streamed raw text as styled markdown. The
 // accumulated text and reasoning are also returned so the caller can round-trip
 // reasoning on the next turn.
-func (a *Agent) stream(ctx context.Context, turn int, policy completionRequestPolicy) (string, string, string, []provider.ToolCall, *provider.Usage, bool, bool, []provider.ToolCall, error) {
+func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, []provider.ToolCall, *provider.Usage, bool, bool, []provider.ToolCall, error) {
 	ctx = provider.WithRetryNotify(ctx, func(info provider.RetryInfo) {
 		a.sink.Emit(event.Event{Kind: event.Retrying, RetryAttempt: info.Attempt, RetryMax: info.Max})
 	})
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	// CreatedAt is durable UI metadata, not model input. Strip it from the
 	// transport copy so wall-clock differences never invalidate the provider's
 	// prompt-cache prefix (and custom providers cannot accidentally send it).
@@ -2821,10 +2804,9 @@ func (a *Agent) stream(ctx context.Context, turn int, policy completionRequestPo
 	for i := range requestMessages {
 		requestMessages[i].CreatedAt = 0
 	}
-	requestMessages, requestTools := policy.request(requestMessages, a.tools.Schemas())
 	ch, err := a.prov.Stream(ctx, provider.Request{
 		Messages:    requestMessages,
-		Tools:       requestTools,
+		Tools:       a.requestTools(),
 		Temperature: provider.OptionalTemperature(a.temperature),
 	})
 	if err != nil {
@@ -2849,7 +2831,7 @@ func (a *Agent) stream(ctx context.Context, turn int, policy completionRequestPo
 		display = original
 		if transformReasoning && original != "" {
 			display = a.hooks.PostLLMCall(ctx, original, turn)
-			if display != "" && !policy.bufferOutput {
+			if display != "" {
 				a.sink.Emit(event.Event{Kind: event.Reasoning, Text: display})
 			}
 		}
@@ -2872,7 +2854,7 @@ func (a *Agent) stream(ctx context.Context, turn int, policy completionRequestPo
 					return text.String(), stored, signature, calls, usage, false, partialToolStarted, partialCalls, err
 				}
 				stored, display := finishReasoning()
-				if !policy.bufferOutput && (text.Len() > 0 || display != "") {
+				if text.Len() > 0 || display != "" {
 					a.sink.Emit(event.Event{
 						Kind:            event.Message,
 						Text:            StripGoalMarkers(text.String()),
@@ -2884,20 +2866,22 @@ func (a *Agent) stream(ctx context.Context, turn int, policy completionRequestPo
 			}
 			chunk = c
 		}
+		if !a.toolCalling && isToolCallChunk(chunk.Type) {
+			stored, _ := finishReasoning()
+			return text.String(), stored, signature, calls, usage, false, partialToolStarted, partialCalls, errors.New(toolCallingDisabledError)
+		}
 		switch chunk.Type {
 		case provider.ChunkReasoning:
 			reasoning.WriteString(chunk.Text)
 			if chunk.Signature != "" {
 				signature = chunk.Signature
 			}
-			if chunk.Text != "" && !transformReasoning && !policy.bufferOutput {
+			if chunk.Text != "" && !transformReasoning {
 				a.sink.Emit(event.Event{Kind: event.Reasoning, Text: chunk.Text})
 			}
 		case provider.ChunkText:
 			text.WriteString(chunk.Text)
-			if !policy.bufferOutput {
-				a.sink.Emit(event.Event{Kind: event.Text, Text: chunk.Text})
-			}
+			a.sink.Emit(event.Event{Kind: event.Text, Text: chunk.Text})
 		case provider.ChunkToolCallStart:
 			partialToolStarted = true
 			// Surface the tool card as soon as the call begins — before its
@@ -2944,30 +2928,6 @@ func (a *Agent) stream(ctx context.Context, turn int, policy completionRequestPo
 		}
 	}
 }
-
-func (a *Agent) emitBufferedCompletion(text, reasoning string) {
-	if reasoning != "" {
-		a.sink.Emit(event.Event{Kind: event.Reasoning, Text: reasoning})
-	}
-	if text != "" {
-		a.sink.Emit(event.Event{Kind: event.Text, Text: text})
-	}
-	if text != "" || reasoning != "" {
-		a.sink.Emit(event.Event{Kind: event.Message, Text: StripGoalMarkers(text), Reasoning: reasoning, MemoryCitations: a.memoryCitations()})
-	}
-}
-
-func safeInterruptedDisplay(policy completionRequestPolicy, text, reasoning string) (string, string) {
-	if policy.bufferOutput {
-		return "", ""
-	}
-	return text, reasoning
-}
-
-func interruptedOutputDropped(policy completionRequestPolicy, text, reasoning string) (bool, bool) {
-	return policy.bufferOutput && strings.TrimSpace(text) != "", policy.bufferOutput && strings.TrimSpace(reasoning) != ""
-}
-
 func upsertPartialToolCall(calls []provider.ToolCall, call provider.ToolCall) []provider.ToolCall {
 	for i := range calls {
 		if call.ID != "" && calls[i].ID == call.ID {

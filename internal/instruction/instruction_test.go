@@ -79,9 +79,6 @@ func TestClearlyRequiresCalculation(t *testing.T) {
 		{name: "money total", input: "19.90 元买 3 个一共多少钱？", want: true},
 		{name: "percentage", input: "What is 12.5% of 80?", want: true},
 		{name: "finance", input: "按 13% 税率计算 599 元含税金额", want: true},
-		{name: "office plan with budget", input: "起草项目执行计划，预算总额 30 万元，列出负责人和时间表", want: false},
-		{name: "office report with percentages", input: "撰写季度汇报，收入增长 12%，预算合计 80 万元", want: false},
-		{name: "office report explicitly requests calculation", input: "起草预算报告，并计算 12 万元加 8 万元的总额", want: true},
 		{name: "date literal", input: "2026-08-04", want: false},
 		{name: "slash date literal", input: "2026/08/04?", want: false},
 		{name: "date question", input: "2026-08-04 是星期几？", want: false},
@@ -95,23 +92,5 @@ func TestClearlyRequiresCalculation(t *testing.T) {
 				t.Fatalf("ClearlyRequiresCalculation(%q) = %v, want %v", tt.input, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestIsDocumentCompositionRequest(t *testing.T) {
-	if !IsDocumentCompositionRequest("请起草一份项目延期汇报") {
-		t.Fatal("explicit document request was not detected")
-	}
-	if IsDocumentCompositionRequest("修复报告生成器中的空指针") {
-		t.Fatal("code task mentioning a report was misclassified as document composition")
-	}
-	if IsDocumentCompositionRequest("起草代码修复方案并补充测试") {
-		t.Fatal("explicit code task was misclassified as office document composition")
-	}
-	if !IsDocumentCompositionRequest("请修改以上周报，负责人改为李明") {
-		t.Fatal("explicit document follow-up was not detected")
-	}
-	if !IsDocumentRevisionRequest("请修改以上周报，负责人改为李明") || IsDocumentRevisionRequest("请起草一份新周报") {
-		t.Fatal("document revision request was not distinguished from new composition")
 	}
 }

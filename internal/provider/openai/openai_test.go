@@ -18,8 +18,10 @@ import (
 // fire the retry-notify callback for each attempt, and ultimately stream the answer.
 func TestStreamRetriesThenSucceeds(t *testing.T) {
 	var reqs int
+	var clientRequestIDs []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqs++
+		clientRequestIDs = append(clientRequestIDs, r.Header.Get("X-Client-Request-ID"))
 		if reqs <= 2 {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte(`{"error":"overloaded"}`))
@@ -65,6 +67,14 @@ func TestStreamRetriesThenSucceeds(t *testing.T) {
 	}
 	if len(attempts) != 2 || attempts[0] != 1 || attempts[1] != 2 {
 		t.Errorf("retry-notify attempts = %v, want [1 2]", attempts)
+	}
+	if len(clientRequestIDs) != reqs || clientRequestIDs[0] == "" {
+		t.Fatalf("client request IDs = %v, want one non-empty ID per request", clientRequestIDs)
+	}
+	for _, requestID := range clientRequestIDs[1:] {
+		if requestID != clientRequestIDs[0] {
+			t.Fatalf("retry changed client request ID: %v", clientRequestIDs)
+		}
 	}
 }
 
@@ -230,6 +240,10 @@ func TestStreamSendsCustomHeaders(t *testing.T) {
 			http.Error(w, "reserved Accept header was overwritten", http.StatusBadRequest)
 			return
 		}
+		if r.Header.Get("X-Client-Request-ID") == "" || r.Header.Get("X-Client-Request-ID") == "attempt-override" {
+			http.Error(w, "client request ID was missing or overwritten", http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n")
 	}))
@@ -241,10 +255,11 @@ func TestStreamSendsCustomHeaders(t *testing.T) {
 		Model:   "model-a",
 		APIKey:  "real-key",
 		Extra: map[string]any{"headers": map[string]string{
-			"Authorization": "Bearer wrong",
-			"Accept":        "application/json",
-			"HTTP-Referer":  "https://app.example",
-			"X-Title":       "VoltUI",
+			"Authorization":       "Bearer wrong",
+			"Accept":              "application/json",
+			"X-Client-Request-ID": "attempt-override",
+			"HTTP-Referer":        "https://app.example",
+			"X-Title":             "VoltUI",
 		}},
 	})
 	if err != nil {

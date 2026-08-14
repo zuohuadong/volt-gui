@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"voltui/internal/provider"
 )
@@ -116,18 +117,25 @@ func (p *MockProvider) Stream(ctx context.Context, req provider.Request) (<-chan
 		defer close(ch)
 		for _, c := range chunks {
 			if err := ctx.Err(); err != nil {
-				ch <- provider.Chunk{Type: provider.ChunkError, Err: err}
+				sendCanceledChunk(ch, err)
 				return
 			}
 			select {
 			case <-ctx.Done():
-				ch <- provider.Chunk{Type: provider.ChunkError, Err: ctx.Err()}
+				sendCanceledChunk(ch, ctx.Err())
 				return
 			case ch <- c:
 			}
 		}
 	}()
 	return ch, nil
+}
+
+func sendCanceledChunk(ch chan<- provider.Chunk, err error) {
+	select {
+	case ch <- provider.Chunk{Type: provider.ChunkError, Err: err}:
+	case <-time.After(10 * time.Millisecond):
+	}
 }
 
 // Requests returns all recorded requests in call order. Safe to call from

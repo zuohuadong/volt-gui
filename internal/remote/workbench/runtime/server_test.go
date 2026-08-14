@@ -1534,7 +1534,10 @@ func TestRuntimeControllerUsesDesktopBrokerWithoutHostKey(t *testing.T) {
 	desktopBroker, err := remotebroker.Attach(desktopWire, remotebroker.Options{
 		Catalog: func(context.Context, map[string]struct{}) ([]protocol.BrokerProviderDescriptor, error) {
 			return []protocol.BrokerProviderDescriptor{
-				remotebroker.DescriptorFromProvider("local/stub", "Local stub", "stub", stub, []string{"high"}, "high", false, 128_000, nil),
+				remotebroker.DescriptorFromProvider(remotebroker.ProviderDescriptorOptions{
+					Ref: "local/stub", DisplayName: "Local stub", Model: "stub", Provider: stub,
+					Efforts: []string{"high"}, DefaultEffort: "high", ToolCalling: true, ContextWindow: 128_000,
+				}),
 			}, nil
 		},
 		Open: func(ctx context.Context, ref, _ string, request provider.Request) (<-chan provider.Chunk, error) {

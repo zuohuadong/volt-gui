@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -43,7 +44,12 @@ func rstAfter(t *testing.T, w http.ResponseWriter, prelude string) {
 // transparently — the caller sees one clean stream, never an error.
 func TestStreamReconnectsOnEarlyConnReset(t *testing.T) {
 	var reqs int
+	var requestIDMu sync.Mutex
+	var clientRequestIDs []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestIDMu.Lock()
+		clientRequestIDs = append(clientRequestIDs, r.Header.Get("X-Client-Request-ID"))
+		requestIDMu.Unlock()
 		reqs++
 		if reqs == 1 {
 			rstAfter(t, w, ": keep-alive\n\n") // a comment line, zero model output
@@ -86,6 +92,11 @@ func TestStreamReconnectsOnEarlyConnReset(t *testing.T) {
 	}
 	if usage == nil || usage.RequestCount != 2 {
 		t.Errorf("usage request count = %+v, want 2", usage)
+	}
+	requestIDMu.Lock()
+	defer requestIDMu.Unlock()
+	if len(clientRequestIDs) != 2 || clientRequestIDs[0] == "" || clientRequestIDs[1] != clientRequestIDs[0] {
+		t.Errorf("reconnect client request IDs = %v, want one non-empty stable ID", clientRequestIDs)
 	}
 }
 
@@ -217,9 +228,9 @@ func TestStreamDropsPartialToolCallOnCleanEOF(t *testing.T) {
 	}
 }
 
-// TestStreamAcceptsFinishReasonWithoutDone keeps gateways that omit the [DONE]
-// sentinel working: a finish_reason marks the turn complete on its own.
-func TestStreamAcceptsFinishReasonWithoutDone(t *testing.T) {
+// TestStreamRejectsFinishReasonWithoutDone prevents a clean EOF from committing
+// a response whose terminal SSE boundary was never received.
+func TestStreamRejectsFinishReasonWithoutDone(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"},\"finish_reason\":\"stop\"}]}\n\n")
@@ -236,9 +247,11 @@ func TestStreamAcceptsFinishReasonWithoutDone(t *testing.T) {
 	}
 
 	var text strings.Builder
+	var gotInterrupted bool
 	for chunk := range ch {
 		if chunk.Type == provider.ChunkError {
-			t.Fatalf("finish_reason without [DONE] should complete cleanly: %v", chunk.Err)
+			var interrupted *provider.StreamInterruptedError
+			gotInterrupted = errors.As(chunk.Err, &interrupted)
 		}
 		if chunk.Type == provider.ChunkText {
 			text.WriteString(chunk.Text)
@@ -246,6 +259,9 @@ func TestStreamAcceptsFinishReasonWithoutDone(t *testing.T) {
 	}
 	if text.String() != "hello" {
 		t.Errorf("text = %q, want %q", text.String(), "hello")
+	}
+	if !gotInterrupted {
+		t.Fatal("finish_reason without [DONE] must surface as an interrupted stream")
 	}
 }
 

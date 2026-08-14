@@ -843,6 +843,9 @@ func cloneProviderEntry(e ProviderEntry) ProviderEntry {
 	e.Price = clonePricing(e.Price)
 	e.Prices = clonePricingMap(e.Prices)
 	e.ModelOverrides = cloneModelOverrideMap(e.ModelOverrides)
+	e.ToolCalling = cloneBoolPointer(e.ToolCalling)
+	e.visionOverride = cloneBoolPointer(e.visionOverride)
+	e.toolCallingOverride = cloneBoolPointer(e.toolCallingOverride)
 	return e
 }
 
@@ -890,7 +893,17 @@ func cloneModelOverrideMap(in map[string]ProviderModelOverride) map[string]Provi
 	out := make(map[string]ProviderModelOverride, len(in))
 	for k, v := range in {
 		v.SupportedEfforts = append([]string(nil), v.SupportedEfforts...)
+		v.Vision = cloneBoolPointer(v.Vision)
+		v.ToolCalling = cloneBoolPointer(v.ToolCalling)
 		out[k] = v
 	}
 	return out
+}
+
+func cloneBoolPointer(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }

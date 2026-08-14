@@ -30,7 +30,7 @@ func (r *LocalProviderResolver) Catalog() []provider.Descriptor {
 		d := provider.Descriptor{
 			Ref: ref, DisplayName: e.DisplayNameOrName(), Model: e.Model,
 			ContextWindow: e.ContextWindow, Vision: config.EffectiveVision(e),
-			Tools: true, DefaultEffort: config.EffectiveEffort(e),
+			Tools: config.EffectiveToolCalling(e), DefaultEffort: config.EffectiveEffort(e),
 		}
 		if price := e.PriceForModel(e.Model); price != nil {
 			d.PricingCurrency = price.Currency
@@ -150,6 +150,7 @@ func syntheticEntryFromResolver(r provider.Resolver, ref string) *config.Provide
 	if name == "" {
 		name = match.DisplayName
 	}
+	toolCalling := match.Tools
 	contextWindow := match.ContextWindow
 	if contextWindow <= 0 {
 		contextWindow = 128_000
@@ -157,7 +158,7 @@ func syntheticEntryFromResolver(r provider.Resolver, ref string) *config.Provide
 	entry := &config.ProviderEntry{
 		Name: name, Model: model, ContextWindow: contextWindow,
 		SupportedEfforts: append([]string(nil), match.Efforts...),
-		DefaultEffort:    match.DefaultEffort, Vision: match.Vision,
+		DefaultEffort:    match.DefaultEffort, Vision: match.Vision, ToolCalling: &toolCalling,
 	}
 	if match.CacheHitPerMillion > 0 || match.InputPerMillion > 0 || match.OutputPerMillion > 0 {
 		entry.Price = &provider.Pricing{CacheHit: match.CacheHitPerMillion, Input: match.InputPerMillion, Output: match.OutputPerMillion, Currency: match.PricingCurrency}

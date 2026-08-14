@@ -245,6 +245,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			entry.Thinking = "adaptive"
 		}
 	}
+	toolCalling := config.EffectiveToolCalling(entry)
 	if opts.RequireKey && opts.ProviderResolver == nil {
 		if err := cfg.Validate(modelName); err != nil {
 			return nil, err
@@ -372,7 +373,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 	shell := sandbox.ResolveShell(cfg.Tools.Shell.Prefer, cfg.Tools.Shell.Path, stderr)
 
-	sysPrompt, err := cfg.ResolveSystemPromptForRoot(root)
+	sysPrompt, err := cfg.ResolveSystemPromptForToolCalling(root, toolCalling)
 	if err != nil {
 		return nil, err
 	}
@@ -382,18 +383,22 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if st, ok := outputstyle.Resolve(cfg.Agent.OutputStyle, outputstyle.Dirs()); ok {
 		sysPrompt = outputstyle.Apply(sysPrompt, st)
 	}
-	sysPrompt += "\n\n" + config.UserDecisionPolicy
+	if toolCalling {
+		sysPrompt += "\n\n" + config.UserDecisionPolicy
+	}
 	sysPrompt += "\n\n" + config.LanguagePolicy
-	sysPrompt = instruction.WithCalculationPolicy(sysPrompt)
-	if workspaceLine := currentWorkspacePromptLine(root); workspaceLine != "" {
-		sysPrompt += "\n\n" + workspaceLine
+	if toolCalling {
+		sysPrompt = instruction.WithCalculationPolicy(sysPrompt)
+		if workspaceLine := currentWorkspacePromptLine(root); workspaceLine != "" {
+			sysPrompt += "\n\n" + workspaceLine
+		}
+		if tokenEconomy {
+			sysPrompt += "\n\n" + tokenEconomyPrompt
+		} else if tokenDelivery {
+			sysPrompt += "\n\n" + tokenDeliveryPrompt
+		}
 	}
-	if tokenEconomy {
-		sysPrompt += "\n\n" + tokenEconomyPrompt
-	} else if tokenDelivery {
-		sysPrompt += "\n\n" + tokenDeliveryPrompt
-	}
-	if cfg.EnvironmentEnabled() {
+	if toolCalling && cfg.EnvironmentEnabled() {
 		shellLabel := shell.Kind.String()
 		if strings.TrimSpace(cfg.Tools.Shell.Path) != "" {
 			shellLabel = shell.Path
@@ -426,12 +431,15 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if !cfg.SafeMode() {
 		mem = memory.Load(memory.Options{CWD: root, UserDir: config.MemoryUserDir()})
 	}
-	projectChecks := instruction.ExtractHostChecks(mem.Docs)
-	sysPrompt = memory.Compose(sysPrompt, mem)
-	if block := strings.TrimSpace(opts.ScopedMemoryBlock); block != "" {
-		sysPrompt = strings.TrimRight(sysPrompt, "\n") + "\n\n" + block
+	var projectChecks []instruction.VerifyCheck
+	if toolCalling {
+		projectChecks = instruction.ExtractHostChecks(mem.Docs)
+		sysPrompt = memory.Compose(sysPrompt, mem)
+		if block := strings.TrimSpace(opts.ScopedMemoryBlock); block != "" {
+			sysPrompt = strings.TrimRight(sysPrompt, "\n") + "\n\n" + block
+		}
+		sysPrompt = applyAgentProfilePrompt(sysPrompt, opts.AgentProfile)
 	}
-	sysPrompt = applyAgentProfilePrompt(sysPrompt, opts.AgentProfile)
 
 	// Skills: discover playbooks (built-in + project/custom/global) and fold their
 	// one-liner index into the same cache-stable prefix — names + descriptions
@@ -459,12 +467,16 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		allSkillStore = skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(), PluginAgentPaths: cfg.PluginPackageAgentOwners(), ExcludedPaths: cfg.SkillExcludedPaths(), AllowedNames: agentProfileSkillNames(opts.AgentProfile), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard})
 	}
 	allSkills := allSkillStore.List()
-	if !tokenEconomy && !cfg.SafeMode() {
+	if toolCalling && !tokenEconomy && !cfg.SafeMode() {
 		sysPrompt = skill.ApplyIndex(sysPrompt, skills)
 	}
 
 	reg := tool.NewRegistry()
-	reg.SetAllowPolicy(agentProfileToolAllowPolicy(opts.AgentProfile))
+	if toolCalling {
+		reg.SetAllowPolicy(agentProfileToolAllowPolicy(opts.AgentProfile))
+	} else {
+		reg.SetAllowPolicy(func(string) bool { return false })
+	}
 	writeRoots := cfg.WriteRootsForRoot(root)
 	writeRoots = appendUniquePaths(writeRoots, additionalDirs...)
 	forbidReadRoots := RuntimeForbidReadRoots(cfg, root)
@@ -1476,7 +1488,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// use_capability surface to both Planner and Executor. Their frontends keep
 	// independent ledgers/audits while sharing the session MCP runtime.
 	dualModelPlanner := false
-	if pm := cfg.Agent.PlannerModel; pm != "" && !tokenEconomy {
+	if pm := cfg.Agent.PlannerModel; toolCalling && pm != "" && !tokenEconomy {
 		if pe, ok := resolveOptionalEntry(opts, cfg, pm); ok && pe.Model != entry.Model {
 			dualModelPlanner = true
 		}
@@ -1565,6 +1577,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ModelRef:    modelRef,
 		Temperature: cfg.Agent.Temperature,
 		Pricing:     entry.Price,
+		ToolCalling: &toolCalling,
 		Gate:        headlessGate,
 		Hooks:       hookRunner,
 		Jobs:        jm,
@@ -1597,7 +1610,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Coordinator with its own session, kept separate for cache stability. The
 	// planner gets the same standing memory context and a filtered read-only
 	// research tool set, so it can inspect rules/code without side effects.
-	if pm := cfg.Agent.PlannerModel; pm != "" && !tokenEconomy {
+	if pm := cfg.Agent.PlannerModel; toolCalling && pm != "" && !tokenEconomy {
 		pe, ok := resolveOptionalEntry(opts, cfg, pm)
 		if !ok {
 			return nil, fmt.Errorf("planner_model %q is not a configured provider", pm)

@@ -32,11 +32,12 @@ func TestValidateStreamUTF8RejectsAndRedactsMalformedFrames(t *testing.T) {
 		slog.SetDefault(slog.New(slog.NewTextHandler(&logOutput, nil)))
 
 		err := ValidateStreamUTF8(StreamUTF8Context{
-			Provider:  "gateway",
-			Model:     "glm-5.2",
-			Protocol:  "openai",
-			RequestID: "request-123",
-			Line:      7,
+			Provider:        "gateway",
+			Model:           "glm-5.2",
+			Protocol:        "openai",
+			ClientRequestID: "client-123",
+			RequestID:       "request-123",
+			Line:            7,
 		}, frame)
 		slog.SetDefault(previous)
 
@@ -48,7 +49,7 @@ func TestValidateStreamUTF8RejectsAndRedactsMalformedFrames(t *testing.T) {
 			t.Fatalf("diagnostic = %+v, want offset=%d bytes=%d", invalid, len("data: secret-"), len(frame))
 		}
 		logged := logOutput.String()
-		for _, want := range []string{"diagnostic_id", "request-123", "frame_sha256", "byte_offset=13", "frame_bytes"} {
+		for _, want := range []string{"diagnostic_id", "client-123", "request-123", "frame_sha256", "byte_offset=13", "frame_bytes"} {
 			if !strings.Contains(logged, want) {
 				t.Fatalf("diagnostic log = %q, want %q", logged, want)
 			}
@@ -67,11 +68,11 @@ func TestLogStreamReplacementRunesRedactsValidReplacementFrames(t *testing.T) {
 
 	frame := []byte(`data: {"content":"secret-�-�"}`)
 	LogStreamReplacementRunes(StreamUTF8Context{
-		Provider: "gateway", Model: "glm-5.2", Protocol: "openai", RequestID: "request-456", Line: 9,
+		Provider: "gateway", Model: "glm-5.2", Protocol: "openai", ClientRequestID: "client-456", RequestID: "request-456", Line: 9,
 	}, frame, CountReplacementRunes("secret-�-�"))
 
 	logged := logOutput.String()
-	for _, want := range []string{"U+FFFD", "request-456", "replacement_runes=2", "frame_sha256"} {
+	for _, want := range []string{"U+FFFD", "client-456", "request-456", "replacement_runes=2", "frame_sha256"} {
 		if !strings.Contains(logged, want) {
 			t.Fatalf("diagnostic log = %q, want %q", logged, want)
 		}

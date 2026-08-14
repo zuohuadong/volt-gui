@@ -52,3 +52,25 @@ func TestDefaultDesktopMetricsOn(t *testing.T) {
 		t.Fatal("desktop metrics explicit false = true, want false")
 	}
 }
+
+func TestEffectiveToolCallingDefaultsToEnabledAndHonorsModelOverride(t *testing.T) {
+	if EffectiveToolCalling(nil) {
+		t.Fatal("nil provider must not advertise tool calling")
+	}
+	if !EffectiveToolCalling(&ProviderEntry{}) {
+		t.Fatal("legacy provider without capability metadata must retain tool calling")
+	}
+	disabled := false
+	enabled := true
+	if EffectiveToolCalling(&ProviderEntry{ToolCalling: &disabled}) {
+		t.Fatal("explicit tool_calling=false was ignored")
+	}
+	cfg := &Config{Providers: []ProviderEntry{{
+		Name: "gateway", Models: []string{"chat"}, ToolCalling: &disabled,
+		ModelOverrides: map[string]ProviderModelOverride{"chat": {ToolCalling: &enabled}},
+	}}}
+	entry, ok := cfg.ResolveModel("gateway/chat")
+	if !ok || !EffectiveToolCalling(entry) {
+		t.Fatalf("model override did not enable tool calling: %+v", entry)
+	}
+}

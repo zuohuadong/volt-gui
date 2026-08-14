@@ -362,7 +362,7 @@ func reservedExtraBodyField(name string) bool {
 
 func reservedCustomHeader(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "authorization", "content-type", "accept", "host":
+	case "authorization", "content-type", "accept", "host", "x-client-request-id":
 		return true
 	default:
 		return false
@@ -378,6 +378,11 @@ var bufPool = sync.Pool{
 }
 
 func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	clientRequestID, err := provider.NewClientRequestID()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", c.name, err)
+	}
+	ctx = provider.WithClientRequestID(ctx, clientRequestID)
 	ctx = provider.WithRequestAttemptCounter(ctx)
 	buf := bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
@@ -398,6 +403,7 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 		applyAPIKeyHeader(httpReq.Header, c.baseURL, c.apiKey)
 		httpReq.Header.Set("Accept", "text/event-stream")
 		applyCustomHeaders(httpReq.Header, c.headers)
+		httpReq.Header.Set("X-Client-Request-ID", clientRequestID)
 		return httpReq, nil
 	}
 	resp, err := provider.SendWithRetry(ctx, c.http, c.sendOpts(), newReq)
@@ -712,7 +718,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	var reasoningStartedAt time.Time
 	var reasoningBytes int
 	streamContext := provider.StreamUTF8Context{
-		Provider: c.name, Model: c.model, Protocol: "openai", RequestID: provider.StreamRequestID(resp.Header),
+		Provider: c.name, Model: c.model, Protocol: "openai", ClientRequestID: provider.ClientRequestID(ctx), RequestID: provider.StreamRequestID(resp.Header),
 	}
 	markValidOutput := func() {
 		validOutputObserved.Store(true)
@@ -886,7 +892,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	// A proxy that idle-closes with a clean FIN ends the scan with no error. Without
 	// this check the turn would be committed as complete — including half-streamed
 	// tool-call arguments, which then 400 on every replay (#3953).
-	if !sawDone && lastFinishReason == "" {
+	if !sawDone {
 		return emitted, fmt.Errorf("%s: stream ended before completion: %w", c.name, io.ErrUnexpectedEOF)
 	}
 

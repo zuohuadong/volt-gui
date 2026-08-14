@@ -34,6 +34,15 @@ func TestHostIgnoresNotificationsFromSupersededGeneration(t *testing.T) {
 	}
 }
 
+func TestDescriptorFromBrokerPreservesToolCallingCapability(t *testing.T) {
+	descriptor := descriptorFromBroker(protocol.BrokerProviderDescriptor{
+		Ref: "vision/model", Model: "model", SupportsToolCalling: false,
+	})
+	if descriptor.Tools {
+		t.Fatalf("broker descriptor advertised tools for a tool-free model: %+v", descriptor)
+	}
+}
+
 func TestHostOutputBackpressureDoesNotBlockDetach(t *testing.T) {
 	h := NewHost()
 	h.generation = 1

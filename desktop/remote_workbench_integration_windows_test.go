@@ -118,7 +118,10 @@ func TestRemoteWorkbenchWindowsToLinuxPhysicalAcceptance(t *testing.T) {
 		brokerOpts := remotebroker.Options{
 			Catalog: func(context.Context, map[string]struct{}) ([]protocol.BrokerProviderDescriptor, error) {
 				return []protocol.BrokerProviderDescriptor{
-					remotebroker.DescriptorFromProvider("physical/stub", "Physical Desktop stub", "stub", providerStub, []string{"high"}, "high", false, 128_000, nil),
+					remotebroker.DescriptorFromProvider(remotebroker.ProviderDescriptorOptions{
+						Ref: "physical/stub", DisplayName: "Physical Desktop stub", Model: "stub", Provider: providerStub,
+						Efforts: []string{"high"}, DefaultEffort: "high", ToolCalling: true, ContextWindow: 128_000,
+					}),
 				}, nil
 			},
 			Open: func(streamCtx context.Context, ref, _ string, request provider.Request) (<-chan provider.Chunk, error) {

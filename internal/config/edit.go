@@ -159,6 +159,7 @@ func (c *Config) UpsertProviderPreservingRuntime(e ProviderEntry) error {
 		e.resolvedAPIKey = current.resolvedAPIKey
 		e.resolvedSource = current.resolvedSource
 		e.visionOverride = current.visionOverride
+		e.toolCallingOverride = current.toolCallingOverride
 	}
 	return c.UpsertProvider(e)
 }
@@ -169,6 +170,7 @@ func ProviderEntryConfigSnapshot(entry ProviderEntry) ProviderEntry {
 	entry.resolvedAPIKey = ""
 	entry.resolvedSource = CredentialSource{}
 	entry.visionOverride = nil
+	entry.toolCallingOverride = nil
 	return entry
 }
 

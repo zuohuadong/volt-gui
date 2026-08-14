@@ -1,6 +1,8 @@
 package provider
 
 import (
+	"context"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -19,11 +21,48 @@ var streamDiagnosticSequence atomic.Uint64
 
 // StreamUTF8Context identifies an SSE frame without carrying its content.
 type StreamUTF8Context struct {
-	Provider  string
-	Model     string
-	Protocol  string
-	RequestID string
-	Line      int
+	Provider        string
+	Model           string
+	Protocol        string
+	ClientRequestID string
+	RequestID       string
+	Line            int
+}
+
+type clientRequestIDKey struct{}
+
+// NewClientRequestID returns a UUIDv4-safe correlation ID for one logical
+// provider stream. It contains no request content or credential material.
+func NewClientRequestID() (string, error) {
+	var raw [16]byte
+	if _, err := cryptorand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generate client request ID: %w", err)
+	}
+	raw[6] = raw[6]&0x0f | 0x40
+	raw[8] = raw[8]&0x3f | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		raw[0:4], raw[4:6], raw[6:8], raw[8:10], raw[10:16]), nil
+}
+
+// WithClientRequestID stores a bounded correlation ID on the logical stream
+// context so retries and stream diagnostics refer to the same user request.
+func WithClientRequestID(ctx context.Context, requestID string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if safe, ok := safeDiagnosticLabel(requestID); ok {
+		return context.WithValue(ctx, clientRequestIDKey{}, safe)
+	}
+	return ctx
+}
+
+// ClientRequestID returns the correlation ID attached to a provider request.
+func ClientRequestID(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	requestID, _ := ctx.Value(clientRequestIDKey{}).(string)
+	return requestID
 }
 
 // InvalidStreamUTF8Error reports a rejected frame using content-free metadata.
@@ -72,6 +111,7 @@ func logInvalidStreamUTF8(streamContext StreamUTF8Context, diagnostic *InvalidSt
 		"provider", diagnostic.Provider,
 		"model", diagnosticLabel(streamContext.Model),
 		"protocol", diagnostic.Protocol,
+		"client_request_id", optionalDiagnosticLabel(streamContext.ClientRequestID),
 		"request_id", optionalDiagnosticLabel(streamContext.RequestID),
 		"line", diagnostic.Line,
 		"byte_offset", diagnostic.ByteOffset,
@@ -92,6 +132,7 @@ func LogStreamReplacementRunes(streamContext StreamUTF8Context, frame []byte, co
 		"provider", diagnosticLabel(streamContext.Provider),
 		"model", diagnosticLabel(streamContext.Model),
 		"protocol", diagnosticLabel(streamContext.Protocol),
+		"client_request_id", optionalDiagnosticLabel(streamContext.ClientRequestID),
 		"request_id", optionalDiagnosticLabel(streamContext.RequestID),
 		"line", streamContext.Line,
 		"frame_bytes", len(frame),

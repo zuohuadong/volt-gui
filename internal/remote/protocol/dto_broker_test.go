@@ -40,7 +40,8 @@ func TestBrokerProviderDescriptorRoundTripPreservesRuntimeMetadata(t *testing.T)
 		Ref: "local/model", DisplayName: "Local", Model: "model",
 		ContextWindow: 1_000_000, PricingCurrency: "$",
 		CacheHitPerMillion: 0.1, InputPerMillion: 1.25, OutputPerMillion: 4.5,
-		SupportsVision: true, SupportedEfforts: []string{"low", "high"}, DefaultEffort: "high",
+		SupportsVision: true, SupportsToolCalling: true,
+		SupportedEfforts: []string{"low", "high"}, DefaultEffort: "high",
 	}
 	raw, err := json.Marshal(BrokerCatalogResult{Providers: []BrokerProviderDescriptor{want}})
 	if err != nil {

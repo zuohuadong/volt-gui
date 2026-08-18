@@ -1,0 +1,17 @@
+# Anyong Workbench Profile for DeepSeek Harness (DSH)
+# Fuses official DSH web services, MCP plugin manager, and Anyong Workbench UI
+
+- id: anyong-ui
+  name: '@xgic/dsh-plugin-ui'
+  config:
+    brandName: '西谷智灯暗涌系统 (Anyong DSH)'
+    theme: 'dark'
+    enableDiffView: true
+    enableThinkingAnimation: true
+    intranetMode: true
+
+- id: agent-default-model
+  name: '@deepseek-ai/dsh-agent-default-model'
+  config:
+    provider: deepseek-official
+    model: deepseek-chat

@@ -1,0 +1,26 @@
+{
+  "appId": "com.xgic.anyong.dsh",
+  "productName": "Anyong DSH",
+  "directories": {
+    "output": "dist-package"
+  },
+  "files": [
+    "dist/**/*",
+    "package.json"
+  ],
+  "mac": {
+    "target": ["dmg", "zip"],
+    "category": "public.app-category.developer-tools"
+  },
+  "win": {
+    "target": ["nsis", "portable"]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true
+  },
+  "linux": {
+    "target": ["AppImage", "deb"],
+    "category": "Development"
+  }
+}

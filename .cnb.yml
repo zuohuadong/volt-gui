@@ -1,70 +1,35 @@
-# CNB 云原生构建配置 — 西谷智灯暗涌系统 (西谷 AI fork of VoltUI)
+# CNB 云原生构建配置 — 西谷智灯暗涌系统 (Anyong DSH + Electron Desktop)
 # 参考: https://docs.cnb.cool/zh/build/configuration.md
 #
-# 本项目的 CNB CI 只构建 Windows 桌面版本 (Wails)，CLI/macOS/Linux 产物不发版。
-# CNB CI 当前使用 Linux Docker runner，发布阶段交叉编译 Windows amd64 桌面包，
-# 并用 Linux nsis/makensis 生成安装器。
-#
-# Tag 命名空间:
-#   desktop-v* → CNB 自动发布桌面端构建
-#   prerequisites-v* → CNB 单独发布低频 Windows 前置依赖
-#
-# 触发条件:
-#   推送 feat:/fix:/feat!:/fix!: 等约定式提交到 main → 自动发版
-#   - feat:     → minor 版本升级 (v0.1.0 → v0.2.0)
-#   - fix:      → patch 版本升级 (v0.1.0 → v0.1.1)
-#   - feat!:    → major 版本升级 (v0.1.0 → v1.0.0)
-#   - chore:/docs:/ci: 等 → 仅构建验证，不发版
-#   - 提交消息含 [skip-release] → 跳过自动发版
+# 架构: 现代 Node.js 22 + pnpm + DSH (DeepSeek Harness) + Electron 桌面端
+# 目标: 自动编译测试并构建 Windows (NSIS/便携版)、macOS 与 Linux 桌面安装包
 
 main:
   push:
-    # Pipeline 1: Windows 桌面发布链路的快速编译验证（每次 push 都执行）
-    # Docker 中无法做完整 Wails/NSIS 打包，只验证 desktop Go 模块与发布辅助命令。
+    # Pipeline 1: 快速编译与全量测试验证（每次 push 执行）
     - docker:
-        image: golang:1.26
+        image: node:22
       env:
         XIGU_BRAND_NAME: "西谷智灯暗涌系统"
       stages:
-        - name: desktop-build
+        - name: install-deps
           script: |
-            cd desktop
+            corepack enable
+            corepack prepare pnpm@10.32.1 --activate
+            pnpm install --frozen-lockfile=false
 
-            # Stub embedded frontend (Wails embeds frontend/dist)
-            mkdir -p frontend/dist
-            echo '<!doctype html><title>ci</title>' > frontend/dist/index.html
-
-            # Resolve deps (desktop is a nested Go module)
-            go mod tidy
-            CGO_ENABLED=0 go vet ./...
-            CGO_ENABLED=0 go build ./...
-
-        - name: windows-release-tools-test
+        - name: run-tests
           script: |
-            cd desktop
+            pnpm test
 
-            mkdir -p frontend/dist
-            echo '<!doctype html><title>ci</title>' > frontend/dist/index.html
-
-            # Only test sub-packages that don't need Wails runtime
-            # (desktop main package requires Wails CGO/WebView — can't run in Docker)
-            go test ./cmd/sign ./cmd/cnbrelease ./internal/update
-
-        - name: windows-prerequisites-contract-test
-          image: node:22
+        - name: build-all-packages
           script: |
-            apt-get update
-            apt-get install -y zip unzip
-            node --test \
-              scripts/stage-windows-prerequisites.test.mjs \
-              scripts/build-windows-prerequisites.test.mjs
+            pnpm run build
+            pnpm --filter @anyong/desktop-electron run build:main
 
-    # Pipeline 2: 自动发版（仅约定式提交触发）
-    # CNB 直接构建 Windows 桌面端、生成 SHA-256 manifest，并上传 CNB Release 资产
-    # imports 导入 OEM 模型配置 (.cnb/envs.yml), 提供 XIGU_MODEL_BASE_URL / XIGU_API_KEY;
-    # env 里的同名 key 优先于 imports.
+    # Pipeline 2: 自动发版（仅在约定式提交 feat:/fix: 时触发）
     - docker:
-        image: golang:1.26
+        image: node:22
       imports:
         - https://cnb.cool/aizhuliren/xgic/anyong-agent/-/blob/main/.cnb/envs.yml
       env:
@@ -73,22 +38,18 @@ main:
         GIT_COMMITTER_NAME: "西谷智灯暗涌系统 Bot"
         GIT_COMMITTER_EMAIL: "bot@xigu.ai"
         XIGU_BRAND_NAME: "西谷智灯暗涌系统"
-        VOLTUI_BRAND_NAME: "西谷智灯暗涌系统"
-        DESKTOP_APP_NAME: "Anyong"   # release artifact prefix (Anyong-windows-amd64-...); overrides upstream VoltUI
-        REQUIRE_XIGU_MODEL_BUNDLE: "1"
+        DESKTOP_APP_NAME: "Anyong-DSH"
       stages:
-        - name: resolve-release
+        - name: resolve-release-tag
           script: |
             MSG="${CNB_COMMIT_MESSAGE}"
 
-            # 跳过标记
             if echo "$MSG" | grep -q '\[skip-release\]'; then
               echo "[skip-release] detected, skipping"
               touch .release_skip
               exit 0
             fi
 
-            # 判断是否为约定式提交的 feat/fix/feat!/fix!
             if echo "$MSG" | grep -qE '^(feat|fix)(\(.+\))?!?:'; then
               echo "Conventional commit detected: $MSG"
             else
@@ -97,11 +58,9 @@ main:
               exit 0
             fi
 
-            # 获取最新 desktop-v* tag 并计算新版本号
             git fetch --tags origin 2>/dev/null || true
             LATEST_TAG=$(git tag -l --sort=-version:refname | grep -E '^desktop-v[0-9]' | head -1 || true)
 
-            # 首次发版: 直接用 0.1.0，不递增
             if [ -z "$LATEST_TAG" ]; then
               DESKTOP_TAG="desktop-v0.1.0"
             else
@@ -110,8 +69,6 @@ main:
               MINOR=$(echo "$VERSION_BASE" | cut -d. -f2)
               PATCH=$(echo "$VERSION_BASE" | cut -d. -f3 | cut -d- -f1)
 
-              # 根据提交类型决定版本号升级
-              # feat!:/fix!: → major, feat: → minor, fix: → patch
               if echo "$MSG" | grep -qE '^(feat|fix)(\(.+\))?!:'; then
                 NEW_MAJOR=$((MAJOR + 1))
                 DESKTOP_TAG="desktop-v${NEW_MAJOR}.0.0"
@@ -124,284 +81,43 @@ main:
               fi
             fi
 
-            echo "Latest tag: ${LATEST_TAG:-none} → New: $DESKTOP_TAG"
-
-            VERSION="${DESKTOP_TAG#desktop-}"
-            PRERELEASE=false
-            case "$VERSION" in *-*) PRERELEASE=true ;; esac
+            echo "Calculated new version tag: $DESKTOP_TAG"
+            VERSION="${DESKTOP_TAG#desktop-v}"
 
             cat > .release_env <<EOF
             DESKTOP_TAG=$DESKTOP_TAG
             VERSION=$VERSION
-            PRERELEASE=$PRERELEASE
             LATEST_TAG=$LATEST_TAG
             EOF
 
-        - name: install-desktop-release-deps
-          script: |
-            if [ -f .release_skip ]; then
-              exit 0
-            fi
-
-            apt-get update
-            apt-get install -y \
-              ca-certificates \
-              curl \
-              nsis \
-              unzip \
-              xz-utils \
-              zip
-
-            curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-            apt-get install -y nodejs
-            npm install -g pnpm@10
-
-            go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
-            wails doctor || true
-
-        - name: build-windows-desktop
+        - name: build-electron-dist
           script: |
             if [ -f .release_skip ]; then
               exit 0
             fi
             . ./.release_env
 
-            rm -rf dist desktop/build/bin
-            # 内网模型 URL / Key 由 imports/env 注入，desktop-build.sh 将其落盘为
-            # 随安装版和便携版发布的最低优先级 OEM sidecar (bundled.env)。
-            # Windows is built by cross-compiling Wails from the CNB Linux container.
-            # macOS and Linux targets are intentionally disabled for now:
-            #   scripts/desktop-build.sh darwin/universal "$VERSION"
-            #   scripts/desktop-build.sh linux/amd64 "$VERSION"
-            scripts/desktop-build.sh windows/amd64 "$VERSION"
+            corepack enable
+            corepack prepare pnpm@10.32.1 --activate
+            pnpm install --frozen-lockfile=false
 
-        - name: generate-manifest
+            # 全量编译前端与 DSH 核心
+            pnpm run build
+
+            # 调用 electron-builder 构建 Windows (NSIS/便携版) 与 Linux 产物
+            cd apps/desktop-electron
+            pnpm run build:main
+            npx electron-builder --win --x64 --config electron-builder.json
+            npx electron-builder --linux --x64 --config electron-builder.json
+
+        - name: generate-checksums
           script: |
             if [ -f .release_skip ]; then
               exit 0
             fi
             . ./.release_env
 
-            cd desktop
-            REPO_BASE="${CNB_REPO_URL_HTTPS:-https://cnb.cool/${CNB_REPO_SLUG}}"
-            RELEASE_DOWNLOAD_PAGE="${REPO_BASE}/-/releases" \
-              RELEASE_ASSET_BASE_URL="${REPO_BASE}/-/releases/download/${DESKTOP_TAG}" \
-              go run ./cmd/sign manifest ../dist "$VERSION" "$DESKTOP_TAG"
-
-        - name: publish-cnb-release
-          script: |
-            if [ -f .release_skip ]; then
-              exit 0
-            fi
-            . ./.release_env
-
-            BRAND="${XIGU_BRAND_NAME:-西谷智灯暗涌系统}"
-            CHANGELOG_LIMIT=50
-
-            if [ -n "$LATEST_TAG" ]; then
-              CHANGE_COUNT=$(git rev-list --count "${LATEST_TAG}..HEAD" 2>/dev/null || echo 0)
-              CHANGELOG=$(git log --max-count="$CHANGELOG_LIMIT" "${LATEST_TAG}..HEAD" --pretty=format:"- %s" 2>/dev/null || echo "- 参见提交记录")
-            else
-              CHANGE_COUNT=$(git rev-list --count HEAD 2>/dev/null || echo 0)
-              CHANGELOG=$(git log --max-count="$CHANGELOG_LIMIT" --pretty=format:"- %s" 2>/dev/null || echo "- 参见提交记录")
-            fi
-            if [ "$CHANGE_COUNT" -gt "$CHANGELOG_LIMIT" ]; then
-              OMITTED_COMMITS=$((CHANGE_COUNT - CHANGELOG_LIMIT))
-              CHANGELOG="${CHANGELOG}
-            - 另有 ${OMITTED_COMMITS} 个提交，详见仓库提交记录"
-            fi
-
-            BODY="${BRAND} ${DESKTOP_TAG} 发布
-
-            ## 变更记录
-            ${CHANGELOG}
-
-            ---
-
-            CNB 已构建并上传 Windows amd64 桌面端安装包。macOS、Linux 和 CLI 产物不会由 CNB 构建或发布。"
-
-            # 创建 desktop-v* tag，保持版本命名空间一致
-            git config user.name "$GIT_COMMITTER_NAME"
-            git config user.email "$GIT_COMMITTER_EMAIL"
-            git tag "$DESKTOP_TAG"
-            git push origin "$DESKTOP_TAG"
-
-            cd desktop
-            go run ./cmd/cnbrelease \
-              --tag "$DESKTOP_TAG" \
-              --version "$VERSION" \
-              --dist ../dist \
-              --assets "Anyong-windows-amd64-installer.exe,Anyong-windows-amd64.zip,latest.json" \
-              --brand "$BRAND" \
-              --body "$BODY" \
-              --prerelease="$PRERELEASE" \
-              --make-latest=true
-
-  # ------------------------------------------------------------------
-  # 合并请求：Windows 桌面发布链路快速检查
-  # ------------------------------------------------------------------
-  pull_request:
-    - docker:
-        image: golang:1.26
-      stages:
-        - name: desktop-build-check
-          script: |
-            cd desktop
-            mkdir -p frontend/dist
-            echo '<!doctype html><title>ci</title>' > frontend/dist/index.html
-            go mod tidy
-            CGO_ENABLED=0 go vet ./...
-            CGO_ENABLED=0 go build ./...
-
-        - name: windows-release-tools-check
-          script: |
-            cd desktop
-            go test ./cmd/sign ./cmd/cnbrelease ./internal/update
-
-        - name: windows-prerequisites-contract-check
-          image: node:22
-          script: |
-            apt-get update
-            apt-get install -y zip unzip
-            node --test \
-              scripts/stage-windows-prerequisites.test.mjs \
-              scripts/build-windows-prerequisites.test.mjs
-
-  # ------------------------------------------------------------------
-  # 定时同步上游 (每天 09:00 CST)
-  # ------------------------------------------------------------------
-  "crontab: 0 9 * * *":
-    - name: sync-upstream
-      docker:
-        image: golang:1.26
-      env:
-        GIT_AUTHOR_NAME: "西谷智灯暗涌系统 Bot"
-        GIT_AUTHOR_EMAIL: "bot@xigu.ai"
-        GIT_COMMITTER_NAME: "西谷智灯暗涌系统 Bot"
-        GIT_COMMITTER_EMAIL: "bot@xigu.ai"
-      stages:
-        - name: configure-git
-          script: |
-            git config --global user.name "$GIT_COMMITTER_NAME"
-            git config --global user.email "$GIT_COMMITTER_EMAIL"
-            git config --global init.defaultBranch main
-
-        - name: sync-upstream
-          script: |
-            chmod +x scripts/sync-upstream.sh
-            bash scripts/sync-upstream.sh || {
-              echo "::warning:: Upstream sync had issues, check logs"
-              exit 0
-            }
-
-        - name: create-pull-request
-          script: |
-            DATE_STAMP=$(date +%Y-%m-%d)
-            SYNC_BRANCH="sync/upstream-${DATE_STAMP}"
-
-            git push origin "$SYNC_BRANCH" --force-with-lease 2>/dev/null || true
-
-            RESPONSE=$(curl -s -X POST \
-              "${CNB_API_ENDPOINT:-https://api.cnb.cool}/${CNB_REPO_SLUG}/-/pulls" \
-              -H "Authorization: Bearer ${CNB_TOKEN}" \
-              -H "Content-Type: application/json" \
-              -d "{
-                \"title\": \"sync: 上游 volt-gui 更新 (${DATE_STAMP})\",
-                \"body\": \"自动同步上游 [volt-gui](https://cnb.cool/aizhuliren/volt-gui) 的最新提交。\\n\\n---\\n_由 CNB CI 定时任务自动生成._\",
-                \"head\": \"${SYNC_BRANCH}\",
-                \"base\": \"main\"
-              }" 2>/dev/null || echo "failed")
-
-            if echo "$RESPONSE" | grep -q '"iid"'; then
-              PR_IID=$(echo "$RESPONSE" | grep -o '"iid":[0-9]*' | head -1 | cut -d: -f2)
-              echo "Pull request created: ${CNB_REPO_URL_HTTPS}/-/pulls/${PR_IID}"
-            else
-              echo "PR creation response: $RESPONSE"
-              echo "Note: If PR already exists, the sync branch has been updated."
-            fi
-
-# ------------------------------------------------------------------
-# 仓库级 Tag 事件：单独发布低频 Windows prerequisites
-# tag_push 必须位于 `$` 下；非 prerequisites-v* Tag 只执行短路检查。
-# ------------------------------------------------------------------
-"$":
-  tag_push:
-    - name: windows-prerequisites-release
-      docker:
-        image: golang:1.26
-      env:
-        XIGU_BRAND_NAME: "西谷智灯暗涌系统"
-        VOLTUI_BRAND_NAME: "西谷智灯暗涌系统"
-        DESKTOP_APP_NAME: "Anyong"
-      stages:
-        - name: resolve-prerequisites-release
-          script: |
-            case "${CNB_BRANCH:-}" in
-              prerequisites-v*) ;;
-              *)
-                echo "Tag ${CNB_BRANCH:-unknown} is not a prerequisites release; skipping"
-                touch .prerequisites_skip
-                exit 0
-                ;;
-            esac
-
-            VERSION=$(tr -d '\r\n' < desktop/prerequisites-version.txt)
-            EXPECTED_TAG="prerequisites-${VERSION}"
-            if [ "$CNB_BRANCH" != "$EXPECTED_TAG" ]; then
-              echo "prerequisites tag mismatch: got $CNB_BRANCH, want $EXPECTED_TAG" >&2
-              exit 1
-            fi
-
-            cat > .prerequisites_env <<EOF
-            VERSION=$VERSION
-            RELEASE_TAG=$EXPECTED_TAG
-            ASSET_NAME=${DESKTOP_APP_NAME}-windows-amd64-prerequisites-${VERSION}.zip
-            EOF
-
-        - name: install-prerequisites-release-deps
-          script: |
-            if [ -f .prerequisites_skip ]; then
-              exit 0
-            fi
-
-            apt-get update
-            apt-get install -y ca-certificates curl zip
-            curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-            apt-get install -y nodejs
-
-        - name: build-windows-prerequisites
-          script: |
-            if [ -f .prerequisites_skip ]; then
-              exit 0
-            fi
-            . ./.prerequisites_env
-
-            PREREQUISITES_RELEASE_TAG="$RELEASE_TAG" \
-              scripts/build-windows-prerequisites.sh windows/amd64
-
-        - name: publish-windows-prerequisites
-          script: |
-            if [ -f .prerequisites_skip ]; then
-              exit 0
-            fi
-            . ./.prerequisites_env
-
-            BRAND="${XIGU_BRAND_NAME:-VoltUI}"
-            MANIFEST_NAME="${ASSET_NAME%.zip}.json"
-            BODY="${BRAND} Windows 前置依赖 ${VERSION}
-
-            此 Release 与 desktop-v* 桌面应用版本解耦，仅在微软运行库、安装脚本或校验元数据发生变化时升级。
-
-            资产包含 Windows amd64 离线 prerequisites ZIP、ZIP 外部 SHA-256 与结构化 manifest。"
-
-            cd desktop
-            go run ./cmd/cnbrelease \
-              --tag "$RELEASE_TAG" \
-              --version "$VERSION" \
-              --dist ../dist-prerequisites \
-              --assets "$ASSET_NAME,$ASSET_NAME.sha256,$MANIFEST_NAME" \
-              --brand "${BRAND} Windows 前置依赖" \
-              --body "$BODY" \
-              --prerelease=false \
-              --make-latest=false \
-              --immutable
+            cd apps/desktop-electron/dist-package
+            sha256sum * > SHA256SUMS.txt
+            echo "Artifacts built:"
+            ls -la

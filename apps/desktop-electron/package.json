@@ -1,0 +1,27 @@
+{
+  "name": "@anyong/desktop-electron",
+  "version": "1.0.0",
+  "description": "Anyong DSH Desktop Application powered by Electron and Svelte 5",
+  "main": "dist/main.js",
+  "type": "module",
+  "scripts": {
+    "build:main": "tsc",
+    "build:frontend": "cd ../../anyong-agent/desktop/frontend && pnpm run build",
+    "build": "pnpm run build:frontend && pnpm run build:main",
+    "dev": "tsc --watch",
+    "start": "electron dist/main.js",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "@dsh/core": "workspace:*",
+    "@dsh/plugins": "workspace:*",
+    "@dsh/server": "workspace:*",
+    "@volt/dsh-plugin-ui": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "^34.3.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.8.2",
+    "@types/node": "^22.13.10"
+  }
+}

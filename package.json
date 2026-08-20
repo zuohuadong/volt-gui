@@ -8,17 +8,17 @@
     "dsh-anyong": "./scripts/anyong.mjs"
   },
   "scripts": {
-    "build": "pnpm -r --filter './packages/*' run build && node ./scripts/bundle.mjs",
-    "test": "pnpm -r --filter './packages/*' run test",
+    "build": "pnpm --filter \"@dsh/*\" --filter \"@xgic/*\" run build && node ./scripts/bundle.mjs",
+    "test": "pnpm --filter \"@dsh/*\" --filter \"@xgic/*\" run test",
     "start": "./scripts/anyong.mjs",
     "web": "./scripts/anyong.mjs web",
-    "desktop": "pnpm --filter @anyong/desktop-electron run build:main && pnpm --filter @anyong/desktop-electron run start",
-    "build:desktop": "pnpm --filter @anyong/desktop-electron run build",
+    "desktop": "pnpm --filter voltui-desktop-workbench run build && pnpm --filter @anyong/desktop-electron run build:main && pnpm --filter @anyong/desktop-electron run start",
+    "build:desktop": "pnpm --filter voltui-desktop-workbench run build && pnpm --filter @anyong/desktop-electron run build",
     "dsh": "pnpm --filter @dsh/cli run dev",
     "bundle": "node ./scripts/bundle.mjs"
   },
   "dependencies": {
-    "@deepseek-ai/dsh": "0.1.0-rc.7"
+    "@deepseek-ai/dsh": "0.1.0-rc.8"
   },
   "devDependencies": {
     "typescript": "^5.8.2",

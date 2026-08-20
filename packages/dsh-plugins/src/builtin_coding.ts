@@ -1,4 +1,4 @@
-import { promises as fs } from 'node:fs';
+﻿import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { exec } from 'node:child_process';
 import fg from 'fast-glob';
@@ -25,6 +25,7 @@ export class BuiltinCodingPlugin implements DshPlugin {
       this.createGrepTool(),
       this.createGlobTool(),
       this.createBashTool(),
+      this.createPwshTool(),
     ];
   }
 
@@ -306,6 +307,61 @@ export class BuiltinCodingPlugin implements DshPlugin {
               if (error) {
                 resolve({
                   output: truncated || `Command exited with code ${error.code}: ${error.message}`,
+                  isError: true,
+                });
+              } else {
+                resolve({
+                  output: truncated || '(Command completed with no output)',
+                  isError: false,
+                });
+              }
+            }
+          );
+        });
+      },
+    };
+  }
+
+  private createPwshTool(): ToolHandler {
+    return {
+      schema: {
+        name: 'pwsh',
+        description: 'Executes a PowerShell command or script in the workspace directory with timeout and output capture.',
+        parameters: {
+          type: 'object',
+          properties: {
+            command: { type: 'string', description: 'PowerShell command or script to execute' },
+            timeout: { type: 'number', description: 'Timeout in milliseconds (defaults to 60000)' },
+          },
+          required: ['command'],
+        },
+      },
+      execute: async (args, context) => {
+        const command = String(args.command);
+        const timeout = typeof args.timeout === 'number' ? args.timeout : 60000;
+        const cwd = context.workingDirectory || this.workingDir;
+
+        return new Promise<{ output: string; isError?: boolean }>((resolve) => {
+          const shell = process.platform === 'win32' ? 'powershell.exe' : 'pwsh';
+          exec(
+            command,
+            {
+              cwd,
+              timeout,
+              shell,
+              maxBuffer: 1024 * 1024 * 5,
+              signal: context.signal,
+            },
+            (error, stdout, stderr) => {
+              const combined = (stdout + (stderr ? `\nSTDERR:\n${stderr}` : '')).trim();
+              let truncated = combined;
+              if (truncated.length > MAX_OUTPUT_CHARS) {
+                truncated = truncated.slice(0, MAX_OUTPUT_CHARS) + '\n...[Output truncated due to 32KB limit]';
+              }
+
+              if (error) {
+                resolve({
+                  output: truncated || `PowerShell exited with code ${error.code}: ${error.message}`,
                   isError: true,
                 });
               } else {

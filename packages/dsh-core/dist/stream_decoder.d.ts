@@ -16,6 +16,7 @@ export declare class StreamDecoder {
         content: string;
         toolCalls: ToolCall[];
     };
+    private extractInlineToolCalls;
     reset(): void;
 }
 //# sourceMappingURL=stream_decoder.d.ts.map

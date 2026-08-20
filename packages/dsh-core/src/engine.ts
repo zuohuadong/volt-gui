@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+﻿import OpenAI from 'openai';
 import type {
   DshConfig,
   Message,
@@ -65,6 +65,14 @@ export class DshEngine {
     );
   }
 
+  public setModel(model: string): void {
+    this.config.model = model;
+  }
+
+  public getModel(): string {
+    return this.config.model;
+  }
+
   public getHistory(): Message[] {
     return [...this.history];
   }
@@ -82,9 +90,10 @@ export class DshEngine {
    */
   public async *runTurn(
     userPrompt: string,
-    options?: { signal?: AbortSignal; maxSteps?: number }
+    options?: { signal?: AbortSignal; maxSteps?: number; model?: string }
   ): AsyncGenerator<DshTurnEvent, Message, void> {
     const maxSteps = options?.maxSteps ?? 25;
+    const activeModel = options?.model || this.config.model;
     let stepCount = 0;
 
     // Append current user message
@@ -131,12 +140,12 @@ export class DshEngine {
         },
       }));
 
-      // 3. Initiate Streaming Call to DeepSeek
+      // 3. Initiate Streaming Call to Model Gateway
       let stream: any;
       try {
         stream = await this.client.chat.completions.create(
           {
-            model: this.config.model,
+            model: activeModel,
             messages: openAiMessages,
             tools: toolsPayload.length > 0 ? toolsPayload : undefined,
             temperature: this.config.temperature,
@@ -146,7 +155,7 @@ export class DshEngine {
           { signal: options?.signal }
         );
       } catch (err: any) {
-        throw new Error(`DeepSeek API request failed: ${err.message}`);
+        throw new Error(`API request failed for model '${activeModel}': ${err.message}`);
       }
 
       let finishReason = 'stop';

@@ -14,5 +14,6 @@ export declare class BuiltinCodingPlugin implements DshPlugin {
     private createGrepTool;
     private createGlobTool;
     private createBashTool;
+    private createPwshTool;
 }
 //# sourceMappingURL=builtin_coding.d.ts.map

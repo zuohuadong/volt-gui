@@ -20,7 +20,7 @@ export class DshServer {
         this.server = http.createServer(async (req, res) => {
             // Enable CORS for Desktop App / Webview
             res.setHeader('Access-Control-Allow-Origin', '*');
-            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE');
             res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
             if (req.method === 'OPTIONS') {
                 res.writeHead(204);
@@ -31,29 +31,62 @@ export class DshServer {
             // 1. Health Check
             if (url.pathname === '/api/health' && req.method === 'GET') {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ status: 'ok', model: this.options.config.model, toolsCount: this.engine.getToolSchemas().length }));
+                res.end(JSON.stringify({
+                    status: 'ok',
+                    model: this.engine.getModel(),
+                    toolsCount: this.engine.getToolSchemas().length
+                }));
                 return;
             }
-            // 2. List Tools
+            // 2. Active Model Management
+            if (url.pathname === '/api/model' && req.method === 'GET') {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ model: this.engine.getModel() }));
+                return;
+            }
+            if (url.pathname === '/api/model' && req.method === 'POST') {
+                let body = '';
+                req.on('data', (chunk) => { body += chunk; });
+                req.on('end', () => {
+                    try {
+                        const data = JSON.parse(body || '{}');
+                        if (data.model) {
+                            this.engine.setModel(String(data.model));
+                            res.writeHead(200, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ success: true, model: this.engine.getModel() }));
+                        }
+                        else {
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: 'Model name is required' }));
+                        }
+                    }
+                    catch (err) {
+                        res.writeHead(500, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: err.message }));
+                    }
+                });
+                return;
+            }
+            // 3. List Tools
             if (url.pathname === '/api/tools' && req.method === 'GET') {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ tools: this.engine.getToolSchemas() }));
                 return;
             }
-            // 3. Get History
+            // 4. Get History
             if (url.pathname === '/api/history' && req.method === 'GET') {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ messages: this.engine.getHistory() }));
                 return;
             }
-            // 4. Reset Session
+            // 5. Reset Session
             if (url.pathname === '/api/history' && req.method === 'DELETE') {
                 this.engine.clearHistory();
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ success: true }));
                 return;
             }
-            // 5. Run Turn (SSE Stream)
+            // 6. Run Turn (SSE Stream)
             if (url.pathname === '/api/turn' && req.method === 'POST') {
                 let body = '';
                 req.on('data', (chunk) => {
@@ -68,8 +101,11 @@ export class DshServer {
                             res.end(JSON.stringify({ error: 'Prompt is required' }));
                             return;
                         }
+                        if (data.model) {
+                            this.engine.setModel(String(data.model));
+                        }
                         res.writeHead(200, {
-                            'Content-Type': 'text/event-stream',
+                            'Content-Type': 'text/event-stream; charset=utf-8',
                             'Cache-Control': 'no-cache',
                             Connection: 'keep-alive',
                         });
@@ -77,11 +113,16 @@ export class DshServer {
                             res.write(`data: ${JSON.stringify(event)}\n\n`);
                         };
                         const abortController = new AbortController();
-                        req.on('close', () => {
-                            abortController.abort();
+                        res.on('close', () => {
+                            if (!res.writableEnded) {
+                                abortController.abort();
+                            }
                         });
                         try {
-                            for await (const event of this.engine.runTurn(prompt, { signal: abortController.signal })) {
+                            for await (const event of this.engine.runTurn(prompt, {
+                                signal: abortController.signal,
+                                model: data.model ? String(data.model) : undefined
+                            })) {
                                 sendEvent(event);
                             }
                             res.write('data: [DONE]\n\n');

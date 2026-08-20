@@ -6,11 +6,11 @@
   "type": "module",
   "scripts": {
     "build:main": "tsc",
-    "build:frontend": "cd ../../anyong-agent/desktop/frontend && pnpm run build",
+    "build:frontend": "node ./scripts/build-frontend.mjs",
     "build": "pnpm run build:frontend && pnpm run build:main",
     "dev": "tsc --watch",
     "start": "electron dist/main.js",
-    "dist": "electron-builder"
+    "dist": "electron-builder --win --x64"
   },
   "dependencies": {
     "@dsh/core": "workspace:*",
@@ -23,5 +23,6 @@
     "electron-builder": "^25.1.8",
     "typescript": "^5.8.2",
     "@types/node": "^22.13.10"
-  }
+  },
+  "author": "西谷AI"
 }

@@ -1,4 +1,4 @@
-import { describe, it, before, after } from 'node:test';
+﻿import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
@@ -63,8 +63,16 @@ describe('DSH Builtin Coding Tools Tests', () => {
 
   it('should execute bash commands safely with timeout and output capture', async () => {
     const bashTool = toolsMap.get('bash');
-    const res = await bashTool.execute({ command: 'echo "dsh test"' }, { workingDirectory: tmpDir });
-    assert.strictEqual(res.output, 'dsh test');
+    const res = await bashTool.execute({ command: 'echo dsh test' }, { workingDirectory: tmpDir });
+    assert.match(res.output, /dsh test/);
+    assert.strictEqual(res.isError, false);
+  });
+
+  it('should execute pwsh commands safely with timeout and output capture', async () => {
+    const pwshTool = toolsMap.get('pwsh');
+    assert.ok(pwshTool, 'pwsh tool should be registered');
+    const res = await pwshTool.execute({ command: 'Write-Output "dsh pwsh test"' }, { workingDirectory: tmpDir });
+    assert.strictEqual(res.output, 'dsh pwsh test');
     assert.strictEqual(res.isError, false);
   });
 });

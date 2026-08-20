@@ -40,6 +40,12 @@ export class DshEngine {
     syncToolSchemas() {
         this.pipeline.updateStaticRoot(this.config.systemPrompt || '', this.getToolSchemas());
     }
+    setModel(model) {
+        this.config.model = model;
+    }
+    getModel() {
+        return this.config.model;
+    }
     getHistory() {
         return [...this.history];
     }
@@ -54,6 +60,7 @@ export class DshEngine {
      */
     async *runTurn(userPrompt, options) {
         const maxSteps = options?.maxSteps ?? 25;
+        const activeModel = options?.model || this.config.model;
         let stepCount = 0;
         // Append current user message
         const userMessage = { role: 'user', content: userPrompt };
@@ -88,11 +95,11 @@ export class DshEngine {
                     parameters: t.parameters,
                 },
             }));
-            // 3. Initiate Streaming Call to DeepSeek
+            // 3. Initiate Streaming Call to Model Gateway
             let stream;
             try {
                 stream = await this.client.chat.completions.create({
-                    model: this.config.model,
+                    model: activeModel,
                     messages: openAiMessages,
                     tools: toolsPayload.length > 0 ? toolsPayload : undefined,
                     temperature: this.config.temperature,
@@ -101,7 +108,7 @@ export class DshEngine {
                 }, { signal: options?.signal });
             }
             catch (err) {
-                throw new Error(`DeepSeek API request failed: ${err.message}`);
+                throw new Error(`API request failed for model '${activeModel}': ${err.message}`);
             }
             let finishReason = 'stop';
             let lastUsage = null;

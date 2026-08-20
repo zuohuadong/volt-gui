@@ -10,6 +10,8 @@ export declare class DshEngine {
     registerTools(handlers: ToolHandler[]): void;
     getToolSchemas(): ToolSchema[];
     private syncToolSchemas;
+    setModel(model: string): void;
+    getModel(): string;
     getHistory(): Message[];
     setHistory(messages: Message[]): void;
     clearHistory(): void;
@@ -19,6 +21,7 @@ export declare class DshEngine {
     runTurn(userPrompt: string, options?: {
         signal?: AbortSignal;
         maxSteps?: number;
+        model?: string;
     }): AsyncGenerator<DshTurnEvent, Message, void>;
 }
 //# sourceMappingURL=engine.d.ts.map

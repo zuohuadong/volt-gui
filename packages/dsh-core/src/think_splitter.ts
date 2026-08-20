@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ThinkSplitter extracts inline `<think>...</think>` blocks from the content stream
  * into explicit reasoning text deltas.
  */
@@ -18,19 +18,34 @@ export class ThinkSplitter {
 
   public push(chunk: string): { reasoning: string; content: string } {
     switch (this.state) {
-      case ThinkState.Passthrough:
+      case ThinkState.Passthrough: {
+        const closeIdx = chunk.indexOf(THINK_CLOSE);
+        if (closeIdx >= 0) {
+          const reasoning = chunk.slice(0, closeIdx);
+          const content = chunk.slice(closeIdx + THINK_CLOSE.length);
+          return { reasoning, content };
+        }
         return { reasoning: '', content: chunk };
+      }
 
       case ThinkState.Inside:
         return this.scanClose(chunk);
 
-      case ThinkState.Probe:
+      case ThinkState.Probe: {
         this.buffer += chunk;
         const trimmed = this.buffer.trimStart();
 
+        const closeIdx = this.buffer.indexOf(THINK_CLOSE);
+        if (closeIdx >= 0) {
+          const reasoning = this.buffer.slice(0, closeIdx);
+          const rest = this.buffer.slice(closeIdx + THINK_CLOSE.length).trimStart();
+          this.buffer = '';
+          this.state = ThinkState.Passthrough;
+          return { reasoning, content: rest };
+        }
+
         if (trimmed.length < THINK_OPEN.length) {
           if (THINK_OPEN.startsWith(trimmed)) {
-            // Could still become <think>
             return { reasoning: '', content: '' };
           }
           return { reasoning: '', content: this.drainPassthrough() };
@@ -44,6 +59,7 @@ export class ThinkSplitter {
         }
 
         return { reasoning: '', content: this.drainPassthrough() };
+      }
     }
   }
 

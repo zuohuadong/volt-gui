@@ -22,16 +22,12 @@ coverage.out
 cpu.prof
 mem.prof
 
-# Wails desktop artifacts
-/desktop/build/*
-!/desktop/build/appicon.png
-!/desktop/build/appicon.svg
-/desktop/desktop
-/desktop/frontend/dist/*
-!/desktop/frontend/dist/.gitkeep
-/desktop/frontend/sourcemaps/
-/desktop/frontend/wailsjs/
-/desktop/frontend/package.json.md5
+# Desktop (Electron + Frontend) build artifacts
+/apps/desktop-electron/dist-package/
+/apps/desktop-electron/dist/renderer/
+/apps/desktop-electron/dist/workbench.html
+/apps/desktop-frontend/dist/*
+!/apps/desktop-frontend/dist/.gitkeep
 
 # Environment / local config (voltui.example.toml is a shared template)
 .env
@@ -39,9 +35,6 @@ mem.prof
 *.local
 /voltui.toml
 /reasonix.toml
-/desktop/.env
-/desktop/voltui.toml
-/desktop/reasonix.toml
 
 # Node / frontend dependencies and caches
 node_modules/

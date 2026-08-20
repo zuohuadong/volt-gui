@@ -118,11 +118,98 @@ export class StreamDecoder {
                 toolCalls.push(call);
             }
         }
+        // Fallback: Check if tool calls were emitted in content stream (DSML / Qwen tags)
+        if (toolCalls.length === 0 && this.accumulatedContent) {
+            const extracted = this.extractInlineToolCalls(this.accumulatedContent);
+            if (extracted.toolCalls.length > 0) {
+                this.accumulatedContent = extracted.cleaned;
+                for (const tc of extracted.toolCalls) {
+                    const parsedArgs = safeParseJson(tc.function.arguments, {});
+                    callbacks.onEvent({
+                        type: 'tool_call_start',
+                        toolCall: { ...tc },
+                    });
+                    callbacks.onEvent({
+                        type: 'tool_call_ready',
+                        toolCall: { ...tc },
+                        parsedArgs,
+                    });
+                    toolCalls.push(tc);
+                }
+            }
+        }
         return {
             reasoningContent: this.accumulatedReasoning,
             content: this.accumulatedContent,
             toolCalls,
         };
+    }
+    extractInlineToolCalls(content) {
+        const toolCalls = [];
+        let cleaned = content;
+        // 1. DSML Tool Format
+        const dsmlBlockRegex = /<[|｜]DSML[|｜]tool_calls>([\s\S]*?)<\/[|｜]DSML[|｜]tool_calls>/gi;
+        let match;
+        while ((match = dsmlBlockRegex.exec(content)) !== null) {
+            const blockContent = match[1];
+            const invokeRegex = /<[|｜]DSML[|｜]invoke\s+name=["']([^"']+)["']>([\s\S]*?)<\/[|｜]DSML[|｜]invoke>/gi;
+            let invMatch;
+            while ((invMatch = invokeRegex.exec(blockContent)) !== null) {
+                const toolName = invMatch[1].trim();
+                const paramsBlock = invMatch[2];
+                const paramRegex = /<[|｜]DSML[|｜]parameter\s+name=["']([^"']+)["'][^>]*>([\s\S]*?)<\/[|｜]DSML[|｜]parameter>/gi;
+                const args = {};
+                let pMatch;
+                while ((pMatch = paramRegex.exec(paramsBlock)) !== null) {
+                    let val = pMatch[2].trim();
+                    try {
+                        val = JSON.parse(val);
+                    }
+                    catch { }
+                    args[pMatch[1].trim()] = val;
+                }
+                toolCalls.push({
+                    id: `call_dsml_${Date.now()}_${toolCalls.length}`,
+                    type: 'function',
+                    function: {
+                        name: toolName,
+                        arguments: JSON.stringify(args),
+                    },
+                });
+            }
+        }
+        cleaned = cleaned.replace(dsmlBlockRegex, '').trim();
+        // 2. Qwen Tool Format
+        const qwenBlockRegex = /<tool_call>([\s\S]*?)<\/tool_call>/gi;
+        while ((match = qwenBlockRegex.exec(content)) !== null) {
+            const block = match[1];
+            const fnMatch = /<function=([^>]+)>([\s\S]*?)<\/function>/i.exec(block);
+            if (fnMatch) {
+                const toolName = fnMatch[1].trim();
+                const paramsBlock = fnMatch[2];
+                const paramRegex = /<parameter=([^>]+)>([\s\S]*?)<\/parameter>/gi;
+                const args = {};
+                let pMatch;
+                while ((pMatch = paramRegex.exec(paramsBlock)) !== null) {
+                    let val = pMatch[2].trim();
+                    try {
+                        val = JSON.parse(val);
+                    }
+                    catch { }
+                    args[pMatch[1].trim()] = val;
+                }
+                toolCalls.push({
+                    id: `call_qwen_${Date.now()}_${toolCalls.length}`,
+                    type: 'function',
+                    function: {
+                        name: toolName,
+                        arguments: JSON.stringify(args),
+                    },
+                });
+            }
+        }
+        cleaned = cleaned.replace(qwenBlockRegex, '').trim();
+        return { toolCalls, cleaned };
     }
     reset() {
         this.thinkSplitter.reset();

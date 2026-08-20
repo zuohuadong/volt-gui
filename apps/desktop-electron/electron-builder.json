@@ -4,20 +4,27 @@
   "directories": {
     "output": "dist-package"
   },
+  "npmRebuild": false,
+  "nodeGypRebuild": false,
+  "buildDependenciesFromSource": false,
   "files": [
     "dist/**/*",
     "package.json"
   ],
   "win": {
-    "icon": "../../desktop/build/windows/icon.ico",
+    "icon": "icon.ico",
     "target": [
       {
         "target": "nsis",
-        "arch": ["x64"]
+        "arch": [
+          "x64"
+        ]
       },
       {
         "target": "portable",
-        "arch": ["x64"]
+        "arch": [
+          "x64"
+        ]
       }
     ]
   },

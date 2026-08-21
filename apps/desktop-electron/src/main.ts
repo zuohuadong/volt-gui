@@ -6,6 +6,8 @@ import { DshServer } from '@dsh/server';
 // 彻底清除 Windows/Linux 默认英文菜单栏 (File / Edit / View / Window / Help)
 Menu.setApplicationMenu(null);
 
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -13,12 +15,14 @@ let mainWindow: BrowserWindow | null = null;
 let dshServer: DshServer | null = null;
 let serverUrl = '';
 let currentWorkingDir = process.cwd();
+const DEFAULT_DSH_PORT = 3210;
+const DSH_PORT_SEARCH_LIMIT = 10;
 
 let appConfig = {
   model: process.env.DEEPSEEK_MODEL || process.env.DSH_MODEL || 'deepseek-v4-flash',
   apiKey: process.env.DEEPSEEK_API_KEY || process.env.DSH_API_KEY || 'sk_gom_rSYWXVs6YkCGY4Qp6T5ILcrb5p6coIeCKovkpTZ9BA',
   baseURL: process.env.DEEPSEEK_BASE_URL || process.env.DSH_BASE_URL || 'http://192.168.1.47:9010/v1',
-  port: 3210,
+  port: DEFAULT_DSH_PORT,
   host: '127.0.0.1',
   align64Prefix: true,
   compactReasoning: true,
@@ -35,24 +39,42 @@ async function startDshBackend(): Promise<string> {
     } catch (e) {
       console.warn('[Electron Main] 停止旧后端服务警告:', e);
     }
+    dshServer = null;
   }
 
-  dshServer = new DshServer({
-    port: appConfig.port,
-    host: appConfig.host,
-    config: {
-      model: appConfig.model,
-      apiKey: appConfig.apiKey,
-      baseURL: appConfig.baseURL,
-      workingDirectory: currentWorkingDir,
-      compactReasoningInHistory: appConfig.compactReasoning,
-      enableDegenerationGuard: appConfig.degenerationGuard,
-    },
-  });
+  const preferredPort = Number.isInteger(appConfig.port) ? appConfig.port : DEFAULT_DSH_PORT;
+  const candidatePorts = Array.from(
+    new Set(Array.from({ length: DSH_PORT_SEARCH_LIMIT }, (_, index) => preferredPort + index)),
+  );
 
-  serverUrl = await dshServer.start();
-  console.log(`[Electron Main] DSH 智能后端已就绪: ${serverUrl}`);
-  return serverUrl;
+  for (const port of [...candidatePorts, 0]) {
+    const candidate = new DshServer({
+      port,
+      host: appConfig.host,
+      config: {
+        model: appConfig.model,
+        apiKey: appConfig.apiKey,
+        baseURL: appConfig.baseURL,
+        workingDirectory: currentWorkingDir,
+        compactReasoningInHistory: appConfig.compactReasoning,
+        enableDegenerationGuard: appConfig.degenerationGuard,
+      },
+    });
+
+    try {
+      serverUrl = await candidate.start();
+      dshServer = candidate;
+      appConfig.port = Number(new URL(serverUrl).port);
+      console.log(`[Electron Main] DSH 智能后端已就绪: ${serverUrl}`);
+      return serverUrl;
+    } catch (error: any) {
+      await candidate.stop().catch(() => undefined);
+      if (error?.code !== 'EADDRINUSE' || port === 0) throw error;
+      console.warn(`[Electron Main] DSH 端口 ${port} 已被占用，尝试下一个端口。`);
+    }
+  }
+
+  throw new Error('未能找到可用的 DSH 本机端口。');
 }
 
 async function createWindow() {
@@ -200,14 +222,29 @@ ipcMain.handle('dsh:toggle-devtools', () => {
   mainWindow?.webContents.toggleDevTools();
 });
 
-app.whenReady().then(async () => {
-  await startDshBackend();
-  await createWindow();
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
   });
-});
+
+  app.whenReady().then(async () => {
+    try {
+      await startDshBackend();
+    } catch (error) {
+      console.error('[Electron Main] DSH 后端启动失败:', error);
+      dialog.showErrorBox('DSH 后端启动失败', '本机服务未能启动，应用仍会打开以便查看配置。');
+    }
+    await createWindow();
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+}
 
 app.on('window-all-closed', async () => {
   if (dshServer) {

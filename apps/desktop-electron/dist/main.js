@@ -40878,6 +40878,23 @@ async function createWindow() {
   });
   mainWindow.removeMenu();
   mainWindow.setMenuBarVisibility(false);
+  let showFallback;
+  const showMainWindow = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (showFallback) {
+      clearTimeout(showFallback);
+      showFallback = void 0;
+    }
+    mainWindow.show();
+    mainWindow.focus();
+  };
+  mainWindow.once("ready-to-show", showMainWindow);
+  mainWindow.webContents.once("did-finish-load", showMainWindow);
+  mainWindow.webContents.once("did-fail-load", (_event, code, description) => {
+    console.error(`[Electron Main] \u5DE5\u4F5C\u53F0\u9875\u9762\u52A0\u8F7D\u5931\u8D25 (${code}): ${description}`);
+    showMainWindow();
+  });
+  showFallback = setTimeout(showMainWindow, 5e3);
   mainWindow.webContents.on("before-input-event", (event, input) => {
     if (input.key === "Alt") {
       event.preventDefault();
@@ -40911,12 +40928,13 @@ async function createWindow() {
     const fallbackPath = path3.join(__dirname, "workbench.html");
     if (fs4.existsSync(fallbackPath)) {
       await mainWindow.loadFile(fallbackPath);
+    } else {
+      console.error("[Electron Main] \u672A\u627E\u5230\u5DE5\u4F5C\u53F0\u9875\u9762\u3002");
+      showMainWindow();
     }
   }
-  mainWindow.once("ready-to-show", () => {
-    mainWindow?.show();
-  });
   mainWindow.on("closed", () => {
+    if (showFallback) clearTimeout(showFallback);
     mainWindow = null;
   });
 }

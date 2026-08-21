@@ -101,6 +101,27 @@ async function createWindow() {
   mainWindow.removeMenu();
   mainWindow.setMenuBarVisibility(false);
 
+  let showFallback: NodeJS.Timeout | undefined;
+  const showMainWindow = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (showFallback) {
+      clearTimeout(showFallback);
+      showFallback = undefined;
+    }
+    mainWindow.show();
+    mainWindow.focus();
+  };
+
+  // 注册必须发生在 loadFile 之前。首次绘制可能在 loadFile 的 Promise
+  // resolve 前完成，晚注册会让窗口永远保持 show: false。
+  mainWindow.once('ready-to-show', showMainWindow);
+  mainWindow.webContents.once('did-finish-load', showMainWindow);
+  mainWindow.webContents.once('did-fail-load', (_event, code, description) => {
+    console.error(`[Electron Main] 工作台页面加载失败 (${code}): ${description}`);
+    showMainWindow();
+  });
+  showFallback = setTimeout(showMainWindow, 5_000);
+
   // 彻底屏蔽 Alt 键呼出 Windows 默认隐藏菜单
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.key === 'Alt') {
@@ -143,14 +164,14 @@ async function createWindow() {
     const fallbackPath = path.join(__dirname, 'workbench.html');
     if (fs.existsSync(fallbackPath)) {
       await mainWindow.loadFile(fallbackPath);
+    } else {
+      console.error('[Electron Main] 未找到工作台页面。');
+      showMainWindow();
     }
   }
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
-  });
-
   mainWindow.on('closed', () => {
+    if (showFallback) clearTimeout(showFallback);
     mainWindow = null;
   });
 }

@@ -12,6 +12,10 @@ const targetRendererHtml = path.resolve(targetRendererDir, "index.html");
 
 console.log("⚡ Preparing Frontend Assets for Anyong DSH Desktop Workbench");
 
+// 先清空旧的渲染层产物，避免历史 hash 文件堆积导致包体膨胀或引用错乱
+fs.rmSync(targetRendererDir, { recursive: true, force: true });
+fs.rmSync(distWorkbench, { force: true });
+
 fs.mkdirSync(path.dirname(distWorkbench), { recursive: true });
 fs.mkdirSync(targetRendererDir, { recursive: true });
 

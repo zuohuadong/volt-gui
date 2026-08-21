@@ -40757,12 +40757,23 @@ var DshServer = class {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Not Found" }));
     });
-    const port = this.options.port || 3210;
+    const port = this.options.port ?? 3210;
     const host = this.options.host || "127.0.0.1";
-    return new Promise((resolve2) => {
-      this.server.listen(port, host, () => {
-        resolve2(`http://${host}:${port}`);
-      });
+    return new Promise((resolve2, reject) => {
+      const server = this.server;
+      const onError = (error2) => {
+        server.off("listening", onListening);
+        reject(error2);
+      };
+      const onListening = () => {
+        server.off("error", onError);
+        const address = server.address();
+        const activePort = typeof address === "object" && address ? address.port : port;
+        resolve2(`http://${host}:${activePort}`);
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(port, host);
     });
   }
   async stop() {
@@ -40770,6 +40781,8 @@ var DshServer = class {
     if (this.server) {
       await new Promise((resolve2) => {
         this.server.close(() => resolve2());
+        if (!this.server.listening)
+          resolve2();
       });
       this.server = null;
     }
@@ -40781,17 +40794,20 @@ var DshServer = class {
 
 // src/main.ts
 Menu.setApplicationMenu(null);
+var gotSingleInstanceLock = app.requestSingleInstanceLock();
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path3.dirname(__filename);
 var mainWindow = null;
 var dshServer = null;
 var serverUrl = "";
 var currentWorkingDir = process.cwd();
+var DEFAULT_DSH_PORT = 3210;
+var DSH_PORT_SEARCH_LIMIT = 10;
 var appConfig = {
   model: process.env.DEEPSEEK_MODEL || process.env.DSH_MODEL || "deepseek-v4-flash",
   apiKey: process.env.DEEPSEEK_API_KEY || process.env.DSH_API_KEY || "[REDACTED_SECRET]",
   baseURL: process.env.DEEPSEEK_BASE_URL || process.env.DSH_BASE_URL || "http://192.168.1.47:9010/v1",
-  port: 3210,
+  port: DEFAULT_DSH_PORT,
   host: "127.0.0.1",
   align64Prefix: true,
   compactReasoning: true,
@@ -40807,22 +40823,38 @@ async function startDshBackend() {
     } catch (e2) {
       console.warn("[Electron Main] \u505C\u6B62\u65E7\u540E\u7AEF\u670D\u52A1\u8B66\u544A:", e2);
     }
+    dshServer = null;
   }
-  dshServer = new DshServer({
-    port: appConfig.port,
-    host: appConfig.host,
-    config: {
-      model: appConfig.model,
-      apiKey: appConfig.apiKey,
-      baseURL: appConfig.baseURL,
-      workingDirectory: currentWorkingDir,
-      compactReasoningInHistory: appConfig.compactReasoning,
-      enableDegenerationGuard: appConfig.degenerationGuard
+  const preferredPort = Number.isInteger(appConfig.port) ? appConfig.port : DEFAULT_DSH_PORT;
+  const candidatePorts = Array.from(
+    new Set(Array.from({ length: DSH_PORT_SEARCH_LIMIT }, (_2, index) => preferredPort + index))
+  );
+  for (const port of [...candidatePorts, 0]) {
+    const candidate = new DshServer({
+      port,
+      host: appConfig.host,
+      config: {
+        model: appConfig.model,
+        apiKey: appConfig.apiKey,
+        baseURL: appConfig.baseURL,
+        workingDirectory: currentWorkingDir,
+        compactReasoningInHistory: appConfig.compactReasoning,
+        enableDegenerationGuard: appConfig.degenerationGuard
+      }
+    });
+    try {
+      serverUrl = await candidate.start();
+      dshServer = candidate;
+      appConfig.port = Number(new URL(serverUrl).port);
+      console.log(`[Electron Main] DSH \u667A\u80FD\u540E\u7AEF\u5DF2\u5C31\u7EEA: ${serverUrl}`);
+      return serverUrl;
+    } catch (error2) {
+      await candidate.stop().catch(() => void 0);
+      if (error2?.code !== "EADDRINUSE" || port === 0) throw error2;
+      console.warn(`[Electron Main] DSH \u7AEF\u53E3 ${port} \u5DF2\u88AB\u5360\u7528\uFF0C\u5C1D\u8BD5\u4E0B\u4E00\u4E2A\u7AEF\u53E3\u3002`);
     }
-  });
-  serverUrl = await dshServer.start();
-  console.log(`[Electron Main] DSH \u667A\u80FD\u540E\u7AEF\u5DF2\u5C31\u7EEA: ${serverUrl}`);
-  return serverUrl;
+  }
+  throw new Error("\u672A\u80FD\u627E\u5230\u53EF\u7528\u7684 DSH \u672C\u673A\u7AEF\u53E3\u3002");
 }
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -40947,13 +40979,27 @@ ipcMain.handle("dsh:window-is-maximized", () => {
 ipcMain.handle("dsh:toggle-devtools", () => {
   mainWindow?.webContents.toggleDevTools();
 });
-app.whenReady().then(async () => {
-  await startDshBackend();
-  await createWindow();
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
   });
-});
+  app.whenReady().then(async () => {
+    try {
+      await startDshBackend();
+    } catch (error2) {
+      console.error("[Electron Main] DSH \u540E\u7AEF\u542F\u52A8\u5931\u8D25:", error2);
+      dialog.showErrorBox("DSH \u540E\u7AEF\u542F\u52A8\u5931\u8D25", "\u672C\u673A\u670D\u52A1\u672A\u80FD\u542F\u52A8\uFF0C\u5E94\u7528\u4ECD\u4F1A\u6253\u5F00\u4EE5\u4FBF\u67E5\u770B\u914D\u7F6E\u3002");
+    }
+    await createWindow();
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+}
 app.on("window-all-closed", async () => {
   if (dshServer) {
     await dshServer.stop();

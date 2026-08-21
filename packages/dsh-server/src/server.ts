@@ -171,13 +171,25 @@ export class DshServer {
       res.end(JSON.stringify({ error: 'Not Found' }));
     });
 
-    const port = this.options.port || 3210;
+    const port = this.options.port ?? 3210;
     const host = this.options.host || '127.0.0.1';
 
-    return new Promise((resolve) => {
-      this.server!.listen(port, host, () => {
-        resolve(`http://${host}:${port}`);
-      });
+    return new Promise((resolve, reject) => {
+      const server = this.server!;
+      const onError = (error: Error) => {
+        server.off('listening', onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        server.off('error', onError);
+        const address = server.address();
+        const activePort = typeof address === 'object' && address ? address.port : port;
+        resolve(`http://${host}:${activePort}`);
+      };
+
+      server.once('error', onError);
+      server.once('listening', onListening);
+      server.listen(port, host);
     });
   }
 
@@ -186,6 +198,7 @@ export class DshServer {
     if (this.server) {
       await new Promise<void>((resolve) => {
         this.server!.close(() => resolve());
+        if (!this.server!.listening) resolve();
       });
       this.server = null;
     }

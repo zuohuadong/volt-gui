@@ -1,6 +1,6 @@
 "use strict";
 
-// src/preload.ts
+// apps/desktop-electron/src/preload.ts
 var import_electron = require("electron");
 import_electron.contextBridge.exposeInMainWorld("electronDsh", {
   getServerUrl: () => import_electron.ipcRenderer.invoke("dsh:get-server-url"),
@@ -18,4 +18,4 @@ import_electron.contextBridge.exposeInMainWorld("electronDsh", {
     import_electron.ipcRenderer.on("dsh:window-state-changed", (_e, state) => callback(state));
   }
 });
-//# sourceMappingURL=preload.js.map
+//# sourceMappingURL=preload.cjs.map

@@ -52,6 +52,7 @@
     Italic,
     Quote,
     Search,
+    Server,
     Settings,
     ShieldCheck,
     Sparkles,
@@ -91,7 +92,7 @@
   import TrustedIntranetSettings from "./components/TrustedIntranetSettings.svelte";
   import OIDCLoginOverlay from "./components/OIDCLoginOverlay.svelte";
   import { app, onAgentEvent, onWorkspaceReady } from "./lib/bridge";
-  import { t } from "./lib/i18n";
+  import { t } from "./lib/i18n-svelte";
   import {
     backendToolApprovalModeToComposer,
     composerToolApprovalModeToBackend,
@@ -742,7 +743,7 @@
   const composerIsBusy = $derived(Boolean(currentSubmissionPending || sending || currentComposerTab?.running || pendingApproval || pendingAsk || pendingBrowserCredential || pendingBrowserVerification));
   const contextRemaining = $derived(contextRemainingPercent(contextTabId && contextTabId === activeTab?.id ? context : undefined));
   const composerWorkPermission = $derived(
-    hasWailsBindings()
+    hasDesktopBackend()
       ? backendToolApprovalModeToComposer(currentComposerTab?.toolApprovalMode)
       : previewWorkPermission,
   );
@@ -753,7 +754,7 @@
   );
   const composerTokenMode = $derived<TokenMode>(currentComposerTab?.tokenMode === "economy" ? "economy" : "full");
   const composerDisabledReason = $derived(
-    hasWailsBindings() && currentComposerTab && currentComposerTab.ready === false
+    hasDesktopBackend() && currentComposerTab && currentComposerTab.ready === false
       ? "工作区正在准备中，请稍后发送"
       : "",
   );
@@ -1528,13 +1529,13 @@
   let workbenchNoticeTimer: number | undefined;
 
   function hasWailsBindings() {
-    return true;
+    return typeof window !== "undefined" && Boolean(window.go?.main?.App);
   }
   function hasElectronDsh() {
     return typeof window !== "undefined" && Boolean((window as any).electronDsh);
   }
   function hasDesktopBackend() {
-    return true;
+    return hasElectronDsh() || typeof window !== "undefined" && Boolean(window.go?.main?.App);
   }
   function desktopBackendUnavailable(feature: string) {
     showWorkbenchNotice(`${feature}不可用：未连接桌面后端，请在桌面运行环境中重试。`);
@@ -1556,7 +1557,7 @@
     return value.replace(/VoltUI/g, brandName).replace(/\bVolt\b/g, brandShortName);
   }
   async function refreshBrand() {
-    if (!hasWailsBindings()) return;
+    if (!hasDesktopBackend()) return;
     try {
       brand = normalizeBrandInfo(await app().Brand());
       appVersion = await app().Version();
@@ -1588,7 +1589,7 @@
     if (file) materialDraftSource = file.name;
   }
   async function pickProjectMaterialFile() {
-    if (!hasWailsBindings()) {
+    if (!hasDesktopBackend()) {
       desktopBackendUnavailable("选择资料文件");
       return;
     }
@@ -2206,7 +2207,7 @@
     }
   }
   async function pickKnowledgeDocumentFile() {
-    if (!hasWailsBindings()) {
+    if (!hasDesktopBackend()) {
       desktopBackendUnavailable("选择知识文档");
       return;
     }
@@ -2575,7 +2576,7 @@
     const next = current.includes(agent.id) ? current.filter((id) => id !== agent.id) : [...current, agent.id];
     capabilityAgentBindings = { ...capabilityAgentBindings, [item.id]: next };
     const bound = next.includes(agent.id);
-    if (hasWailsBindings()) {
+    if (hasDesktopBackend()) {
       try {
         await app().SaveAgent(agentInputWithCapability(agent, item, bound));
         await refreshAgents();
@@ -2744,7 +2745,7 @@
   }
 
   async function ensureSettingsLoaded() {
-    if (!hasWailsBindings()) {
+    if (!hasDesktopBackend()) {
       syncSettingsDraft();
       return;
     }
@@ -2789,7 +2790,7 @@
       closeUserPanelDialog();
       return;
     }
-    if (!hasWailsBindings()) {
+    if (!hasDesktopBackend()) {
       settingsMessage = "设置未保存：未连接桌面后端，请在桌面运行环境中重试。";
       return;
     }
@@ -2830,7 +2831,7 @@
   }
 
   async function removeTrustedIntranetSite(site: TrustedIntranetSiteView) {
-    if (!hasWailsBindings()) return;
+    if (!hasDesktopBackend()) return;
     const key = `${site.host}|${site.cidrs.join(",")}|${site.ports.join(",")}`;
     trustedIntranetRemoving = key;
     settingsMessage = "";
@@ -2847,7 +2848,7 @@
   }
 
   async function removeBrowserCredential(credential: BrowserCredentialView) {
-    if (!hasWailsBindings()) return;
+    if (!hasDesktopBackend()) return;
     browserCredentialRemoving = credential.origin;
     settingsMessage = "";
     modelSettingsError = "";
@@ -2971,7 +2972,7 @@
       }
     }
 
-    if (hasWailsBindings()) {
+    if (hasDesktopBackend()) {
       try {
         await app().SaveProvider(DEFAULT_INTRANET_PROVIDER);
         await app().SetDefaultModel("xigu-intranet/deepseek-v4-flash");
@@ -3032,7 +3033,7 @@
   }
 
   async function refreshModelSettings() {
-    if (!hasWailsBindings()) {
+    if (!hasDesktopBackend()) {
       if (!modelSettings) {
         modelSettings = {
           defaultModel: "xigu-intranet/deepseek-v4-flash",
@@ -3071,7 +3072,7 @@
   }
 
   async function fetchDraftProviderModels() {
-    if (!hasWailsBindings()) {
+    if (!hasDesktopBackend()) {
       modelDraftMessage = "已使用内网预置模型列表（deepseek-v4-flash, deepseek-v4-pro, glm-5.2, xllm, vlm）。";
       modelDraft.fetchedModels = ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5.2", "xllm", "vlm"];
       applySelectedDraftModels(modelDraft.fetchedModels);
@@ -3116,7 +3117,7 @@
       modelDraftError = "保存 API Key 需要填写环境变量名，或清空 API Key 后保存免密 provider。";
       return;
     }
-    if (hasWailsBindings()) {
+    if (hasDesktopBackend()) {
       modelDraftSaving = true;
       modelDraftNameInvalid = false;
       modelDraftError = "";
@@ -3170,7 +3171,7 @@
   }
 
   async function setDefaultModelProvider(provider: ProviderView, model = providerDefaultModel(provider)) {
-    if (!hasWailsBindings()) return;
+    if (!hasDesktopBackend()) return;
     modelSettingsError = "";
     modelSettingsMessage = "";
     try {
@@ -3187,7 +3188,7 @@
   }
 
   async function deleteModelProvider(provider: ProviderView) {
-    if (!hasWailsBindings()) return;
+    if (!hasDesktopBackend()) return;
     const confirmMessage = provider.builtIn
       ? `移除内置渠道“${provider.name}”？它会从当前配置和模型列表隐藏，默认模型可能自动调整；内置能力与环境变量中的密钥不会被删除。`
       : `删除渠道“${provider.name}”？渠道下的模型会从列表移除，默认模型可能自动调整；环境变量中的密钥不会被删除。`;
@@ -3289,7 +3290,7 @@
     } catch (error) {
       console.warn("Failed to persist unified workbench state", error);
     }
-    if (hasWailsBindings()) {
+    if (hasDesktopBackend()) {
       const backendPayload = JSON.stringify(persistentWorkbenchSnapshot(snapshot));
       if (sidebarPersistenceTimer) window.clearTimeout(sidebarPersistenceTimer);
       sidebarPersistenceTimer = window.setTimeout(() => {
@@ -3391,21 +3392,21 @@
     restoreThreadQueue();
     restoreDiffReviewComments();
     pruneEmptyDraftSidebarConversations();
-    sidebarStateHydrated = restoredSidebarLocally || !hasWailsBindings();
-    sidebarStateReady = hasWailsBindings() && !restoredSidebarLocally
+    sidebarStateHydrated = restoredSidebarLocally || !hasDesktopBackend();
+    sidebarStateReady = hasDesktopBackend() && !restoredSidebarLocally
       ? restoreSidebarStateFromBackend()
       : Promise.resolve();
     queueStateHydrated = true;
     diffReviewStateHydrated = true;
     const handleNativeMaterialFilePicker = (event: MouseEvent) => {
       const target = event.target;
-      if (!hasWailsBindings() || !(target instanceof HTMLInputElement) || target.type !== "file" || target.getAttribute("aria-label") !== "选择资料文件") return;
+      if (!hasDesktopBackend() || !(target instanceof HTMLInputElement) || target.type !== "file" || target.getAttribute("aria-label") !== "选择资料文件") return;
       event.preventDefault();
       void pickProjectMaterialFile();
     };
     document.addEventListener("click", handleNativeMaterialFilePicker, true);
 
-    if (!hasWailsBindings()) {
+    if (!hasDesktopBackend()) {
       brand = defaultBrand;
       appVersion = "dev";
       tabs = [];
@@ -3858,7 +3859,7 @@
   }
 
   function bindSidebarConversationThread(projectId: string, conversationId: string): Promise<TabMeta | undefined> {
-    if (!hasWailsBindings()) return Promise.resolve(undefined);
+    if (!hasDesktopBackend()) return Promise.resolve(undefined);
     const key = conversationThreadKey(projectId, conversationId);
     const existing = conversationThreadRequests.get(key);
     if (existing) return existing;
@@ -4017,7 +4018,7 @@
     codeInspectorOpen = false;
     sidebarCollapsed = false;
     void tick().then(() => {
-      if (hasWailsBindings()) {
+      if (hasDesktopBackend()) {
         void refreshCodeDock();
         void refreshManagedWorktreeState();
       }
@@ -4167,7 +4168,7 @@ function switchActivityMode(mode: ActivityMode) {
 
   async function refreshDataTrustCenter() {
     const tab = governanceTargetTab();
-    if (!hasWailsBindings() || !tab) {
+    if (!hasDesktopBackend() || !tab) {
       trustCenterView = undefined;
       trustCenterError = tab ? "" : "请先打开一个真实 Thread。";
       return;
@@ -4187,7 +4188,7 @@ function switchActivityMode(mode: ActivityMode) {
 
   async function refreshScopedMemory() {
     const tab = governanceTargetTab();
-    if (!hasWailsBindings() || !tab) {
+    if (!hasDesktopBackend() || !tab) {
       scopedMemoryView = undefined;
       scopedMemoryError = tab ? "" : "请先打开一个真实 Thread。";
       return;
@@ -4447,7 +4448,7 @@ function openGovernanceCenter() {
   async function openUnifiedCodeTask() {
     openCodeWorkbench("overview");
     await tick();
-    if (hasWailsBindings()) await Promise.all([refreshCodeDock(), refreshManagedWorktreeState()]);
+    if (hasDesktopBackend()) await Promise.all([refreshCodeDock(), refreshManagedWorktreeState()]);
   }
   function selectedProject() { return projectCards.find((project) => project.id === selectedProjectId) ?? projectCards[0]; }
   function projectMaterials(project = selectedProject()) { return projectMaterialRows.filter((item) => item.projectId === project.id); }
@@ -4463,7 +4464,7 @@ function openGovernanceCenter() {
   }
   function selectedReport() { return reportCards.find((report) => report.id === selectedReportId) ?? reportCards[0]; }
   async function refreshArtifactReviewJob(reportId = selectedReport()?.id) {
-    if (!reportId || !hasWailsBindings()) {
+    if (!reportId || !hasDesktopBackend()) {
       artifactReviewJob = undefined;
       return;
     }
@@ -4641,7 +4642,7 @@ function openGovernanceCenter() {
       selectedArtifactStage = saved.reviewStage === "export" ? "export" : "design";
       artifactStyleApproved = Boolean(saved.styleApproved);
       artifactReviewComment = saved.reviewComment || "";
-      if (artifactReviewJob && hasWailsBindings()) {
+      if (artifactReviewJob && hasDesktopBackend()) {
         try {
           artifactReviewJob = await app().UpdateWorkbenchStep(artifactReviewJob.id, "design", {
             status: "draft",
@@ -4677,7 +4678,7 @@ function openGovernanceCenter() {
       selectedArtifactStage = saved.reviewStage === "export" ? "export" : "design";
       artifactStyleApproved = Boolean(saved.styleApproved);
       artifactReviewComment = saved.reviewComment || "";
-      if (hasWailsBindings()) {
+      if (hasDesktopBackend()) {
         try {
           const job = await ensureArtifactReviewJob();
           if (action === "submit") {
@@ -4933,7 +4934,7 @@ function openGovernanceCenter() {
       showWorkbenchNotice(`${artifact?.title ?? "运行产物"}尚无可打开的真实路径。`);
       return;
     }
-    if (!hasWailsBindings()) {
+    if (!hasDesktopBackend()) {
       desktopBackendUnavailable("打开团队产物");
       return;
     }
@@ -5658,7 +5659,7 @@ function openGovernanceCenter() {
             showWorkbenchNotice(`资料文件“${browserFile.name}”未导入：浏览器 data URL 导入最多支持 25 MiB；桌面端原生选择支持最高 64 MiB。`);
             return;
           }
-          if (!hasWailsBindings()) {
+          if (!hasDesktopBackend()) {
             showWorkbenchNotice("浏览器预览不能写入资料库；请在 Volt GUI 桌面端导入文件。");
             return;
           }
@@ -5731,7 +5732,7 @@ function openGovernanceCenter() {
       showConfigValidation("ingest-project", "请选择导入资料的归属项目后再确认。");
       return;
     }
-    if (!hasWailsBindings()) {
+    if (!hasDesktopBackend()) {
       desktopBackendUnavailable("批量导入资料");
       return;
     }
@@ -6211,7 +6212,7 @@ function openGovernanceCenter() {
     });
   }
   async function refreshSkillStatus() {
-    if (!hasWailsBindings()) {
+    if (!hasDesktopBackend()) {
       skillCards = skillCards.map((skill) => ({
         ...skill,
         available: true,
@@ -6243,7 +6244,7 @@ function openGovernanceCenter() {
     }
   }
   async function refreshToolStatus() {
-    if (!hasWailsBindings()) {
+    if (!hasDesktopBackend()) {
       applyToolAvailability({
         files: { available: true, reason: hasElectronDsh() ? "暗涌 DSH 工作区已就绪" : "本地文件与资料" },
         terminal: { available: true, reason: hasElectronDsh() ? "DSH 终端执行引擎就绪" : "终端执行" },
@@ -6298,7 +6299,7 @@ function openGovernanceCenter() {
     void refreshSkillStatus();
   }
   async function refreshAgents() {
-    if (hasWailsBindings()) {
+    if (hasDesktopBackend()) {
       try {
         const agents = await app().ListAgents();
         agentCards = Array.isArray(agents) && agents.length > 0 ? agents : loadLocalAgentsFallback();
@@ -6426,7 +6427,7 @@ function openGovernanceCenter() {
       skills: skillCards.filter((skill) => skill.active).map((skill) => skill.title),
       coreFiles: current?.coreFiles ?? coreFiles,
     };
-    if (hasWailsBindings()) {
+    if (hasDesktopBackend()) {
       try {
         const saved = await app().SaveAgent(input);
         selectedAgentId = saved.id;
@@ -6468,7 +6469,7 @@ function openGovernanceCenter() {
     showWorkbenchNotice(`已保存并部署 Agent：${name}`);
   }
   async function deleteAgent(agent: AgentView) {
-    if (hasWailsBindings()) {
+    if (hasDesktopBackend()) {
       try {
         await app().DeleteAgent(agent.id);
         await refreshAgents();
@@ -6509,7 +6510,7 @@ function openGovernanceCenter() {
         skills: item.tags,
         coreFiles: [],
       };
-      if (hasWailsBindings()) {
+      if (hasDesktopBackend()) {
         try {
           await app().SaveAgent(marketAgent);
           await refreshAgents();
@@ -6644,7 +6645,7 @@ function openGovernanceCenter() {
     };
   }
   async function refreshCapabilities() {
-    if (!hasWailsBindings()) {
+    if (!hasDesktopBackend()) {
       capabilityBuckets = emptyCapabilityBuckets();
       return;
     }
@@ -6786,7 +6787,7 @@ function openGovernanceCenter() {
   }
   async function toggleCapabilityEnabled(item = currentCapability()) {
     if (!item) return;
-    if (!hasWailsBindings()) {
+    if (!hasDesktopBackend()) {
       showWorkbenchNotice("当前环境未连接桌面后端，无法更新能力状态。");
       return;
     }
@@ -6849,7 +6850,7 @@ function openGovernanceCenter() {
 		return capabilityTab === "plugin" && item?.id === "cloudflare-drop-publish";
 	}
 	async function pickCloudflareDropSource(kind: "folder" | "zip") {
-		if (!hasWailsBindings()) {
+		if (!hasDesktopBackend()) {
 			showWorkbenchNotice("当前环境未连接桌面后端，无法执行本地预检。");
 			return;
 		}
@@ -6872,7 +6873,7 @@ function openGovernanceCenter() {
 	}
 	async function createCloudflareDropJob() {
 		const preflight = cloudflareDropPreflight;
-		if (!preflight?.valid || !hasWailsBindings()) {
+		if (!preflight?.valid || !hasDesktopBackend()) {
 			showWorkbenchNotice("请先完成通过的本地预检。");
 			return;
 		}
@@ -6910,7 +6911,7 @@ function openGovernanceCenter() {
 		}
 	}
 	async function handoffToCloudflareDrop() {
-		if (!cloudflareDropJob || !hasWailsBindings()) {
+		if (!cloudflareDropJob || !hasDesktopBackend()) {
 			showWorkbenchNotice("请先创建发布流程。");
 			return;
 		}
@@ -6930,7 +6931,7 @@ function openGovernanceCenter() {
 		}
 	}
 	async function saveCloudflareDropPreviewURL() {
-		if (!cloudflareDropJob || !hasWailsBindings()) {
+		if (!cloudflareDropJob || !hasDesktopBackend()) {
 			showWorkbenchNotice("请先创建发布流程。");
 			return;
 		}
@@ -6955,7 +6956,7 @@ function openGovernanceCenter() {
     const file = input.files?.[0];
     input.value = "";
     if (!file) return;
-    if (!hasWailsBindings()) {
+    if (!hasDesktopBackend()) {
       showWorkbenchNotice("当前环境未连接桌面后端，无法导入能力配置。");
       return;
     }
@@ -7105,7 +7106,7 @@ function openGovernanceCenter() {
       showWorkbenchNotice(formatErrorMessage(error));
       return;
     }
-    if (!hasWailsBindings()) {
+    if (!hasDesktopBackend()) {
       showWorkbenchNotice("请在 Volt GUI 桌面端导入 MCP 配置。");
       return;
     }
@@ -7246,7 +7247,7 @@ function openGovernanceCenter() {
 
     updateTranscriptItem(item.id, { archiveLoading: true, archiveLoadError: undefined }, { scroll: false });
     try {
-      if (!hasWailsBindings()) throw new Error("归档详情只能在桌面端会话中加载。");
+      if (!hasDesktopBackend()) throw new Error("归档详情只能在桌面端会话中加载。");
       const evidence = await app().ToolResultForTab(tabID, toolID);
       if (!evidence) throw new Error("归档详情当前不可用。");
       if (currentTranscriptTabId() !== tabID) return;
@@ -7390,7 +7391,7 @@ function openGovernanceCenter() {
     const tabID = historyPageTabId;
     const generation = historyPageGeneration;
     const scrollEl = conversationScrollEl;
-    if (!hasWailsBindings() || !tabID || historyPageLoadingOlder || !historyPageHasOlder) return;
+    if (!hasDesktopBackend() || !tabID || historyPageLoadingOlder || !historyPageHasOlder) return;
     if (!historyRequestStillCurrent(tabID, generation)) return;
 
     historyPageLoadingOlder = true;
@@ -7945,7 +7946,7 @@ function openGovernanceCenter() {
   }
 
   async function refreshManagedWorktreeState(workspaceRoot = currentManagedWorktreeRoot()) {
-    if (!hasWailsBindings() || !workspaceRoot) {
+    if (!hasDesktopBackend() || !workspaceRoot) {
       managedWorktreeWorkspaceRoot = "";
       managedWorktrees = [];
       managedWorktreeSnapshots = [];
@@ -7969,7 +7970,7 @@ function openGovernanceCenter() {
 
   async function createManagedWorktree(name: string) {
     const workspaceRoot = currentManagedWorktreeRoot();
-    if (!workspaceRoot || !hasWailsBindings()) return;
+    if (!workspaceRoot || !hasDesktopBackend()) return;
     const operation = ++managedWorktreeOperation;
     managedWorktreeBusy = true;
     try {
@@ -7987,7 +7988,7 @@ function openGovernanceCenter() {
   }
 
   async function openManagedWorktree(worktree: ManagedWorktree) {
-    if (!hasWailsBindings() || worktree.status !== "ready") return;
+    if (!hasDesktopBackend() || worktree.status !== "ready") return;
     const sourceRoot = currentManagedWorktreeRoot();
     const operation = ++managedWorktreeOperation;
     managedWorktreeBusy = true;
@@ -8010,7 +8011,7 @@ function openGovernanceCenter() {
   }
 
   async function snapshotManagedWorktree(worktreeID: string) {
-    if (!hasWailsBindings()) return;
+    if (!hasDesktopBackend()) return;
     const workspaceRoot = managedWorktreeWorkspaceRoot;
     const operation = ++managedWorktreeOperation;
     managedWorktreeBusy = true;
@@ -8028,7 +8029,7 @@ function openGovernanceCenter() {
   }
 
   async function restoreManagedWorktree(snapshotID: string, targetWorktreeID: string) {
-    if (!hasWailsBindings()) return;
+    if (!hasDesktopBackend()) return;
     if (typeof window !== "undefined" && !window.confirm("恢复只允许应用到相同 HEAD 且干净的目标工作区。确认继续？")) return;
     const workspaceRoot = managedWorktreeWorkspaceRoot;
     const operation = ++managedWorktreeOperation;
@@ -8049,7 +8050,7 @@ function openGovernanceCenter() {
   }
 
   async function handoffManagedWorktree(sourceWorktreeID: string, targetWorktreeID: string, summary: string) {
-    if (!hasWailsBindings()) return;
+    if (!hasDesktopBackend()) return;
     if (typeof window !== "undefined" && !window.confirm("Handoff 会创建源快照，并只在目标工作区干净且 HEAD 一致时应用。确认继续？")) return;
     const workspaceRoot = managedWorktreeWorkspaceRoot;
     const operation = ++managedWorktreeOperation;
@@ -8648,7 +8649,7 @@ function openGovernanceCenter() {
 
   async function performActivityTabSwitch(tabID: string, request: number) {
     const tab = tabs.find((candidate) => candidate.id === tabID);
-    if (!tab || !hasWailsBindings()) return;
+    if (!tab || !hasDesktopBackend()) return;
     saveActiveSidebarConversationTranscript({ touch: false });
     const linked = sidebarProjects.flatMap((project) =>
       project.tasks
@@ -8692,7 +8693,7 @@ function openGovernanceCenter() {
   }
 
   async function cancelActivityTab(tabID: string) {
-    if (!hasWailsBindings()) return;
+    if (!hasDesktopBackend()) return;
     await app().CancelTab(tabID);
     tabs = tabs.map((tab) => tab.id === tabID ? { ...tab, cancelRequested: true } : tab);
   }
@@ -8988,7 +8989,7 @@ function openGovernanceCenter() {
     openCodeConversation();
     codeInspectorOpen = true;
     await tick();
-    if (hasWailsBindings()) await refreshCodeDock();
+    if (hasDesktopBackend()) await refreshCodeDock();
   }
 
   async function previewFile(path: string) {
@@ -9670,7 +9671,7 @@ function openGovernanceCenter() {
                   view={trustCenterView}
                   loading={trustCenterLoading}
                   error={trustCenterError}
-                  backendAvailable={hasWailsBindings()}
+                  backendAvailable={hasDesktopBackend()}
                   onRefresh={() => void refreshDataTrustCenter()}
                   onOpenMemory={() => openGovernanceLayer("scopedMemory")}
                 />
@@ -9681,7 +9682,7 @@ function openGovernanceCenter() {
                   view={scopedMemoryView}
                   loading={scopedMemoryLoading}
                   error={scopedMemoryError}
-                  backendAvailable={hasWailsBindings()}
+                  backendAvailable={hasDesktopBackend()}
                   running={Boolean(governanceTargetTab()?.running || sending)}
                   onRefresh={() => void refreshScopedMemory()}
                   onOpenTrust={() => openGovernanceLayer("trust")}
@@ -9717,6 +9718,7 @@ function openGovernanceCenter() {
                         <button type="button" onclick={startNewTaskFromSidebar}><CirclePlus size={15} /> 新建任务</button>
                       {:else}
                         <button type="button" onclick={startNewTaskFromSidebar}><CirclePlus size={15} /> 新建任务</button>
+                        <button type="button" onclick={() => void applyIntranetModelPreset()}><Server size={15} /> 使用内网模型</button>
                       {/if}
                     </div>
                   </div>
@@ -10485,6 +10487,7 @@ function openGovernanceCenter() {
                     <p>先确认渠道是否已配置，再选择默认对话模型。这里不代表接口已经通过网络连通测试。</p>
                   </div>
                   <div class="model-management-toolbar__actions">
+                    <button type="button" onclick={() => void applyIntranetModelPreset()}><Server size={14} /> 使用内网模型</button>
                     <button type="button" disabled={modelSettingsLoading} onclick={() => void refreshModelSettings()}><RefreshCw size={14} /> 刷新配置</button>
                     <button class="primary" type="button" onclick={() => openModelProviderDialog()}><Plus size={14} /> 添加渠道</button>
                   </div>
@@ -11328,7 +11331,7 @@ function openGovernanceCenter() {
                       />
                     </div>
                   {:else if settingsPanel === "advanced"}
-                    <AdvancedRuntimeSettings available={hasWailsBindings()} {models} />
+                    <AdvancedRuntimeSettings available={hasDesktopBackend()} {models} />
                   {:else}
                     <div class="user-panel-list settings-model-list">
                       <article><div><strong>默认模型</strong><p>{modelSettings?.defaultModel || selectedModel || agentModel}</p><em>在模型管理中修改默认对话模型。</em></div><button type="button" onclick={() => { closeUserPanelDialog(); openWorkLayer("models"); }}>打开模型管理</button></article>
@@ -11673,7 +11676,7 @@ function openGovernanceCenter() {
             <strong>自动获取模型</strong>
             <span>使用当前 Base URL 和 API Key 调用 OpenAI-compatible /models。</span>
           </div>
-          <button type="button" onclick={() => void fetchDraftProviderModels()} disabled={modelDraftFetching || !hasWailsBindings() || !modelDraft.baseUrl.trim()}>
+          <button type="button" onclick={() => void fetchDraftProviderModels()} disabled={modelDraftFetching || !hasDesktopBackend() || !modelDraft.baseUrl.trim()}>
             <RefreshCw size={14} /> {modelDraftFetching ? "拉取中" : "自动获取模型"}
           </button>
         </div>

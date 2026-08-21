@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import { app } from "../lib/bridge";
 
-  const hasWails = typeof window !== "undefined" && !!window.go?.main?.App;
+  const hasWails = typeof window !== "undefined" && (Boolean(window.go?.main?.App) || Boolean((window as any).electronDsh));
 
   let {
     brandName,

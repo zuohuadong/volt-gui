@@ -234,7 +234,7 @@
 
 <div class="runtime-settings">
   {#if !available}
-    <div class="runtime-settings__notice">未连接 Wails 桌面后端，运行配置保持只读。</div>
+    <div class="runtime-settings__notice">未连接桌面后端，运行配置保持只读。</div>
   {:else}
     <div class="runtime-settings__toolbar">
       <p>这些配置直接写入 Volt 运行时，不使用浏览器模拟状态。</p>

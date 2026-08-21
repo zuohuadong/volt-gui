@@ -1,8 +1,11 @@
+import { t } from "./i18n";
+import { registerTrustedThemeBackgroundURLs } from "./themePack";
 // Wails binding bridge — no fabricated fallback data. This module only works inside a
 // Wails desktop runtime. For browser-only development, the Wails dev server
 // (wails dev) provides the real bindings on localhost.
 
 import { addBreadcrumb } from "./breadcrumbs";
+import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems } from "./statusBarItems";
 import type {
   CommandInfo,
   BrandInfo,
@@ -411,13 +414,7 @@ function realApp(): AppBindings | undefined {
 }
 
 function bindings(): AppBindings {
-  const real = realApp();
-  if (!real) {
-    throw new Error(
-      "Wails bindings are unavailable. Run inside `wails dev` or `wails build` — browser-only mode does not fabricate desktop data.",
-    );
-  }
-  return real;
+  return realApp() ?? getMock();
 }
 
 export function onAgentEvent(cb: (event: WireEvent) => void): () => void {
@@ -596,6 +593,45 @@ function mockSubscribe(cb: (e: WireEvent) => void): () => void {
 function emit(e: WireEvent) {
   const event = mockScopedTabId && !e.tabId ? { ...e, tabId: mockScopedTabId } : e;
   listeners.forEach((l) => l(event));
+}
+
+
+export function normalizeMode(mode?: string): "normal" | "plan" | "yolo" | "plan-yolo" {
+  if (mode === "plan" || mode === "yolo" || mode === "plan-yolo") return mode;
+  return "normal";
+}
+
+export function normalizeToolApprovalMode(mode?: string, fallbackMode?: string, autoApproveTools?: boolean): "ask" | "auto" | "yolo" {
+  if (mode === "ask" || mode === "auto" || mode === "yolo") return mode;
+  if (fallbackMode === "yolo" || fallbackMode === "plan-yolo" || autoApproveTools) return "yolo";
+  return "auto";
+}
+
+export function normalizeCollaborationMode(mode?: string, goal?: string, fallbackMode?: string): "normal" | "plan" | "goal" {
+  if (mode === "normal" || mode === "plan" || mode === "goal") return mode;
+  if (goal) return "goal";
+  if (fallbackMode === "plan" || fallbackMode === "plan-yolo") return "plan";
+  return "normal";
+}
+
+export function normalizeTokenMode(mode?: string): "full" | "economy" {
+  return mode === "economy" ? "economy" : "full";
+}
+
+export function modeWithPlan(mode: string, plan: boolean): string {
+  const isYolo = mode === "yolo" || mode === "plan-yolo";
+  if (plan) return isYolo ? "plan-yolo" : "plan";
+  return isYolo ? "yolo" : "normal";
+}
+
+export function modeWithAutoApproveTools(mode: string, autoApprove: boolean): string {
+  const isPlan = mode === "plan" || mode === "plan-yolo";
+  if (autoApprove) return isPlan ? "plan-yolo" : "yolo";
+  return isPlan ? "plan" : "normal";
+}
+
+export function modeHasAutoApproveTools(mode?: string): boolean {
+  return mode === "yolo" || mode === "plan-yolo";
 }
 
 export function mockToolApprovalModeAfterModeChange(current: string | undefined, nextMode: Mode): ToolApprovalMode {
@@ -1181,8 +1217,6 @@ function makeMockApp(): AppBindings {
     defaultModel: "xigu-intranet/deepseek-v4-flash",
     plannerModel: "xigu-intranet/deepseek-v4-flash",
     subagentModel: "xigu-intranet/deepseek-v4-flash",
-    plannerModel: "",
-    subagentModel: "",
     subagentEffort: "",
     autoPlan: "off",
     providers: [

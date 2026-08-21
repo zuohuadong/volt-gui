@@ -1,6 +1,6 @@
 "use strict";
 
-// apps/desktop-electron/src/preload.ts
+// src/preload.ts
 var import_electron = require("electron");
 import_electron.contextBridge.exposeInMainWorld("electronDsh", {
   getServerUrl: () => import_electron.ipcRenderer.invoke("dsh:get-server-url"),

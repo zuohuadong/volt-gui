@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { AtSign, Check, FileText, FileType, Folder, FolderKanban, Image, Paperclip, Plus, Presentation, Search, Send, ShieldCheck, Square, Table, WandSparkles, X } from "@lucide/svelte";
-  import { t } from "../lib/i18n";
+  import { t } from "../lib/i18n-svelte";
   import { app, onFilesDropped, openExternal } from "../lib/bridge";
   import { composerSubmission } from "../lib/composer-submit";
   import { contextRemainingPercent, formatSessionCost } from "../lib/thread-ux";

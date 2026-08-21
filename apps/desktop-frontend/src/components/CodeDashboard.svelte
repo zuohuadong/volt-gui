@@ -24,7 +24,7 @@
     WorkspaceDiffView,
     WorkspaceChangesView,
   } from "../lib/types";
-  import { t } from "../lib/i18n";
+  import { t } from "../lib/i18n-svelte";
 
   type RewindScope = "conversation" | "code" | "both";
   type CodeDashboardVariant = "dock" | "workbench";

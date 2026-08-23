@@ -5,18 +5,10 @@ import * as fs from 'node:fs';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { DshServer } from '@dsh/server';
+import { normalizedConfigPatch } from './runtime-config.js';
+import type { AppConfig, AppConfigPatch } from './runtime-config.js';
 // 彻底清除 Windows/Linux 默认英文菜单栏 (File / Edit / View / Window / Help)
 Menu.setApplicationMenu(null);
-
-interface AppConfig {
-  model: string;
-  apiKey: string;
-  baseURL: string;
-  port: number;
-  host: '127.0.0.1';
-  compactReasoning: boolean;
-  degenerationGuard: boolean;
-}
 
 interface PublicAppConfig extends Omit<AppConfig, 'apiKey'> {
   apiKeySet: boolean;
@@ -27,15 +19,6 @@ interface PublicAppConfig extends Omit<AppConfig, 'apiKey'> {
 interface DshConnection {
   baseUrl: string;
   accessToken: string;
-}
-
-interface AppConfigPatch {
-  model?: unknown;
-  apiKey?: unknown;
-  clearApiKey?: unknown;
-  baseURL?: unknown;
-  compactReasoning?: unknown;
-  degenerationGuard?: unknown;
 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -85,32 +68,6 @@ function publicConfig(config = appConfig): PublicAppConfig {
 
 function serverConnection(): DshConnection {
   return { baseUrl: serverUrl, accessToken: serverAccessToken };
-}
-
-function normalizedConfigPatch(patch: AppConfigPatch): AppConfig {
-  const next = { ...appConfig };
-
-  if (patch.model !== undefined) {
-    if (typeof patch.model !== 'string' || !patch.model.trim()) throw new Error('模型名称不能为空。');
-    next.model = patch.model.trim();
-  }
-
-  if (patch.baseURL !== undefined) {
-    if (typeof patch.baseURL !== 'string' || !patch.baseURL.trim()) throw new Error('接口地址不能为空。');
-    const parsed = new URL(patch.baseURL.trim());
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('接口地址仅支持 HTTP 或 HTTPS。');
-    next.baseURL = parsed.toString().replace(/\/$/, '');
-  }
-
-  if (patch.apiKey !== undefined) {
-    if (typeof patch.apiKey !== 'string') throw new Error('API 密钥格式无效。');
-    if (patch.apiKey.trim()) next.apiKey = patch.apiKey.trim();
-  }
-  if (patch.clearApiKey === true) next.apiKey = '';
-  if (typeof patch.compactReasoning === 'boolean') next.compactReasoning = patch.compactReasoning;
-  if (typeof patch.degenerationGuard === 'boolean') next.degenerationGuard = patch.degenerationGuard;
-
-  return next;
 }
 
 async function launchDshBackend(config: AppConfig, workingDirectory: string) {
@@ -281,7 +238,7 @@ ipcMain.handle('dsh:get-config', () => publicConfig());
 ipcMain.handle('dsh:save-config', async (_evt, patch: AppConfigPatch) => {
   try {
     await startDshBackend(() => ({
-      config: normalizedConfigPatch(patch ?? {}),
+      config: normalizedConfigPatch(appConfig, patch ?? {}),
       workingDirectory: currentWorkingDir,
     }));
     return { success: true, config: publicConfig(), connection: serverConnection() };

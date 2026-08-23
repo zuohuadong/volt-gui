@@ -167,6 +167,11 @@ if [[ -n "$LAST_SYNC" ]] && ! git cat-file -e "$LAST_SYNC^{commit}" 2>/dev/null;
   exit 2
 fi
 
+if [[ -n "$(git ls-files -u)" ]]; then
+  echo "ERROR: resolve all existing merge conflicts before running upstream sync" >&2
+  exit 2
+fi
+
 if [ "$LAST_SYNC" = "$UPSTREAM_HEAD" ]; then
   echo "Already up to date (sync marker = $UPSTREAM_HEAD)"
   exit 0
@@ -183,11 +188,13 @@ echo "=== Syncing cumulative diff $LAST_SYNC..$UPSTREAM_HEAD ==="
 SYNC_BASE=""
 SYNC_ACTIVE=0
 PATCH_FILE=""
+SYNC_CHANGE_PATHS=()
 
 rollback_sync() {
   echo "=== Rolling back incomplete sync ===" >&2
   local path
   local -a changed_paths=()
+  local -a rollback_candidates=("${SYNC_CHANGE_PATHS[@]}" "${MODULE_PATHS[@]}" "$MARKER_FILE")
   declare -A seen_paths=()
 
   while IFS= read -r -d '' path; do
@@ -196,8 +203,8 @@ rollback_sync() {
       changed_paths+=("$path")
     fi
   done < <(
-    git diff --name-only -z -- "${SYNC_PATHS[@]}" "${MODULE_PATHS[@]}" "$MARKER_FILE"
-    git diff --cached --name-only -z -- "${SYNC_PATHS[@]}" "${MODULE_PATHS[@]}" "$MARKER_FILE"
+    git diff --name-only -z -- "${rollback_candidates[@]}"
+    git diff --cached --name-only -z -- "${rollback_candidates[@]}"
   )
 
   for path in "${changed_paths[@]}"; do
@@ -238,22 +245,27 @@ PATCH_FILE=$(mktemp)
 # upstream files represent the final upstream snapshot.
 MISSING_PATHS=()
 SNAPSHOT_PATHS=()
-while IFS=$'\t' read -r status path _; do
-  case "$status" in
-    A*|M*|T*)
-      if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
-        echo "  SNAPSHOT (missing fork path): $path"
-        MISSING_PATHS+=(":(exclude,literal)$path")
-        SNAPSHOT_PATHS+=("$path")
+declare -A SYNC_CHANGE_SET=()
+while IFS= read -r -d '' path; do
+  SYNC_CHANGE_PATHS+=("$path")
+  SYNC_CHANGE_SET["$path"]=1
+done < <(git diff --name-only -z --no-renames "$LAST_SYNC" "$UPSTREAM_HEAD" -- "${SYNC_PATHS[@]}")
+
+for path in "${SYNC_CHANGE_PATHS[@]}"; do
+  if git cat-file -e "$UPSTREAM_HEAD:$path" 2>/dev/null; then
+    if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+      if [[ -e "$path" || -L "$path" ]]; then
+        echo "ERROR: upstream path collides with an untracked or ignored path: $path" >&2
+        exit 2
       fi
-      ;;
-    D*)
-      if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
-        MISSING_PATHS+=(":(exclude,literal)$path")
-      fi
-      ;;
-  esac
-done < <(git diff --name-status -M "$LAST_SYNC" "$UPSTREAM_HEAD" -- "${SYNC_PATHS[@]}")
+      echo "  SNAPSHOT (missing fork path): $path"
+      MISSING_PATHS+=(":(exclude,literal)$path")
+      SNAPSHOT_PATHS+=("$path")
+    fi
+  elif ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+    MISSING_PATHS+=(":(exclude,literal)$path")
+  fi
+done
 
 if ((${#MISSING_PATHS[@]})); then
   git diff --binary "$LAST_SYNC" "$UPSTREAM_HEAD" -- "${SYNC_PATHS[@]}" "${MISSING_PATHS[@]}" > "$PATCH_FILE"
@@ -272,6 +284,10 @@ if [[ -s "$PATCH_FILE" ]] && ! git apply --check --reverse --whitespace=nowarn "
       exit 1
     fi
     for f in "${CONFLICT_FILES[@]}"; do
+      if [[ -z "${SYNC_CHANGE_SET[$f]+present}" ]]; then
+        echo "ERROR: refusing to resolve an unexpected conflict outside this upstream patch: $f" >&2
+        exit 1
+      fi
       echo "  MERGE (upstream snapshot + branding): $f"
       if git checkout --theirs "$f" 2>/dev/null; then
         [[ ! -f "$f" ]] || rebrand_go_file "$f"
@@ -281,6 +297,10 @@ if [[ -s "$PATCH_FILE" ]] && ! git apply --check --reverse --whitespace=nowarn "
       fi
       git add "$f"
     done
+    if [[ -n "$(git ls-files -u)" ]]; then
+      echo "ERROR: upstream patch left unresolved conflicts" >&2
+      exit 1
+    fi
   fi
 else
   echo "  SKIP (no new sync-selected changes)"
@@ -323,9 +343,10 @@ echo "$UPSTREAM_HEAD" > "$MARKER_FILE"
 
 echo "=== Staging sync-selected changes ==="
 STAGE_PATHS=()
+STAGE_CANDIDATES=("${SYNC_CHANGE_PATHS[@]}" "${MODULE_PATHS[@]}" "$MARKER_FILE")
 while IFS= read -r -d '' path; do
   STAGE_PATHS+=("$path")
-done < <(git diff --name-only -z "$SYNC_BASE" -- "${SYNC_PATHS[@]}" "${MODULE_PATHS[@]}" "$MARKER_FILE")
+done < <(git diff --name-only -z "$SYNC_BASE" -- "${STAGE_CANDIDATES[@]}")
 if ((${#STAGE_PATHS[@]})); then
   git add -A -- "${STAGE_PATHS[@]}"
 fi

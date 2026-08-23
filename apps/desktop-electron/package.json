@@ -8,6 +8,7 @@
     "build:main": "node ./scripts/build-main.mjs",
     "build:frontend": "pnpm --filter voltui-desktop-workbench run build:electron && node ./scripts/build-frontend.mjs",
     "build": "pnpm run build:frontend && pnpm run build:main",
+    "test:config": "node --test src/runtime-config.test.mjs",
     "dev": "tsc --watch",
     "start": "electron dist/main.js",
     "dist": "electron-builder --win --x64"

@@ -38,8 +38,11 @@ SYNC_PATHS=(
   ':(exclude,glob)internal/autoresearch/**'
   ':(exclude,glob)internal/boot/**'
   ':(exclude,glob)internal/bot/**'
+  ':(exclude,glob)internal/botruntime/**'
+  ':(exclude,glob)internal/boundedllm/**'
   ':(exclude,glob)internal/capability/**'
   ':(exclude,glob)internal/capdiag/**'
+  ':(exclude,glob)internal/checkpoint/**'
   ':(exclude,glob)internal/cli/**'
   ':(exclude,glob)internal/completion/**'
   ':(exclude,glob)internal/config/**'
@@ -48,23 +51,33 @@ SYNC_PATHS=(
   ':(exclude,glob)internal/event/**'
   ':(exclude,glob)internal/eventwire/**'
   ':(exclude,glob)internal/evidence/**'
+  ':(exclude,glob)internal/extension/**'
   ':(exclude,glob)internal/filelock/**'
+  ':(exclude,glob)internal/fileutil/**'
+  ':(exclude,glob)internal/history/**'
+  ':(exclude,glob)internal/historycatalog/**'
   ':(exclude,glob)internal/i18n/**'
   ':(exclude,glob)internal/installsource/**'
   ':(exclude,glob)internal/guardian/**'
   ':(exclude,glob)internal/hook/**'
+  ':(exclude,glob)internal/jobs/**'
   ':(exclude,glob)internal/memory/**'
   ':(exclude,glob)internal/notify/**'
+  ':(exclude,glob)internal/permission/**'
   ':(exclude,glob)internal/plancontract/**'
   ':(exclude,glob)internal/planmode/**'
   ':(exclude,glob)internal/plugin/**'
   ':(exclude,glob)internal/pluginpkg/**'
+  ':(exclude,glob)internal/projectiondb/**'
   ':(exclude,glob)internal/provider/**'
   ':(exclude,glob)internal/recovery/**'
   ':(exclude,glob)internal/repair/**'
+  ':(exclude,glob)internal/runtimepolicy/**'
   ':(exclude,glob)internal/sandbox/**'
   ':(exclude,glob)internal/serve/**'
+  ':(exclude,glob)internal/sessioncatalog/**'
   ':(exclude,glob)internal/sessioninbox/**'
+  ':(exclude,glob)internal/shellsafe/**/*.go'
   ':(exclude,glob)internal/shellrun/**'
   # Volt keeps a configurable tool-output redaction policy that upstream no
   # longer exposes. Sync secret handling only through an explicit review so an
@@ -73,11 +86,16 @@ SYNC_PATHS=(
   ':(exclude,glob)internal/skill/**'
   ':(exclude,glob)internal/stats/**'
   ':(exclude,glob)internal/store/**'
+  ':(exclude,glob)internal/taskcatalog/**'
   ':(exclude,glob)internal/taskcontract/**'
+  ':(exclude,glob)internal/taskmonitor/**'
   ':(exclude,glob)internal/telemetry/**'
   ':(exclude,glob)internal/tool/**'
   ':(exclude,glob)internal/trajectory/**'
+  ':(exclude,glob)internal/usagecatalog/**'
   ':(exclude,glob)internal/winsandbox/**'
+  ':(exclude,glob)internal/workspacelease/**'
+  ':(exclude,glob)tools/repolint/**'
   ':(exclude)internal/winsandbox/'
   ':(exclude)internal/sandbox/seatbelt_windows.go'
   ':(exclude)internal/sandbox/seatbelt_windows_test.go'
@@ -89,13 +107,57 @@ MODULE_PATHS=(
   'go.sum'
 )
 
+rebrand_go_file() {
+  local path="$1"
+  node --input-type=module - "$path" <<'NODE'
+import fs from 'node:fs';
+
+const path = process.argv[2];
+const original = fs.readFileSync(path, 'utf8');
+const branded = original
+  .replaceAll('reasonix/', 'voltui/')
+  .replace(/\breasonix_/g, 'voltui_')
+  .replace(/\bReasonix_/g, 'VoltUI_')
+  .replace(/\bREASONIX_/g, 'VOLTUI_')
+  .replace(/\breasonix\b/g, 'voltui')
+  .replace(/\bReasonix\b/g, 'VoltUI')
+  .replace(/\bREASONIX\b/g, 'VOLTUI');
+
+if (branded !== original) fs.writeFileSync(path, branded);
+NODE
+}
+
+fetch_upstream() {
+  local attempt
+  for attempt in 1 2 3; do
+    if git fetch --no-tags "$UPSTREAM_REMOTE" "$UPSTREAM_BRANCH"; then
+      return
+    fi
+    if ((attempt < 3)); then
+      echo "Upstream fetch failed (attempt $attempt/3); retrying..." >&2
+      sleep $((attempt * 2))
+    fi
+  done
+  return 1
+}
+
 echo "=== Fetching upstream over HTTPS ==="
 if git remote get-url "$UPSTREAM_REMOTE" >/dev/null 2>&1; then
   git remote set-url "$UPSTREAM_REMOTE" "$UPSTREAM_URL"
 else
   git remote add "$UPSTREAM_REMOTE" "$UPSTREAM_URL"
 fi
-git fetch --no-tags "$UPSTREAM_REMOTE" "$UPSTREAM_BRANCH"
+FETCHED_HEAD=$(git rev-parse "$UPSTREAM_REMOTE/$UPSTREAM_BRANCH" 2>/dev/null || true)
+if [[ "${VOLTUI_UPSTREAM_USE_FETCHED_HEAD:-0}" == "1" \
+  && -n "${VOLTUI_UPSTREAM_EXPECTED_HEAD:-}" \
+  && "$FETCHED_HEAD" == "$VOLTUI_UPSTREAM_EXPECTED_HEAD" ]]; then
+  echo "WARNING: using explicitly verified fetched head $FETCHED_HEAD" >&2
+else
+  if ! fetch_upstream; then
+    echo "ERROR: upstream fetch failed; refusing an unverified cached head" >&2
+    exit 1
+  fi
+fi
 
 LAST_SYNC=$(cat "$MARKER_FILE" 2>/dev/null || echo "")
 UPSTREAM_HEAD=$(git rev-parse "$UPSTREAM_REMOTE/$UPSTREAM_BRANCH")
@@ -124,7 +186,28 @@ PATCH_FILE=""
 
 rollback_sync() {
   echo "=== Rolling back incomplete sync ===" >&2
-  git restore --source="$SYNC_BASE" --staged --worktree -- "${SYNC_PATHS[@]}" "${MODULE_PATHS[@]}" "$MARKER_FILE"
+  local path
+  local -a changed_paths=()
+  declare -A seen_paths=()
+
+  while IFS= read -r -d '' path; do
+    if [[ -z "${seen_paths[$path]+present}" ]]; then
+      seen_paths["$path"]=1
+      changed_paths+=("$path")
+    fi
+  done < <(
+    git diff --name-only -z -- "${SYNC_PATHS[@]}" "${MODULE_PATHS[@]}" "$MARKER_FILE"
+    git diff --cached --name-only -z -- "${SYNC_PATHS[@]}" "${MODULE_PATHS[@]}" "$MARKER_FILE"
+  )
+
+  for path in "${changed_paths[@]}"; do
+    if git cat-file -e "$SYNC_BASE:$path" 2>/dev/null; then
+      git restore --source="$SYNC_BASE" --staged --worktree -- "$path"
+    else
+      git rm -f --cached --ignore-unmatch -- "$path" >/dev/null
+      rm -f -- "$path"
+    fi
+  done
 }
 
 cleanup_sync() {
@@ -191,7 +274,7 @@ if [[ -s "$PATCH_FILE" ]] && ! git apply --check --reverse --whitespace=nowarn "
     for f in "${CONFLICT_FILES[@]}"; do
       echo "  MERGE (upstream snapshot + branding): $f"
       if git checkout --theirs "$f" 2>/dev/null; then
-        [[ ! -f "$f" ]] || perl -0pi -e 's|reasonix/|voltui/|g' "$f"
+        [[ ! -f "$f" ]] || rebrand_go_file "$f"
       else
         git rm -f -- "$f"
         continue
@@ -217,7 +300,7 @@ while IFS= read -r -d '' path; do
   case "$path" in
     *.go)
       [[ -f "$path" ]] || continue
-      perl -0pi -e 's|reasonix/|voltui/|g; s|\breasonix_|voltui_|g; s|\bReasonix_|VoltUI_|g; s|\bREASONIX_|VOLTUI_|g; s|\breasonix\b|voltui|g; s|\bReasonix\b|VoltUI|g; s|\bREASONIX\b|VOLTUI|g' "$path"
+      rebrand_go_file "$path"
       ;;
   esac
 done < <(git diff --name-only -z "$SYNC_BASE" -- "${SYNC_PATHS[@]}")
@@ -239,7 +322,13 @@ node "$PARITY_CHECK" "$LAST_SYNC" "$UPSTREAM_HEAD"
 echo "$UPSTREAM_HEAD" > "$MARKER_FILE"
 
 echo "=== Staging sync-selected changes ==="
-git add -- "${SYNC_PATHS[@]}" "${MODULE_PATHS[@]}" "$MARKER_FILE"
+STAGE_PATHS=()
+while IFS= read -r -d '' path; do
+  STAGE_PATHS+=("$path")
+done < <(git diff --name-only -z "$SYNC_BASE" -- "${SYNC_PATHS[@]}" "${MODULE_PATHS[@]}" "$MARKER_FILE")
+if ((${#STAGE_PATHS[@]})); then
+  git add -A -- "${STAGE_PATHS[@]}"
+fi
 SYNC_ACTIVE=0
 
 echo "=== Done. Review with git diff --cached. ==="

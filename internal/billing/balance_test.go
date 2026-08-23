@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// A DeepSeek-shaped response parses, exposes Available, and Display prefers CNY
-// with the right symbol; the request carries the bearer key.
 func TestFetchDeepSeekShape(t *testing.T) {
 	const body = `{
 		"is_available": true,
@@ -38,7 +36,6 @@ func TestFetchDeepSeekShape(t *testing.T) {
 	if len(b.Infos) != 2 {
 		t.Fatalf("want 2 infos, got %d", len(b.Infos))
 	}
-	// Display prefers CNY → "¥110.00", not the first (USD) entry.
 	if got := b.Display(); got != "¥110.00" {
 		t.Errorf("Display = %q, want %q", got, "¥110.00")
 	}
@@ -50,8 +47,6 @@ func TestFetchDeepSeekShape(t *testing.T) {
 	}
 }
 
-// An empty url is "not configured", not an error: (nil, nil), and Display on a nil
-// balance is "".
 func TestFetchEmptyURL(t *testing.T) {
 	b, err := Fetch(context.Background(), "", "key")
 	if err != nil || b != nil {
@@ -62,7 +57,6 @@ func TestFetchEmptyURL(t *testing.T) {
 	}
 }
 
-// A non-200 surfaces an error rather than a bogus zero balance.
 func TestFetchHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -74,8 +68,6 @@ func TestFetchHTTPError(t *testing.T) {
 	}
 }
 
-// Display falls back to the first currency when no CNY entry is present, and maps
-// USD to "$".
 func TestDisplayUSDOnly(t *testing.T) {
 	b := &Balance{Available: true, Infos: []Info{{Currency: "USD", TotalBalance: "9.99"}}}
 	if got := b.Display(); got != "$9.99" {
@@ -83,5 +75,31 @@ func TestDisplayUSDOnly(t *testing.T) {
 	}
 	if got := b.DisplayForCurrency("CNY"); got != "USD $9.99" {
 		t.Errorf("DisplayForCurrency(CNY) = %q, want explicit real fallback currency %q", got, "USD $9.99")
+	}
+}
+
+func TestBalanceOriginalCurrencyDisplayNeverConverts(t *testing.T) {
+	b := &Balance{Available: true, Infos: []Info{
+		{Currency: "CNY", TotalBalance: "70.16"},
+		{Currency: "USD", TotalBalance: "9.82"},
+	}}
+	if got := b.DisplayForCurrency("USD"); got != "$9.82" {
+		t.Fatalf("USD display = %q", got)
+	}
+	if got := (&Balance{Infos: []Info{{Currency: "CNY", TotalBalance: "70.16"}}}).DisplayForCurrency("USD"); got != "CNY ¥70.16" {
+		t.Fatalf("fallback display = %q", got)
+	}
+	if got := b.PrimaryCurrency(); got != "" || !b.MultiCurrency() {
+		t.Fatalf("wallet currencies = %v primary=%q", b.Currencies(), got)
+	}
+}
+
+func TestBalanceSingleWalletCurrencyHint(t *testing.T) {
+	b := &Balance{Infos: []Info{{Currency: "RMB", TotalBalance: "1"}}}
+	if got := b.PrimaryCurrency(); got != "CNY" {
+		t.Fatalf("primary = %q", got)
+	}
+	if got := b.Currencies(); len(got) != 1 || got[0] != "CNY" {
+		t.Fatalf("currencies = %v", got)
 	}
 }

@@ -849,15 +849,15 @@ export const DEFAULT_INTRANET_PROVIDER: ProviderView = {
   displayName: "西谷内网模型网关",
   builtIn: true,
   added: true,
-  configured: true,
+  configured: false,
   kind: "openai",
-  baseUrl: "http://192.168.1.47:9010/v1",
-  modelsUrl: "http://192.168.1.47:9010/v1/models",
+  baseUrl: "",
+  modelsUrl: "",
   models: ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5.2", "xllm", "vlm"],
   default: "deepseek-v4-flash",
   apiKeyEnv: "DEEPSEEK_API_KEY",
-  apiKeyValue: "[REDACTED_SECRET]",
-  keySet: true,
+  apiKeyValue: "",
+  keySet: false,
   requiresKey: true,
   balanceUrl: "",
   contextWindow: 128000,
@@ -5320,7 +5320,7 @@ function makeMockApp(): AppBindings {
     },
 
     async KnowledgeDocumentPreview(_id: string): Promise<string> {
-      return "# 西谷内网模型接入指南\n\n内网网关: http://192.168.1.47:9010/v1";
+      return "# 西谷内网模型接入指南\n\n请由管理员提供模型接口地址，并在运行设置中完成连接。";
     },
 
     async ImportKnowledgeDocument(input: KnowledgeDocumentImportInput): Promise<WorkbenchKnowledgeDocument> {

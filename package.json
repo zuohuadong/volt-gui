@@ -12,7 +12,7 @@
     "test": "pnpm --filter \"@dsh/*\" --filter \"@volt/*\" run test",
     "start": "./scripts/anyong.mjs",
     "web": "./scripts/anyong.mjs web",
-    "desktop": "pnpm --filter voltui-desktop-workbench run build && pnpm --filter @anyong/desktop-electron run build:main && pnpm --filter @anyong/desktop-electron run start",
+    "desktop": "pnpm --filter voltui-desktop-workbench run build && pnpm --filter @anyong/desktop-electron run build && pnpm --filter @anyong/desktop-electron run start",
     "build:desktop": "pnpm --filter voltui-desktop-workbench run build && pnpm --filter @anyong/desktop-electron run build",
     "dist:desktop": "pnpm --filter voltui-desktop-workbench run build && pnpm --filter @anyong/desktop-electron run build && pnpm --filter @anyong/desktop-electron run dist && node ./scripts/package-dist.mjs",
     "dsh": "pnpm --filter @dsh/cli run dev",

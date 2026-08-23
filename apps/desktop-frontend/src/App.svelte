@@ -1372,15 +1372,15 @@
     displayName: "西谷内网模型网关",
     builtIn: true,
     added: true,
-    configured: true,
+    configured: false,
     kind: "openai",
-    baseUrl: "http://192.168.1.47:9010/v1",
-    modelsUrl: "http://192.168.1.47:9010/v1/models",
+    baseUrl: "",
+    modelsUrl: "",
     models: ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5.2", "xllm", "vlm"],
     default: "deepseek-v4-flash",
     apiKeyEnv: "DEEPSEEK_API_KEY",
-    apiKeyValue: "[REDACTED_SECRET]",
-    keySet: true,
+    apiKeyValue: "",
+    keySet: false,
     requiresKey: true,
     balanceUrl: "",
     contextWindow: 128000,
@@ -1528,14 +1528,8 @@
   let distillSampleTodoId = $state("");
   let workbenchNoticeTimer: number | undefined;
 
-  function hasWailsBindings() {
-    return typeof window !== "undefined" && Boolean(window.go?.main?.App);
-  }
-  function hasElectronDsh() {
-    return typeof window !== "undefined" && Boolean((window as any).electronDsh);
-  }
   function hasDesktopBackend() {
-    return hasElectronDsh() || typeof window !== "undefined" && Boolean(window.go?.main?.App);
+    return typeof window !== "undefined" && Boolean(window.go?.main?.App);
   }
   function desktopBackendUnavailable(feature: string) {
     showWorkbenchNotice(`${feature}不可用：未连接桌面后端，请在桌面运行环境中重试。`);
@@ -2960,18 +2954,6 @@
   }
 
   async function applyIntranetModelPreset() {
-    if (typeof window !== "undefined" && (window as any).electronDsh?.saveConfig) {
-      try {
-        await (window as any).electronDsh.saveConfig({
-          baseURL: "http://192.168.1.47:9010/v1",
-          model: "deepseek-v4-flash",
-          apiKey: "[REDACTED_SECRET]",
-        });
-      } catch (err) {
-        console.warn("Electron DSH saveConfig error:", err);
-      }
-    }
-
     if (hasDesktopBackend()) {
       try {
         await app().SaveProvider(DEFAULT_INTRANET_PROVIDER);
@@ -2992,8 +2974,8 @@
       plannerModel: "volt-intranet/deepseek-v4-flash",
       autoPlan: "auto",
       providers: updatedProviders,
-      permissions: { defaultMode: "ask", allowBash: true, allowBrowser: true, allowFileWrite: true, allowFileRead: true },
-      sandbox: { bashMode: "enforce", bashNetwork: false, workspaceRoot: "", allowWritePaths: [], shell: "auto" },
+      permissions: { mode: "ask", allow: [], ask: [], deny: [] },
+      sandbox: { bash: "enforce", network: false, workspaceRoot: "", allowWrite: [], shell: "auto" },
       desktopLanguage: "zh-CN",
       desktopTheme: "auto",
       desktopThemeStyle: "graphite",
@@ -3005,9 +2987,11 @@
 
     selectedModel = "volt-intranet/deepseek-v4-flash";
     models = DEFAULT_INTRANET_PROVIDER.models.map((m) => ({
+      name: `volt-intranet/${m}`,
+      ref: `volt-intranet/${m}`,
+      provider: "volt-intranet",
+      model: m,
       label: m,
-      insert: `volt-intranet/${m}`,
-      hint: m === "deepseek-v4-flash" ? "内网高速推理" : "内网模型",
       current: m === "deepseek-v4-flash",
     }));
 
@@ -3029,7 +3013,7 @@
     } catch {}
 
     newTaskConversationActive = true;
-    showWorkbenchNotice("已连接西谷内网模型网关 (192.168.1.47:9010 · deepseek-v4-flash)");
+    showWorkbenchNotice("已添加内网模型模板，请补充接口地址与凭据后连接。");
   }
 
   async function refreshModelSettings() {
@@ -3040,8 +3024,8 @@
           plannerModel: "volt-intranet/deepseek-v4-flash",
           autoPlan: "auto",
           providers: [DEFAULT_INTRANET_PROVIDER],
-          permissions: { defaultMode: "ask", allowBash: true, allowBrowser: true, allowFileWrite: true, allowFileRead: true },
-          sandbox: { bashMode: "enforce", bashNetwork: false, workspaceRoot: "", allowWritePaths: [], shell: "auto" },
+          permissions: { mode: "ask", allow: [], ask: [], deny: [] },
+          sandbox: { bash: "enforce", network: false, workspaceRoot: "", allowWrite: [], shell: "auto" },
           desktopLanguage: "zh-CN",
           desktopTheme: "auto",
           desktopThemeStyle: "graphite",
@@ -3156,8 +3140,8 @@
       plannerModel: modelSettings?.plannerModel || `${provider.name}/${provider.models[0]}`,
       autoPlan: "auto",
       providers: nextProviders,
-      permissions: modelSettings?.permissions || { defaultMode: "ask", allowBash: true, allowBrowser: true, allowFileWrite: true, allowFileRead: true },
-      sandbox: modelSettings?.sandbox || { bashMode: "enforce", bashNetwork: false, workspaceRoot: "", allowWritePaths: [], shell: "auto" },
+      permissions: modelSettings?.permissions || { mode: "ask", allow: [], ask: [], deny: [] },
+      sandbox: modelSettings?.sandbox || { bash: "enforce", network: false, workspaceRoot: "", allowWrite: [], shell: "auto" },
       desktopLanguage: "zh-CN",
       desktopTheme: "auto",
       desktopThemeStyle: "graphite",
@@ -3419,9 +3403,11 @@
         }
       }).catch(() => {});
       models = DEFAULT_INTRANET_PROVIDER.models.map((m) => ({
+        name: `volt-intranet/${m}`,
+        ref: `volt-intranet/${m}`,
+        provider: "volt-intranet",
+        model: m,
         label: m,
-        insert: `volt-intranet/${m}`,
-        hint: m === "deepseek-v4-flash" ? "内网高速推理" : "内网模型",
         current: m === "deepseek-v4-flash",
       }));
       commands = [];
@@ -3432,8 +3418,8 @@
         plannerModel: "volt-intranet/deepseek-v4-flash",
         autoPlan: "auto",
         providers: [DEFAULT_INTRANET_PROVIDER],
-        permissions: { defaultMode: "ask", allowBash: true, allowBrowser: true, allowFileWrite: true, allowFileRead: true },
-        sandbox: { bashMode: "enforce", bashNetwork: false, workspaceRoot: "", allowWritePaths: [], shell: "auto" },
+        permissions: { mode: "ask", allow: [], ask: [], deny: [] },
+        sandbox: { bash: "enforce", network: false, workspaceRoot: "", allowWrite: [], shell: "auto" },
         desktopLanguage: "zh-CN",
         desktopTheme: "auto",
         desktopThemeStyle: "graphite",
@@ -3444,8 +3430,8 @@
       };
       selectedModel = "volt-intranet/deepseek-v4-flash";
       applyToolAvailability({
-        files: { available: true, reason: hasElectronDsh() ? "暗涌 DSH 工作区已就绪" : "本地文件与资料" },
-        terminal: { available: true, reason: hasElectronDsh() ? "DSH 终端执行引擎就绪" : "终端执行" },
+        files: { available: true, reason: "本地文件与资料" },
+        terminal: { available: true, reason: "终端执行" },
         browser: { available: true, reason: "桌面 WebView 已加载" },
         memory: { available: true, reason: "会话记忆已就绪" },
       });
@@ -6246,8 +6232,8 @@ function openGovernanceCenter() {
   async function refreshToolStatus() {
     if (!hasDesktopBackend()) {
       applyToolAvailability({
-        files: { available: true, reason: hasElectronDsh() ? "暗涌 DSH 工作区已就绪" : "本地文件与资料" },
-        terminal: { available: true, reason: hasElectronDsh() ? "DSH 终端执行引擎就绪" : "终端执行" },
+        files: { available: true, reason: "本地文件与资料" },
+        terminal: { available: true, reason: "终端执行" },
         browser: { available: true, reason: "桌面 WebView 已加载" },
         memory: { available: true, reason: "会话记忆已就绪" },
       });
@@ -6450,9 +6436,9 @@ function openGovernanceCenter() {
       vibe: input.vibe || "严谨高效",
       provider: input.provider,
       model: input.model,
-      tools: input.tools,
-      skills: input.skills,
-      coreFiles: input.coreFiles,
+      tools: input.tools ?? [],
+      skills: input.skills ?? [],
+      coreFiles: input.coreFiles ?? [],
       builtIn: false,
       createdAt: current?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -6526,6 +6512,9 @@ function openGovernanceCenter() {
           role: marketAgent.role ?? "内置模板",
           runs: 0,
           status: marketAgent.status ?? "已启用",
+          tools: marketAgent.tools ?? [],
+          skills: marketAgent.skills ?? [],
+          coreFiles: marketAgent.coreFiles ?? [],
           builtIn: true,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),

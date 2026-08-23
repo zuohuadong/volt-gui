@@ -1,10 +1,34 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { DshServer } from '@dsh/server';
 // 彻底清除 Windows/Linux 默认英文菜单栏 (File / Edit / View / Window / Help)
 Menu.setApplicationMenu(null);
+
+interface AppConfig {
+  model: string;
+  apiKey: string;
+  baseURL: string;
+  port: number;
+  host: '127.0.0.1';
+  compactReasoning: boolean;
+  degenerationGuard: boolean;
+}
+
+interface PublicAppConfig extends Omit<AppConfig, 'apiKey'> {
+  apiKeySet: boolean;
+}
+
+interface AppConfigPatch {
+  model?: unknown;
+  apiKey?: unknown;
+  clearApiKey?: unknown;
+  baseURL?: unknown;
+  compactReasoning?: unknown;
+  degenerationGuard?: unknown;
+}
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -14,67 +38,120 @@ const __dirname = path.dirname(__filename);
 let mainWindow: BrowserWindow | null = null;
 let dshServer: DshServer | null = null;
 let serverUrl = '';
-let currentWorkingDir = process.cwd();
+
+function resolveInitialWorkingDirectory(): string {
+  const configuredDirectory = process.env.DSH_WORKSPACE || process.env.INIT_CWD;
+  if (configuredDirectory) {
+    try {
+      const resolvedDirectory = path.resolve(configuredDirectory);
+      if (fs.statSync(resolvedDirectory).isDirectory()) return resolvedDirectory;
+    } catch {
+      console.warn(`[Electron Main] 初始工作区不可用，回退到用户主目录: ${configuredDirectory}`);
+    }
+  }
+  return homedir();
+}
+
+let currentWorkingDir = resolveInitialWorkingDirectory();
 const DEFAULT_DSH_PORT = 3210;
 const DSH_PORT_SEARCH_LIMIT = 10;
 
-let appConfig = {
-  model: process.env.DEEPSEEK_MODEL || process.env.DSH_MODEL || 'deepseek-v4-flash',
-  apiKey: process.env.DEEPSEEK_API_KEY || process.env.DSH_API_KEY || '[REDACTED_SECRET]',
-  baseURL: process.env.DEEPSEEK_BASE_URL || process.env.DSH_BASE_URL || 'http://192.168.1.47:9010/v1',
+let appConfig: AppConfig = {
+  model: process.env.DEEPSEEK_MODEL || process.env.DSH_MODEL || 'deepseek-chat',
+  apiKey: process.env.DEEPSEEK_API_KEY || process.env.DSH_API_KEY || '',
+  baseURL: process.env.DEEPSEEK_BASE_URL || process.env.DSH_BASE_URL || 'https://api.deepseek.com',
   port: DEFAULT_DSH_PORT,
   host: '127.0.0.1',
-  align64Prefix: true,
   compactReasoning: true,
   degenerationGuard: true,
-  autoCollapseThinking: false,
-  fontSize: '14px',
-  sandboxLevel: 'standard',
 };
 
-async function startDshBackend(): Promise<string> {
-  if (dshServer) {
-    try {
-      await dshServer.stop();
-    } catch (e) {
-      console.warn('[Electron Main] 停止旧后端服务警告:', e);
-    }
-    dshServer = null;
+function publicConfig(config = appConfig): PublicAppConfig {
+  const { apiKey, ...safeConfig } = config;
+  return { ...safeConfig, apiKeySet: Boolean(apiKey) };
+}
+
+function normalizedConfigPatch(patch: AppConfigPatch): AppConfig {
+  const next = { ...appConfig };
+
+  if (patch.model !== undefined) {
+    if (typeof patch.model !== 'string' || !patch.model.trim()) throw new Error('模型名称不能为空。');
+    next.model = patch.model.trim();
   }
 
-  const preferredPort = Number.isInteger(appConfig.port) ? appConfig.port : DEFAULT_DSH_PORT;
-  const candidatePorts = Array.from(
-    new Set(Array.from({ length: DSH_PORT_SEARCH_LIMIT }, (_, index) => preferredPort + index)),
-  );
+  if (patch.baseURL !== undefined) {
+    if (typeof patch.baseURL !== 'string' || !patch.baseURL.trim()) throw new Error('接口地址不能为空。');
+    const parsed = new URL(patch.baseURL.trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('接口地址仅支持 HTTP 或 HTTPS。');
+    next.baseURL = parsed.toString().replace(/\/$/, '');
+  }
 
-  for (const port of [...candidatePorts, 0]) {
+  if (patch.apiKey !== undefined) {
+    if (typeof patch.apiKey !== 'string') throw new Error('API 密钥格式无效。');
+    if (patch.apiKey.trim()) next.apiKey = patch.apiKey.trim();
+  }
+  if (patch.clearApiKey === true) next.apiKey = '';
+  if (typeof patch.compactReasoning === 'boolean') next.compactReasoning = patch.compactReasoning;
+  if (typeof patch.degenerationGuard === 'boolean') next.degenerationGuard = patch.degenerationGuard;
+
+  return next;
+}
+
+async function launchDshBackend(config: AppConfig, workingDirectory: string) {
+  const preferredPort = Number.isInteger(config.port) ? config.port : DEFAULT_DSH_PORT;
+  const candidatePorts = preferredPort === 0
+    ? [0]
+    : [
+        ...Array.from(new Set(Array.from({ length: DSH_PORT_SEARCH_LIMIT }, (_, index) => preferredPort + index))),
+        0,
+      ];
+
+  for (const port of candidatePorts) {
     const candidate = new DshServer({
       port,
-      host: appConfig.host,
+      host: config.host,
       config: {
-        model: appConfig.model,
-        apiKey: appConfig.apiKey,
-        baseURL: appConfig.baseURL,
-        workingDirectory: currentWorkingDir,
-        compactReasoningInHistory: appConfig.compactReasoning,
-        enableDegenerationGuard: appConfig.degenerationGuard,
+        model: config.model,
+        apiKey: config.apiKey,
+        baseURL: config.baseURL,
+        workingDirectory,
+        compactReasoningInHistory: config.compactReasoning,
+        enableDegenerationGuard: config.degenerationGuard,
       },
     });
 
     try {
-      serverUrl = await candidate.start();
-      dshServer = candidate;
-      appConfig.port = Number(new URL(serverUrl).port);
-      console.log(`[Electron Main] DSH 智能后端已就绪: ${serverUrl}`);
-      return serverUrl;
-    } catch (error: any) {
+      const url = await candidate.start();
+      return { server: candidate, url, port: Number(new URL(url).port) };
+    } catch (error: unknown) {
       await candidate.stop().catch(() => undefined);
-      if (error?.code !== 'EADDRINUSE' || port === 0) throw error;
+      const code = error instanceof Error && 'code' in error ? (error as NodeJS.ErrnoException).code : undefined;
+      if (code !== 'EADDRINUSE' || port === 0) throw error;
       console.warn(`[Electron Main] DSH 端口 ${port} 已被占用，尝试下一个端口。`);
     }
   }
 
   throw new Error('未能找到可用的 DSH 本机端口。');
+}
+
+async function startDshBackend(nextConfig = appConfig, nextWorkingDir = currentWorkingDir): Promise<string> {
+  const previousServer = dshServer;
+  const launchConfig = previousServer ? { ...nextConfig, port: 0 } : nextConfig;
+  const launched = await launchDshBackend(launchConfig, nextWorkingDir);
+
+  dshServer = launched.server;
+  serverUrl = launched.url;
+  appConfig = { ...nextConfig, port: launched.port };
+  currentWorkingDir = nextWorkingDir;
+
+  if (previousServer) {
+    await previousServer.stop().catch((error: unknown) => {
+      console.warn('[Electron Main] 停止旧后端服务警告:', error);
+    });
+  }
+
+  console.log(`[Electron Main] DSH 智能后端已就绪: ${serverUrl}`);
+  return serverUrl;
 }
 
 async function createWindow() {
@@ -84,7 +161,7 @@ async function createWindow() {
     minWidth: 1060,
     minHeight: 680,
     title: '暗涌智能 · Anyong DSH 工作台',
-    backgroundColor: '#080b12',
+    backgroundColor: '#F6F6F5',
     frame: false,
     autoHideMenuBar: true,
     titleBarStyle: 'hidden',
@@ -93,7 +170,7 @@ async function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false,
+      sandbox: true,
       spellcheck: false,
     },
   });
@@ -134,6 +211,11 @@ async function createWindow() {
     e.preventDefault();
   });
 
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.on('will-navigate', (event, targetUrl) => {
+    if (targetUrl !== mainWindow?.webContents.getURL()) event.preventDefault();
+  });
+
   // 监听窗口最大化与还原事件同步给渲染层
   mainWindow.on('maximize', () => {
     mainWindow?.webContents.send('dsh:window-state-changed', { isMaximized: true });
@@ -143,31 +225,17 @@ async function createWindow() {
     mainWindow?.webContents.send('dsh:window-state-changed', { isMaximized: false });
   });
 
-  const htmlCandidates = [
-    path.join(__dirname, 'renderer', 'index.html'),
-    path.join(__dirname, 'workbench.html'),
-    path.join(__dirname, '..', 'dist', 'renderer', 'index.html'),
-    path.join(__dirname, '..', 'src', 'workbench.html'),
-  ];
+  const rendererPath = path.join(__dirname, 'renderer', 'electron.html');
+  const fallbackPath = path.join(__dirname, 'workbench.html');
 
-  let targetHtml = '';
-  for (const candidate of htmlCandidates) {
-    if (fs.existsSync(candidate)) {
-      targetHtml = candidate;
-      break;
-    }
-  }
-
-  if (targetHtml) {
-    await mainWindow.loadFile(targetHtml);
+  if (fs.existsSync(rendererPath)) {
+    await mainWindow.loadFile(rendererPath);
+  } else if (fs.existsSync(fallbackPath)) {
+    console.error(`[Electron Main] Electron 渲染产物缺失: ${rendererPath}`);
+    await mainWindow.loadFile(fallbackPath);
   } else {
-    const fallbackPath = path.join(__dirname, 'workbench.html');
-    if (fs.existsSync(fallbackPath)) {
-      await mainWindow.loadFile(fallbackPath);
-    } else {
-      console.error('[Electron Main] 未找到工作台页面。');
-      showMainWindow();
-    }
+    console.error('[Electron Main] 未找到 Electron 工作台或故障提示页。');
+    showMainWindow();
   }
 
   mainWindow.on('closed', () => {
@@ -179,27 +247,32 @@ async function createWindow() {
 // IPC 接口注册
 ipcMain.handle('dsh:get-server-url', () => serverUrl);
 ipcMain.handle('dsh:get-working-dir', () => currentWorkingDir);
-ipcMain.handle('dsh:get-config', () => appConfig);
+ipcMain.handle('dsh:get-config', () => publicConfig());
 
-ipcMain.handle('dsh:save-config', async (_evt, newConfig) => {
-  appConfig = { ...appConfig, ...newConfig };
+ipcMain.handle('dsh:save-config', async (_evt, patch: AppConfigPatch) => {
   try {
-    await startDshBackend();
-  } catch (err: any) {
-    console.error('重启后端服务失败:', err);
+    const nextConfig = normalizedConfigPatch(patch ?? {});
+    await startDshBackend(nextConfig, currentWorkingDir);
+    return { success: true, config: publicConfig(), serverUrl };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('重启后端服务失败:', error);
+    return { success: false, config: publicConfig(), serverUrl, error: message };
   }
-  return { success: true, config: appConfig, serverUrl };
 });
 
 ipcMain.handle('dsh:set-working-dir', async (_evt, dirPath) => {
-  if (dirPath && fs.existsSync(dirPath)) {
-    currentWorkingDir = dirPath;
-    try {
-      await startDshBackend();
-    } catch {}
-    return { success: true, workingDir: currentWorkingDir };
+  if (typeof dirPath !== 'string') return { success: false, error: '目标路径无效' };
+
+  try {
+    if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
+      return { success: false, error: '目标路径不存在或不是目录' };
+    }
+    await startDshBackend(appConfig, dirPath);
+    return { success: true, workingDir: currentWorkingDir, serverUrl };
+  } catch (error: unknown) {
+    return { success: false, workingDir: currentWorkingDir, error: error instanceof Error ? error.message : String(error) };
   }
-  return { success: false, error: '目标路径不存在' };
 });
 
 ipcMain.handle('dsh:open-folder-dialog', async () => {
@@ -210,11 +283,12 @@ ipcMain.handle('dsh:open-folder-dialog', async () => {
     title: '选择工作区目录',
   });
   if (result.filePaths && result.filePaths.length > 0) {
-    currentWorkingDir = result.filePaths[0];
     try {
-      await startDshBackend();
-    } catch {}
-    return currentWorkingDir;
+      await startDshBackend(appConfig, result.filePaths[0]);
+      return { success: true, workingDir: currentWorkingDir, serverUrl };
+    } catch (error: unknown) {
+      return { success: false, workingDir: currentWorkingDir, error: error instanceof Error ? error.message : String(error) };
+    }
   }
   return null;
 });

@@ -5790,7 +5790,7 @@ var require_lib3 = __commonJS({
       let accum = [];
       let accumBytes = 0;
       let abort = false;
-      return new Body.Promise(function(resolve2, reject) {
+      return new Body.Promise(function(resolve3, reject) {
         let resTimeout;
         if (_this4.timeout) {
           resTimeout = setTimeout(function() {
@@ -5824,7 +5824,7 @@ var require_lib3 = __commonJS({
           }
           clearTimeout(resTimeout);
           try {
-            resolve2(Buffer.concat(accum, accumBytes));
+            resolve3(Buffer.concat(accum, accumBytes));
           } catch (err) {
             reject(new FetchError(`Could not create Buffer from response body for ${_this4.url}: ${err.message}`, "system", err));
           }
@@ -6499,7 +6499,7 @@ var require_lib3 = __commonJS({
         throw new Error("native promise missing, set fetch.Promise to your favorite alternative");
       }
       Body.Promise = fetch3.Promise;
-      return new fetch3.Promise(function(resolve2, reject) {
+      return new fetch3.Promise(function(resolve3, reject) {
         const request = new Request3(url, opts);
         const options = getNodeRequestOptions(request);
         const send = (options.protocol === "https:" ? https : http2).request;
@@ -6632,7 +6632,7 @@ var require_lib3 = __commonJS({
                   requestOpts.body = void 0;
                   requestOpts.headers.delete("content-length");
                 }
-                resolve2(fetch3(new Request3(locationURL, requestOpts)));
+                resolve3(fetch3(new Request3(locationURL, requestOpts)));
                 finalize2();
                 return;
             }
@@ -6653,7 +6653,7 @@ var require_lib3 = __commonJS({
           const codings = headers.get("Content-Encoding");
           if (!request.compress || request.method === "HEAD" || codings === null || res.statusCode === 204 || res.statusCode === 304) {
             response = new Response3(body, response_options);
-            resolve2(response);
+            resolve3(response);
             return;
           }
           const zlibOptions = {
@@ -6663,7 +6663,7 @@ var require_lib3 = __commonJS({
           if (codings == "gzip" || codings == "x-gzip") {
             body = body.pipe(zlib.createGunzip(zlibOptions));
             response = new Response3(body, response_options);
-            resolve2(response);
+            resolve3(response);
             return;
           }
           if (codings == "deflate" || codings == "x-deflate") {
@@ -6675,12 +6675,12 @@ var require_lib3 = __commonJS({
                 body = body.pipe(zlib.createInflateRaw());
               }
               response = new Response3(body, response_options);
-              resolve2(response);
+              resolve3(response);
             });
             raw.on("end", function() {
               if (!response) {
                 response = new Response3(body, response_options);
-                resolve2(response);
+                resolve3(response);
               }
             });
             return;
@@ -6688,11 +6688,11 @@ var require_lib3 = __commonJS({
           if (codings == "br" && typeof zlib.createBrotliDecompress === "function") {
             body = body.pipe(zlib.createBrotliDecompress());
             response = new Response3(body, response_options);
-            resolve2(response);
+            resolve3(response);
             return;
           }
           response = new Response3(body, response_options);
-          resolve2(response);
+          resolve3(response);
         });
         writeToStream(req, request);
       });
@@ -13988,11 +13988,11 @@ var require_out = __commonJS({
       async.read(path4, getSettings(optionsOrSettingsOrCallback), callback);
     }
     exports.stat = stat;
-    function statSync2(path4, optionsOrSettings) {
+    function statSync3(path4, optionsOrSettings) {
       const settings = getSettings(optionsOrSettings);
       return sync.read(path4, settings);
     }
-    exports.statSync = statSync2;
+    exports.statSync = statSync3;
     function getSettings(settingsOrOptions = {}) {
       if (settingsOrOptions instanceof settings_1.default) {
         return settingsOrOptions;
@@ -14657,41 +14657,41 @@ var require_queue = __commonJS({
       queue.drained = drained;
       return queue;
       function push2(value) {
-        var p2 = new Promise(function(resolve2, reject) {
+        var p2 = new Promise(function(resolve3, reject) {
           pushCb(value, function(err, result) {
             if (err) {
               reject(err);
               return;
             }
-            resolve2(result);
+            resolve3(result);
           });
         });
         p2.catch(noop);
         return p2;
       }
       function unshift(value) {
-        var p2 = new Promise(function(resolve2, reject) {
+        var p2 = new Promise(function(resolve3, reject) {
           unshiftCb(value, function(err, result) {
             if (err) {
               reject(err);
               return;
             }
-            resolve2(result);
+            resolve3(result);
           });
         });
         p2.catch(noop);
         return p2;
       }
       function drained() {
-        var p2 = new Promise(function(resolve2) {
+        var p2 = new Promise(function(resolve3) {
           process.nextTick(function() {
             if (queue.idle()) {
-              resolve2();
+              resolve3();
             } else {
               var previousDrain = queue.drain;
               queue.drain = function() {
                 if (typeof previousDrain === "function") previousDrain();
-                resolve2();
+                resolve3();
                 queue.drain = previousDrain;
               };
             }
@@ -15177,9 +15177,9 @@ var require_stream3 = __commonJS({
         });
       }
       _getStat(filepath) {
-        return new Promise((resolve2, reject) => {
+        return new Promise((resolve3, reject) => {
           this._stat(filepath, this._fsStatSettings, (error2, stats) => {
-            return error2 === null ? resolve2(stats) : reject(error2);
+            return error2 === null ? resolve3(stats) : reject(error2);
           });
         });
       }
@@ -15203,10 +15203,10 @@ var require_async5 = __commonJS({
         this._readerStream = new stream_1.default(this._settings);
       }
       dynamic(root, options) {
-        return new Promise((resolve2, reject) => {
+        return new Promise((resolve3, reject) => {
           this._walkAsync(root, options, (error2, entries) => {
             if (error2 === null) {
-              resolve2(entries);
+              resolve3(entries);
             } else {
               reject(error2);
             }
@@ -15216,10 +15216,10 @@ var require_async5 = __commonJS({
       async static(patterns, options) {
         const entries = [];
         const stream = this._readerStream.static(patterns, options);
-        return new Promise((resolve2, reject) => {
+        return new Promise((resolve3, reject) => {
           stream.once("error", reject);
           stream.on("data", (entry) => entries.push(entry));
-          stream.once("end", () => resolve2(entries));
+          stream.once("end", () => resolve3(entries));
         });
       }
     };
@@ -18827,7 +18827,7 @@ var require_compile2 = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve2.call(this, root, ref);
+      let _sch = resolve3.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a4 = root.localRefs) === null || _a4 === void 0 ? void 0 : _a4[ref];
         const { schemaId } = this.opts;
@@ -18854,7 +18854,7 @@ var require_compile2 = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve2(root, ref) {
+    function resolve3(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -19485,7 +19485,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve2(baseURI, relativeURI, options) {
+    function resolve3(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const { parsed: baseParsed, malformedAuthorityOrPort: baseMalformed } = parseWithStatus(baseURI, schemelessOptions);
       const { parsed: relativeParsed, malformedAuthorityOrPort: relativeMalformed } = parseWithStatus(relativeURI, schemelessOptions);
@@ -19769,7 +19769,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve2,
+      resolve: resolve3,
       resolveComponent,
       equal,
       serialize,
@@ -22852,12 +22852,12 @@ var require_isexe = __commonJS({
         if (typeof Promise !== "function") {
           throw new TypeError("callback not provided");
         }
-        return new Promise(function(resolve2, reject) {
+        return new Promise(function(resolve3, reject) {
           isexe(path4, options || {}, function(er2, is) {
             if (er2) {
               reject(er2);
             } else {
-              resolve2(is);
+              resolve3(is);
             }
           });
         });
@@ -22923,27 +22923,27 @@ var require_which = __commonJS({
         opt = {};
       const { pathEnv, pathExt, pathExtExe } = getPathInfo(cmd, opt);
       const found = [];
-      const step = (i2) => new Promise((resolve2, reject) => {
+      const step = (i2) => new Promise((resolve3, reject) => {
         if (i2 === pathEnv.length)
-          return opt.all && found.length ? resolve2(found) : reject(getNotFoundError(cmd));
+          return opt.all && found.length ? resolve3(found) : reject(getNotFoundError(cmd));
         const ppRaw = pathEnv[i2];
         const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
         const pCmd = path4.join(pathPart, cmd);
         const p2 = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
-        resolve2(subStep(p2, i2, 0));
+        resolve3(subStep(p2, i2, 0));
       });
-      const subStep = (p2, i2, ii) => new Promise((resolve2, reject) => {
+      const subStep = (p2, i2, ii) => new Promise((resolve3, reject) => {
         if (ii === pathExt.length)
-          return resolve2(step(i2 + 1));
+          return resolve3(step(i2 + 1));
         const ext = pathExt[ii];
         isexe(p2 + ext, { pathExt: pathExtExe }, (er2, is) => {
           if (!er2 && is) {
             if (opt.all)
               found.push(p2 + ext);
             else
-              return resolve2(p2 + ext);
+              return resolve3(p2 + ext);
           }
-          return resolve2(subStep(p2, i2, ii + 1));
+          return resolve3(subStep(p2, i2, ii + 1));
         });
       });
       return cb ? step(0).then((res) => cb(null, res), cb) : step(0);
@@ -23259,6 +23259,7 @@ var require_cross_spawn = __commonJS({
 import { app, BrowserWindow, ipcMain, dialog, Menu } from "electron";
 import * as path3 from "node:path";
 import * as fs4 from "node:fs";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 // ../../packages/dsh-server/dist/server.js
@@ -25995,8 +25996,8 @@ function _addRequestID(value, response) {
 }
 var APIPromise = class _APIPromise extends Promise {
   constructor(responsePromise, parseResponse2 = defaultParseResponse) {
-    super((resolve2) => {
-      resolve2(null);
+    super((resolve3) => {
+      resolve3(null);
     });
     this.responsePromise = responsePromise;
     this.parseResponse = parseResponse2;
@@ -26571,7 +26572,7 @@ var startsWithSchemeRegexp = /^[a-z][a-z0-9+.-]*:/i;
 var isAbsoluteURL = (url) => {
   return startsWithSchemeRegexp.test(url);
 };
-var sleep = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms));
+var sleep = (ms) => new Promise((resolve3) => setTimeout(resolve3, ms));
 var validatePositiveInteger = (name, n2) => {
   if (typeof n2 !== "number" || !Number.isInteger(n2)) {
     throw new OpenAIError(`${name} must be an integer`);
@@ -27004,12 +27005,12 @@ var EventStream = class {
     _EventStream_errored.set(this, false);
     _EventStream_aborted.set(this, false);
     _EventStream_catchingPromiseCreated.set(this, false);
-    __classPrivateFieldSet7(this, _EventStream_connectedPromise, new Promise((resolve2, reject) => {
-      __classPrivateFieldSet7(this, _EventStream_resolveConnectedPromise, resolve2, "f");
+    __classPrivateFieldSet7(this, _EventStream_connectedPromise, new Promise((resolve3, reject) => {
+      __classPrivateFieldSet7(this, _EventStream_resolveConnectedPromise, resolve3, "f");
       __classPrivateFieldSet7(this, _EventStream_rejectConnectedPromise, reject, "f");
     }), "f");
-    __classPrivateFieldSet7(this, _EventStream_endPromise, new Promise((resolve2, reject) => {
-      __classPrivateFieldSet7(this, _EventStream_resolveEndPromise, resolve2, "f");
+    __classPrivateFieldSet7(this, _EventStream_endPromise, new Promise((resolve3, reject) => {
+      __classPrivateFieldSet7(this, _EventStream_resolveEndPromise, resolve3, "f");
       __classPrivateFieldSet7(this, _EventStream_rejectEndPromise, reject, "f");
     }), "f");
     __classPrivateFieldGet8(this, _EventStream_connectedPromise, "f").catch(() => {
@@ -27093,11 +27094,11 @@ var EventStream = class {
    *   const message = await stream.emitted('message') // rejects if the stream errors
    */
   emitted(event) {
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       __classPrivateFieldSet7(this, _EventStream_catchingPromiseCreated, true, "f");
       if (event !== "error")
         this.once("error", reject);
-      this.once(event, resolve2);
+      this.once(event, resolve3);
     });
   }
   async done() {
@@ -27250,7 +27251,7 @@ var AssistantStream = class _AssistantStream extends EventStream {
           if (done) {
             return { value: void 0, done: true };
           }
-          return new Promise((resolve2, reject) => readQueue.push({ resolve: resolve2, reject })).then((chunk2) => chunk2 ? { value: chunk2, done: false } : { value: void 0, done: true });
+          return new Promise((resolve3, reject) => readQueue.push({ resolve: resolve3, reject })).then((chunk2) => chunk2 ? { value: chunk2, done: false } : { value: void 0, done: true });
         }
         const chunk = pushQueue.shift();
         return { value: chunk, done: false };
@@ -28868,7 +28869,7 @@ var ChatCompletionStream = class _ChatCompletionStream extends AbstractChatCompl
           if (done) {
             return { value: void 0, done: true };
           }
-          return new Promise((resolve2, reject) => readQueue.push({ resolve: resolve2, reject })).then((chunk2) => chunk2 ? { value: chunk2, done: false } : { value: void 0, done: true });
+          return new Promise((resolve3, reject) => readQueue.push({ resolve: resolve3, reject })).then((chunk2) => chunk2 ? { value: chunk2, done: false } : { value: void 0, done: true });
         }
         const chunk = pushQueue.shift();
         return { value: chunk, done: false };
@@ -30519,7 +30520,7 @@ var ResponseStream = class _ResponseStream extends EventStream {
           if (done) {
             return { value: void 0, done: true };
           }
-          return new Promise((resolve2, reject) => readQueue.push({ resolve: resolve2, reject })).then((event2) => event2 ? { value: event2, done: false } : { value: void 0, done: true });
+          return new Promise((resolve3, reject) => readQueue.push({ resolve: resolve3, reject })).then((event2) => event2 ? { value: event2, done: false } : { value: void 0, done: true });
         }
         const event = pushQueue.shift();
         return { value: event, done: false };
@@ -31626,7 +31627,7 @@ var BuiltinCodingPlugin = class {
         const command = String(args.command);
         const timeout = typeof args.timeout === "number" ? args.timeout : 6e4;
         const cwd = context.workingDirectory || this.workingDir;
-        return new Promise((resolve2) => {
+        return new Promise((resolve3) => {
           exec(command, {
             cwd,
             timeout,
@@ -31641,12 +31642,12 @@ ${stderr}` : "")).trim();
               truncated = truncated.slice(0, MAX_OUTPUT_CHARS) + "\n...[Output truncated due to 32KB limit]";
             }
             if (error2) {
-              resolve2({
+              resolve3({
                 output: truncated || `Command exited with code ${error2.code}: ${error2.message}`,
                 isError: true
               });
             } else {
-              resolve2({
+              resolve3({
                 output: truncated || "(Command completed with no output)",
                 isError: false
               });
@@ -31674,7 +31675,7 @@ ${stderr}` : "")).trim();
         const command = String(args.command);
         const timeout = typeof args.timeout === "number" ? args.timeout : 6e4;
         const cwd = context.workingDirectory || this.workingDir;
-        return new Promise((resolve2) => {
+        return new Promise((resolve3) => {
           const shell = process.platform === "win32" ? "powershell.exe" : "pwsh";
           exec(command, {
             cwd,
@@ -31691,12 +31692,12 @@ ${stderr}` : "")).trim();
               truncated = truncated.slice(0, MAX_OUTPUT_CHARS) + "\n...[Output truncated due to 32KB limit]";
             }
             if (error2) {
-              resolve2({
+              resolve3({
                 output: truncated || `PowerShell exited with code ${error2.code}: ${error2.message}`,
                 isError: true
               });
             } else {
-              resolve2({
+              resolve3({
                 output: truncated || "(Command completed with no output)",
                 isError: false
               });
@@ -39026,7 +39027,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+        await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error2) {
@@ -39043,7 +39044,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       const earlyReject = (error2) => {
         reject(error2);
       };
@@ -39121,7 +39122,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve2(parseResult.data);
+            resolve3(parseResult.data);
           }
         } catch (error2) {
           reject(error2);
@@ -39382,12 +39383,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve2, interval);
+      const timeoutId = setTimeout(resolve3, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -40338,7 +40339,7 @@ var StdioClientTransport = class {
     if (this._process) {
       throw new Error("StdioClientTransport already started! If using Client class, note that connect() calls start() automatically.");
     }
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       this._process = (0, import_cross_spawn.default)(this._serverParams.command, this._serverParams.args ?? [], {
         // merge default env with server env because mcp server needs some env vars
         env: {
@@ -40355,7 +40356,7 @@ var StdioClientTransport = class {
         this.onerror?.(error2);
       });
       this._process.on("spawn", () => {
-        resolve2();
+        resolve3();
       });
       this._process.on("close", (_code) => {
         this._process = void 0;
@@ -40420,22 +40421,22 @@ var StdioClientTransport = class {
     if (this._process) {
       const processToClose = this._process;
       this._process = void 0;
-      const closePromise = new Promise((resolve2) => {
+      const closePromise = new Promise((resolve3) => {
         processToClose.once("close", () => {
-          resolve2();
+          resolve3();
         });
       });
       try {
         processToClose.stdin?.end();
       } catch {
       }
-      await Promise.race([closePromise, new Promise((resolve2) => setTimeout(resolve2, 2e3).unref())]);
+      await Promise.race([closePromise, new Promise((resolve3) => setTimeout(resolve3, 2e3).unref())]);
       if (processToClose.exitCode === null) {
         try {
           processToClose.kill("SIGTERM");
         } catch {
         }
-        await Promise.race([closePromise, new Promise((resolve2) => setTimeout(resolve2, 2e3).unref())]);
+        await Promise.race([closePromise, new Promise((resolve3) => setTimeout(resolve3, 2e3).unref())]);
       }
       if (processToClose.exitCode === null) {
         try {
@@ -40447,15 +40448,15 @@ var StdioClientTransport = class {
     this._readBuffer.clear();
   }
   send(message) {
-    return new Promise((resolve2) => {
+    return new Promise((resolve3) => {
       if (!this._process?.stdin) {
         throw new Error("Not connected");
       }
       const json = serializeMessage(message);
       if (this._process.stdin.write(json)) {
-        resolve2();
+        resolve3();
       } else {
-        this._process.stdin.once("drain", resolve2);
+        this._process.stdin.once("drain", resolve3);
       }
     });
   }
@@ -40759,7 +40760,7 @@ var DshServer = class {
     });
     const port = this.options.port ?? 3210;
     const host = this.options.host || "127.0.0.1";
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       const server = this.server;
       const onError = (error2) => {
         server.off("listening", onListening);
@@ -40769,7 +40770,7 @@ var DshServer = class {
         server.off("error", onError);
         const address = server.address();
         const activePort = typeof address === "object" && address ? address.port : port;
-        resolve2(`http://${host}:${activePort}`);
+        resolve3(`http://${host}:${activePort}`);
       };
       server.once("error", onError);
       server.once("listening", onListening);
@@ -40779,10 +40780,10 @@ var DshServer = class {
   async stop() {
     await this.pluginManager.destroy();
     if (this.server) {
-      await new Promise((resolve2) => {
-        this.server.close(() => resolve2());
+      await new Promise((resolve3) => {
+        this.server.close(() => resolve3());
         if (!this.server.listening)
-          resolve2();
+          resolve3();
       });
       this.server = null;
     }
@@ -40800,61 +40801,101 @@ var __dirname = path3.dirname(__filename);
 var mainWindow = null;
 var dshServer = null;
 var serverUrl = "";
-var currentWorkingDir = process.cwd();
+function resolveInitialWorkingDirectory() {
+  const configuredDirectory = process.env.DSH_WORKSPACE || process.env.INIT_CWD;
+  if (configuredDirectory) {
+    try {
+      const resolvedDirectory = path3.resolve(configuredDirectory);
+      if (fs4.statSync(resolvedDirectory).isDirectory()) return resolvedDirectory;
+    } catch {
+      console.warn(`[Electron Main] \u521D\u59CB\u5DE5\u4F5C\u533A\u4E0D\u53EF\u7528\uFF0C\u56DE\u9000\u5230\u7528\u6237\u4E3B\u76EE\u5F55: ${configuredDirectory}`);
+    }
+  }
+  return homedir();
+}
+var currentWorkingDir = resolveInitialWorkingDirectory();
 var DEFAULT_DSH_PORT = 3210;
 var DSH_PORT_SEARCH_LIMIT = 10;
 var appConfig = {
-  model: process.env.DEEPSEEK_MODEL || process.env.DSH_MODEL || "deepseek-v4-flash",
-  apiKey: process.env.DEEPSEEK_API_KEY || process.env.DSH_API_KEY || "[REDACTED_SECRET]",
-  baseURL: process.env.DEEPSEEK_BASE_URL || process.env.DSH_BASE_URL || "http://192.168.1.47:9010/v1",
+  model: process.env.DEEPSEEK_MODEL || process.env.DSH_MODEL || "deepseek-chat",
+  apiKey: process.env.DEEPSEEK_API_KEY || process.env.DSH_API_KEY || "",
+  baseURL: process.env.DEEPSEEK_BASE_URL || process.env.DSH_BASE_URL || "https://api.deepseek.com",
   port: DEFAULT_DSH_PORT,
   host: "127.0.0.1",
-  align64Prefix: true,
   compactReasoning: true,
-  degenerationGuard: true,
-  autoCollapseThinking: false,
-  fontSize: "14px",
-  sandboxLevel: "standard"
+  degenerationGuard: true
 };
-async function startDshBackend() {
-  if (dshServer) {
-    try {
-      await dshServer.stop();
-    } catch (e2) {
-      console.warn("[Electron Main] \u505C\u6B62\u65E7\u540E\u7AEF\u670D\u52A1\u8B66\u544A:", e2);
-    }
-    dshServer = null;
+function publicConfig(config2 = appConfig) {
+  const { apiKey, ...safeConfig } = config2;
+  return { ...safeConfig, apiKeySet: Boolean(apiKey) };
+}
+function normalizedConfigPatch(patch) {
+  const next = { ...appConfig };
+  if (patch.model !== void 0) {
+    if (typeof patch.model !== "string" || !patch.model.trim()) throw new Error("\u6A21\u578B\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A\u3002");
+    next.model = patch.model.trim();
   }
-  const preferredPort = Number.isInteger(appConfig.port) ? appConfig.port : DEFAULT_DSH_PORT;
-  const candidatePorts = Array.from(
-    new Set(Array.from({ length: DSH_PORT_SEARCH_LIMIT }, (_2, index) => preferredPort + index))
-  );
-  for (const port of [...candidatePorts, 0]) {
+  if (patch.baseURL !== void 0) {
+    if (typeof patch.baseURL !== "string" || !patch.baseURL.trim()) throw new Error("\u63A5\u53E3\u5730\u5740\u4E0D\u80FD\u4E3A\u7A7A\u3002");
+    const parsed = new URL(patch.baseURL.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("\u63A5\u53E3\u5730\u5740\u4EC5\u652F\u6301 HTTP \u6216 HTTPS\u3002");
+    next.baseURL = parsed.toString().replace(/\/$/, "");
+  }
+  if (patch.apiKey !== void 0) {
+    if (typeof patch.apiKey !== "string") throw new Error("API \u5BC6\u94A5\u683C\u5F0F\u65E0\u6548\u3002");
+    if (patch.apiKey.trim()) next.apiKey = patch.apiKey.trim();
+  }
+  if (patch.clearApiKey === true) next.apiKey = "";
+  if (typeof patch.compactReasoning === "boolean") next.compactReasoning = patch.compactReasoning;
+  if (typeof patch.degenerationGuard === "boolean") next.degenerationGuard = patch.degenerationGuard;
+  return next;
+}
+async function launchDshBackend(config2, workingDirectory) {
+  const preferredPort = Number.isInteger(config2.port) ? config2.port : DEFAULT_DSH_PORT;
+  const candidatePorts = preferredPort === 0 ? [0] : [
+    ...Array.from(new Set(Array.from({ length: DSH_PORT_SEARCH_LIMIT }, (_2, index) => preferredPort + index))),
+    0
+  ];
+  for (const port of candidatePorts) {
     const candidate = new DshServer({
       port,
-      host: appConfig.host,
+      host: config2.host,
       config: {
-        model: appConfig.model,
-        apiKey: appConfig.apiKey,
-        baseURL: appConfig.baseURL,
-        workingDirectory: currentWorkingDir,
-        compactReasoningInHistory: appConfig.compactReasoning,
-        enableDegenerationGuard: appConfig.degenerationGuard
+        model: config2.model,
+        apiKey: config2.apiKey,
+        baseURL: config2.baseURL,
+        workingDirectory,
+        compactReasoningInHistory: config2.compactReasoning,
+        enableDegenerationGuard: config2.degenerationGuard
       }
     });
     try {
-      serverUrl = await candidate.start();
-      dshServer = candidate;
-      appConfig.port = Number(new URL(serverUrl).port);
-      console.log(`[Electron Main] DSH \u667A\u80FD\u540E\u7AEF\u5DF2\u5C31\u7EEA: ${serverUrl}`);
-      return serverUrl;
+      const url = await candidate.start();
+      return { server: candidate, url, port: Number(new URL(url).port) };
     } catch (error2) {
       await candidate.stop().catch(() => void 0);
-      if (error2?.code !== "EADDRINUSE" || port === 0) throw error2;
+      const code = error2 instanceof Error && "code" in error2 ? error2.code : void 0;
+      if (code !== "EADDRINUSE" || port === 0) throw error2;
       console.warn(`[Electron Main] DSH \u7AEF\u53E3 ${port} \u5DF2\u88AB\u5360\u7528\uFF0C\u5C1D\u8BD5\u4E0B\u4E00\u4E2A\u7AEF\u53E3\u3002`);
     }
   }
   throw new Error("\u672A\u80FD\u627E\u5230\u53EF\u7528\u7684 DSH \u672C\u673A\u7AEF\u53E3\u3002");
+}
+async function startDshBackend(nextConfig = appConfig, nextWorkingDir = currentWorkingDir) {
+  const previousServer = dshServer;
+  const launchConfig = previousServer ? { ...nextConfig, port: 0 } : nextConfig;
+  const launched = await launchDshBackend(launchConfig, nextWorkingDir);
+  dshServer = launched.server;
+  serverUrl = launched.url;
+  appConfig = { ...nextConfig, port: launched.port };
+  currentWorkingDir = nextWorkingDir;
+  if (previousServer) {
+    await previousServer.stop().catch((error2) => {
+      console.warn("[Electron Main] \u505C\u6B62\u65E7\u540E\u7AEF\u670D\u52A1\u8B66\u544A:", error2);
+    });
+  }
+  console.log(`[Electron Main] DSH \u667A\u80FD\u540E\u7AEF\u5DF2\u5C31\u7EEA: ${serverUrl}`);
+  return serverUrl;
 }
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -40863,7 +40904,7 @@ async function createWindow() {
     minWidth: 1060,
     minHeight: 680,
     title: "\u6697\u6D8C\u667A\u80FD \xB7 Anyong DSH \u5DE5\u4F5C\u53F0",
-    backgroundColor: "#080b12",
+    backgroundColor: "#F6F6F5",
     frame: false,
     autoHideMenuBar: true,
     titleBarStyle: "hidden",
@@ -40872,7 +40913,7 @@ async function createWindow() {
       preload: path3.join(__dirname, "preload.cjs"),
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false,
+      sandbox: true,
       spellcheck: false
     }
   });
@@ -40902,6 +40943,10 @@ async function createWindow() {
   });
   mainWindow.webContents.on("context-menu", (e2) => {
     e2.preventDefault();
+  });
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-navigate", (event, targetUrl) => {
+    if (targetUrl !== mainWindow?.webContents.getURL()) event.preventDefault();
   });
   mainWindow.on("maximize", () => {
     mainWindow?.webContents.send("dsh:window-state-changed", { isMaximized: true });
@@ -40940,26 +40985,29 @@ async function createWindow() {
 }
 ipcMain.handle("dsh:get-server-url", () => serverUrl);
 ipcMain.handle("dsh:get-working-dir", () => currentWorkingDir);
-ipcMain.handle("dsh:get-config", () => appConfig);
-ipcMain.handle("dsh:save-config", async (_evt, newConfig) => {
-  appConfig = { ...appConfig, ...newConfig };
+ipcMain.handle("dsh:get-config", () => publicConfig());
+ipcMain.handle("dsh:save-config", async (_evt, patch) => {
   try {
-    await startDshBackend();
-  } catch (err) {
-    console.error("\u91CD\u542F\u540E\u7AEF\u670D\u52A1\u5931\u8D25:", err);
+    const nextConfig = normalizedConfigPatch(patch ?? {});
+    await startDshBackend(nextConfig, currentWorkingDir);
+    return { success: true, config: publicConfig(), serverUrl };
+  } catch (error2) {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    console.error("\u91CD\u542F\u540E\u7AEF\u670D\u52A1\u5931\u8D25:", error2);
+    return { success: false, config: publicConfig(), serverUrl, error: message };
   }
-  return { success: true, config: appConfig, serverUrl };
 });
 ipcMain.handle("dsh:set-working-dir", async (_evt, dirPath) => {
-  if (dirPath && fs4.existsSync(dirPath)) {
-    currentWorkingDir = dirPath;
-    try {
-      await startDshBackend();
-    } catch {
+  if (typeof dirPath !== "string") return { success: false, error: "\u76EE\u6807\u8DEF\u5F84\u65E0\u6548" };
+  try {
+    if (!fs4.existsSync(dirPath) || !fs4.statSync(dirPath).isDirectory()) {
+      return { success: false, error: "\u76EE\u6807\u8DEF\u5F84\u4E0D\u5B58\u5728\u6216\u4E0D\u662F\u76EE\u5F55" };
     }
-    return { success: true, workingDir: currentWorkingDir };
+    await startDshBackend(appConfig, dirPath);
+    return { success: true, workingDir: currentWorkingDir, serverUrl };
+  } catch (error2) {
+    return { success: false, workingDir: currentWorkingDir, error: error2 instanceof Error ? error2.message : String(error2) };
   }
-  return { success: false, error: "\u76EE\u6807\u8DEF\u5F84\u4E0D\u5B58\u5728" };
 });
 ipcMain.handle("dsh:open-folder-dialog", async () => {
   if (!mainWindow) return null;
@@ -40969,12 +41017,12 @@ ipcMain.handle("dsh:open-folder-dialog", async () => {
     title: "\u9009\u62E9\u5DE5\u4F5C\u533A\u76EE\u5F55"
   });
   if (result.filePaths && result.filePaths.length > 0) {
-    currentWorkingDir = result.filePaths[0];
     try {
-      await startDshBackend();
-    } catch {
+      await startDshBackend(appConfig, result.filePaths[0]);
+      return { success: true, workingDir: currentWorkingDir, serverUrl };
+    } catch (error2) {
+      return { success: false, workingDir: currentWorkingDir, error: error2 instanceof Error ? error2.message : String(error2) };
     }
-    return currentWorkingDir;
   }
   return null;
 });

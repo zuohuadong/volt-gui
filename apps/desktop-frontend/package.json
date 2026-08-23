@@ -6,17 +6,20 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:electron": "vite build --mode electron",
     "build:release": "vite build",
     "check": "svelte-check --no-tsconfig --ignore \"node_modules,dist\"",
     "check:runtime-mocks": "node ../../scripts/check-runtime-mocks.mjs",
+    "check:electron-boundary": "node ../../scripts/check-electron-runtime-boundary.mjs",
+    "test:electron-boundary": "node --test ../../scripts/check-electron-runtime-boundary.test.mjs",
     "test:runtime-mock-gate": "node --test ../../scripts/check-runtime-mocks.test.mjs",
     "test:unit": "vitest run src/lib",
     "preview": "vite preview"
   },
   "dependencies": {
     "@lucide/svelte": "^1.24.0",
-    "@svadmin/core": "^0.31.0",
-    "@svadmin/ui": "^0.38.2",
+    "@svadmin/core": "^0.36.3",
+    "@svadmin/ui": "^0.42.2",
     "@tanstack/svelte-query": "^6.1.36",
     "clsx": "^2.1.1",
     "katex": "^0.17.0",

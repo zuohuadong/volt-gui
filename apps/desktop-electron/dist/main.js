@@ -31131,6 +31131,44 @@ var DshServer = class {
   }
 };
 
+// src/runtime-config.ts
+function replacementApiKey(patch) {
+  if (patch.apiKey === void 0) return void 0;
+  if (typeof patch.apiKey !== "string") throw new Error("API \u5BC6\u94A5\u683C\u5F0F\u65E0\u6548\u3002");
+  return patch.apiKey.trim() || void 0;
+}
+function normalizedBaseURL(currentConfig, patch, nextApiKey) {
+  if (patch.baseURL === void 0) return currentConfig.baseURL;
+  if (typeof patch.baseURL !== "string" || !patch.baseURL.trim()) throw new Error("\u63A5\u53E3\u5730\u5740\u4E0D\u80FD\u4E3A\u7A7A\u3002");
+  const parsed = new URL(patch.baseURL.trim());
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("\u63A5\u53E3\u5730\u5740\u4EC5\u652F\u6301 HTTP \u6216 HTTPS\u3002");
+  if (parsed.username || parsed.password) throw new Error("\u63A5\u53E3\u5730\u5740\u4E0D\u80FD\u5305\u542B\u7528\u6237\u540D\u6216\u5BC6\u7801\u3002");
+  const changesOrigin = new URL(currentConfig.baseURL).origin !== parsed.origin;
+  const reusesExistingKey = currentConfig.apiKey && nextApiKey === void 0 && patch.clearApiKey !== true;
+  if (changesOrigin && reusesExistingKey) {
+    throw new Error("\u66F4\u6362\u63A5\u53E3\u5730\u5740\u65F6\u5FC5\u987B\u91CD\u65B0\u8F93\u5165 API \u5BC6\u94A5\u6216\u660E\u786E\u6E05\u9664\u65E7\u5BC6\u94A5\u3002");
+  }
+  return parsed.toString().replace(/\/$/, "");
+}
+function normalizedConfigPatch(currentConfig, patch) {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new Error("\u8FD0\u884C\u914D\u7F6E\u683C\u5F0F\u65E0\u6548\u3002");
+  const next = { ...currentConfig };
+  const nextApiKey = replacementApiKey(patch);
+  if (patch.model !== void 0) {
+    if (typeof patch.model !== "string" || !patch.model.trim()) throw new Error("\u6A21\u578B\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A\u3002");
+    next.model = patch.model.trim();
+  }
+  next.baseURL = normalizedBaseURL(currentConfig, patch, nextApiKey);
+  if (nextApiKey !== void 0) next.apiKey = nextApiKey;
+  if (patch.clearApiKey === true) next.apiKey = "";
+  if (patch.clearApiKey !== void 0 && typeof patch.clearApiKey !== "boolean") throw new Error("\u5BC6\u94A5\u6E05\u9664\u9009\u9879\u683C\u5F0F\u65E0\u6548\u3002");
+  if (patch.compactReasoning !== void 0 && typeof patch.compactReasoning !== "boolean") throw new Error("\u63A8\u7406\u538B\u7F29\u9009\u9879\u683C\u5F0F\u65E0\u6548\u3002");
+  if (patch.degenerationGuard !== void 0 && typeof patch.degenerationGuard !== "boolean") throw new Error("\u91CD\u590D\u8F93\u51FA\u4FDD\u62A4\u9009\u9879\u683C\u5F0F\u65E0\u6548\u3002");
+  if (patch.compactReasoning !== void 0) next.compactReasoning = patch.compactReasoning;
+  if (patch.degenerationGuard !== void 0) next.degenerationGuard = patch.degenerationGuard;
+  return next;
+}
+
 // src/main.ts
 Menu.setApplicationMenu(null);
 var gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -31173,27 +31211,6 @@ function publicConfig(config2 = appConfig) {
 }
 function serverConnection() {
   return { baseUrl: serverUrl, accessToken: serverAccessToken };
-}
-function normalizedConfigPatch(patch) {
-  const next = { ...appConfig };
-  if (patch.model !== void 0) {
-    if (typeof patch.model !== "string" || !patch.model.trim()) throw new Error("\u6A21\u578B\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A\u3002");
-    next.model = patch.model.trim();
-  }
-  if (patch.baseURL !== void 0) {
-    if (typeof patch.baseURL !== "string" || !patch.baseURL.trim()) throw new Error("\u63A5\u53E3\u5730\u5740\u4E0D\u80FD\u4E3A\u7A7A\u3002");
-    const parsed = new URL(patch.baseURL.trim());
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("\u63A5\u53E3\u5730\u5740\u4EC5\u652F\u6301 HTTP \u6216 HTTPS\u3002");
-    next.baseURL = parsed.toString().replace(/\/$/, "");
-  }
-  if (patch.apiKey !== void 0) {
-    if (typeof patch.apiKey !== "string") throw new Error("API \u5BC6\u94A5\u683C\u5F0F\u65E0\u6548\u3002");
-    if (patch.apiKey.trim()) next.apiKey = patch.apiKey.trim();
-  }
-  if (patch.clearApiKey === true) next.apiKey = "";
-  if (typeof patch.compactReasoning === "boolean") next.compactReasoning = patch.compactReasoning;
-  if (typeof patch.degenerationGuard === "boolean") next.degenerationGuard = patch.degenerationGuard;
-  return next;
 }
 async function launchDshBackend(config2, workingDirectory) {
   const preferredPort = Number.isInteger(config2.port) ? config2.port : DEFAULT_DSH_PORT;
@@ -31334,7 +31351,7 @@ ipcMain.handle("dsh:get-config", () => publicConfig());
 ipcMain.handle("dsh:save-config", async (_evt, patch) => {
   try {
     await startDshBackend(() => ({
-      config: normalizedConfigPatch(patch ?? {}),
+      config: normalizedConfigPatch(appConfig, patch ?? {}),
       workingDirectory: currentWorkingDir
     }));
     return { success: true, config: publicConfig(), connection: serverConnection() };

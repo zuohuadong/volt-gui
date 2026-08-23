@@ -21,6 +21,7 @@ const script = (name) => readIfPresent(join(root, "scripts", name));
 const cnb = readIfPresent(join(root, ".cnb.yml"));
 const releaseCli = wf("release.yml");
 const releaseDesktop = wf("release-desktop.yml");
+const releasePleaseDesktop = wf("release-please-desktop.yml");
 const desktopCi = wf("desktop-ci.yml");
 const ci = wf("ci.yml");
 const upstreamSyncYml = wf("upstream-sync.yml");
@@ -29,6 +30,10 @@ const upstreamParityManifestPath = join(root, "scripts", "upstream-feature-parit
 const upstreamParityManifest = existsSync(upstreamParityManifestPath)
   ? JSON.parse(readFileSync(upstreamParityManifestPath, "utf8"))
   : null;
+
+test("legacy release-please desktop publisher is retired", () => {
+  assert.equal(releasePleaseDesktop, null, "release-please must not create a public Desktop GitHub Release");
+});
 
 if (releaseDesktop !== null) {
   test("release-desktop.yml builds an unsigned Electron Windows x64 artifact", () => {
@@ -124,9 +129,20 @@ if (upstreamSyncSh !== null) {
 
   test("upstream-sync.sh rejects an invalid sync marker before diffing", () => {
     const markerValidation = upstreamSyncSh.indexOf('git cat-file -e "$LAST_SYNC^{commit}"');
-    const cumulativeDiff = upstreamSyncSh.indexOf('git diff --name-status -M "$LAST_SYNC" "$UPSTREAM_HEAD"');
+    const cumulativeDiff = upstreamSyncSh.indexOf('git diff --name-only -z --no-renames "$LAST_SYNC" "$UPSTREAM_HEAD"');
     assert.ok(markerValidation >= 0, "sync must validate a non-empty marker as a fetched commit");
     assert.ok(cumulativeDiff > markerValidation, "marker validation must happen before cumulative diffing");
+  });
+
+  test("upstream-sync.sh protects existing conflicts and untracked paths", () => {
+    assert.match(upstreamSyncSh, /git ls-files -u/);
+    assert.match(upstreamSyncSh, /resolve all existing merge conflicts before running upstream sync/);
+    assert.match(upstreamSyncSh, /\[\[ -e "\$path" \|\| -L "\$path" \]\]/);
+    assert.match(upstreamSyncSh, /upstream path collides with an untracked or ignored path/);
+    assert.match(upstreamSyncSh, /SYNC_CHANGE_SET\["\$path"\]=1/);
+    assert.match(upstreamSyncSh, /refusing to resolve an unexpected conflict outside this upstream patch/);
+    assert.match(upstreamSyncSh, /rollback_candidates=\("\$\{SYNC_CHANGE_PATHS\[@\]\}"/);
+    assert.match(upstreamSyncSh, /STAGE_CANDIDATES=\("\$\{SYNC_CHANGE_PATHS\[@\]\}"/);
   });
 
   if (upstreamParityManifest !== null) {
@@ -196,6 +212,7 @@ test("desktop-ci.yml tracks and verifies the active Electron/DSH workspace", () 
   assert.match(desktopCi, /runs-on:\s*windows-latest/);
   assert.match(desktopCi, /check-electron-runtime-boundary/);
   assert.match(desktopCi, /check-runtime-mocks/);
+  assert.match(desktopCi, /@voltui\/desktop-electron run test:config/);
   assert.match(desktopCi, /pnpm run build:desktop/);
   assert.match(desktopCi, /pnpm run dist:desktop/);
   assert.doesNotMatch(desktopCi, /desktop\/go\.mod|prod_test|wails/i);

@@ -13,6 +13,7 @@ const boundaryFiles = {
   electronEntry: "apps/desktop-frontend/src/electron-main.ts",
   electronWorkbench: "apps/desktop-frontend/src/components/ElectronWorkbench.svelte",
   electronMain: "apps/desktop-electron/src/main.ts",
+  electronRuntimeConfig: "apps/desktop-electron/src/runtime-config.ts",
   electronPreload: "apps/desktop-electron/src/preload.ts",
   electronFallback: "apps/desktop-electron/src/workbench.html",
   electronBuild: "apps/desktop-electron/scripts/build-frontend.mjs",
@@ -94,6 +95,10 @@ function scanLocalServiceBoundary(findings, sources) {
   }
   if (!/getServerConnection/.test(sources.electronPreload) || /getServerUrl/.test(sources.electronPreload)) {
     addFinding(findings, boundaryFiles.electronPreload, "unsafe-server-discovery", "preload 必须只暴露带会话令牌的 DSH 连接描述。");
+  }
+  if (!/changesOrigin = new URL\(currentConfig\.baseURL\)\.origin !== parsed\.origin/.test(sources.electronRuntimeConfig)
+    || !/reusesExistingKey = currentConfig\.apiKey && nextApiKey === undefined && patch\.clearApiKey !== true/.test(sources.electronRuntimeConfig)) {
+    addFinding(findings, boundaryFiles.electronRuntimeConfig, "endpoint-key-reuse", "更换模型端点时不能沿用主进程中的旧 API 密钥。");
   }
 }
 

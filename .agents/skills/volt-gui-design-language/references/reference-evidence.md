@@ -27,11 +27,11 @@ Read these files before broad UI work:
 - `docs/PRODUCT_REQUIREMENTS.md`
 - `docs/WORKBENCH.md`
 - `docs/WORKBENCH_FEATURE_MATRIX.md`
-- `desktop/frontend/src/App.svelte`
-- `desktop/frontend/src/app.css`
-- `desktop/frontend/src/components/UnifiedSidebar.svelte`
-- `desktop/frontend/src/components/Composer.svelte`
-- `desktop/frontend/src/components/CodeDashboard.svelte`
+- `apps/desktop-frontend/src/App.svelte`
+- `apps/desktop-frontend/src/app.css`
+- `apps/desktop-frontend/src/components/UnifiedSidebar.svelte`
+- `apps/desktop-frontend/src/components/Composer.svelte`
+- `apps/desktop-frontend/src/components/CodeDashboard.svelte`
 
 Use the latest passing screenshots under `output/playwright/` when they exist. Screenshots are evidence of a historical build, so verify the current source before claiming they are current.
 
@@ -66,4 +66,4 @@ Example: <https://github.com/am-will/codex-app/tree/main/desktop/recovered/app-a
 - Do not copy or redistribute extracted/restored source.
 - Do not copy OpenAI logos, product copy, proprietary fonts, illustrations, or branded motion.
 - Do not present inferred reconstruction behavior as official fact.
-- Extract interaction principles, layout relationships, state models, and usability lessons; implement them independently in Svelte/Wails.
+- Extract interaction principles, layout relationships, state models, and usability lessons; implement them independently in Svelte/Electron.

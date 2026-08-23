@@ -2,8 +2,8 @@ name: Relay stable release
 run-name: Relay stable release ${{ github.ref_name }}
 
 # The tag event itself has a tag-shaped origin. Relay the immutable tag name to
-# release-stable.yml on protected main-v2 so the production SignPath policy can
-# allow exactly one branch name without trusting wildcard tag-like branches.
+# release-stable.yml on protected main-v2 so the release control plane can
+# authorize one immutable candidate without trusting wildcard tag-like branches.
 on:
   push:
     tags:

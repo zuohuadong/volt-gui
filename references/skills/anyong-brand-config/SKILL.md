@@ -1,6 +1,6 @@
 ---
 name: anyong-brand-config
-description: Use when configuring, verifying, or debugging the 西谷智灯暗涌系统 (Anyong/Xigu AI) white-label branding on the VoltUI fork. Covers BrandConfig env vars, voltui.toml [brand] section, desktop-build.sh VOLTUI_BRAND_NAME, and GitHub Actions/CNB release naming.
+description: Use when configuring, verifying, or debugging the 西谷智灯暗涌系统 (Anyong/Xigu AI) white-label branding on the VoltUI fork. Covers Go BrandConfig, Electron runtime brand environment variables, and GitHub Actions/CNB build behavior.
 ---
 
 # 西谷智灯暗涌系统 Brand Configuration
@@ -57,34 +57,32 @@ if brandName != "VoltUI" {
 }
 ```
 
-## Desktop Build Branding
+## Electron Desktop Branding
 
-`scripts/desktop-build.sh` uses `VOLTUI_BRAND_NAME` for artifact naming:
+`apps/desktop-electron/src/main.ts` reads the display brand at runtime:
 ```bash
-BRAND="${VOLTUI_BRAND_NAME:-VoltUI}"
-# Output: 西谷智灯暗涌系统-darwin-universal.zip, 西谷智灯暗涌系统-windows-amd64-installer.exe, etc.
+VOLTUI_BRAND_NAME="西谷智灯暗涌系统"
+VOLTUI_BRAND_SHORT_NAME="暗涌"
 ```
 
-For CNB CI (`\.cnb.yml`), set `XIGU_BRAND_NAME` env var:
+For CNB CI (`.cnb.yml`), set the same Electron variables:
 ```yaml
 env:
-  XIGU_BRAND_NAME: "西谷智灯暗涌系统"
+  VOLTUI_BRAND_NAME: "西谷智灯暗涌系统"
+  VOLTUI_BRAND_SHORT_NAME: "暗涌"
 ```
 
 ## Frontend Branding
 
-`desktop/frontend/src/lib/brand.tsx` provides `BrandProvider` React context:
-- Reads brand info from Go kernel via `app.Brand()` bridge call
-- All components should use `useBrand()` instead of hardcoding names
-- The `defaultBrand` fallback uses `"VoltUI"` — this is correct and should NOT be changed
+`apps/desktop-electron/src/main.ts` removes API keys from the public config and adds `brandName` / `brandShortName`. The typed preload returns that public config to `apps/desktop-frontend/src/components/ElectronWorkbench.svelte`; the renderer must not read secrets or invent a second brand source.
 
 ## Verification Checklist
 
 When checking if branding is correctly configured:
 
 1. ✅ Source code still says `"VoltUI"` as default — correct
-2. ✅ `.cnb.yml` sets `XIGU_BRAND_NAME: "西谷智灯暗涌系统"` — correct
-3. ✅ `desktop-build.sh` uses `VOLTUI_BRAND_NAME` env var — correct
+2. ✅ `.cnb.yml` sets `VOLTUI_BRAND_NAME` and `VOLTUI_BRAND_SHORT_NAME` — correct
+3. ✅ Electron main exposes only public brand fields through preload — correct
 4. ✅ No `西谷智灯暗涌系统` appears in `.go`, `.ts`, `.tsx` source files — correct
 5. ✅ `BrandConfig.Name` default in `config.go` is `"VoltUI"` — correct
 

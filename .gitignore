@@ -26,6 +26,7 @@ mem.prof
 /apps/desktop-electron/dist-package/
 /apps/desktop-electron/dist/renderer/
 /apps/desktop-electron/dist/workbench.html
+/apps/desktop-frontend/dist-electron/
 /apps/desktop-frontend/dist/*
 !/apps/desktop-frontend/dist/.gitkeep
 
@@ -64,6 +65,7 @@ Thumbs.db
 # Scratch / agent working dirs (never committed)
 /tmp/
 /.codex/
+/.agents/evidence/
 servers.local.md
 .mailbox/*.md
 !.mailbox/README.md

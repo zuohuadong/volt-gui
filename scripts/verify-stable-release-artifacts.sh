@@ -6,6 +6,7 @@ repository="${RELEASE_REPOSITORY:?RELEASE_REPOSITORY is required}"
 version="${RELEASE_VERSION:?RELEASE_VERSION is required}"
 cli_tag="${CLI_TAG:?CLI_TAG is required}"
 desktop_tag="${DESKTOP_TAG:?DESKTOP_TAG is required}"
+verify_desktop_publication="${VERIFY_DESKTOP_PUBLICATION:-true}"
 attempts="${VERIFY_ATTEMPTS:-6}"
 delay="${VERIFY_DELAY_SECONDS:-10}"
 
@@ -37,8 +38,9 @@ jq -e '
     all(. as $required | $names | index($required)))
 ' "$tmp_dir/cli.json" >/dev/null
 
-gh release view "$desktop_tag" --repo "$repository" --json isDraft,isPrerelease,assets >"$tmp_dir/desktop.json"
-jq -e '
+if [ "$verify_desktop_publication" = "true" ]; then
+	gh release view "$desktop_tag" --repo "$repository" --json isDraft,isPrerelease,assets >"$tmp_dir/desktop.json"
+	jq -e '
   .isDraft == false and .isPrerelease == false and
   ([.assets[].name] as $names |
     ($names | index("latest.json")) and
@@ -47,11 +49,15 @@ jq -e '
       "Reasonix-windows-arm64-installer.exe"] |
      all(. as $required | ($names | index($required)) and ($names | index($required + ".minisig")))))
 ' "$tmp_dir/desktop.json" >/dev/null
+elif [ "$verify_desktop_publication" != "false" ]; then
+	echo "::error::VERIFY_DESKTOP_PUBLICATION must be true or false" >&2
+	exit 2
+fi
 
 for attempt in $(seq 1 "$attempts"); do
 	latest="$(npm view reasonix dist-tags.latest 2>/dev/null || true)"
 	if [ "$latest" = "$version" ]; then
-		echo "stable release postflight OK: cli=$cli_tag desktop=$desktop_tag npm-latest=$latest"
+		echo "stable release postflight OK: cli=$cli_tag desktop-artifact=$desktop_tag npm-latest=$latest"
 		exit 0
 	fi
 	echo "npm latest -> ${latest:-<unreadable>}, want $version (attempt $attempt/$attempts)"

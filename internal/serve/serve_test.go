@@ -175,6 +175,33 @@ func TestHistoryMessagesHideCalculationGateRetry(t *testing.T) {
 	}
 }
 
+func TestHistoryMessagesApplyDisplayMetadata(t *testing.T) {
+	got := historyMessages([]provider.Message{
+		{Role: provider.RoleUser, Content: "visible request"},
+		{Role: provider.RoleAssistant, Content: "hidden draft", DisplayHidden: true},
+		{Role: provider.RoleUser, Content: "hidden proofreading", DisplayHidden: true},
+		{
+			Role:             provider.RoleAssistant,
+			Content:          "tools-only draft",
+			ReasoningContent: "tools-only reasoning",
+			ToolCalls:        []provider.ToolCall{{ID: "call_1", Name: "bash", Arguments: `{"command":"pwd"}`}},
+			DisplayToolsOnly: true,
+		},
+		{Role: provider.RoleTool, ToolCallID: "call_1", Name: "bash", Content: "/tmp/project"},
+		{Role: provider.RoleAssistant, Content: "visible final"},
+	})
+
+	if len(got) != 4 {
+		t.Fatalf("history = %+v, want visible user, tool call, tool result, final assistant", got)
+	}
+	if got[1].Role != "assistant" || got[1].Content != "" || got[1].Reasoning != "" || len(got[1].ToolCalls) != 1 {
+		t.Fatalf("tools-only assistant = %+v", got[1])
+	}
+	if got[2].Role != "tool" || got[3].Content != "visible final" {
+		t.Fatalf("visible tail = %+v", got[2:])
+	}
+}
+
 func TestSessionsListPreviewStripsTransientReasoningLanguageBlock(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")

@@ -215,6 +215,7 @@ func (a *approvalManager) register(tool, subject, reason string) (string, chan a
 type pendingApprovalOptions struct {
 	fresh        bool
 	requireHuman bool
+	guardian     *event.GuardianResult
 	kind         string
 	recovery     *event.RecoveryApproval
 }
@@ -246,7 +247,7 @@ func (a *approvalManager) registerDecisionWithOptions(tool, subject, reason stri
 	}
 	a.approvals[id] = pendingApproval{
 		tool: tool, subject: subject, reason: reason,
-		fresh: opts.fresh, requireHuman: opts.requireHuman, autoDrain: autoDrain,
+		guardian: opts.guardian, fresh: opts.fresh, requireHuman: opts.requireHuman, autoDrain: autoDrain,
 		kind: opts.kind, recovery: opts.recovery, reply: reply,
 	}
 	return id, reply
@@ -439,7 +440,7 @@ func (a *approvalManager) snapshotPrompts() ([]event.Approval, []event.Ask) {
 	for id, p := range a.approvals {
 		approvals = append(approvals, event.Approval{
 			ID: id, Tool: p.tool, Subject: p.subject, Reason: p.reason, Fresh: p.fresh,
-			Kind: p.kind, Recovery: p.recovery,
+			Guardian: p.guardian, Kind: p.kind, Recovery: p.recovery,
 		})
 	}
 	asks := make([]event.Ask, 0, len(a.asks))

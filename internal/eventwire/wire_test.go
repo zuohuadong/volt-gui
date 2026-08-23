@@ -195,7 +195,7 @@ func readDesktopTypes(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime caller unavailable")
 	}
-	path := filepath.Join(filepath.Dir(file), "..", "..", "desktop", "frontend", "src", "lib", "types.ts")
+	path := filepath.Join(filepath.Dir(file), "..", "..", "apps", "desktop-frontend", "src", "lib", "types.ts")
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read desktop types: %v", err)

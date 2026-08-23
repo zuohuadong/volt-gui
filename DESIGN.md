@@ -202,7 +202,7 @@ Use 6-8px radii for controls and rows, 12px for cards, and 16px for composer/mod
 
 - **Terminal:** before PTY attach, user input is visibly queued rather than dropped; resize requests coalesce to the newest dimensions; reconnect snapshots expose only the final 16,000 characters. TypeScript owns product pending/recovery state, the Go desktop backend owns PTY lifetime, and a renderer may own only cells, input, and selection.
 - **CodeSurface:** every write carries `fileHandle`, `documentGeneration`, and `ticket`. A stale acknowledgement never replaces the visible document. The Go desktop backend remains authoritative for workspace path, mtime, and disk writes; renderer state is limited to the document model, selection, undo, and IME. Conflict UI preserves the draft and offers compare, reload, or retry instead of silently overwriting the file.
-- These contracts describe required behavior for a real surface. Do not render a successful terminal attach or file write until the Wails backend exposes the matching authority and acknowledgement.
+- These contracts describe required behavior for a real surface. Do not render a successful terminal attach or file write until the Electron preload/DSH boundary exposes the matching authority and acknowledgement.
 
 ## Do's and Don'ts
 

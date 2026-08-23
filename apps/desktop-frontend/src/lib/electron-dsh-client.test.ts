@@ -16,12 +16,14 @@ describe("Electron DSH client", () => {
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(getDshHealth("http://127.0.0.1:3211/")).resolves.toEqual({
+    await expect(getDshHealth({ baseUrl: "http://127.0.0.1:3211/", accessToken: "test-token" })).resolves.toEqual({
       status: "ok",
       model: "deepseek-chat",
       toolsCount: 8,
     });
-    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:3211/api/health");
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:3211/api/health", {
+      headers: { Authorization: "Bearer test-token" },
+    });
   });
 
   it("decodes fragmented SSE events without losing streamed text", async () => {
@@ -44,7 +46,7 @@ describe("Electron DSH client", () => {
     const events: DshTurnEvent[] = [];
 
     await streamDshTurn(
-      "http://127.0.0.1:3211",
+      { baseUrl: "http://127.0.0.1:3211", accessToken: "test-token" },
       "检查项目",
       "deepseek-chat",
       (event) => events.push(event),

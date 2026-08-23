@@ -1,15 +1,12 @@
 // Contract test for GitHub Actions workflow + sync script invariants.
 // Run with: node --test scripts/ci-workflows.test.mjs
 //
-// Guards the full-regression-repair-20260711 fixes:
-//   1. release-desktop cache save/restore enable cross-OS archive handoff
-//   2. upstream-sync.sh uses public HTTPS (no SSH) upstream
-//   3. upstream-sync.yml commits as github-actions[bot]
-//   4. missing upstream-sync label does not fail PR creation
-//   5. desktop-ci path filters include root go.mod/go.sum/internal/**
-//   6. ci.yml keeps main-v2 push/pull_request AND adds workflow_dispatch
-//   7. desktop-ci gates the local production packaging regression contract
-//   8. upstream sync preserves VoltUI's fork-specific Windows sandbox boundary
+// Guards the Electron/DSH migration contracts:
+//   1. Desktop CI and release packaging run on Windows x64.
+//   2. Active desktop jobs use the Electron renderer/runtime boundary gates.
+//   3. The release workflow uploads unsigned artifacts and stays fail-closed for signing.
+//   4. Reasonix sync uses a dedicated public-HTTPS remote and preserves fork boundaries.
+//   5. ci.yml keeps main-v2 push/pull_request and adds workflow_dispatch.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -21,6 +18,8 @@ const readIfPresent = (path) => existsSync(path) ? readFileSync(path, "utf8") : 
 const wf = (name) => readIfPresent(join(root, ".github", "workflows", name));
 const script = (name) => readIfPresent(join(root, "scripts", name));
 
+const cnb = readIfPresent(join(root, ".cnb.yml"));
+const releaseCli = wf("release.yml");
 const releaseDesktop = wf("release-desktop.yml");
 const desktopCi = wf("desktop-ci.yml");
 const ci = wf("ci.yml");
@@ -31,40 +30,41 @@ const upstreamParityManifest = existsSync(upstreamParityManifestPath)
   ? JSON.parse(readFileSync(upstreamParityManifestPath, "utf8"))
   : null;
 
-// Collect the `with:` text that follows each actions/cache save|restore step,
-// stopping at the next step or job-level key. Used to assert per-step inputs.
-function cacheWithBlocks(yaml) {
-  const lines = yaml.split("\n");
-  const blocks = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (!/uses:\s*actions\/cache\/(save|restore)@v6\b/.test(lines[i])) continue;
-    const collected = [];
-    for (let j = i + 1; j < lines.length; j++) {
-      // next step (`      - `) or a job/structure key at 2-space indent ends the step
-      if (/^      - /.test(lines[j]) || /^  [A-Za-z]/.test(lines[j])) break;
-      collected.push(lines[j]);
-    }
-    blocks.push({ lineNo: i + 1, uses: lines[i].trim(), text: collected.join("\n") });
-  }
-  return blocks;
+if (releaseDesktop !== null) {
+  test("release-desktop.yml builds an unsigned Electron Windows x64 artifact", () => {
+    assert.match(releaseDesktop, /runs-on:\s*windows-latest/);
+    assert.match(releaseDesktop, /pnpm install --frozen-lockfile/);
+    assert.match(releaseDesktop, /node scripts\/set-electron-package-version\.mjs/);
+    assert.match(releaseDesktop, /pnpm run dist:desktop/);
+    assert.match(releaseDesktop, /CSC_IDENTITY_AUTO_DISCOVERY:\s*["']false["']/);
+    assert.match(releaseDesktop, /Get-AuthenticodeSignature/);
+    assert.match(releaseDesktop, /Status -ne 'NotSigned'/);
+    assert.match(releaseDesktop, /actions\/upload-artifact@/);
+    assert.match(releaseDesktop, /windows-x64-unsigned/);
+  });
+
+  test("release-desktop.yml rejects unsupported signing and publication claims", () => {
+    assert.match(releaseDesktop, /Reject unsupported signing claims/);
+    assert.match(releaseDesktop, /Electron production signing is not migrated yet/);
+    assert.doesNotMatch(releaseDesktop, /signpath\/github-action-submit-signing-request/i);
+    assert.doesNotMatch(releaseDesktop, /gh release create/i);
+  });
 }
 
-if (releaseDesktop !== null) {
-  test("release-desktop.yml: every cache save/restore enables cross-OS archive", () => {
-    const blocks = cacheWithBlocks(releaseDesktop);
-    assert.ok(blocks.length >= 1, "expected at least one actions/cache save/restore step");
-    for (const b of blocks) {
-      assert.match(
-        b.text,
-        /enableCrossOsArchive:\s*true/,
-        `line ${b.lineNo} (${b.uses}): missing enableCrossOsArchive in with: block`
-      );
-      assert.doesNotMatch(
-        b.text,
-        /enable-cross-os-archive:/,
-        `line ${b.lineNo} (${b.uses}): actions/cache input must use camelCase enableCrossOsArchive`
-      );
-    }
+if (releaseCli !== null) {
+  test("CLI release no longer republishes the legacy Wails updater manifest", () => {
+    assert.doesNotMatch(releaseCli, /desktop manifest compatibility|compatibility manifest/i);
+    assert.doesNotMatch(releaseCli, /latest\.json|dl\.reasonix\.io|reasonix\.io\/\?download=desktop/);
+    assert.doesNotMatch(releaseCli, /R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY|R2_ACCOUNT_ID|R2_BUCKET/);
+  });
+}
+
+if (cnb !== null) {
+  test("CNB validates the Linux Electron source bundle without claiming Windows packaging", () => {
+    assert.match(cnb, /pnpm run build:desktop/);
+    assert.match(cnb, /apps\/desktop-electron\/dist\/preload\.cjs/);
+    assert.doesNotMatch(cnb, /apps\/desktop-electron\/dist\/preload\.js/);
+    assert.doesNotMatch(cnb, /electron-builder --win/);
   });
 }
 
@@ -89,17 +89,26 @@ if (upstreamSyncSh !== null) {
       /git@github\.com:/,
       "upstream URL must not be SSH (git@github.com)"
     );
+    assert.match(
+      upstreamSyncSh,
+      /UPSTREAM_REMOTE="reasonix-upstream"/,
+      "Reasonix sync must not overwrite the Volt GUI contribution remote",
+    );
   });
 
   test("upstream-sync.sh preserves the fork-specific Windows sandbox boundary", () => {
     assert.ok(
+      upstreamSyncSh.includes("'internal/shellsafe/testdata/command_effects.json'"),
+      "shell effect tests require their shared command fixture",
+    );
+    assert.ok(
       upstreamSyncSh.includes("':(exclude,glob)internal/sandbox/**'"),
       "sandbox conflicts must be treated as fork-divergent",
     );
-    assert.ok(
-      upstreamSyncSh.includes("':(exclude)desktop/main.go'"),
-      "desktop helper dispatch conflicts must keep the VoltUI side",
-    );
+    assert.ok(upstreamSyncSh.includes("':(exclude,glob)desktop/**'"), "legacy desktop sources stay outside selective Go sync");
+    assert.match(upstreamSyncSh, /SNAPSHOT \(missing fork path\)/);
+    assert.match(upstreamSyncSh, /git checkout "\$UPSTREAM_HEAD" -- "\$\{SNAPSHOT_PATHS\[@\]\}"/);
+    assert.doesNotMatch(upstreamSyncSh, /SKIP \(missing fork path\)/);
     for (const protectedPath of [
       "internal/winsandbox/",
       "internal/sandbox/seatbelt_windows.go",
@@ -171,28 +180,25 @@ if (upstreamSyncYml !== null) {
   });
 }
 
-test("desktop-ci.yml: path filters include root Go module dependency paths", () => {
-  // Desktop builds compile root-module Go code, so changes to go.mod, go.sum,
-  // and internal/** must trigger desktop-ci. Quoted entries only appear in the
-  // paths filter (go-version-file/cache-dependency-path use prefixed, unquoted
-  // values like desktop/go.mod).
-  assert.match(desktopCi, /"go\.mod"/, 'paths filter must include "go.mod"');
-  assert.match(desktopCi, /"go\.sum"/, 'paths filter must include "go.sum"');
-  assert.match(desktopCi, /"internal\/\*\*"/, 'paths filter must include "internal/**"');
-});
-
-test("desktop-ci.yml: local production packaging regressions are gated on macOS", () => {
-  assert.match(desktopCi, /"prod_test"/, 'paths filter must include "prod_test"');
-  assert.match(
-    desktopCi,
-    /"scripts\/prod-test\.test\.mjs"/,
-    'paths filter must include "scripts/prod-test.test.mjs"',
-  );
-  assert.match(
-    desktopCi,
-    /if:\s*runner\.os == 'macOS'\s*\n\s*run:\s*node --test scripts\/prod-test\.test\.mjs/,
-    "macOS Desktop CI must execute the local production packaging contract",
-  );
+test("desktop-ci.yml tracks and verifies the active Electron/DSH workspace", () => {
+  for (const path of [
+    "apps/desktop-electron/**",
+    "apps/desktop-frontend/**",
+    "packages/dsh-*/**",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "scripts/package-dist.mjs",
+    "scripts/set-electron-package-version.mjs",
+  ]) {
+    assert.ok(desktopCi.includes(`"${path}"`), `paths filter must include ${path}`);
+  }
+  assert.match(desktopCi, /runs-on:\s*windows-latest/);
+  assert.match(desktopCi, /check-electron-runtime-boundary/);
+  assert.match(desktopCi, /check-runtime-mocks/);
+  assert.match(desktopCi, /pnpm run build:desktop/);
+  assert.match(desktopCi, /pnpm run dist:desktop/);
+  assert.doesNotMatch(desktopCi, /desktop\/go\.mod|prod_test|wails/i);
 });
 
 test("ci.yml: workflow_dispatch added while retaining main-v2 push/pull_request", () => {

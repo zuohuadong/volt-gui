@@ -1,7 +1,7 @@
 {
-  "name": "@anyong/desktop-electron",
+  "name": "@voltui/desktop-electron",
   "version": "1.0.0",
-  "description": "Anyong DSH Desktop Application powered by Electron and Svelte 5",
+  "description": "VoltUI desktop application powered by Electron, DSH and Svelte 5",
   "main": "dist/main.js",
   "type": "module",
   "scripts": {
@@ -12,18 +12,15 @@
     "start": "electron dist/main.js",
     "dist": "electron-builder --win --x64"
   },
-  "dependencies": {
+  "devDependencies": {
     "@dsh/core": "workspace:*",
     "@dsh/plugins": "workspace:*",
     "@dsh/server": "workspace:*",
-    "@xgic/dsh-plugin-ui": "workspace:*"
-  },
-  "devDependencies": {
     "@types/node": "^22.13.10",
     "electron": "^34.3.0",
     "electron-builder": "^25.1.8",
     "esbuild": "^0.28.2",
     "typescript": "^5.8.2"
   },
-  "author": "西谷AI"
+  "author": "VoltUI contributors"
 }

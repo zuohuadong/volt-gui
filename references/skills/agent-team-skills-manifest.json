@@ -19,7 +19,7 @@
       "id": "anyong-brand-config",
       "frontmatterName": "anyong-brand-config",
       "path": "references/skills/anyong-brand-config/SKILL.md",
-      "description": "Use when configuring, verifying, or debugging the 西谷智灯暗涌系统 (Anyong/Xigu AI) white-label branding on the VoltUI fork. Covers BrandConfig env vars, voltui.toml [brand] section, desktop-build.sh VOLTUI_BRAND_NAME, and GitHub Actions/CNB release naming."
+      "description": "Use when configuring, verifying, or debugging the 西谷智灯暗涌系统 (Anyong/Xigu AI) white-label branding on the VoltUI fork. Covers Go BrandConfig, Electron runtime brand environment variables, and GitHub Actions/CNB build behavior."
     },
     {
       "id": "bun-cli-cross-platform",
@@ -199,7 +199,7 @@
       "id": "volt-desktop-experience",
       "frontmatterName": "volt-desktop-experience",
       "path": "references/skills/volt-desktop-experience/SKILL.md",
-      "description": "Use when designing, implementing, or reviewing Volt GUI operational task-lifecycle UX: running message queues and Steer, activity centers, result receipts, structured recovery, explainable approvals, Diff comments to fixes, automation result inboxes, or managed worktree snapshot/Handoff flows. Enforces real Wails-backed state, safe mutation preflights, Work/Code ownership, and behavioral plus visual verification; pair with the project volt-gui-design-language skill for broad visual or layout work."
+      "description": "Use when designing, implementing, or reviewing Volt GUI operational task-lifecycle UX: running message queues and Steer, activity centers, result receipts, structured recovery, explainable approvals, Diff comments to fixes, automation result inboxes, or managed worktree snapshot/Handoff flows. Enforces real Electron/DSH-backed state, safe mutation preflights, Work/Code ownership, and behavioral plus visual verification; pair with the project volt-gui-design-language skill for broad visual or layout work."
     },
     {
       "id": "vue-frontend",

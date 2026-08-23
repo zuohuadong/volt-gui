@@ -176,11 +176,12 @@ type FileDiff struct {
 // Approval identifies a pending tool-call approval for an ApprovalRequest
 // event. ID correlates the request with the controller's Approve(ID, …) reply.
 type Approval struct {
-	ID      string
-	Tool    string
-	Subject string
-	Reason  string // optional annotation explaining why approval is needed
-	Fresh   bool   // current human decision required; do not offer remembered grants
+	ID       string
+	Tool     string
+	Subject  string
+	Reason   string          // optional annotation explaining why approval is needed
+	Fresh    bool            // current human decision required; do not offer remembered grants
+	Guardian *GuardianResult // optional safety review attached for reliable UI correlation and replay
 	// Kind classifies the approval surface: "tool" (default), "plan", or
 	// "recovery". Empty means ordinary tool permission for backward compat.
 	Kind string

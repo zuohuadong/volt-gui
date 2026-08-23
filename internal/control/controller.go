@@ -275,6 +275,7 @@ type pendingApproval struct {
 	tool         string
 	subject      string
 	reason       string
+	guardian     *event.GuardianResult
 	fresh        bool
 	requireHuman bool
 	autoDrain    bool
@@ -5545,14 +5546,14 @@ func (g gateApprover) ApproveWithReason(ctx context.Context, tool, subject strin
 		return true, false, "", nil
 	}
 	if g.c.guardianSess != nil && !requireHuman {
-		allow, reason, reviewErr := g.c.guardianSess.Review(ctx, tool, args, g.c.executor.Session())
+		allow, reason, guardianResult, reviewErr := g.c.guardianSess.ReviewWithResult(ctx, tool, args, g.c.executor.Session())
 		if reviewErr != nil {
 			return false, false, "", reviewErr
 		}
 		if allow && !requiresFreshApprovalTool(tool) {
 			return true, false, "", nil
 		}
-		humanAllow, remember, err := g.c.requestApprovalWithReason(ctx, tool, subject, args, reason)
+		humanAllow, remember, err := g.c.requestApprovalWithGuardian(ctx, tool, subject, args, reason, &guardianResult)
 		if err != nil {
 			return false, false, reason, err
 		}
@@ -6150,7 +6151,11 @@ func (c *Controller) requestApproval(ctx context.Context, tool, subject string, 
 }
 
 func (c *Controller) requestApprovalWithReason(ctx context.Context, tool, subject string, args json.RawMessage, reason string) (bool, bool, error) {
-	r, err := c.requestApprovalDecision(ctx, tool, subject, args, reason)
+	return c.requestApprovalWithGuardian(ctx, tool, subject, args, reason, nil)
+}
+
+func (c *Controller) requestApprovalWithGuardian(ctx context.Context, tool, subject string, args json.RawMessage, reason string, guardian *event.GuardianResult) (bool, bool, error) {
+	r, err := c.requestApprovalDecisionWithOptions(ctx, tool, subject, args, reason, approvalDecisionOptions{guardian: guardian})
 	if err != nil {
 		return false, false, err
 	}
@@ -6195,6 +6200,7 @@ type approvalDecisionOptions struct {
 	// requireHuman keeps the ordinary four-choice prompt, but Auto, an approved
 	// plan, and Guardian cannot answer it. YOLO remains an explicit bypass.
 	requireHuman bool
+	guardian     *event.GuardianResult
 }
 
 func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, tool, subject string, args json.RawMessage, reason string, opts approvalDecisionOptions) (approvalReply, error) {
@@ -6241,10 +6247,10 @@ func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, too
 	}
 
 	id, reply := c.approval.registerDecisionWithOptions(tool, subject, reason, pendingApprovalOptions{
-		fresh: opts.fresh, requireHuman: opts.requireHuman,
+		fresh: opts.fresh, requireHuman: opts.requireHuman, guardian: opts.guardian,
 	})
 
-	c.sink.Emit(c.approvalRequestEvent(event.Approval{ID: id, Tool: tool, Subject: subject, Reason: reason, Fresh: opts.fresh}))
+	c.sink.Emit(c.approvalRequestEvent(event.Approval{ID: id, Tool: tool, Subject: subject, Reason: reason, Fresh: opts.fresh, Guardian: opts.guardian}))
 	// The agent now needs the user's attention; a Notification hook can ping an
 	// external channel (desktop notice, phone) while the run blocks on the reply.
 	go c.hooks.Notification(ctx, approvalNotificationText(tool, subject), "permission_prompt")

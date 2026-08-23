@@ -159,7 +159,7 @@ and DeepSeek prefix-cache–oriented design.
   existing skill. Both expose only read-only tools and safe foreground bash, do
   not write resumable transcripts, and keep writer-capable `task` / `run_skill`
   blocked until after plan approval.
-- **No web dashboard** — the v2 line is terminal + desktop (Wails), by design.
+- **No web dashboard** — the v2 line is terminal + desktop (Electron/DSH), by design.
 - Some granular v1 tools are intentionally consolidated (e.g. file-management ops
   go through `bash`); a few v1 tools are not yet ported (tracked on Discussions).
 

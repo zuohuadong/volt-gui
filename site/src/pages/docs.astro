@@ -51,8 +51,8 @@ try {
 
       <h2 id="install"><span class="l-en">Installation</span><span class="l-zh">安装</span></h2>
       <p><span class="l-en">One command on macOS, Linux, Windows, or WSL.</span><span class="l-zh">一条命令,支持 macOS、Linux、Windows 或 WSL。</span></p>
-      <pre class="codeblock"><button data-copy="npm i -g voltui@next">Copy</button><span class="c"># npm (Go 1.x · recommended · 推荐)</span>
-npm i -g voltui@next
+      <pre class="codeblock"><button data-copy="npm i -g voltui">Copy</button><span class="c"># npm (Go 1.x · recommended · 推荐)</span>
+npm i -g voltui
 
 <span class="c"># Homebrew</span>
 brew install esengine/voltui/voltui</pre>
@@ -63,7 +63,7 @@ brew install esengine/voltui/voltui</pre>
       <p><span class="l-en">Public npm, Homebrew and release downloads are convenient acquisition paths, not requirements for an enterprise runtime. For a private or air-gapped network, administrators should acquire and verify artifacts in a connected preparation zone, then distribute them through an internal software repository, endpoint manager or approved offline media.</span><span class="l-zh">公网 npm、Homebrew 与 Release 下载是便捷的获取方式，不是企业运行时要求。对于内网或隔离网络，管理员应在联网准备区获取并校验制品，再通过内部软件仓库、终端管理系统或获批离线介质分发。</span></p>
       <div class="offline-doc-grid">
         <article><strong>CLI / TUI</strong><p><span class="l-en">Distribute the platform-specific Go binary plus reviewed configuration. The CLI does not require Node at runtime.</span><span class="l-zh">分发对应平台的 Go 二进制与经审查配置；CLI 运行时不需要 Node。</span></p></article>
-        <article><strong>Wails Desktop</strong><p><span class="l-en">Distribute the built desktop application and validate platform WebView requirements, signing and your upgrade path.</span><span class="l-zh">分发已构建的桌面应用，并验证平台 WebView 依赖、签名与升级路径。</span></p></article>
+        <article><strong>Electron Desktop</strong><p><span class="l-en">Package the DSH-backed desktop application and validate Electron signing, installer and upgrade paths.</span><span class="l-zh">打包由 DSH 驱动的桌面应用，并验证 Electron 签名、安装器与升级路径。</span></p></article>
       </div>
       <p><span class="l-en">Prepare provider templates, credential injection, permissions, approved MCP servers and any required executables before rollout. Do not hardcode credentials in packages.</span><span class="l-zh">部署前准备 Provider 模板、凭据注入、权限、已批准的 MCP 服务及其所需可执行文件。不要在软件包中硬编码凭据。</span></p>
       <div class="callout"><span class="ico">i</span><span><span class="l-en"><strong>CodeGraph is optional.</strong> It downloads an external runtime on first use in a connected environment. Offline deployments must install or pre-cache that runtime in advance; VoltUI's core repository workflow does not require CodeGraph.</span><span class="l-zh"><strong>CodeGraph 是可选能力。</strong> 在联网环境中首次使用会下载外部运行时；离线部署必须提前安装或预缓存。VoltUI 的核心代码库工作流不依赖 CodeGraph。</span></span></div>

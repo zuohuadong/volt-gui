@@ -27,7 +27,7 @@
     X,
   } from "@lucide/svelte";
 
-  import type { ElectronDshConfig } from "../electron";
+  import type { ElectronDshApi, ElectronDshConfig, ElectronDshConnection } from "../electron";
   import {
     clearDshHistory,
     getDshHealth,
@@ -73,7 +73,7 @@
   let messages = $state<WorkbenchMessage[]>([]);
   let tools = $state<DshToolSchema[]>([]);
   let input = $state("");
-  let serverUrl = $state("");
+  let connection = $state<ElectronDshConnection>();
   let workingDir = $state("");
   let config = $state<ElectronDshConfig>();
   let runtimeState = $state<RuntimeState>("connecting");
@@ -101,6 +101,7 @@
   let textareaElement: HTMLTextAreaElement | undefined = $state();
 
   const isEmpty = $derived(messages.length === 0);
+  const serverUrl = $derived(connection?.baseUrl ?? "");
   const runtimeLabel = $derived(
     runtimeState === "ready" ? "运行正常" : runtimeState === "connecting" ? "正在连接" : "连接异常",
   );
@@ -119,9 +120,22 @@
     return String(error);
   }
 
-  function nativeApi(): NonNullable<typeof electronApi> {
+  function nativeApi(): ElectronDshApi {
     if (!electronApi) throw new Error("Electron preload 未加载，原生操作不可用。");
     return electronApi;
+  }
+
+  function markRuntimeFailure(error: unknown): void {
+    runtimeState = "error";
+    runtimeError = displayError(error);
+  }
+
+  async function runNativeCommand(command: (api: ElectronDshApi) => Promise<void>): Promise<void> {
+    try {
+      await command(nativeApi());
+    } catch (error) {
+      markRuntimeFailure(error);
+    }
   }
 
   async function scrollToBottom(): Promise<void> {
@@ -212,27 +226,26 @@
 
     try {
       const api = nativeApi();
-      const [nextServerUrl, nextWorkingDir, nextConfig] = await Promise.all([
-        api.getServerUrl(),
+      const [nextConnection, nextWorkingDir, nextConfig] = await Promise.all([
+        api.getServerConnection(),
         api.getWorkingDir(),
         api.getConfig(),
       ]);
-      serverUrl = nextServerUrl;
+      connection = nextConnection;
       workingDir = nextWorkingDir;
       applyConfig(nextConfig);
 
       const [health, nextTools, history] = await Promise.all([
-        getDshHealth(serverUrl),
-        getDshTools(serverUrl),
-        loadHistory ? getDshHistory(serverUrl) : Promise.resolve<DshMessage[]>([]),
+        getDshHealth(nextConnection),
+        getDshTools(nextConnection),
+        loadHistory ? getDshHistory(nextConnection) : Promise.resolve<DshMessage[]>([]),
       ]);
       tools = nextTools;
       if (config && health.model !== config.model) applyConfig({ ...config, model: health.model });
       if (loadHistory) messages = hydrateMessages(history);
       runtimeState = "ready";
     } catch (error) {
-      runtimeState = "error";
-      runtimeError = displayError(error);
+      markRuntimeFailure(error);
     }
   }
 
@@ -314,7 +327,7 @@
 
   async function sendMessage(promptOverride?: string): Promise<void> {
     const prompt = (promptOverride ?? input).trim();
-    if (!prompt || sending || runtimeState !== "ready") return;
+    if (!prompt || !connection || sending || runtimeState !== "ready") return;
 
     const userMessage: WorkbenchMessage = {
       id: messageId("user"),
@@ -343,7 +356,7 @@
 
     try {
       await streamDshTurn(
-        serverUrl,
+        connection,
         prompt,
         config?.model || "deepseek-chat",
         handleTurnEvent,
@@ -400,7 +413,7 @@
       if (!result) return;
       if (!result.success) throw new Error(result.error || "工作区切换失败。");
       workingDir = result.workingDir ?? workingDir;
-      serverUrl = result.serverUrl ?? serverUrl;
+      connection = result.connection ?? connection;
       messages = [];
       diagnostics = undefined;
       await refreshRuntime(true);
@@ -434,7 +447,7 @@
       });
       if (!result.success || !result.config) throw new Error(result.error || "配置保存失败。当前运行配置未变更。");
       applyConfig(result.config);
-      serverUrl = result.serverUrl ?? serverUrl;
+      connection = result.connection ?? connection;
       messages = [];
       diagnostics = undefined;
       settingsSuccess = "运行配置已更新，会话已重新开始。";
@@ -448,9 +461,9 @@
 
   async function clearConversation(): Promise<void> {
     clearDialogOpen = false;
-    if (!serverUrl || sending) return;
+    if (!connection || sending) return;
     try {
-      await clearDshHistory(serverUrl);
+      await clearDshHistory(connection);
       messages = [];
       diagnostics = undefined;
       input = "";
@@ -479,7 +492,7 @@
     void refreshRuntime(true).then(scrollToBottom);
     let removeWindowStateListener: (() => void) | undefined;
     if (electronApi) {
-      void electronApi.isMaximized().then((value) => (isMaximized = value));
+      void electronApi.isMaximized().then((value) => (isMaximized = value)).catch(markRuntimeFailure);
       removeWindowStateListener = electronApi.onWindowStateChange((state) => (isMaximized = state.isMaximized));
     }
     return () => {
@@ -490,7 +503,7 @@
 </script>
 
 <svelte:head>
-  <title>西谷智灯暗涌系统 工作台</title>
+  <title>{config?.brandName || "VoltUI"} 工作台</title>
 </svelte:head>
 
 <svelte:window onkeydown={handleGlobalKeydown} />
@@ -498,8 +511,8 @@
 <main class="desktop-workbench" class:sidebar-collapsed={sidebarCollapsed}>
   <header class="titlebar">
     <div class="titlebar__brand">
-      <span class="brand-mark" aria-hidden="true">西</span>
-      <strong>西谷智灯暗涌系统</strong>
+      <span class="brand-mark" aria-hidden="true">{(config?.brandShortName || "V").slice(0, 1)}</span>
+      <strong>{config?.brandName || "VoltUI"}</strong>
       <span>工作台</span>
     </div>
     <div class="titlebar__context" title={workingDir}>
@@ -513,11 +526,11 @@
       </button>
       <button type="button" onclick={openSettings} title="设置" aria-label="设置"><Settings size={15} /></button>
       <i aria-hidden="true"></i>
-      <button type="button" onclick={() => void nativeApi().minimizeWindow()} title="最小化" aria-label="最小化"><Minimize2 size={15} /></button>
-      <button type="button" onclick={() => void nativeApi().maximizeWindow()} title={isMaximized ? "还原" : "最大化"} aria-label={isMaximized ? "还原" : "最大化"}>
+      <button type="button" onclick={() => void runNativeCommand((api) => api.minimizeWindow())} title="最小化" aria-label="最小化"><Minimize2 size={15} /></button>
+      <button type="button" onclick={() => void runNativeCommand((api) => api.maximizeWindow())} title={isMaximized ? "还原" : "最大化"} aria-label={isMaximized ? "还原" : "最大化"}>
         {#if isMaximized}<Square size={12} />{:else}<Maximize2 size={14} />{/if}
       </button>
-      <button class="close-button" type="button" onclick={() => void nativeApi().closeWindow()} title="关闭" aria-label="关闭"><X size={16} /></button>
+      <button class="close-button" type="button" onclick={() => void runNativeCommand((api) => api.closeWindow())} title="关闭" aria-label="关闭"><X size={16} /></button>
     </div>
   </header>
 
@@ -560,7 +573,7 @@
       <button type="button" onclick={openSettings}>
         <Settings size={15} /><span><strong>运行设置</strong><em>{config?.apiKeySet ? "密钥已配置" : "密钥未设置"}</em></span>
       </button>
-      <small>v1.0.0 · Electron DSH</small>
+      <small>Electron · DSH · Svelte 5</small>
     </footer>
   </aside>
 
@@ -635,7 +648,7 @@
               </article>
             {:else}
               <article class="message message--assistant" data-status={message.status}>
-                <div class="message__label"><span><Sparkles size={13} /></span> 暗涌</div>
+                <div class="message__label"><span><Sparkles size={13} /></span> {config?.brandShortName || "Volt"}</div>
                 {#if message.reasoning}
                   <details class="reasoning" open={message.status === "streaming" && !message.content}>
                     <summary>{message.status === "streaming" && !message.content ? "正在思考" : "思考过程"}</summary>
@@ -740,8 +753,8 @@
         {#if settingsSuccess}<div class="settings-feedback success"><Check size={15} /> {settingsSuccess}</div>{/if}
       </div>
       <footer>
-        <button class="developer-action" type="button" onclick={() => void nativeApi().toggleDevTools()} disabled={!electronApi}><TerminalSquare size={15} /> 开发者工具</button>
-        <div><button type="button" onclick={() => (settingsOpen = false)}>取消</button><button class="primary-action" type="button" onclick={saveSettings} disabled={savingSettings || !modelDraft.trim() || !baseUrlDraft.trim()}>{#if savingSettings}<LoaderCircle class="spin" size={15} />{/if}保存并重启</button></div>
+        <button class="developer-action" type="button" onclick={() => void runNativeCommand((api) => api.toggleDevTools())} disabled={!electronApi}><TerminalSquare size={15} /> 开发者工具</button>
+        <div><button type="button" onclick={() => (settingsOpen = false)}>取消</button><button class="primary-action" type="button" onclick={saveSettings} disabled={!electronApi || savingSettings || !modelDraft.trim() || !baseUrlDraft.trim()}>{#if savingSettings}<LoaderCircle class="spin" size={15} />{/if}保存并重启</button></div>
       </footer>
     </div>
   {/if}

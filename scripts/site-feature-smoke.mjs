@@ -79,7 +79,7 @@ check(
 );
 
 check(pages.home.includes('enterprise-hero') && pages.home.includes('Private-network workspace'), 'home opens with an enterprise split hero and deployment overview');
-check(pages.home.includes('single-binary CLI') && pages.home.includes('prepared desktop client'), 'home distinguishes the Go CLI from the prepared Wails desktop client');
+check(pages.home.includes('single-binary CLI') && pages.home.includes('prepared desktop client'), 'home distinguishes the Go CLI from the prepared Electron desktop client');
 check(pages.home.includes('Public internet is a preparation path') && pages.home.includes('controlled import'), 'home explains the enterprise network preparation topology');
 check(pages.home.includes('Platform administrator') && pages.home.includes('Security / compliance') && pages.home.includes('Developer'), 'home includes an enterprise role matrix');
 check(pages.home.includes('Typical scenarios') && pages.home.includes('Current product boundary'), 'home includes scenarios and explicit product boundaries');

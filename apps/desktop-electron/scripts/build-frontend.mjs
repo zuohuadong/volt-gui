@@ -10,7 +10,7 @@ const distWorkbench = path.resolve(__dirname, "../dist/workbench.html");
 const targetRendererDir = path.resolve(__dirname, "../dist/renderer");
 const targetRendererHtml = path.resolve(targetRendererDir, "electron.html");
 
-console.log("⚡ Preparing Frontend Assets for Anyong DSH Desktop Workbench");
+console.log("Preparing frontend assets for the VoltUI Electron workbench");
 
 // 先清空旧的渲染层产物，避免历史 hash 文件堆积导致包体膨胀或引用错乱
 fs.rmSync(targetRendererDir, { recursive: true, force: true });

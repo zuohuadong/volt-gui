@@ -31,11 +31,35 @@ var windowsDefaultHookShell struct {
 // cmd.exe PATH, so reuse the same hardened discovery path as the shell tool
 // instead of asking cmd.exe to find an executable it cannot see.
 func windowsPOSIXShellInvocation(command string) (string, []string, bool, error) {
-	return windowsPOSIXShellInvocationWith(command, cachedWindowsHookBash)
+	fields, _, _, ok := parseSimpleHookCommandFields(command)
+	shellCommand := command
+	if ok && len(fields) > 0 {
+		shellCommand = fields[0]
+	}
+	return windowsPOSIXShellInvocationWith(command, func() (string, error) {
+		return windowsHookPOSIXShell(shellCommand)
+	})
 }
 
 func windowsPOSIXShellArgvInvocation(command string, args []string) (string, []string, bool, error) {
-	return windowsPOSIXShellArgvInvocationWith(command, args, cachedWindowsHookBash)
+	return windowsPOSIXShellArgvInvocationWith(command, args, func() (string, error) {
+		return windowsHookPOSIXShell(command)
+	})
+}
+
+func windowsHookPOSIXShell(command string) (string, error) {
+	shellName := strings.TrimSuffix(strings.ToLower(filepath.Base(strings.TrimSpace(command))), ".exe")
+	if shellName == "sh" {
+		if shPath, err := exec.LookPath("sh"); err == nil {
+			sh := sandbox.ResolveShell("bash", shPath, nil)
+			if sh.Kind == sandbox.ShellBash {
+				if resolved, err := resolvedHookShellPath(sh); err == nil {
+					return resolved, nil
+				}
+			}
+		}
+	}
+	return cachedWindowsHookBash()
 }
 
 func windowsPOSIXShellArgvInvocationWith(command string, args []string, resolve func() (string, error)) (string, []string, bool, error) {

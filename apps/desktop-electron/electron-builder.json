@@ -1,6 +1,6 @@
 {
-  "appId": "com.xgic.anyong.dsh",
-  "productName": "Anyong DSH",
+  "appId": "com.voltui.desktop",
+  "productName": "VoltUI",
   "directories": {
     "output": "dist-package"
   },
@@ -9,6 +9,7 @@
   "buildDependenciesFromSource": false,
   "files": [
     "dist/**/*",
+    "!dist/**/*.map",
     "package.json"
   ],
   "win": {

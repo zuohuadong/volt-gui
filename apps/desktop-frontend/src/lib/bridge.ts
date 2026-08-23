@@ -2206,14 +2206,17 @@ function makeMockApp(): AppBindings {
       }
       // Try connecting to Anyong DSH Backend via SSE
       try {
-        const dshUrl =
-          typeof window !== "undefined" && (window as any).electronDsh?.getServerUrl
-            ? await (window as any).electronDsh.getServerUrl()
-            : "http://127.0.0.1:3210";
-        if (dshUrl) {
-          const response = await fetch(`${dshUrl}/api/turn`, {
+        const dshConnection =
+          typeof window !== "undefined" && (window as any).electronDsh?.getServerConnection
+            ? await (window as any).electronDsh.getServerConnection()
+            : { baseUrl: "http://127.0.0.1:3210", accessToken: "" };
+        if (dshConnection.baseUrl) {
+          const response = await fetch(`${dshConnection.baseUrl}/api/turn`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...(dshConnection.accessToken ? { Authorization: `Bearer ${dshConnection.accessToken}` } : {}),
+            },
             body: JSON.stringify({
               prompt: input,
               model: (settings.defaultModel || "deepseek-v4-flash").split("/").pop(),

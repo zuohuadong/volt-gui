@@ -4242,9 +4242,15 @@ func firstLine(s string) string {
 // user message in msgs, skipping empty strings and model placeholders ("…", "...").
 // The result is chronological (oldest first).
 func copyAssistantParts(msgs []provider.Message) []string {
+	visible := make([]provider.Message, 0, len(msgs))
+	for _, msg := range msgs {
+		if projected, ok := provider.DisplayMessage(msg); ok {
+			visible = append(visible, projected)
+		}
+	}
 	lastUserIdx := -1
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == provider.RoleUser {
+	for i := len(visible) - 1; i >= 0; i-- {
+		if visible[i].Role == provider.RoleUser {
 			lastUserIdx = i
 			break
 		}
@@ -4254,11 +4260,11 @@ func copyAssistantParts(msgs []provider.Message) []string {
 		start = 0
 	}
 	var parts []string
-	for i := start; i < len(msgs); i++ {
-		if msgs[i].Role != provider.RoleAssistant {
+	for i := start; i < len(visible); i++ {
+		if visible[i].Role != provider.RoleAssistant {
 			continue
 		}
-		c := strings.TrimSpace(msgs[i].Content)
+		c := strings.TrimSpace(visible[i].Content)
 		if c == "" || c == "..." || c == "…" {
 			continue
 		}
@@ -4282,6 +4288,11 @@ func (m *chatTUI) runExportCommand(input string) {
 	lastRole := provider.Role("")
 	exportedMessages := 0
 	for _, msg := range msgs {
+		var visible bool
+		msg, visible = provider.DisplayMessage(msg)
+		if !visible {
+			continue
+		}
 		switch msg.Role {
 		case provider.RoleUser:
 			// Skip internal steer messages.
@@ -4557,6 +4568,11 @@ func replaySectionsFor(history []provider.Message, width int) []string {
 			if m.InterruptedTurn != nil {
 				out = append(out, fmt.Sprintf("  · %s\n\n", interruptedTurnDisplayNotice()))
 			}
+			continue
+		}
+		var visible bool
+		m, visible = provider.DisplayMessage(m)
+		if !visible {
 			continue
 		}
 		switch m.Role {

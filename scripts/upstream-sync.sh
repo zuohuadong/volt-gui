@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Selectively sync Go backend changes from upstream (esengine/DeepSeek-Reasonix)
-# while keeping VoltUI branding and the Svelte frontend.
+# Selectively sync Go backend changes from esengine/DeepSeek-Reasonix while
+# keeping VoltUI branding and the Electron/DSH/Svelte desktop workspace.
 #
 # Key design decisions:
-# 1. Fetch over SSH and sync selected Go sources/tests plus reviewed resources
+# 1. Fetch over public HTTPS and sync selected Go sources/tests plus reviewed resources
 # 2. Explicitly exclude CI, documentation, README files, site, and React frontends
 # 3. Exclude Volt-owned subsystems with deep API divergence from automatic sync
 # 4. Never patch VoltUI's fork-specific Windows sandbox implementation
@@ -13,6 +13,7 @@
 set -euo pipefail
 
 UPSTREAM_URL="https://github.com/esengine/DeepSeek-Reasonix.git"
+UPSTREAM_REMOTE="reasonix-upstream"
 UPSTREAM_BRANCH="main-v2"
 MARKER_FILE=".upstream-sync-marker"
 PARITY_CHECK="scripts/check-upstream-feature-parity.mjs"
@@ -23,43 +24,59 @@ SYNC_PATHS=(
   ':(glob)**/*.go'
   'internal/mcpcatalog/catalog-v1.json'
   'internal/mcpcatalog/catalog-v1.json.minisig'
+  'internal/shellsafe/testdata/command_effects.json'
   ':(exclude,glob).github/**'
   ':(exclude,glob)docs/**'
   ':(exclude,glob)**/README*'
   ':(exclude,glob)site/**'
   ':(exclude,glob)cmd/reasonix-guard/**'
+  ':(exclude,glob)benchmarks/**'
+  ':(exclude,glob)cmd/e2ebench/**'
   ':(exclude,glob)desktop/**'
-  ':(exclude)desktop/main.go'
   ':(exclude,glob)internal/acp/**'
   ':(exclude,glob)internal/agent/**'
+  ':(exclude,glob)internal/autoresearch/**'
   ':(exclude,glob)internal/boot/**'
   ':(exclude,glob)internal/bot/**'
   ':(exclude,glob)internal/capability/**'
   ':(exclude,glob)internal/capdiag/**'
   ':(exclude,glob)internal/cli/**'
+  ':(exclude,glob)internal/completion/**'
   ':(exclude,glob)internal/config/**'
   ':(exclude,glob)internal/control/**'
   ':(exclude,glob)internal/doctor/**'
   ':(exclude,glob)internal/event/**'
   ':(exclude,glob)internal/eventwire/**'
+  ':(exclude,glob)internal/evidence/**'
+  ':(exclude,glob)internal/filelock/**'
   ':(exclude,glob)internal/i18n/**'
   ':(exclude,glob)internal/installsource/**'
   ':(exclude,glob)internal/guardian/**'
   ':(exclude,glob)internal/hook/**'
   ':(exclude,glob)internal/memory/**'
+  ':(exclude,glob)internal/notify/**'
+  ':(exclude,glob)internal/plancontract/**'
   ':(exclude,glob)internal/planmode/**'
   ':(exclude,glob)internal/plugin/**'
   ':(exclude,glob)internal/pluginpkg/**'
   ':(exclude,glob)internal/provider/**'
+  ':(exclude,glob)internal/recovery/**'
   ':(exclude,glob)internal/repair/**'
   ':(exclude,glob)internal/sandbox/**'
   ':(exclude,glob)internal/serve/**'
+  ':(exclude,glob)internal/sessioninbox/**'
+  ':(exclude,glob)internal/shellrun/**'
   # Volt keeps a configurable tool-output redaction policy that upstream no
   # longer exposes. Sync secret handling only through an explicit review so an
   # upstream snapshot cannot remove APIs still used by the fork's boot path.
   ':(exclude,glob)internal/secrets/**'
   ':(exclude,glob)internal/skill/**'
+  ':(exclude,glob)internal/stats/**'
+  ':(exclude,glob)internal/store/**'
+  ':(exclude,glob)internal/taskcontract/**'
+  ':(exclude,glob)internal/telemetry/**'
   ':(exclude,glob)internal/tool/**'
+  ':(exclude,glob)internal/trajectory/**'
   ':(exclude,glob)internal/winsandbox/**'
   ':(exclude)internal/winsandbox/'
   ':(exclude)internal/sandbox/seatbelt_windows.go'
@@ -70,20 +87,18 @@ SYNC_PATHS=(
 MODULE_PATHS=(
   'go.mod'
   'go.sum'
-  'desktop/go.mod'
-  'desktop/go.sum'
 )
 
 echo "=== Fetching upstream over HTTPS ==="
-if git remote get-url upstream >/dev/null 2>&1; then
-  git remote set-url upstream "$UPSTREAM_URL"
+if git remote get-url "$UPSTREAM_REMOTE" >/dev/null 2>&1; then
+  git remote set-url "$UPSTREAM_REMOTE" "$UPSTREAM_URL"
 else
-  git remote add upstream "$UPSTREAM_URL"
+  git remote add "$UPSTREAM_REMOTE" "$UPSTREAM_URL"
 fi
-git fetch --no-tags upstream "$UPSTREAM_BRANCH"
+git fetch --no-tags "$UPSTREAM_REMOTE" "$UPSTREAM_BRANCH"
 
 LAST_SYNC=$(cat "$MARKER_FILE" 2>/dev/null || echo "")
-UPSTREAM_HEAD=$(git rev-parse "upstream/$UPSTREAM_BRANCH")
+UPSTREAM_HEAD=$(git rev-parse "$UPSTREAM_REMOTE/$UPSTREAM_BRANCH")
 
 if [[ -n "$LAST_SYNC" ]] && ! git cat-file -e "$LAST_SYNC^{commit}" 2>/dev/null; then
   echo "ERROR: $MARKER_FILE does not name a fetched commit: $LAST_SYNC" >&2
@@ -103,7 +118,6 @@ fi
 
 echo "=== Syncing cumulative diff $LAST_SYNC..$UPSTREAM_HEAD ==="
 
-SKIPPED_FILES=""
 SYNC_BASE=""
 SYNC_ACTIVE=0
 PATCH_FILE=""
@@ -140,13 +154,19 @@ PATCH_FILE=$(mktemp)
 # avoids repeatedly merging the same forked file and guarantees that accepted
 # upstream files represent the final upstream snapshot.
 MISSING_PATHS=()
+SNAPSHOT_PATHS=()
 while IFS=$'\t' read -r status path _; do
   case "$status" in
-    M*|D*|T*)
+    A*|M*|T*)
       if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
-        echo "  SKIP (missing fork path): $path"
+        echo "  SNAPSHOT (missing fork path): $path"
         MISSING_PATHS+=(":(exclude,literal)$path")
-        SKIPPED_FILES="$SKIPPED_FILES $path"
+        SNAPSHOT_PATHS+=("$path")
+      fi
+      ;;
+    D*)
+      if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+        MISSING_PATHS+=(":(exclude,literal)$path")
       fi
       ;;
   esac
@@ -182,6 +202,10 @@ if [[ -s "$PATCH_FILE" ]] && ! git apply --check --reverse --whitespace=nowarn "
 else
   echo "  SKIP (no new sync-selected changes)"
 fi
+
+if ((${#SNAPSHOT_PATHS[@]})); then
+  git checkout "$UPSTREAM_HEAD" -- "${SNAPSHOT_PATHS[@]}"
+fi
 rm -f "$PATCH_FILE"
 PATCH_FILE=""
 
@@ -198,23 +222,13 @@ while IFS= read -r -d '' path; do
   esac
 done < <(git diff --name-only -z "$SYNC_BASE" -- "${SYNC_PATHS[@]}")
 
-# Reconcile module manifests against the merged VoltUI source tree. This keeps
-# fork-only dependencies while adding dependencies required by new upstream
-# packages, instead of replacing either manifest wholesale.
+# Reconcile the root Go manifest against the merged VoltUI source tree. The
+# desktop runtime is an independent pnpm workspace and is verified separately.
 go mod tidy
-(
-  cd desktop
-  go mod tidy
-)
 
-# Do not advance the marker unless both Go modules compile and pass their tests.
+# Do not advance the marker unless the root Go module compiles and passes tests.
 echo "=== Verifying root Go module ==="
 go test ./...
-echo "=== Verifying desktop Go module ==="
-(
-  cd desktop
-  go test ./...
-)
 
 # The marker must not advance past excluded upstream capability changes until
 # each change has an explicit Volt disposition in the parity manifest.
@@ -227,14 +241,5 @@ echo "$UPSTREAM_HEAD" > "$MARKER_FILE"
 echo "=== Staging sync-selected changes ==="
 git add -- "${SYNC_PATHS[@]}" "${MODULE_PATHS[@]}" "$MARKER_FILE"
 SYNC_ACTIVE=0
-
-if [ -n "$SKIPPED_FILES" ]; then
-  echo ""
-  echo "=== WARNING: The following missing fork files were SKIPPED ==="
-  for f in $SKIPPED_FILES; do
-    echo "  - $f"
-  done
-  echo "Review upstream changes to these files manually if needed."
-fi
 
 echo "=== Done. Review with git diff --cached. ==="

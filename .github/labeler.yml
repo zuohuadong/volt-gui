@@ -40,12 +40,13 @@ tui:
 desktop:
   - changed-files:
       - any-glob-to-any-file:
-          - 'desktop/**'
+          - 'apps/desktop-electron/**'
+          - 'apps/desktop-frontend/**'
+          - 'packages/dsh-*/**'
 
 updater:
   - changed-files:
       - any-glob-to-any-file:
-          - 'desktop/cmd/sign/**'
-          - 'desktop/updater*.go'
-          - 'scripts/desktop-build.sh'
+          - 'apps/desktop-electron/electron-builder.json'
+          - 'scripts/package-dist.mjs'
           - '.github/workflows/release*.yml'

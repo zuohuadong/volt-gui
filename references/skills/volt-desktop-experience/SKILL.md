@@ -1,6 +1,6 @@
 ---
 name: volt-desktop-experience
-description: "Use when designing, implementing, or reviewing Volt GUI operational task-lifecycle UX: running message queues and Steer, activity centers, result receipts, structured recovery, explainable approvals, Diff comments to fixes, automation result inboxes, or managed worktree snapshot/Handoff flows. Enforces real Wails-backed state, safe mutation preflights, Work/Code ownership, and behavioral plus visual verification; pair with the project volt-gui-design-language skill for broad visual or layout work."
+description: "Use when designing, implementing, or reviewing Volt GUI operational task-lifecycle UX: running message queues and Steer, activity centers, result receipts, structured recovery, explainable approvals, Diff comments to fixes, automation result inboxes, or managed worktree snapshot/Handoff flows. Enforces real Electron/DSH-backed state, safe mutation preflights, Work/Code ownership, and behavioral plus visual verification; pair with the project volt-gui-design-language skill for broad visual or layout work."
 ---
 
 # Volt Desktop Experience
@@ -10,7 +10,7 @@ Build a calm, compact, trustworthy desktop workbench. Reuse proven interaction s
 ## Start from durable truth
 
 1. Read the repository `DESIGN.md` completely.
-2. Read the Volt overlay in `AGENTS.md` and the relevant Svelte/Wails project rules.
+2. Read the Volt overlay in `AGENTS.md` and the relevant Svelte/Electron/DSH project rules.
 3. Inspect the current component, backend binding, real state type, and tests before changing UI.
 4. Inspect the designated reference project's real source when it is reachable. Extract structure and interaction logic; never infer unavailable source or copy brand assets, product copy, or implementation wholesale.
 
@@ -52,8 +52,8 @@ Core rules:
 
 ## Implement within existing boundaries
 
-- Keep Wails/Go as the source of truth for filesystem, Git, automation, and runtime state.
-- Keep pure TypeScript state transitions in `desktop/frontend/src/lib/` with Vitest coverage.
+- Keep the Electron main process, typed preload API, and DSH service as the desktop authority boundary. Go remains authoritative only for CLI/TUI paths that the Electron workbench actually invokes.
+- Keep pure TypeScript state transitions in `apps/desktop-frontend/src/lib/` with Vitest coverage.
 - Keep Svelte components owned and focused; avoid adding more broad normalization CSS to `App.svelte`.
 - Use semantic tokens and the prose intent in `DESIGN.md`; do not introduce a new design system or framework.
 - Prefer compact rows for large collections and cards only for summaries, decisions, or small bounded groups.
@@ -67,7 +67,7 @@ Run the narrowest real checks first, then broaden:
 1. Add or update behavior-first unit tests for state transitions.
 2. Run `svelte-autofixer` on every changed `.svelte` file and resolve actual issues.
 3. Run frontend unit tests and the production build.
-4. Run targeted Go tests for Wails-backed behavior, then the applicable desktop test suite.
+4. Run Electron boundary tests, DSH package tests, and targeted Go tests only when the changed behavior still crosses the Go CLI/TUI boundary.
 5. Run `npx @google/design.md lint DESIGN.md` when design tokens or rationale change.
 6. Inspect desktop and narrow screenshots for hierarchy, density, overflow, focus, empty states, and recovery actions.
 7. Run `git diff --check` and review the current diff before declaring completion.

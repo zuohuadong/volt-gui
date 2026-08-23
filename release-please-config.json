@@ -47,9 +47,9 @@
       "release-type": "simple",
       "component": "desktop",
       "package-name": "voltui-desktop",
-      "changelog-path": "desktop/CHANGELOG.md",
+      "changelog-path": "CHANGELOG.md",
       "extra-files": [
-        "desktop/version.txt"
+        "apps/desktop-electron/package.json"
       ]
     }
   }

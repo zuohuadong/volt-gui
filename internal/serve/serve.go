@@ -681,6 +681,11 @@ type historyMessage struct {
 func historyMessages(msgs []provider.Message) []historyMessage {
 	out := make([]historyMessage, 0, len(msgs))
 	for _, m := range msgs {
+		var visible bool
+		m, visible = provider.DisplayMessage(m)
+		if !visible {
+			continue
+		}
 		// Steer messages are surfaced as a notice, not a user message.
 		if m.Role == provider.RoleUser {
 			if steerText, isSteer := agent.SteerText(m.Content); isSteer {

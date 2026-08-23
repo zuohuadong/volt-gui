@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "jsonrepair": "^3.15.0",
-    "openai": "^4.86.1"
+    "openai": "^6.26.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

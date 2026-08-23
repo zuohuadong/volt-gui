@@ -22,6 +22,8 @@
 
 > **西谷智灯暗涌系统 (Anyong)** — [西谷AI](https://cnb.cool/aizhuliren) 出品的本土化 AI 编码 Agent。
 > 离线优先、多模型、内网就绪 —— 打包一次，全员上手。
+>
+> 桌面端现采用 Electron + DSH + Svelte 5，当前打包范围仅为 Windows x64。macOS/Linux 与自动稳定版发布会在签名和更新链完成验证后再启用。
 
 <br/>
 

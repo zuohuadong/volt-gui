@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron';
+import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { homedir } from 'node:os';
@@ -19,6 +20,13 @@ interface AppConfig {
 
 interface PublicAppConfig extends Omit<AppConfig, 'apiKey'> {
   apiKeySet: boolean;
+  brandName: string;
+  brandShortName: string;
+}
+
+interface DshConnection {
+  baseUrl: string;
+  accessToken: string;
 }
 
 interface AppConfigPatch {
@@ -38,6 +46,8 @@ const __dirname = path.dirname(__filename);
 let mainWindow: BrowserWindow | null = null;
 let dshServer: DshServer | null = null;
 let serverUrl = '';
+const serverAccessToken = randomBytes(32).toString('base64url');
+let restartQueue: Promise<void> = Promise.resolve();
 
 function resolveInitialWorkingDirectory(): string {
   const configuredDirectory = process.env.DSH_WORKSPACE || process.env.INIT_CWD;
@@ -55,6 +65,8 @@ function resolveInitialWorkingDirectory(): string {
 let currentWorkingDir = resolveInitialWorkingDirectory();
 const DEFAULT_DSH_PORT = 3210;
 const DSH_PORT_SEARCH_LIMIT = 10;
+const brandName = process.env.VOLTUI_BRAND_NAME?.trim() || 'VoltUI';
+const brandShortName = process.env.VOLTUI_BRAND_SHORT_NAME?.trim() || 'Volt';
 
 let appConfig: AppConfig = {
   model: process.env.DEEPSEEK_MODEL || process.env.DSH_MODEL || 'deepseek-chat',
@@ -68,7 +80,11 @@ let appConfig: AppConfig = {
 
 function publicConfig(config = appConfig): PublicAppConfig {
   const { apiKey, ...safeConfig } = config;
-  return { ...safeConfig, apiKeySet: Boolean(apiKey) };
+  return { ...safeConfig, apiKeySet: Boolean(apiKey), brandName, brandShortName };
+}
+
+function serverConnection(): DshConnection {
+  return { baseUrl: serverUrl, accessToken: serverAccessToken };
 }
 
 function normalizedConfigPatch(patch: AppConfigPatch): AppConfig {
@@ -110,6 +126,8 @@ async function launchDshBackend(config: AppConfig, workingDirectory: string) {
     const candidate = new DshServer({
       port,
       host: config.host,
+      authToken: serverAccessToken,
+      allowedOrigins: ['null'],
       config: {
         model: config.model,
         apiKey: config.apiKey,
@@ -134,24 +152,35 @@ async function launchDshBackend(config: AppConfig, workingDirectory: string) {
   throw new Error('未能找到可用的 DSH 本机端口。');
 }
 
-async function startDshBackend(nextConfig = appConfig, nextWorkingDir = currentWorkingDir): Promise<string> {
+async function replaceDshBackend(nextConfig: AppConfig, nextWorkingDir: string): Promise<DshConnection> {
   const previousServer = dshServer;
   const launchConfig = previousServer ? { ...nextConfig, port: 0 } : nextConfig;
   const launched = await launchDshBackend(launchConfig, nextWorkingDir);
+
+  if (previousServer) {
+    try {
+      await previousServer.stop();
+    } catch (error) {
+      await launched.server.stop().catch(() => undefined);
+      throw error;
+    }
+  }
 
   dshServer = launched.server;
   serverUrl = launched.url;
   appConfig = { ...nextConfig, port: launched.port };
   currentWorkingDir = nextWorkingDir;
-
-  if (previousServer) {
-    await previousServer.stop().catch((error: unknown) => {
-      console.warn('[Electron Main] 停止旧后端服务警告:', error);
-    });
-  }
-
   console.log(`[Electron Main] DSH 智能后端已就绪: ${serverUrl}`);
-  return serverUrl;
+  return serverConnection();
+}
+
+function startDshBackend(resolveTarget = () => ({ config: appConfig, workingDirectory: currentWorkingDir })): Promise<DshConnection> {
+  const restart = restartQueue.then(() => {
+    const target = resolveTarget();
+    return replaceDshBackend({ ...target.config }, target.workingDirectory);
+  });
+  restartQueue = restart.then(() => undefined, () => undefined);
+  return restart;
 }
 
 async function createWindow() {
@@ -160,7 +189,7 @@ async function createWindow() {
     height: 940,
     minWidth: 1060,
     minHeight: 680,
-    title: '暗涌智能 · Anyong DSH 工作台',
+    title: `${brandName} 工作台`,
     backgroundColor: '#F6F6F5',
     frame: false,
     autoHideMenuBar: true,
@@ -245,19 +274,21 @@ async function createWindow() {
 }
 
 // IPC 接口注册
-ipcMain.handle('dsh:get-server-url', () => serverUrl);
+ipcMain.handle('dsh:get-server-connection', () => serverConnection());
 ipcMain.handle('dsh:get-working-dir', () => currentWorkingDir);
 ipcMain.handle('dsh:get-config', () => publicConfig());
 
 ipcMain.handle('dsh:save-config', async (_evt, patch: AppConfigPatch) => {
   try {
-    const nextConfig = normalizedConfigPatch(patch ?? {});
-    await startDshBackend(nextConfig, currentWorkingDir);
-    return { success: true, config: publicConfig(), serverUrl };
+    await startDshBackend(() => ({
+      config: normalizedConfigPatch(patch ?? {}),
+      workingDirectory: currentWorkingDir,
+    }));
+    return { success: true, config: publicConfig(), connection: serverConnection() };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('重启后端服务失败:', error);
-    return { success: false, config: publicConfig(), serverUrl, error: message };
+    return { success: false, config: publicConfig(), connection: serverConnection(), error: message };
   }
 });
 
@@ -268,8 +299,8 @@ ipcMain.handle('dsh:set-working-dir', async (_evt, dirPath) => {
     if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
       return { success: false, error: '目标路径不存在或不是目录' };
     }
-    await startDshBackend(appConfig, dirPath);
-    return { success: true, workingDir: currentWorkingDir, serverUrl };
+    await startDshBackend(() => ({ config: appConfig, workingDirectory: dirPath }));
+    return { success: true, workingDir: currentWorkingDir, connection: serverConnection() };
   } catch (error: unknown) {
     return { success: false, workingDir: currentWorkingDir, error: error instanceof Error ? error.message : String(error) };
   }
@@ -284,8 +315,8 @@ ipcMain.handle('dsh:open-folder-dialog', async () => {
   });
   if (result.filePaths && result.filePaths.length > 0) {
     try {
-      await startDshBackend(appConfig, result.filePaths[0]);
-      return { success: true, workingDir: currentWorkingDir, serverUrl };
+      await startDshBackend(() => ({ config: appConfig, workingDirectory: result.filePaths[0] }));
+      return { success: true, workingDir: currentWorkingDir, connection: serverConnection() };
     } catch (error: unknown) {
       return { success: false, workingDir: currentWorkingDir, error: error instanceof Error ? error.message : String(error) };
     }
@@ -342,8 +373,11 @@ if (!gotSingleInstanceLock) {
 }
 
 app.on('window-all-closed', async () => {
+  await restartQueue;
   if (dshServer) {
     await dshServer.stop();
+    dshServer = null;
+    serverUrl = '';
   }
   if (process.platform !== 'darwin') {
     app.quit();

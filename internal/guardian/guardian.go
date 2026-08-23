@@ -118,8 +118,15 @@ func NewSession(prov provider.Provider, readOnlyReg *tool.Registry, policyPrompt
 // prefix-cache warmth). Event emission is deferred to outside the lock so a
 // slow sink does not stall the next review.
 func (gs *Session) Review(ctx context.Context, toolName string, args json.RawMessage, parentSession *agent.Session) (allow bool, reason string, err error) {
-	allow, reason, _ = gs.review(ctx, toolName, args, parentSession)
+	allow, reason, _, _ = gs.review(ctx, toolName, args, parentSession)
 	return allow, reason, nil
+}
+
+// ReviewWithResult preserves Review's fail-closed legacy behavior while also
+// returning the structured assessment that approval UIs persist and replay.
+func (gs *Session) ReviewWithResult(ctx context.Context, toolName string, args json.RawMessage, parentSession *agent.Session) (allow bool, reason string, result event.GuardianResult, err error) {
+	allow, reason, result, _ = gs.review(ctx, toolName, args, parentSession)
+	return allow, reason, result, nil
 }
 
 // ReviewVerdict is Review for callers that must distinguish an authentic
@@ -129,10 +136,11 @@ func (gs *Session) Review(ctx context.Context, toolName string, args json.RawMes
 // nil error. auto_review uses this so a failed review degrades to a fresh
 // human decision instead of masquerading as a reviewer deny.
 func (gs *Session) ReviewVerdict(ctx context.Context, toolName string, args json.RawMessage, parentSession *agent.Session) (allow bool, reason string, err error) {
-	return gs.review(ctx, toolName, args, parentSession)
+	allow, reason, _, err = gs.review(ctx, toolName, args, parentSession)
+	return allow, reason, err
 }
 
-func (gs *Session) review(ctx context.Context, toolName string, args json.RawMessage, parentSession *agent.Session) (allow bool, reason string, failure error) {
+func (gs *Session) review(ctx context.Context, toolName string, args json.RawMessage, parentSession *agent.Session) (allow bool, reason string, result event.GuardianResult, failure error) {
 	reviewCtx, cancel := context.WithTimeout(ctx, reviewTimeout)
 	defer cancel()
 
@@ -235,12 +243,13 @@ func (gs *Session) review(ctx context.Context, toolName string, args json.RawMes
 	gs.mu.Unlock()
 
 	// Emit event outside the lock.
-	gs.emitTo(sink, assessment, toolName, subject(args), dur, reviewUsage)
+	result = gs.result(assessment, toolName, subject(args), dur, reviewUsage)
+	gs.emitTo(sink, result)
 
 	if assessment.Outcome == "deny" {
-		return false, reason, failure
+		return false, reason, result, failure
 	}
-	return true, "", nil
+	return true, "", result, nil
 }
 
 // PathFor returns the guardian session file path for a given main session path.
@@ -485,23 +494,23 @@ func (gs *Session) countRecentDenials() int {
 
 // emitTo sends a GuardianAssessment event (with per-review token cost) to the
 // captured sink. Must be called outside the Session mutex to avoid blocking.
-func (gs *Session) emitTo(sink event.Sink, a Assessment, tool, subj string, durMs int64, usage *provider.Usage) {
-	id := fmt.Sprintf("guardian-%d", time.Now().UnixNano())
-	sink.Emit(event.Event{
-		Kind: event.GuardianAssessment,
-		Guardian: event.GuardianResult{
-			ID:                id,
-			Tool:              tool,
-			Subject:           subj,
-			Outcome:           a.Outcome,
-			RiskLevel:         a.RiskLevel,
-			UserAuthorization: a.UserAuthorization,
-			Rationale:         a.Rationale,
-			DurationMs:        durMs,
-			Usage:             usage,
-			Pricing:           gs.pricing,
-		},
-	})
+func (gs *Session) result(a Assessment, tool, subj string, durMs int64, usage *provider.Usage) event.GuardianResult {
+	return event.GuardianResult{
+		ID:                fmt.Sprintf("guardian-%d", time.Now().UnixNano()),
+		Tool:              tool,
+		Subject:           subj,
+		Outcome:           a.Outcome,
+		RiskLevel:         a.RiskLevel,
+		UserAuthorization: a.UserAuthorization,
+		Rationale:         a.Rationale,
+		DurationMs:        durMs,
+		Usage:             usage,
+		Pricing:           gs.pricing,
+	}
+}
+
+func (gs *Session) emitTo(sink event.Sink, result event.GuardianResult) {
+	sink.Emit(event.Event{Kind: event.GuardianAssessment, Guardian: result})
 }
 
 // subject extracts a human-readable call subject from tool args for event display.

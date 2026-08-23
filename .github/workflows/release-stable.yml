@@ -5,12 +5,9 @@ run-name: Release stable ${{ inputs.tag || github.ref_name }}
 # npm, and desktop tags atomically; release-stable-trigger.yml relays the vX.Y.Z
 # tag to this workflow on protected main-v2. Preflight verifies that all three
 # tags point to the reviewed Notes candidate on main-v2 history, and one GitHub
-# approval releases every surface. After approval, a zero-publication Windows
-# preflight verifies both architectures and signing stages before publication.
-# Keeping the control-plane ref on main-v2 lets SignPath restrict
-# production signing to that one protected origin instead of trusting wildcard
-# tag-like branch names. Manual recovery uses the same fixed control plane while
-# preserving an older tagged candidate on main-v2 history.
+# approval releases CLI/npm while building the Electron Windows x64 artifact.
+# Desktop publication remains fail-closed until Electron signing and updater
+# verification replace the retired Wails/SignPath pipeline.
 on:
   workflow_dispatch:
     inputs:
@@ -29,7 +26,7 @@ on:
         default: true
         type: boolean
       publish_desktop:
-        description: "Recover the Desktop/R2 channel"
+        description: "Build the unsigned Electron Windows x64 artifact"
         required: false
         default: true
         type: boolean
@@ -43,8 +40,8 @@ concurrency:
   group: stable-release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
-# Reusable release workflows can only reduce caller permissions, so the
-# orchestrator grants the union needed by CLI/Desktop publication.
+  # Reusable release workflows can only reduce caller permissions, so the
+  # orchestrator grants the union needed by CLI/npm publication and artifacts.
 permissions:
   actions: write
   contents: write
@@ -142,8 +139,8 @@ jobs:
 
   cli:
     name: publish CLI and Homebrew
-    needs: [authorize, signpath-preflight]
-    if: ${{ always() && !cancelled() && needs.authorize.result == 'success' && (needs.signpath-preflight.result == 'success' || needs.signpath-preflight.result == 'skipped') && (github.event_name != 'workflow_dispatch' || inputs.publish_cli) }}
+    needs: authorize
+    if: ${{ always() && !cancelled() && needs.authorize.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.publish_cli) }}
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.authorize.outputs.cli_tag }}
@@ -154,8 +151,8 @@ jobs:
 
   npm:
     name: publish npm
-    needs: [authorize, signpath-preflight]
-    if: ${{ always() && !cancelled() && needs.authorize.result == 'success' && (needs.signpath-preflight.result == 'success' || needs.signpath-preflight.result == 'skipped') && (github.event_name != 'workflow_dispatch' || inputs.publish_npm) }}
+    needs: authorize
+    if: ${{ always() && !cancelled() && needs.authorize.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.publish_npm) }}
     uses: ./.github/workflows/release-npm.yml
     with:
       channel: stable
@@ -166,24 +163,10 @@ jobs:
       orchestrated: true
     secrets: inherit
 
-  signpath-preflight:
-    name: verify stable SignPath control plane
-    needs: authorize
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_desktop }}
-    uses: ./.github/workflows/release-desktop.yml
-    with:
-      channel: stable
-      tag: ${{ needs.authorize.outputs.desktop_tag }}
-      approved_cli_tag: ${{ needs.authorize.outputs.cli_tag }}
-      approved_sha: ${{ needs.authorize.outputs.sha }}
-      orchestrated: true
-      signing_preflight: true
-    secrets: inherit
-
   desktop:
-    name: publish desktop
-    needs: [authorize, signpath-preflight]
-    if: ${{ always() && !cancelled() && needs.authorize.result == 'success' && needs.signpath-preflight.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.publish_desktop) }}
+    name: build Electron desktop artifact
+    needs: authorize
+    if: ${{ always() && !cancelled() && needs.authorize.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.publish_desktop) }}
     uses: ./.github/workflows/release-desktop.yml
     with:
       channel: stable
@@ -191,8 +174,6 @@ jobs:
       approved_cli_tag: ${{ needs.authorize.outputs.cli_tag }}
       approved_sha: ${{ needs.authorize.outputs.sha }}
       orchestrated: true
-      signing_preflight_verified: true
-    secrets: inherit
 
   postflight:
     name: verify stable release artifacts
@@ -242,6 +223,7 @@ jobs:
           RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
           CLI_TAG: ${{ needs.authorize.outputs.cli_tag }}
           DESKTOP_TAG: ${{ needs.authorize.outputs.desktop_tag }}
+          VERIFY_DESKTOP_PUBLICATION: "false"
         run: bash scripts/verify-stable-release-artifacts.sh
       - name: Publish exact Stable release record
         env:

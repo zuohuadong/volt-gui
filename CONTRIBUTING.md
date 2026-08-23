@@ -15,7 +15,7 @@
 
 - **Go 1.26+** — the project targets the latest stable Go release
 - **Git** — for version control
-- **Node.js** (optional) — only if you work on the desktop app (`desktop/`)
+- **Node.js 26 + pnpm 11** (optional) — required for the Electron desktop and DSH workspace
 
 ## Getting started
 
@@ -46,7 +46,9 @@ go test ./...              # runs the full test suite
 | `internal/sandbox` | OS-level sandboxing |
 | `internal/serve` | HTTP/SSE server frontend |
 | `internal/checkpoint` | Snapshot-based rewind |
-| `desktop/` | Wails-based desktop app (separate Go module) |
+| `apps/desktop-electron/` | Electron main process, preload and Windows packaging |
+| `apps/desktop-frontend/` | Svelte 5 desktop renderer |
+| `packages/dsh-*` | DSH runtime, server, CLI and desktop integration packages |
 | `docs/` | Engineering spec, migration guide |
 | `references/skills/` | Fork 专属行业 skill (不贡献上游) |
 
@@ -70,7 +72,15 @@ make vet            # go vet ./...
 make fmt            # gofmt -w .
 make hooks          # install git hooks (pre-push: go vet)
 make cross          # cross-compile for all 6 targets
+make desktop-check  # Svelte and runtime-boundary checks
+make desktop-test   # desktop frontend and DSH unit tests
+make desktop-build  # build the Electron renderer, preload and main process
+make desktop-dist   # package Windows x64 NSIS and portable executables
 ```
+
+The Electron packaging contract is currently Windows x64 only. CI fails closed
+instead of advertising macOS or Linux desktop artifacts until those targets,
+signing and updater flows are implemented and verified.
 
 ### Running tests
 

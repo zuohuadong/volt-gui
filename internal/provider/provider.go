@@ -54,8 +54,11 @@ type Message struct {
 	MemoryCitations    []MemoryCitation `json:"memoryCitations,omitempty"` // local UI metadata; provider requests ignore it
 	WorkDurationMs     int64            `json:"workDurationMs,omitempty"`  // local UI metadata; provider requests ignore it
 	CreatedAt          int64            `json:"createdAt,omitempty"`       // local UI metadata; unix milliseconds; stripped before provider requests
-	Edited             bool             `json:"edited,omitempty"`          // local UI metadata; provider requests ignore it
-	Original           string           `json:"original,omitempty"`        // user prompt before inline edit
+	// Display metadata keeps model-visible context intact while projecting user-visible history.
+	DisplayHidden    bool   `json:"displayHidden,omitempty"`
+	DisplayToolsOnly bool   `json:"displayToolsOnly,omitempty"`
+	Edited           bool   `json:"edited,omitempty"`   // local UI metadata; provider requests ignore it
+	Original         string `json:"original,omitempty"` // user prompt before inline edit
 	// LocalOnly marks durable transcript content that must never be sent to a
 	// model provider. Interrupted streaming output uses it so every frontend can
 	// replay what the user saw without feeding partial reasoning or tool-call

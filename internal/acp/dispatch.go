@@ -202,6 +202,11 @@ func (s *updateSink) send(update any) {
 // completed since it is history, not a live turn.
 func (s *updateSink) replay(msgs []provider.Message) {
 	for _, m := range msgs {
+		var visible bool
+		m, visible = provider.DisplayMessage(m)
+		if !visible {
+			continue
+		}
 		switch m.Role {
 		case provider.RoleUser:
 			text := m.Content

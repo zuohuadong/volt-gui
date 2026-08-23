@@ -5,10 +5,11 @@ import { execFileSync } from "node:child_process";
 
 const files = execFileSync("git", ["ls-files", "README.md", "docs/*.md", "site/src/pages/*", "site/src/pages/**/*"], {
   encoding: "utf8",
-}).trim().split("\n").filter(Boolean);
+}).trim().split("\n").map((file) => file.trim().replaceAll("\\", "/")).filter(Boolean);
 const migrationReferences = new Set([
+  "docs/MIGRATING.md",
+  "docs/MIGRATING.zh-CN.md",
   "docs/RELEASING.md",
-  "docs/SIGNPATH_WINDOWS_ADMIN_SOP.md",
   "docs/CLI.md",
   "docs/CLI.zh-CN.md",
 ]);

@@ -30,7 +30,7 @@ When studying Codex Desktop, aoristlawer, or another product:
 
 - Extract navigation rhythm, panel ownership, progressive disclosure, queue semantics, review loops, and recovery behavior.
 - Translate those patterns into Volt's Workspace → Project → Thread/Task → Agent Profile model.
-- Preserve Volt's Work/Code split and Wails/Svelte boundaries.
+- Preserve Volt's Work/Code split and Electron preload/DSH/Svelte boundaries.
 - Do not copy names, logos, proprietary copy, illustrations, source layout, or hidden implementation details.
 - Prefer a smaller native pattern over a broad clone when the reference conflicts with Volt's object model.
 

@@ -41,6 +41,54 @@ func TestSearchRanksSavedSessionHistory(t *testing.T) {
 	}
 }
 
+func TestSearchAndAroundApplyDisplayMetadata(t *testing.T) {
+	sessionDir := t.TempDir()
+	path := filepath.Join(sessionDir, "office.jsonl")
+	writeSession(t, path, []provider.Message{
+		{Role: provider.RoleUser, Content: "visible anchor"},
+		{Role: provider.RoleUser, Content: "proofreadsecret", DisplayHidden: true},
+		{
+			Role:             provider.RoleAssistant,
+			Content:          "draftsecret",
+			ReasoningContent: "reasoningsecret",
+			ToolCalls:        []provider.ToolCall{{ID: "call_1", Name: "bash", Arguments: `{"cmd":"visible-tool"}`}},
+			DisplayToolsOnly: true,
+		},
+		{Role: provider.RoleTool, ToolCallID: "call_1", Name: "bash", Content: "visible tool result"},
+		{Role: provider.RoleAssistant, Content: "visible final"},
+	})
+
+	searcher := NewSearcher(Options{SessionDir: sessionDir})
+	for _, query := range []string{"proofreadsecret", "draftsecret", "reasoningsecret"} {
+		hits, err := searcher.Search(context.Background(), SearchRequest{Query: query, Limit: 5})
+		if err != nil {
+			t.Fatalf("Search(%q): %v", query, err)
+		}
+		if len(hits) != 0 {
+			t.Fatalf("Search(%q) leaked hidden history: %+v", query, hits)
+		}
+	}
+
+	msgs, err := searcher.Around(context.Background(), AroundRequest{SessionPath: path, MessageIndex: 2, Before: 2, After: 2})
+	if err != nil {
+		t.Fatalf("Around: %v", err)
+	}
+	joined := ""
+	for _, msg := range msgs {
+		joined += msg.Text + "\n"
+	}
+	for _, hidden := range []string{"proofreadsecret", "draftsecret", "reasoningsecret"} {
+		if strings.Contains(joined, hidden) {
+			t.Fatalf("Around leaked %q:\n%s", hidden, joined)
+		}
+	}
+	for _, visible := range []string{"visible anchor", "visible-tool", "visible tool result", "visible final"} {
+		if !strings.Contains(joined, visible) {
+			t.Fatalf("Around lost %q:\n%s", visible, joined)
+		}
+	}
+}
+
 func TestSearchGlobalIncludesArchives(t *testing.T) {
 	sessionDir := t.TempDir()
 	archiveDir := t.TempDir()

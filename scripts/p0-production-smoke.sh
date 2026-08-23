@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# P0 production-readiness smoke for the desktop workbench.
+# P0 production-readiness smoke for the Electron/DSH desktop workbench.
 #
 # Defaults are deterministic and do not require provider secrets. Expensive or
 # credentialed checks are opt-in:
 #   VOLTUI_P0_REAL_PROVIDER=1      run a real-provider tool loop via e2ebench
-#   VOLTUI_P0_DESKTOP_PACKAGE=1    build a platform package through ./prod_test
+#   VOLTUI_P0_DESKTOP_PACKAGE=1    package the supported Windows x64 target
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,19 +22,18 @@ require_cmd() {
 	}
 }
 
-restore_frontend_keep() {
-	mkdir -p desktop/frontend/dist
-	touch desktop/frontend/dist/.gitkeep
-}
-
-run_frontend_checks() {
-	run pnpm --dir desktop/frontend check
-	(
-		cd desktop/frontend
-		run bun test
-	)
-	run pnpm --dir desktop/frontend build
-	restore_frontend_keep
+run_desktop_checks() {
+	run node --test \
+		scripts/check-electron-runtime-boundary.test.mjs \
+		scripts/check-runtime-mocks.test.mjs \
+		scripts/package-dist.test.mjs \
+		scripts/set-electron-package-version.test.mjs
+	run node scripts/check-electron-runtime-boundary.mjs
+	run node scripts/check-runtime-mocks.mjs
+	run pnpm --filter voltui-desktop-workbench run check
+	run pnpm --filter voltui-desktop-workbench run test:unit
+	run pnpm test
+	run pnpm run build:desktop
 }
 
 run_real_provider_smoke() {
@@ -112,27 +111,29 @@ EOF_CFG
 	)
 }
 
+run_desktop_package() {
+	if [[ "${VOLTUI_P0_DESKTOP_PACKAGE:-0}" != "1" ]]; then
+		printf '\n==> skipping desktop package smoke: set VOLTUI_P0_DESKTOP_PACKAGE=1 to enable\n'
+		return
+	fi
+
+	case "$(uname -s)" in
+	MINGW*|MSYS*|CYGWIN*) run pnpm run dist:desktop ;;
+	*)
+		printf 'desktop packaging is supported only on a Windows x64 runner\n' >&2
+		exit 1
+		;;
+	esac
+}
+
 require_cmd go
+require_cmd node
 require_cmd pnpm
-require_cmd bun
-trap restore_frontend_keep EXIT
 
 run go test ./internal/agent -run 'TestAgentEmitsRetryingThenStreams|TestGateBlocksDeniedCall|TestRunPermissionDeniedToolCallPreservesRecovery|TestRunRecoversInterruptedPartialToolCallWithoutExecutingIt' -count=1
-
-run_frontend_checks
-(
-	cd desktop
-	run go test ./... -run 'TestWailsBindingSmoke|TestSubmitDisplayToTabRejectsMissingProviderKeyBeforeTurn|TestEnsureTabModelReadyFallsBackFromKeylessRestoredModel|TestRecoverToPending|TestFlushPendingCrash|TestAppPlatformReturnsRuntimeGOOS' -count=1
-)
-
+run_desktop_checks
 run_real_provider_smoke
-
-if [[ "${VOLTUI_P0_DESKTOP_PACKAGE:-0}" == "1" ]]; then
-	PROD_TEST_OPEN_DIST=0 run ./prod_test
-else
-	printf '\n==> skipping desktop package smoke: set VOLTUI_P0_DESKTOP_PACKAGE=1 to enable\n'
-fi
-
+run_desktop_package
 run git diff --check
 
 printf '\nP0 production smoke completed.\n'

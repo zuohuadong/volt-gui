@@ -3,6 +3,7 @@ package bot
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -195,7 +196,7 @@ func TestRemoteStoreEnforcesLifecycleGovernanceReceiptAuditAndCrashSafety(t *tes
 		if err != nil {
 			t.Fatalf("stat %s: %v", name, err)
 		}
-		if info.Mode().Perm() != 0o600 {
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 			t.Fatalf("%s mode = %o, want 600", name, info.Mode().Perm())
 		}
 	}

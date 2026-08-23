@@ -37,8 +37,9 @@ func SessionsShareContent(pathA, pathB string) (bool, error) {
 // time. Messages restored from a replace event (compaction, rewind) lose their
 // per-turn times and report zero; callers apply their own fallback.
 type SessionUserMessage struct {
-	Text string
-	At   time.Time
+	Text          string
+	At            time.Time
+	DisplayHidden bool
 }
 
 // LoadSessionUserMessages returns the session's user-role messages in
@@ -61,7 +62,11 @@ func LoadSessionUserMessages(path string) ([]SessionUserMessage, error) {
 				if m.CreatedAt > 0 {
 					at = time.UnixMilli(m.CreatedAt)
 				}
-				out = append(out, SessionUserMessage{Text: m.Content, At: at})
+				out = append(out, SessionUserMessage{
+					Text:          m.Content,
+					At:            at,
+					DisplayHidden: m.DisplayHidden,
+				})
 			}
 			return out, nil
 		}
@@ -79,7 +84,7 @@ func LoadSessionUserMessages(path string) ([]SessionUserMessage, error) {
 		if m.CreatedAt > 0 {
 			at = time.UnixMilli(m.CreatedAt)
 		}
-		out = append(out, SessionUserMessage{Text: m.Content, At: at})
+		out = append(out, SessionUserMessage{Text: m.Content, At: at, DisplayHidden: m.DisplayHidden})
 	}
 	return out, nil
 }

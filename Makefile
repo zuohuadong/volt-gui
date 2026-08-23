@@ -2,7 +2,7 @@ VERSION := $(shell git describe --tags --always 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 GOEXE := $(shell go env GOEXE)
 
-.PHONY: build vet fmt test desktop-test desktop-test-short desktop-test-times hooks cross clean
+.PHONY: build vet fmt test desktop-check desktop-test desktop-build desktop-dist hooks cross clean
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/voltui$(GOEXE) ./cmd/voltui
@@ -18,13 +18,19 @@ test:
 	go test ./...
 
 desktop-test:
-	cd desktop && go test .
+	pnpm --filter voltui-desktop-workbench run test:unit
+	pnpm --filter "@dsh/*" --filter "@volt/*" run test
 
-desktop-test-short:
-	cd desktop && go test -short .
+desktop-check:
+	pnpm --filter voltui-desktop-workbench run check
+	pnpm --filter voltui-desktop-workbench run check:runtime-mocks
+	pnpm --filter voltui-desktop-workbench run check:electron-boundary
 
-desktop-test-times:
-	cd desktop && go test -count=1 -json . | python3 ../scripts/desktop-test-times.py
+desktop-build:
+	pnpm run build:desktop
+
+desktop-dist:
+	pnpm run dist:desktop
 
 hooks:
 	@git config core.hooksPath .githooks

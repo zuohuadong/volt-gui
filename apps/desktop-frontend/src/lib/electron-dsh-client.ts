@@ -56,6 +56,11 @@ export interface DshHealth {
   toolsCount: number;
 }
 
+export interface DshConnection {
+  baseUrl: string;
+  accessToken: string;
+}
+
 async function responseError(response: Response): Promise<Error> {
   const body = await response.text();
   try {
@@ -67,8 +72,17 @@ async function responseError(response: Response): Promise<Error> {
   return new Error(body.trim() || `DSH 请求失败（HTTP ${response.status}）`);
 }
 
-async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+function requestHeaders(connection: DshConnection, json = false): HeadersInit {
+  return {
+    Authorization: `Bearer ${connection.accessToken}`,
+    ...(json ? { "Content-Type": "application/json" } : {}),
+  };
+}
+
+async function getJson<T>(connection: DshConnection, path: string): Promise<T> {
+  const response = await fetch(`${normalizeDshBaseUrl(connection.baseUrl)}${path}`, {
+    headers: requestHeaders(connection),
+  });
   if (!response.ok) throw await responseError(response);
   return response.json() as Promise<T>;
 }
@@ -77,22 +91,25 @@ export function normalizeDshBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/$/, "");
 }
 
-export async function getDshHealth(baseUrl: string): Promise<DshHealth> {
-  return getJson<DshHealth>(`${normalizeDshBaseUrl(baseUrl)}/api/health`);
+export async function getDshHealth(connection: DshConnection): Promise<DshHealth> {
+  return getJson<DshHealth>(connection, "/api/health");
 }
 
-export async function getDshHistory(baseUrl: string): Promise<DshMessage[]> {
-  const result = await getJson<{ messages: DshMessage[] }>(`${normalizeDshBaseUrl(baseUrl)}/api/history`);
+export async function getDshHistory(connection: DshConnection): Promise<DshMessage[]> {
+  const result = await getJson<{ messages: DshMessage[] }>(connection, "/api/history");
   return Array.isArray(result.messages) ? result.messages : [];
 }
 
-export async function getDshTools(baseUrl: string): Promise<DshToolSchema[]> {
-  const result = await getJson<{ tools: DshToolSchema[] }>(`${normalizeDshBaseUrl(baseUrl)}/api/tools`);
+export async function getDshTools(connection: DshConnection): Promise<DshToolSchema[]> {
+  const result = await getJson<{ tools: DshToolSchema[] }>(connection, "/api/tools");
   return Array.isArray(result.tools) ? result.tools : [];
 }
 
-export async function clearDshHistory(baseUrl: string): Promise<void> {
-  const response = await fetch(`${normalizeDshBaseUrl(baseUrl)}/api/history`, { method: "DELETE" });
+export async function clearDshHistory(connection: DshConnection): Promise<void> {
+  const response = await fetch(`${normalizeDshBaseUrl(connection.baseUrl)}/api/history`, {
+    method: "DELETE",
+    headers: requestHeaders(connection),
+  });
   if (!response.ok) throw await responseError(response);
 }
 
@@ -106,15 +123,15 @@ function parseSseLine(line: string): DshTurnEvent | "done" | undefined {
 }
 
 export async function streamDshTurn(
-  baseUrl: string,
+  connection: DshConnection,
   prompt: string,
   model: string,
   onEvent: (event: DshTurnEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetch(`${normalizeDshBaseUrl(baseUrl)}/api/turn`, {
+  const response = await fetch(`${normalizeDshBaseUrl(connection.baseUrl)}/api/turn`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: requestHeaders(connection, true),
     body: JSON.stringify({ prompt, model }),
     signal,
   });

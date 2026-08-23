@@ -20,7 +20,7 @@ import (
 const (
 	SchemaArtifactPath     = "internal/remote/protocol/schema.generated.json"
 	SchemaHashArtifactPath = "internal/remote/protocol/schema_hash.generated.go"
-	TypeScriptArtifactPath = "desktop/frontend/src/generated/remoteProtocol.generated.ts"
+	TypeScriptArtifactPath = "apps/desktop-frontend/src/generated/remoteProtocol.generated.ts"
 )
 
 // Artifact is one deterministic generated file, relative to the repository

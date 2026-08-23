@@ -167,6 +167,52 @@ func TestUpdateSinkMapsEvents(t *testing.T) {
 	}
 }
 
+func TestUpdateSinkReplayAppliesDisplayMetadata(t *testing.T) {
+	fn := &fakeNotifier{}
+	sink := newUpdateSink(fn, "sess-1")
+	sink.replay([]provider.Message{
+		{Role: provider.RoleUser, Content: "visible request"},
+		{Role: provider.RoleAssistant, Content: "hidden draft", DisplayHidden: true},
+		{Role: provider.RoleUser, Content: "hidden proofreading", DisplayHidden: true},
+		{
+			Role:             provider.RoleAssistant,
+			Content:          "tools-only draft",
+			ReasoningContent: "tools-only reasoning",
+			ToolCalls:        []provider.ToolCall{{ID: "call-1", Name: "read_file", Arguments: `{"path":"report.md"}`}},
+			DisplayToolsOnly: true,
+		},
+		{Role: provider.RoleTool, ToolCallID: "call-1", Name: "read_file", Content: "tool result"},
+		{Role: provider.RoleAssistant, Content: "visible final"},
+	})
+
+	if got := len(fn.notifs); got != 4 {
+		raw, _ := json.Marshal(fn.notifs)
+		t.Fatalf("replay notifications = %d, want 4: %s", got, raw)
+	}
+	wantKinds := []string{"user_message_chunk", "tool_call", "tool_call_update", "agent_message_chunk"}
+	for i, want := range wantKinds {
+		if got := fn.updateMap(t, i)["sessionUpdate"]; got != want {
+			t.Fatalf("update %d kind = %v, want %q", i, got, want)
+		}
+	}
+	raw, _ := json.Marshal(fn.notifs)
+	for _, hidden := range []string{"hidden draft", "hidden proofreading", "tools-only draft", "tools-only reasoning"} {
+		if strings.Contains(string(raw), hidden) {
+			t.Fatalf("ACP replay leaked %q: %s", hidden, raw)
+		}
+	}
+}
+
+func TestTitleFromHistorySkipsHiddenUsers(t *testing.T) {
+	got := titleFromHistory([]provider.Message{
+		{Role: provider.RoleUser, Content: "hidden proofreading", DisplayHidden: true},
+		{Role: provider.RoleUser, Content: "visible request"},
+	})
+	if got != "visible request" {
+		t.Fatalf("titleFromHistory = %q, want visible request", got)
+	}
+}
+
 func TestUpdateSinkDropsAndWarns(t *testing.T) {
 	fn := &fakeNotifier{}
 	sink := newUpdateSink(fn, "sess-1")

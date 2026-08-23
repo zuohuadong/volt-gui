@@ -21,7 +21,9 @@
 <br/>
 
 > **西谷智灯暗涌系统 (Anyong)** by [西谷AI](https://cnb.cool/aizhuliren) — an offline-first, multi-model AI coding agent built for enterprise intranets.
-> Based on [VoltUI](https://cnb.cool/aizhuliren/volt-gui) (Go + Wails), brand-customized via `BrandConfig` without forking source code.
+> Based on [VoltUI](https://cnb.cool/aizhuliren/volt-gui), with a Go CLI/TUI and an Electron + DSH + Svelte 5 desktop workbench.
+
+> Desktop packaging currently targets Windows x64 only. macOS/Linux packages and automatic stable publication remain disabled until their signing and updater contracts are verified.
 
 <br/>
 

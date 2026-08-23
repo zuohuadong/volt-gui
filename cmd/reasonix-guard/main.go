@@ -1,6 +1,6 @@
 // Command reasonix-guard diagnoses and repairs VoltUI without loading the
 // desktop shell. It is packaged beside the desktop application so recovery
-// remains available when Wails, WebView, or user configuration cannot start.
+// remains available when Electron, DSH, or user configuration cannot start.
 package main
 
 import (
@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -20,7 +21,10 @@ import (
 	"voltui/internal/repair"
 )
 
-var version = "dev"
+var (
+	version         = "dev"
+	showLaunchError = nativeui.ShowError
+)
 
 func main() { os.Exit(run(os.Args[1:])) }
 
@@ -359,7 +363,7 @@ func reportDetachedLaunchError(launchErr error, launchLog *os.File, logPath stri
 		message += "\n\n启动日志：" + logPath
 	}
 	fmt.Fprintln(os.Stderr, "error:", launchErr)
-	nativeui.ShowError("VoltUI 启动失败", message)
+	showLaunchError("VoltUI 启动失败", message)
 }
 
 func packagedDetachedLauncher() bool {
@@ -431,11 +435,18 @@ func desktopExecutableCandidates(launcherPath, goos string) []string {
 		suffix = ".exe"
 	}
 	dir := filepath.Dir(launcherPath)
+	joinPath := filepath.Join
+	cleanPath := filepath.Clean
+	if goos != "windows" {
+		dir = path.Dir(launcherPath)
+		joinPath = path.Join
+		cleanPath = path.Clean
+	}
 	paths := make([]string, 0, 4)
 	for _, name := range []string{"voltui-desktop" + suffix, "reasonix-desktop" + suffix} {
-		paths = append(paths, filepath.Join(dir, name))
+		paths = append(paths, joinPath(dir, name))
 		if goos == "darwin" {
-			paths = append(paths, filepath.Clean(filepath.Join(dir, "..", "MacOS", name)))
+			paths = append(paths, cleanPath(joinPath(dir, "..", "MacOS", name)))
 		}
 	}
 	return paths

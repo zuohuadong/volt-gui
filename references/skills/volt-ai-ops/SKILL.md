@@ -13,7 +13,7 @@ description: Use when tasks involve 西谷AI (volt AI) internal operations, 西�
 
 - **目标用户**: 中国开发者团队和企业内网部署
 - **核心差异**: 本土化品牌、CNB 云构建支持、中文交互优先、合规适配
-- **技术栈**: 与上游 VoltUI 完全一致 (Go CLI + Wails Desktop)，仅通过 BrandConfig 定制品牌
+- **技术栈**: 与上游 VoltUI 完全一致（Go CLI/TUI + Electron/DSH/Svelte 5 Desktop），仅通过 BrandConfig 与 Electron 品牌环境变量定制品牌
 
 ## Fork 筡理策略
 
@@ -30,8 +30,8 @@ description: Use when tasks involve 西谷AI (volt AI) internal operations, 西�
 ### 上游同步流程
 
 1. **定时同步**: CNB CI 每天 09:00 CST 自动 `git merge upstream/main`
-2. **冲突解决**: 优先采纳上游版本，保留 `.cnb.yml` 定制
-3. **验证**: merge 后运行 `make build` + `go test ./...`
+2. **冲突解决**: 优先采纳上游版本，保留 `.cnb.yml` 与品牌环境变量定制
+3. **验证**: merge 后运行 Go 门禁、Electron 边界测试、Svelte 检查与 `pnpm run build:desktop`
 
 ### 向上游贡献流程
 
@@ -42,26 +42,23 @@ description: Use when tasks involve 西谷AI (volt AI) internal operations, 西�
 
 ## 发布流程
 
-### 桌面端发布（3 个原生 runner）
+### 桌面端发布（当前仅 Windows x64）
 
 ```
-feat: 新功能 → CNB CI → desktop-v* tag → GitHub Actions → macOS/Windows/Linux 安装包
+feat: 新功能 → CNB build-only 验证 → GitHub Windows runner → 未签名 Electron artifact
 ```
 
 1. 开发者推送 `feat:` 提交到 `main`
-2. CNB CI 检测到约定式提交，计算版本号
-3. 创建 `desktop-v*` tag 并推送
-4. GitHub Actions 在原生 runner 上构建：
-   - `macos-14`: `.zip` + `.dmg` (universal)
-   - `windows-latest`: `-installer.exe` (NSIS)
-   - `ubuntu-22.04`: `.tar.gz` (amd64)
-5. 产物发布到 GitHub Releases
+2. CNB CI 检测约定式提交，计算候选版本并验证 Electron 源码 bundle
+3. 受保护的 GitHub 工作流解析不可变候选 SHA
+4. `windows-latest` 生成 NSIS 与 portable x64 产物
+5. 在生产签名与 updater 契约迁移完成前，仅上传短期未签名 artifact，不发布公开 GitHub Desktop Release
 
 ### 品牌名在产物中的体现
 
-- 环境变量 `VOLTUI_BRAND_NAME=西谷智灯暗涌系统` → 产物命名 `西谷智灯暗涌系统-darwin-universal.zip`
-- Release title: `西谷智灯暗涌系统 desktop-v1.6.0`
-- 安装包内应用名: `西谷智灯暗涌系统.app` / `西谷智灯暗涌系统.exe`
+- 环境变量 `VOLTUI_BRAND_NAME=西谷智灯暗涌系统` → Electron 运行时显示本土化品牌
+- `VOLTUI_BRAND_SHORT_NAME=暗涌` → 紧凑界面使用短品牌名
+- 正式安装包元数据仍需在 Electron builder/signing 迁移任务中完成配置闭环
 
 ## 中国AI市场背景
 
@@ -75,14 +72,14 @@ feat: 新功能 → CNB CI → desktop-v* tag → GitHub Actions → macOS/Windo
 
 | 产品 | 框架 | 定位 |
 |---|---|---|
-| 西谷智灯暗涌系统 (VoltUI fork) | Go + Wails | 本土化编码 Agent |
+| 西谷智灯暗涌系统 (VoltUI fork) | Go + Electron/DSH/Svelte 5 | 本土化编码 Agent |
 | Cursor | Electron | 国际化 AI 编码 IDE |
 | CodeBuddy | 云 IDE | 中国 AI 编码助手 |
 | Claude Code | CLI | Anthropic 编码 Agent |
 
 ### 差异化优势
 
-1. **Go 性能**: 比 Electron 类产品内存占用低 10x
+1. **双运行时边界**: Go CLI/TUI 保持轻量，Electron/DSH 提供成熟桌面能力
 2. **本地运行**: 无需云端，企业内网友好
 3. **多模型**: 支持 DeepSeek/OpenAI/本地模型切换
 4. **MCP 协议**: 内置 MCP 服务器支持（time, Context7, filesystem 等）

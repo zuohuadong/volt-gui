@@ -11,10 +11,10 @@ This skill covers the CNB (cnb.cool) CI/CD system used for the 西谷智灯暗�
 
 | Component | Responsibility | Trigger |
 |---|---|---|
-| **CNB CI** (`.cnb.yml`) | Version calculation + Windows desktop build + minisign + CNB Release assets | `feat:/fix:` commit to main |
-| **GitHub Actions** (`release.yml`) | Legacy upstream CLI/npm release path | `v*` tag push |
+| **CNB CI** (`.cnb.yml`) | Electron/DSH tests, source bundle build, candidate version calculation | pushes to `main` |
+| **GitHub Actions** (`release-desktop.yml`) | Windows x64 Electron packaging and unsigned artifact upload | manual/reusable workflow |
 
-**Current CNB desktop scope**: CNB Linux Docker runners cross-compile Windows amd64 Wails artifacts and use Linux `nsis`/`makensis` to produce the installer. macOS and Linux desktop artifacts are intentionally disabled until their CNB build strategy is confirmed.
+**Current CNB desktop scope**: CNB Linux Docker runners verify the Electron/DSH/Svelte source bundle only. They do not run `electron-builder --win`, create a desktop tag, or publish a CNB Release because a verified Windows/Wine packaging and signing toolchain is not available there. Windows x64 packaging stays on GitHub's native Windows runner.
 
 ## .cnb.yml Structure
 
@@ -23,12 +23,14 @@ This skill covers the CNB (cnb.cool) CI/CD system used for the 西谷智灯暗�
 main:
   push:
     - docker:
-        image: golang:1.26
+        image: node:26
       stages:
-        - name: build
-          script: make build
+        - name: install
+          script: pnpm install --frozen-lockfile
         - name: test
-          script: go test ./...
+          script: pnpm test
+        - name: desktop-bundle
+          script: pnpm run build:desktop
 ```
 
 ### Pipeline 2: Auto-release (conventional commits only)
@@ -39,24 +41,24 @@ SemVer logic:
 - `fix:` → patch bump (desktop-v{X}.{Y}.{Z+1})
 - `[skip-release]` → skip entirely
 
-The auto-release pipeline:
+The release-readiness pipeline:
 1. Detects conventional commit message
 2. Calculates new version from latest `desktop-v*` tag
-3. Installs Wails, Node/pnpm, and Linux `nsis`
-4. Cross-compiles `windows/amd64`, builds the NSIS installer, signs artifacts, and generates `latest.json`
-5. Creates and pushes `desktop-v*` tag
-6. Creates CNB Release and uploads assets
+3. Installs Node 26 and pnpm 11 dependencies from the frozen lockfile
+4. Runs Electron boundary, runtime mock, Svelte and DSH tests
+5. Applies the candidate version and builds the Electron source bundle
+6. Leaves tag creation, Windows installer generation, signing, and publication untouched
 
 ### Pipeline 3: Merge-request CI
 ```yaml
 merge-request:
   - docker:
-      image: golang:1.26
-    stages:
-      - name: build-check
-        script: make build
-      - name: test
-        script: go test ./...
+        image: node:26
+      stages:
+        - name: build-check
+          script: pnpm run build:desktop
+        - name: test
+          script: pnpm test
 ```
 
 ### Pipeline 4: Crontab sync (daily 09:00 CST)
@@ -88,8 +90,8 @@ For cross-repo: push branch to upstream first, then create PR.
 
 | Tag pattern | What it triggers | Example |
 |---|---|---|
-| `desktop-v*` | CNB desktop release record and artifact upload | `desktop-v1.6.0` |
-| `v*` | Legacy upstream GitHub `release.yml` (CLI/npm) | `v1.6.0` |
+| `desktop-v*` | GitHub Windows x64 desktop candidate | `desktop-v1.6.0` |
+| `v*` | GitHub CLI/npm stable release | `v1.6.0` |
 
 **Never mix namespaces** — desktop releases use `desktop-v*`, CLI releases use `v*`.
 
@@ -101,17 +103,15 @@ For cross-repo: push branch to upstream first, then create PR.
 | `CNB_REPO_SLUG` | CNB CI runtime | API calls |
 | `CNB_TOKEN` | CNB CI runtime | API authentication |
 | `CNB_API_ENDPOINT` | CNB CI runtime | API base URL (default: https://api.cnb.cool) |
-| `MINISIGN_PRIVATE_KEY` | CNB secret | Desktop artifact signing key |
-| `MINISIGN_PASSWORD` | CNB secret | Desktop artifact signing password |
-| `volt_BRAND_NAME: "西谷智灯暗涌系统") |
-| `VOLTUI_BRAND_NAME` | Runtime | Desktop build artifact naming |
+| `VOLTUI_BRAND_NAME` | Runtime/build | Electron display branding |
+| `VOLTUI_BRAND_SHORT_NAME` | Runtime/build | Compact Electron display branding |
 
 ## Common Issues
 
 | Problem | Cause | Fix |
 |---|---|---|
-| Release created but no artifacts | CNB asset upload failed after release creation | Check `publish-cnb-release` logs and `CNB_TOKEN` permissions |
-| Signing fails | Missing minisign secrets | Configure `MINISIGN_PRIVATE_KEY` and `MINISIGN_PASSWORD` in CNB |
-| macOS/Linux artifacts missing | They are intentionally disabled in `.cnb.yml` | Enable them only after confirming the CNB build strategy |
+| No CNB desktop release or installer | CNB intentionally performs build-only verification | Use `.github/workflows/release-desktop.yml` on a Windows runner |
+| Windows packaging requested in CNB | Linux runner lacks the verified production toolchain | Keep fail-closed until Wine/signing/updater contracts are approved |
+| macOS/Linux artifacts missing | They are intentionally unsupported | Enable them only after confirming native packaging and signing |
 | Cross-repo PR fails: branch not found | Branch not pushed to upstream repo | `git push upstream <branch>` first |
-| Build/test stage fails | Go version mismatch | Update docker image to `golang:1.26` |
+| Build/test stage fails | Node/pnpm or lockfile mismatch | Use Node 26, pnpm 11, and regenerate `pnpm-lock.yaml` |

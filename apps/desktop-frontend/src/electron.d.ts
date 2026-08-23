@@ -6,6 +6,8 @@ export interface ElectronDshConfig {
   compactReasoning: boolean;
   degenerationGuard: boolean;
   apiKeySet: boolean;
+  brandName: string;
+  brandShortName: string;
 }
 
 export interface ElectronDshConfigPatch {
@@ -17,16 +19,21 @@ export interface ElectronDshConfigPatch {
   degenerationGuard?: boolean;
 }
 
+export interface ElectronDshConnection {
+  baseUrl: string;
+  accessToken: string;
+}
+
 export interface ElectronDshMutationResult {
   success: boolean;
   config?: ElectronDshConfig;
-  serverUrl?: string;
+  connection?: ElectronDshConnection;
   workingDir?: string;
   error?: string;
 }
 
 export interface ElectronDshApi {
-  getServerUrl(): Promise<string>;
+  getServerConnection(): Promise<ElectronDshConnection>;
   openFolderDialog(): Promise<ElectronDshMutationResult | null>;
   getWorkingDir(): Promise<string>;
   setWorkingDir(directory: string): Promise<ElectronDshMutationResult>;

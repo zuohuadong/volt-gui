@@ -1,46 +1,47 @@
 # CNB 云原生构建配置 — 西谷智灯暗涌系统 (Anyong DSH + Electron Desktop)
 # 参考: https://docs.cnb.cool/zh/build/configuration.md
 #
-# 架构: 现代 Node.js 22 + pnpm + DSH (DeepSeek Harness) + Electron 桌面端
-# 目标: 自动编译测试并构建 Windows (NSIS/便携版)、macOS 与 Linux 桌面安装包
+# 架构: Node.js 26 + pnpm 11 + DSH (DeepSeek Harness) + Electron 桌面端
+# 目标: 在 Linux runner 验证源码、边界与 Electron bundle；Windows x64 安装包由 GitHub Windows runner 构建
 
 main:
   push:
     # Pipeline 1: 快速编译与全量测试验证（每次 push 执行）
     - docker:
-        image: node:22
+        image: node:26
       env:
-        volt_BRAND_NAME: "西谷智灯暗涌系统"
+        VOLTUI_BRAND_NAME: "西谷智灯暗涌系统"
+        VOLTUI_BRAND_SHORT_NAME: "暗涌"
       stages:
         - name: install-deps
           script: |
             corepack enable
-            corepack prepare pnpm@10.32.1 --activate
-            pnpm install --frozen-lockfile=false
+            corepack prepare pnpm@11 --activate
+            pnpm install --frozen-lockfile
 
         - name: run-tests
           script: |
+            node --test scripts/check-electron-runtime-boundary.test.mjs scripts/check-runtime-mocks.test.mjs
+            node scripts/check-electron-runtime-boundary.mjs
+            node scripts/check-runtime-mocks.mjs
+            pnpm --filter voltui-desktop-workbench run check
+            pnpm --filter voltui-desktop-workbench run test:unit
             pnpm test
 
-        - name: build-all-packages
+        - name: build-electron-bundle
           script: |
-            pnpm run build
-            pnpm --filter @anyong/desktop-electron run build:main
+            pnpm run build:desktop
 
-    # Pipeline 2: 自动发版（仅在约定式提交 feat:/fix: 时触发）
+    # Pipeline 2: 发版就绪验证（仅在约定式提交 feat:/fix: 时触发）
+    # CNB 当前没有经验证的 Windows/Wine 打包工具链，因此绝不在 Linux
+    # runner 上声称已经生成可发布安装包。
     - docker:
-        image: node:22
-      imports:
-        - https://cnb.cool/aizhuliren/volt/anyong-agent/-/blob/main/.cnb/envs.yml
+        image: node:26
       env:
-        GIT_AUTHOR_NAME: "西谷智灯暗涌系统 Bot"
-        GIT_AUTHOR_EMAIL: "bot@volt.ai"
-        GIT_COMMITTER_NAME: "西谷智灯暗涌系统 Bot"
-        GIT_COMMITTER_EMAIL: "bot@volt.ai"
-        volt_BRAND_NAME: "西谷智灯暗涌系统"
-        DESKTOP_APP_NAME: "Anyong-DSH"
+        VOLTUI_BRAND_NAME: "西谷智灯暗涌系统"
+        VOLTUI_BRAND_SHORT_NAME: "暗涌"
       stages:
-        - name: resolve-release-tag
+        - name: resolve-release-version
           script: |
             MSG="${CNB_COMMIT_MESSAGE}"
 
@@ -81,7 +82,7 @@ main:
               fi
             fi
 
-            echo "Calculated new version tag: $DESKTOP_TAG"
+            echo "Calculated candidate version: $DESKTOP_TAG"
             VERSION="${DESKTOP_TAG#desktop-v}"
 
             cat > .release_env <<EOF
@@ -90,7 +91,7 @@ main:
             LATEST_TAG=$LATEST_TAG
             EOF
 
-        - name: build-electron-dist
+        - name: verify-electron-release-readiness
           script: |
             if [ -f .release_skip ]; then
               exit 0
@@ -98,26 +99,18 @@ main:
             . ./.release_env
 
             corepack enable
-            corepack prepare pnpm@10.32.1 --activate
-            pnpm install --frozen-lockfile=false
+            corepack prepare pnpm@11 --activate
+            pnpm install --frozen-lockfile
 
-            # 全量编译前端与 DSH 核心
-            pnpm run build
+            node scripts/set-electron-package-version.mjs "$VERSION"
+            node --test scripts/check-electron-runtime-boundary.test.mjs scripts/check-runtime-mocks.test.mjs
+            node scripts/check-electron-runtime-boundary.mjs
+            node scripts/check-runtime-mocks.mjs
+            pnpm --filter voltui-desktop-workbench run check
+            pnpm run build:desktop
 
-            # 调用 electron-builder 构建 Windows (NSIS/便携版) 与 Linux 产物
-            cd apps/desktop-electron
-            pnpm run build:main
-            npx electron-builder --win --x64 --config electron-builder.json
-            npx electron-builder --linux --x64 --config electron-builder.json
-
-        - name: generate-checksums
-          script: |
-            if [ -f .release_skip ]; then
-              exit 0
-            fi
-            . ./.release_env
-
-            cd apps/desktop-electron/dist-package
-            sha256sum * > SHA256SUMS.txt
-            echo "Artifacts built:"
-            ls -la
+            test -f apps/desktop-electron/dist/main.js
+            test -f apps/desktop-electron/dist/preload.cjs
+            test -f apps/desktop-electron/dist/renderer/electron.html
+            echo "Electron source bundle is release-ready for $DESKTOP_TAG."
+            echo "Windows x64 packaging remains delegated to .github/workflows/release-desktop.yml."

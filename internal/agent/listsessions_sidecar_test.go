@@ -49,6 +49,31 @@ func TestSessionPreviewFromMessagesMatchesDecode(t *testing.T) {
 	}
 }
 
+func TestSessionPreviewFromMessagesSkipsHiddenUsers(t *testing.T) {
+	preview, turns := SessionPreviewFromMessages([]provider.Message{
+		{Role: provider.RoleUser, Content: "first visible"},
+		{Role: provider.RoleUser, Content: "internal proofreading", DisplayHidden: true},
+		{Role: provider.RoleUser, Content: "second visible"},
+	})
+	if preview != "first visible" || turns != 2 {
+		t.Fatalf("preview/turns = %q/%d, want first visible/2", preview, turns)
+	}
+}
+
+func TestSessionPreviewSkipsHiddenUsers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "20260101-000000-deepseek-chat.jsonl")
+	writeSessionFile(t, path, []provider.Message{
+		{Role: provider.RoleUser, Content: "internal proofreading", DisplayHidden: true},
+		{Role: provider.RoleUser, Content: "first visible"},
+		{Role: provider.RoleUser, Content: "second visible"},
+	})
+
+	preview, turns := previewSession(path)
+	if preview != "first visible" || turns != 2 {
+		t.Fatalf("preview/turns = %q/%d, want first visible/2", preview, turns)
+	}
+}
+
 // When the sidecar records Turns/Preview, ListSessions must trust them and not
 // re-derive from the .jsonl. We prove that by planting counts that disagree with
 // the file: if ListSessions returns the planted values, it used the sidecar.

@@ -1,6 +1,6 @@
 ---
 name: volt-gui-design-language
-description: Define, implement, and review the Volt GUI desktop design language and user experience. Use for any Volt GUI Svelte/Wails UI work involving visual styling, layout, navigation, Work/Code workbenches, composer interactions, settings, dialogs, lists, empty/loading/error states, responsive behavior, or design-system decisions.
+description: Define, implement, and review the Volt GUI desktop design language and user experience. Use for any Volt GUI Svelte/Electron UI work involving visual styling, layout, navigation, Work/Code workbenches, composer interactions, settings, dialogs, lists, empty/loading/error states, responsive behavior, or design-system decisions.
 ---
 
 # Volt GUI Design Language
@@ -72,9 +72,10 @@ For Svelte files, load `svelte-code-writer` and `svelte-core-bestpractices`. For
 Run the narrowest meaningful checks, then broaden when shared shell or components changed:
 
 ```bash
-npx @sveltejs/mcp svelte-autofixer desktop/frontend/src/<changed>.svelte --svelte-version 5
-cd desktop/frontend && npm run check
-cd desktop/frontend && npm run build
+npx @sveltejs/mcp svelte-autofixer apps/desktop-frontend/src/<changed>.svelte --svelte-version 5
+pnpm --filter voltui-desktop-workbench run check
+pnpm --filter voltui-desktop-workbench run build
+pnpm --filter @voltui/desktop-electron run build
 git diff --check
 ```
 

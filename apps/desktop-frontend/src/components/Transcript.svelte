@@ -16,6 +16,7 @@
     sending,
     approval,
     ask,
+    officeOutput = false,
     onApprove,
     onAnswerAsk,
     onLoadArchivedTool,
@@ -25,6 +26,7 @@
     sending: boolean;
     approval?: WireApproval;
     ask?: WireAsk;
+    officeOutput?: boolean;
     onApprove: (allow: boolean, session: boolean, persist: boolean) => void;
     onAnswerAsk: (answers: QuestionAnswer[]) => void;
     onLoadArchivedTool?: (item: TranscriptItem) => void | Promise<void>;
@@ -419,7 +421,7 @@
                 </footer>
               </div>
             {:else}
-              <MarkdownView text={item.role === "assistant" || item.role === "notice" ? visibleAssistantTranscriptText(item.body) : visibleTranscriptText(item.body)} />
+              <MarkdownView text={item.role === "assistant" || item.role === "notice" ? visibleAssistantTranscriptText(item.body, { officeOutput }) : visibleTranscriptText(item.body, { officeOutput })} />
               {#if item.pending && item.role === "assistant"}
                 <div class="pending-inline-status" role="status" aria-live="polite">
                   <LoaderCircle size={13} />

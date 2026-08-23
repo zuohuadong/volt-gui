@@ -17,20 +17,20 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@lucide/svelte": "^1.24.0",
+    "@lucide/svelte": "^1.28.0",
     "@svadmin/core": "^0.36.3",
     "@svadmin/ui": "^0.42.2",
-    "@tanstack/svelte-query": "^6.1.36",
+    "@tanstack/svelte-query": "^6.1.38",
     "clsx": "^2.1.1",
-    "katex": "^0.17.0",
-    "svelte": "^5.56.4"
+    "katex": "^0.18.1",
+    "svelte": "^5.56.8"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.2.0",
     "esbuild": "^0.28.1",
-    "svelte-check": "^4.7.2",
-    "typescript": "~6.0.0",
-    "vite": "^8.1.4",
+    "svelte-check": "^4.7.4",
+    "typescript": "^6.0.3",
+    "vite": "^8.2.0",
     "vitest": "^4.0.18"
   }
 }

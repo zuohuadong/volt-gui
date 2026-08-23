@@ -815,7 +815,7 @@ func TestHasCommandStringFlagParsesBashOptions(t *testing.T) {
 	}
 }
 
-func TestDefaultSpawnerUsesGitBashForExplicitShOnWindows(t *testing.T) {
+func TestDefaultSpawnerUsesGitPOSIXShellForExplicitShOnWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("exercises Git for Windows Bash discovery")
 	}

@@ -19,58 +19,40 @@ Preview provides the fast pre-release buffer instead of a long-lived branch.
 |---|---|---|
 | Native CLI | GitHub Release `vX.Y.Z` + Homebrew | GitHub prerelease `vX.Y.Z-preview.N` (never Homebrew or GitHub Latest) |
 | npm | `latest` (current 1.x stable) | `next` (rc), `canary` (`npm i voltui@canary`) |
-| Desktop | R2 `latest/` pointer + release gateway | R2 `preview/` pointer + release gateway proxy (never on the GitHub releases page) |
+| Desktop | Short-lived unsigned Windows x64 Actions artifact | Disabled until signing and updater contracts are reviewed |
 
-Native CLI and Desktop have exactly two user-facing channels:
+Native CLI has Stable and Preview. Electron desktop publication is currently
+fail-closed; its workflow produces a review artifact, not a public channel:
 
-- **Preview** is the opt-in, fast channel, normally cut every 1–2 days. Native
-  CLI uses an immutable protected `vX.Y.Z-preview.N` tag and a GitHub
-  prerelease; Desktop builds carry `-X main.channel=preview`, use the same
-  version shape, and move only the desktop `preview/` pointer.
-- **Stable** is the weekly channel. It publishes the native CLI GitHub Release
-  and Homebrew cask and moves only the desktop `latest/` pointer.
+- **Preview** is the opt-in Native CLI channel, normally cut every 1–2 days,
+  using an immutable protected `vX.Y.Z-preview.N` tag and GitHub prerelease.
+- **Stable** publishes the Native CLI GitHub Release and Homebrew cask. The
+  aligned `desktop-vX.Y.Z` tag authorizes an unsigned Windows x64 review build
+  only; it does not publish a Desktop Release or updater pointer.
 
-Both channels are public product builds. Homebrew remains Stable-only because
-it has no separate prerelease channel. On Windows, Desktop Preview and Stable
-use the same verified publisher identity and the SignPath `release-signing`
-policy. Certificate trust must not be used to communicate release quality.
-`test-signing` is reserved for internal CI/signing validation and must never
-publish the public Preview pointer.
+Homebrew remains Stable-only because it has no separate prerelease channel.
+Electron signing, automatic update, and public Desktop publication remain
+unsupported claims until a reviewed replacement workflow lands.
 
 An RC is not a third user-facing channel. If a weekly candidate needs a freeze,
 use a surface-specific `vX.Y.Z-rc.N` or `desktop-vX.Y.Z-rc.N` tag as an
 internal candidate checkpoint. Neither moves a rolling pointer or Homebrew.
 npm retains its separate `next` and `canary` dist-tags.
 
-### Desktop channel compatibility
-
-| Input/client state | Effective behavior |
-|---|---|
-| No `desktop.update_channel` setting | Stable |
-| `stable` | Stable |
-| `preview` | Preview |
-| Legacy `canary`, `beta`, or `next` setting | Normalized as Preview; future writes persist `preview` |
-| Unknown value | Stable (fail closed) |
-| Older client polling `canary/latest.json` | Receives the mirrored Preview pointer |
-| New client polling Preview | Tries `preview/` first, then legacy `canary/` during migration |
-
 ## Who can release what
 
 | Action | Who | Mechanism |
 |---|---|---|
 | **Cut Native CLI Preview** | release-tag creator + configured reviewer | create and push a protected `vX.Y.Z-preview.N` tag; a minimal relay dispatches **Release** on protected `main-v2`, which classifies it as Preview, pauses on the `canary` environment, and publishes a GitHub prerelease without touching Homebrew or Latest |
-| **Cut Desktop Preview** | maintainer + configured reviewer | dispatch **Release desktop** on protected `main-v2`; the `canary` GitHub environment is retained as a compatibility name and must have the same required reviewers as `release` |
+| **Build Desktop review artifact** | maintainer + configured reviewer | dispatch **Release desktop** on protected `main-v2`; the workflow builds unsigned Windows x64 artifacts and never publishes a Desktop Release |
 | **Ship stable** | release-tag creators + one configured reviewer | atomically push the three stable tags; a minimal tag relay dispatches **Release stable** on protected `main-v2`, which requests one GitHub `release`-environment approval before every channel publishes |
 | **Ship a standalone RC** | release-tag creators + one configured reviewer | push the surface-specific prerelease tag; a minimal relay dispatches the standalone workflow on protected `main-v2`, which requests one `release` approval |
 
-Preview remains operationally fast, but its public artifacts are not an
-unreviewed or test-certificate path. Native CLI Preview tag runs and Desktop
-Preview dispatches pause at the legacy `canary` environment approval. Desktop
-then uses the production SignPath policy. A stable release pauses once in
-**Release stable** until a configured reviewer approves the `release`
-environment. The jobs then continue without another human approval: SignPath
-verifies the trusted GitHub origin, scans and signs every installed executable,
-rebuilds the packages, and signs the outer installers.
+Native CLI Preview remains operationally fast, while desktop artifacts are
+review-only and require the configured environment approval. A stable release
+pauses once in **Release stable** until a configured reviewer approves the
+`release` environment; the desktop publisher then builds an explicitly unsigned
+artifact and fails if signing inputs or an Authenticode signature are present.
 
 > Repo settings backing this: Environments → `release` and `canary` have the
 > same release owners as required reviewers, and the release-tag ruleset restricts
@@ -88,14 +70,10 @@ its remote release tag immediately before publication. An unprotected branch
 cannot claim that it already passed the approval job.
 
 Repository `write` access remains a privileged role because repository-level
-Actions secrets are available to workflows on repository branches. Production
-Windows signing has an additional provider-side boundary: SignPath accepts the
-trusted `.github/workflows/release-stable.yml` and
-`.github/workflows/release-desktop.yml` build definitions only when their
-origin branch is exactly `main-v2`. Never broaden that policy to `**` or a
-tag-shaped wildcard. Other publication credentials should move to protected
-environment secrets or provider-side OIDC/trusted-publishing policies when
-strict separation from repository writers is required.
+Actions secrets are available to workflows on repository branches. Publication
+credentials should live behind protected environments or provider-side
+OIDC/trusted-publishing policies when strict separation from repository writers
+is required. The desktop workflow receives no signing credentials.
 
 ## The release loop
 
@@ -118,20 +96,19 @@ strict separation from repository writers is required.
    equivalent English and Chinese product notes, validates their structure and
    citations, and includes the rendered draft in the workflow summary. Review
    the catalog diff like product copy. Once merged, the same entry drives
-   `/changelog/` and both CLI and Desktop GitHub Releases; the desktop app links
-   to that web history from Settings → Updates. A missing catalog entry still
-   blocks stable publication.
+   `/changelog/` and the CLI GitHub Release. Desktop review artifacts may reuse
+   the approved version metadata, but no Desktop GitHub Release is created. A
+   missing catalog entry still blocks stable publication.
 3. **Cut Preview** during the intended release cycle (e.g. heading for `1.4.0`):
    - Native CLI: create and push the next protected Preview tag:
      ```sh
      git tag v1.4.0-preview.1
      git push origin v1.4.0-preview.1
      ```
-   - Desktop: Actions → **Release desktop** → `channel: preview`, `base_version: 1.4.0`
+   - Desktop: no public Preview publication; optionally dispatch **Release desktop** for an unsigned review artifact.
    - CLI: Actions → **Release npm** → `base_version: 1.4.0`
-   - Publishes the native CLI as a GitHub prerelease and Desktop to R2
-     `preview/` (no Desktop GitHub release), mirroring Desktop `canary/` only
-     for older clients. npm still publishes its independent `@canary` channel.
+   - Publishes the native CLI as a GitHub prerelease. npm still publishes its
+     independent `@canary` channel; Desktop remains unpublished.
 4. **Test** — native CLI testers download the immutable GitHub prerelease;
    desktop users opt into Preview in Settings → Updates; npm CLI testers
    install `voltui@canary`.
@@ -153,13 +130,10 @@ strict separation from repository writers is required.
    the cache guard. It then **waits once for a configured reviewer to approve the
    GitHub `release` environment** before invoking all three publishers. The
    approval records the immutable release commit. Before any publisher starts,
-   **Release stable** runs a zero-publication AMD64/ARM64 SignPath preflight for
-   both the payload and installer stages. Every publisher checks out that SHA
-   and fails if its remote tag moves afterward.
-   Windows signing then runs automatically under SignPath trusted-build and
-   origin verification: each architecture signs its installed executable
-   payload first, rebuilds the portable archive and NSIS package, and finally
-   signs the outer installer.
+    Every publisher checks out that SHA and fails if its remote tag moves
+    afterward. The desktop publisher builds Windows x64 NSIS and portable
+    artifacts with certificate auto-discovery disabled, verifies both are
+    `NotSigned`, and uploads them only as a short-lived Actions artifact.
    A stable `npm-v*` publish moves the `latest` dist-tag automatically (build.mjs)
    and release-npm.yml verifies it landed. **Do not skip the npm tag**: the stable
    preflight fails when the matching `npm-v*` or `desktop-v*` tag is missing or
@@ -170,7 +144,7 @@ strict separation from repository writers is required.
    assertion. The stable orchestrator finishes with a postflight that verifies
    both GitHub Releases contain their required assets and npm `latest` exactly
    matches the approved version; missing artifacts can no longer produce a green
-   stable run.
+    stable run. Desktop public-release checks remain disabled by design.
 7. **Next cycle** — Preview rolls on toward `1.5.0`.
 
 ### Release-PR frequency rule
@@ -191,58 +165,26 @@ strict separation from repository writers is required.
 
 ## Notes
 
-- Native CLI Preview uses the protected tag's explicit `N`; Desktop Preview and
-  npm Canary use their workflow `run_number`, so suffixes can differ. Only
-  monotonicity per surface matters.
+- Native CLI Preview uses the protected tag's explicit `N`; npm prerelease
+  suffixes may use their workflow `run_number`. Desktop Preview publication is
+  disabled until the Electron signing and updater contracts are complete.
 - A stable `-rc` tag (e.g. `npm-v1.4.0-rc.1`) still ships under `next`, not `canary`.
 - Recover an interrupted stable release by dispatching **Release stable** from
   protected `main-v2` with the existing `vX.Y.Z` tag. Recovery requires the CLI,
   npm, and Desktop tags to remain aligned on an ancestor of current `main-v2`,
   then uses the same single approval and postflight. Never move or recreate the
   published tags to pick up a workflow fix.
-- Windows release signing uses SignPath trusted-build, origin verification, and
-  malware scanning. Keep the checked-in `windows-payload` and
-  `windows-installer-v2` artifact configurations synchronized with the matching
-  SignPath project slugs before merging a workflow that references them. Keep
-  the legacy `windows-installer` and internal test configurations available for
-  older release refs and signing validation, but never use them for public
-  Preview or Stable artifacts.
-  `windows-payload` signs the desktop, update helper, CLI, and generated NSIS
-  uninstaller. `windows-installer-v2` verifies those trusted
-  payload signatures before signing the rebuilt outer installer. The release
-  certificate requires SignPath approval for every request. Preview and Stable
-  reach Windows signing only after their GitHub environment approval; a
-  dedicated SignPath CI identity then approves each payload and installer
-  request through the SignPath API. Human SignPath approvers remain available
-  for emergency recovery, but normal releases do not require additional
-  SignPath clicks. SignPath must restrict `release-signing` to the trusted
-  `.github/workflows/release-stable.yml` and
-  `.github/workflows/release-desktop.yml` build definitions and exact `main-v2`
-  branch. Stable and prerelease tag events are relayed to that protected control
-  plane; do not replace exact matches with wildcards. The machine-readable
-  `.signpath/contracts/release-signing.yml` policy is checked against the parsed
-  workflow call graph in CI. Standalone Desktop releases require
-  `SIGNPATH_RELEASE_SIGNING_ATTESTATION` to match the current contract hash;
-  `signing_preflight=true` refreshes it only after both architectures complete
-  both signing stages. Stable performs the same live preflight in its approved
-  run before CLI, npm, or Desktop publication, so a provider-side policy drift
-  fails before any public channel starts.
-- Desktop in-app updates use R2 first, then the `crash.voltui.io` desktop release
-  gateway. The gateway resolves the `desktop-v*` release line directly and never uses
-  GitHub's repository-wide `/releases/latest`, because plain `v*` tags are the CLI
-  release line. Stable CLI releases also carry a compatibility `latest.json` asset so
-  older desktop builds that still use GitHub `latest` do not 404.
-- Preview uses R2 plus the same gateway proxy for `preview/`; it never appears
-  on the GitHub releases page. Releases also mirror the legacy `canary/`
-  pointer, and the gateway accepts `/canary/`, until old desktop clients age out.
+- The Electron desktop workflow currently builds Windows x64 NSIS and portable
+  executables on `windows-latest`, verifies their shape and checksums, and uploads
+  them as a short-lived artifact whose name ends in `-unsigned`.
+- Electron production signing and updater publication are fail-closed. Setting
+  either signing preflight input makes the workflow fail explicitly. The
+  workflow must not create a GitHub Desktop Release, update pointer, or public
+  `latest.json` until a reviewed signing and updater design replaces this rule.
+- CNB Linux runners validate the source bundle only. They must not run
+  `electron-builder --win` or claim that a Windows installer was produced.
 - DeepSeek is an editorial drafting dependency, not a runtime or publishing dependency.
   The API key is available only to the manually dispatched preparation workflow; tag
   workflows publish the reviewed JSON already committed to `main-v2` and never call a model.
-- Windows applies the minisign-verified NSIS installer in place. Linux portable
-  (`.tar.gz`) installs replace binaries in the install directory; Linux `.deb`
-  installs download a signed package, authorize via Polkit, and upgrade with
-  apt. The first `.deb` that ships the update helper is a one-time bootstrap
-  (manual `sudo apt install ./VoltUI-linux-amd64.deb`). macOS applies in-app
-  only for Developer ID signed and notarized builds; ad-hoc/local builds fall
-  back to the download page. Desktop `latest.json` keeps `platforms` for
-  portable channels and adds optional `native_packages` for OS packages.
+- Windows x64 is the only verified desktop target. macOS, Linux, automatic
+  update, code signing, and notarization remain unsupported release claims.

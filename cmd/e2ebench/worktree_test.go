@@ -11,6 +11,7 @@ import (
 func TestCreateAttemptWorktreePreservesCallerTree(t *testing.T) {
 	repo := t.TempDir()
 	runWorktreeGit(t, repo, "init")
+	runWorktreeGit(t, repo, "config", "core.autocrlf", "false")
 	writeWorktreeFile(t, filepath.Join(repo, "tracked.txt"), "committed\n")
 	runWorktreeGit(t, repo, "add", "tracked.txt")
 	runWorktreeGit(t, repo, "-c", "user.name=e2ebench", "-c", "user.email=e2ebench@example.invalid", "commit", "-m", "init")

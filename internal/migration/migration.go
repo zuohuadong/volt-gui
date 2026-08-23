@@ -218,6 +218,7 @@ func migrateLegacyMemorySources(sink event.Sink, verbose bool) memoryMigrationRe
 	}
 	if home, herr := os.UserHomeDir(); herr == nil {
 		addRoot(filepath.Join(home, ".voltui"), "~/.voltui")
+		addRoot(filepath.Join(home, ".reasonix"), "~/.reasonix")
 	}
 	addRoot(config.ReasonixHomeDir(), "~/.reasonix")
 	for _, legacyConfig := range config.LegacyUserConfigPaths() {
@@ -415,6 +416,16 @@ func migrateLegacySessionSources(sink event.Sink, verbose bool) sessionMigration
 		legacySessions := filepath.Join(voltuiHome, "sessions")
 		addFlatSource(legacySessions, legacySessions, agent.MigrateLegacySessions)
 		addProjectSources(voltuiHome)
+
+		// Windows stores the current support directory under AppData, while the
+		// v0.x JSON config and its sessions lived under %USERPROFILE%/.reasonix.
+		// Unix-like systems already reach this path through ReasonixHomeDir below.
+		reasonixLegacyHome := filepath.Join(home, ".reasonix")
+		if !samePath(reasonixLegacyHome, config.ReasonixHomeDir()) {
+			legacySessions = filepath.Join(reasonixLegacyHome, "sessions")
+			addFlatSource(legacySessions, legacySessions, agent.MigrateLegacySessions)
+			addProjectSources(reasonixLegacyHome)
+		}
 	}
 	reasonixHome := config.ReasonixHomeDir()
 	if strings.TrimSpace(reasonixHome) != "" {

@@ -95,6 +95,9 @@ func TestOpenDesktopLaunchLogUsesUserStateDirectory(t *testing.T) {
 func TestStartDetachedDesktopLogsStartFailure(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("REASONIX_HOME", stateDir)
+	previousShowLaunchError := showLaunchError
+	showLaunchError = func(string, string) {}
+	t.Cleanup(func() { showLaunchError = previousShowLaunchError })
 	missingDesktop := filepath.Join(t.TempDir(), "missing-desktop")
 	if code := startDetachedDesktop(exec.Command(missingDesktop), missingDesktop); code != 1 {
 		t.Fatalf("exit code = %d, want 1", code)

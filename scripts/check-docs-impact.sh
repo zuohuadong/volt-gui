@@ -40,7 +40,9 @@ while IFS= read -r file; do
 	esac
 	case "$file" in
 		cmd/reasonix/*|\
-		desktop/*|\
+		apps/desktop-electron/*|\
+		apps/desktop-frontend/*|\
+		packages/dsh-*/*|\
 		internal/agent/*|\
 		internal/boot/*|\
 		internal/cli/*|\
@@ -60,7 +62,8 @@ while IFS= read -r file; do
 		internal/tool/*|\
 		npm/*|\
 		.goreleaser.yaml|\
-		scripts/desktop-build.sh)
+		scripts/package-dist.mjs|\
+		scripts/set-electron-package-version.mjs)
 			user_visible+=("$file")
 			;;
 	esac

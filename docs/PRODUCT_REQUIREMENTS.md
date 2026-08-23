@@ -1,15 +1,15 @@
 # VoltUI Product Plan and Bilingual Requirements
 
 > Status: Draft
-> Last updated: 2026-06-30
-> Scope: VoltUI CLI/TUI, Wails desktop workbench, local configuration, model/provider management, MCP/skills/plugin ecosystem, and enterprise rollout.
+> Last updated: 2026-08-23
+> Scope: VoltUI CLI/TUI, Electron/DSH/Svelte 5 desktop workbench, local configuration, model/provider management, MCP/skills/plugin ecosystem, and enterprise rollout.
 
 ## 0. Document Control / 文档控制
 
 | Item | 中文 | English |
 | --- | --- | --- |
 | Product name | VoltUI / Volt GUI。面向用户的材料统一使用 VoltUI；历史 VoltUI 命名仅作为兼容和迁移上下文处理。 | VoltUI / Volt GUI. User-facing materials should use VoltUI; legacy VoltUI naming is treated as compatibility and migration context only. |
-| Evidence base | 当前仓库 README、桌面 Workbench 契约、Feature Matrix、配置路径、插件开发文档、Marketing Hub 规划和 `desktop/frontend/src` 源码。 | Current repo README, desktop Workbench contract, feature matrix, config paths, plugin development docs, Marketing Hub plan, and `desktop/frontend/src` source. |
+| Evidence base | 当前仓库 README、桌面 Workbench 契约、Feature Matrix、配置路径、插件开发文档、Marketing Hub 规划和 `apps/desktop-*` / `packages/dsh-*` 源码。 | Current repo README, desktop Workbench contract, feature matrix, config paths, plugin development docs, Marketing Hub plan, and `apps/desktop-*` / `packages/dsh-*` source. |
 | UI reference note | 项目规则要求 UI 规划优先参考 aoristlawer 源码；本机 `/Volumes/Data/workspace` 下未找到该仓库。本 PRD 不声明视觉对齐已完成，后续 UI 实施前必须补充该证据。 | Project rules require UI planning to reference the aoristlawer source first; that repo was not found under local `/Volumes/Data/workspace`. This PRD does not claim visual parity; UI implementation must refresh that evidence first. |
 | Non-goals for this document | 不改变代码、不定义商业价格、不承诺云 SaaS、不替代工程规格和测试矩阵。 | Do not change code, define pricing, promise cloud SaaS, or replace engineering specs and test matrices. |
 
@@ -34,7 +34,7 @@ The long-term direction is to become the local control console for enterprise in
 | Primary category | 企业内网 AI coding agent + 桌面工作台。 | Enterprise intranet AI coding agent plus desktop workbench. |
 | Primary buyer | 已部署或计划部署私有/内网大模型的研发平台、IT、AI 平台或安全合规团队。 | R&D platform, IT, AI platform, or security teams that run or plan to run private/intranet LLMs. |
 | Primary users | 开发者、技术负责人、团队协调者、平台管理员、插件/技能维护者。 | Developers, tech leads, team coordinators, platform admins, and plugin/skill maintainers. |
-| Differentiation | 离线优先、Windows 10 优先、任意 OpenAI 兼容模型、多模型路由、Go/Wails 本地内核、MCP/技能/插件治理、Work/Code 双工作台。 | Offline-first, Windows 10 first, any OpenAI-compatible model, multi-model routing, local Go/Wails kernel, MCP/skill/plugin governance, and Work/Code workbench modes. |
+| Differentiation | 离线优先、Windows x64 优先、任意 OpenAI 兼容模型、Go CLI/TUI、Electron/DSH 桌面运行时、MCP/技能/插件治理。 | Offline-first, Windows x64 first, any OpenAI-compatible model, Go CLI/TUI, an Electron/DSH desktop runtime, and MCP/skill/plugin governance. |
 | Product promise | 打包一次，内网开发者开箱可用；策略可控，结果可审查，扩展不侵入核心。 | Package once, let intranet developers work immediately; keep policy controllable, results reviewable, and extensions outside the core. |
 
 ## 3. Target Users and Scenarios / 目标用户与场景
@@ -56,7 +56,7 @@ The long-term direction is to become the local control console for enterprise in
    Providers are configuration and registry entries, not hardcoded product branches. 模型渠道通过配置和注册表扩展，不在产品逻辑里硬编码厂商。
 
 3. **Local trust boundary / 本地信任边界**
-   Go/Wails remains the desktop execution and IPC boundary. Desktop UI calls typed bindings, not a hidden Node/Electron server. Go/Wails 继续作为桌面执行和 IPC 边界；桌面 UI 通过类型化绑定访问内核。
+   Electron main owns native authority, a minimal typed preload owns IPC, and DSH listens only on loopback. The renderer never receives secrets or Node access. Electron main 负责原生权限，最小化类型化 preload 负责 IPC，DSH 仅监听 loopback；renderer 不接触密钥或 Node 权限。
 
 4. **Workbench, not chat-only / 工作台优先，不是纯聊天**
    Chat is one surface inside Work and Code. The product must expose projects, tasks, files, diffs, approvals, resources, memory, and checkpoints as first-class work objects. 对话只是 Work/Code 工作台中的一个面，项目、任务、文件、diff、审批、资源、记忆和检查点都必须是一等对象。
@@ -73,8 +73,8 @@ The long-term direction is to become the local control console for enterprise in
 
 | Area | 中文范围 | English scope |
 | --- | --- | --- |
-| Agent runtime | CLI/TUI、桌面端和 serve 共享同一个 Go 控制器、Provider、Tool、Permission、Memory 和 Checkpoint 能力。 | CLI/TUI, desktop, and serve share the same Go controller, provider, tool, permission, memory, and checkpoint capabilities. |
-| Desktop workbench | Wails v2 + Svelte 5。Work 和 Code 是顶层工作域；Ask/Auto/YOLO/Plan/Goal 是运行姿态。 | Wails v2 plus Svelte 5. Work and Code are top-level activity domains; Ask/Auto/YOLO/Plan/Goal are run postures. |
+| Agent runtime | Go CLI/TUI 保持现有控制器能力；Electron 桌面通过 DSH 提供会话、工具、工作区和模型运行时。 | Go CLI/TUI keeps the existing controller capabilities; Electron desktop uses DSH for sessions, tools, workspaces, and model runtime. |
+| Desktop workbench | Electron + DSH + Svelte 5。当前首要路径是可信的任务对话、工具执行、工作区和模型设置；Work/Code 完整域继续按真实 DSH 能力迁移。 | Electron plus DSH plus Svelte 5. The current primary path is trustworthy task conversation, tool execution, workspace and model settings; full Work/Code domains migrate only as real DSH capabilities land. |
 | Model/provider management | OpenAI-compatible and Anthropic providers, provider/model refs, priority-based disambiguation, key env handling, default/planner model selection. | OpenAI-compatible and Anthropic providers, provider/model refs, priority disambiguation, key env handling, and default/planner model selection. |
 | MCP and skills | MCP servers, prompts/resources/tools, skill roots, enable/disable controls, and capability center surfaces. | MCP servers, prompts/resources/tools, skill roots, enable/disable controls, and capability center surfaces. |
 | Local state | `~/.voltui` or `%APPDATA%\voltui` config, sessions, archive, memory, credentials `.env`, migration rescue, and workspace-local workbench jobs. | `~/.voltui` or `%APPDATA%\voltui` config, sessions, archive, memory, credential `.env`, migration rescue, and workspace-local workbench jobs. |
@@ -91,8 +91,8 @@ The long-term direction is to become the local control console for enterprise in
 
 ### 5.3 Out of Scope by Default / 默认非目标
 
-- 不迁移到 Electron，不把 Go 内核迁到 Node 服务。
-  Do not migrate to Electron or move the Go kernel to a Node service.
+- 不引入第二套桌面运行时，也不把 Go CLI/TUI 内核迁入 Node；Electron + DSH 是当前唯一生产桌面栈。
+  Do not introduce a second desktop runtime or move the Go CLI/TUI kernel into Node; Electron plus DSH is the only production desktop stack.
 - 不默认提供公网 SaaS、多租户计费或云端控制面。
   Do not assume public SaaS, multi-tenant billing, or a cloud control plane.
 - 不把客户或下游产品品牌硬编码进上游桌面壳。
@@ -206,7 +206,7 @@ The long-term direction is to become the local control console for enterprise in
 | Security | 密钥不进入仓库、配置诊断、前端状态、日志或文档样例；所有导出诊断默认脱敏。 | Secrets never enter repo files, config diagnostics, frontend state, logs, or doc examples; exported diagnostics are redacted by default. |
 | Reliability | 启动、提交、取消、审批、恢复、设置保存、更新检查和资源列表必须可重试、可恢复并显示错误。 | Startup, submit, cancel, approval, resume, settings save, update check, and resource listing must be retryable, recoverable, and visible on error. |
 | Performance | 桌面首屏不依赖远程字体或资源；大 transcript 和大 diff 必须有截断、折叠或虚拟化策略。 | Desktop first paint depends on no remote fonts/assets; large transcripts and diffs need truncation, folding, or virtualization. |
-| Compatibility | 保持 Go CLI 单静态二进制目标；桌面 CGO/WebKit 依赖隔离在 `desktop/` nested module。 | Preserve the Go CLI single static binary target; isolate desktop CGO/WebKit dependencies in the `desktop/` nested module. |
+| Compatibility | 保持 Go CLI 单静态二进制目标；桌面 Electron/DSH/pnpm 依赖隔离在 `apps/desktop-*` 与 `packages/dsh-*`，休眠的 `desktop/` Wails 源码不得进入生产构建。 | Preserve the Go CLI single static binary target; isolate Electron/DSH/pnpm dependencies under `apps/desktop-*` and `packages/dsh-*`, while dormant Wails sources under `desktop/` stay outside production builds. |
 | Accessibility | 常用操作支持键盘；审批卡片、菜单、设置和 Work/Code 切换必须有稳定焦点路径。 | Common operations support keyboard access; approval cards, menus, settings, and Work/Code switching have stable focus paths. |
 | Observability | Provider、MCP、Skill、Plugin、Permission、Update、Job 和 Session 状态有可见诊断入口。 | Provider, MCP, skill, plugin, permission, update, job, and session states have visible diagnostics. |
 | Privacy | 默认本地优先，不上传会话、记忆、仓库内容或工具结果；任何同步能力必须显式启用。 | Local-first by default. Sessions, memory, repository content, and tool results are not uploaded; any sync capability must be explicit. |
@@ -270,8 +270,8 @@ The VoltUI desktop resource layer should expose resources through a unified Data
 按改动范围选择最小但真实的门禁：
 
 - 文档/规划：`git diff --check`，必要时检查链接和术语一致性。
-- Frontend：`cd desktop/frontend && pnpm check && pnpm build`。
-- Desktop Go：`cd desktop && GOTOOLCHAIN=local GOPROXY=https://goproxy.cn,direct go test ./...`。
+- Frontend：`pnpm --filter voltui-desktop-workbench run check && pnpm --filter voltui-desktop-workbench run test:unit`。
+- Electron/DSH：`node --test scripts/check-electron-runtime-boundary.test.mjs scripts/check-runtime-mocks.test.mjs && pnpm run build:desktop`。
 - Root Go：`GOTOOLCHAIN=local GOPROXY=https://goproxy.cn,direct go test ./...`，必要时 `go vet ./...`。
 - 生产门禁：`./scripts/p0-production-smoke.sh`。
 - 广覆盖 UI：`node scripts/ui-feature-smoke.mjs` 或项目当前推荐 smoke 命令。
@@ -281,8 +281,8 @@ The VoltUI desktop resource layer should expose resources through a unified Data
 Choose the smallest real gate based on changed scope:
 
 - Docs/planning: `git diff --check`, plus link and terminology checks when needed.
-- Frontend: `cd desktop/frontend && pnpm check && pnpm build`.
-- Desktop Go: `cd desktop && GOTOOLCHAIN=local GOPROXY=https://goproxy.cn,direct go test ./...`.
+- Frontend: `pnpm --filter voltui-desktop-workbench run check && pnpm --filter voltui-desktop-workbench run test:unit`.
+- Electron/DSH: `node --test scripts/check-electron-runtime-boundary.test.mjs scripts/check-runtime-mocks.test.mjs && pnpm run build:desktop`.
 - Root Go: `GOTOOLCHAIN=local GOPROXY=https://goproxy.cn,direct go test ./...`, and `go vet ./...` when needed.
 - Production gate: `./scripts/p0-production-smoke.sh`.
 - Broad UI: `node scripts/ui-feature-smoke.mjs` or the current project-recommended smoke command.
@@ -294,7 +294,7 @@ Choose the smallest real gate based on changed scope:
 | Legacy naming drift | 建立产品术语清单，新增文档统一 VoltUI，旧 VoltUI 表述标注兼容来源并逐步修复。 | Maintain product terminology, use VoltUI in new docs, mark legacy VoltUI wording as compatibility context, and fix it incrementally. |
 | Provider compatibility variance | 把模型发现、streaming、tool call、reasoning、vision、context window 都做成 capability，不靠厂商名推断。 | Model discovery, streaming, tool calls, reasoning, vision, and context window should be capabilities, not vendor-name assumptions. |
 | UI scope creep | Work/Code 核心路径优先；Marketing/Content Studio 等复杂业务能力通过 Workbench plugin 隔离。 | Prioritize Work/Code core paths; isolate complex business capabilities such as Marketing/Content Studio through Workbench plugins. |
-| Wails platform variance | 保持平台专项 release notes 和 smoke；Linux WebKit、Windows WebView2、macOS Gatekeeper 单独列风险。 | Keep platform-specific release notes and smoke; track Linux WebKit, Windows WebView2, and macOS Gatekeeper separately. |
+| Electron platform variance | 当前只验证 Windows x64；签名、updater、macOS notarization 和 Linux packaging 在完成真实工具链前保持 fail-closed。 | Windows x64 is the only verified target; signing, updater, macOS notarization, and Linux packaging stay fail-closed until real toolchains exist. |
 | Secret leakage | 所有配置、诊断、插件和文档样例都使用 env key、masked value 和 redaction。 | Use env keys, masked values, and redaction in configs, diagnostics, plugins, and documentation examples. |
 | Missing UI reference evidence | 后续 UI 实施前补充 aoristlawer 源码读取和截图/结构证据；没有证据时不声明对齐。 | Before UI implementation, refresh aoristlawer source and screenshot/structure evidence; do not claim alignment without evidence. |
 

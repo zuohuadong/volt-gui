@@ -42,7 +42,7 @@ for production_workflow in "$stable_workflow" "$cli_workflow" "$npm_workflow" "$
 done
 
 # Every reusable publisher must bind itself to the approved orchestrator, SHA,
-# tag, and cache guard before it can receive release credentials.
+# and tag before it can receive release credentials.
 for publisher in "$cli_workflow" "$npm_workflow" "$desktop_workflow"; do
 	require_pattern '^  workflow_call:$' "$publisher"
 	require_pattern 'github\.workflow_ref' "$publisher"
@@ -50,6 +50,8 @@ for publisher in "$cli_workflow" "$npm_workflow" "$desktop_workflow"; do
 	require_pattern 'inputs\.approved_sha' "$publisher"
 	require_pattern 'verify-release-tag\.sh' "$publisher"
 	require_pattern 'release-stable\.yml' "$publisher"
+done
+for publisher in "$cli_workflow" "$npm_workflow"; do
 	require_pattern "needs\.cache-guard\.result == 'success'" "$publisher"
 done
 
@@ -83,52 +85,44 @@ require_pattern 'Publish or recover immutable npm packages' "$npm_workflow"
 require_pattern 'publishPackages' "$repo_root/npm/build.mjs"
 require_pattern '[A-Za-z]+CandidateSha: candidateSha' "$repo_root/npm/build.mjs"
 
-# Desktop's public dispatch is Stable-only. The workflow resolves one candidate
-# SHA, uses protected release-control verification, and retains SignPath gates.
+# Desktop's public dispatch is Stable-only. It resolves one immutable candidate,
+# packages Electron on Windows x64, and uploads an explicitly unsigned artifact.
 require_pattern 'options: \[stable\]' "$desktop_workflow"
 if sed -n '/^  workflow_dispatch:/,/^  workflow_call:/p' "$desktop_workflow" | grep -Eqi 'preview|canary'; then
 	echo "standalone Desktop dispatch must not expose Preview or Canary" >&2
 	exit 1
 fi
 require_pattern '^  resolve:$' "$desktop_workflow"
-require_pattern 'sha:.*steps\.candidate\.outputs\.sha' "$desktop_workflow"
+require_pattern 'sha:.*candidate-orchestrated.*candidate-standalone' "$desktop_workflow"
 require_pattern 'bash scripts/resolve-desktop-candidate\.sh' "$desktop_workflow"
 require_pattern 'ref: \$\{\{ needs\.resolve\.outputs\.sha \}\}' "$desktop_workflow"
-require_pattern 'path: release-control' "$desktop_workflow"
-require_pattern 'ref: \$\{\{ github\.workflow_sha \}\}' "$desktop_workflow"
-require_pattern 'signing-policy-slug: release-signing' "$desktop_workflow"
-if require_pattern 'signing-policy-slug:.*test-signing' "$desktop_workflow"; then
-	echo "public Desktop workflow must not use the SignPath test certificate" >&2
+require_pattern '^  orchestration-guard:$' "$desktop_workflow"
+require_pattern '^  standalone-approval:$' "$desktop_workflow"
+require_pattern '^  package:$' "$desktop_workflow"
+require_pattern 'runs-on: windows-latest' "$desktop_workflow"
+require_pattern 'node scripts/set-electron-package-version\.mjs' "$desktop_workflow"
+require_pattern 'pnpm run dist:desktop' "$desktop_workflow"
+require_pattern 'windows-x64-unsigned' "$desktop_workflow"
+require_pattern 'Electron production signing is not migrated yet' "$desktop_workflow"
+if grep -Eqi 'signpath/github-action-submit-signing-request|gh release create' "$desktop_workflow"; then
+	echo "unsigned Electron workflow must not submit signing requests or publish a GitHub Release" >&2
 	exit 1
 fi
-require_pattern '^  signing-contract:$' "$desktop_workflow"
-require_pattern '^  attest-signing-contract:$' "$desktop_workflow"
-require_pattern 'steps\.submit-windows-payload\.outputs\.signing-request-id' "$desktop_workflow"
-require_pattern 'steps\.submit-windows-installer\.outputs\.signing-request-id' "$desktop_workflow"
-require_pattern 'artifact-configuration-slug: windows-payload' "$desktop_workflow"
-require_pattern 'artifact-configuration-slug: windows-installer-v2' "$desktop_workflow"
-grep -Fq -- '-RequireTrusted:$true' "$desktop_workflow"
 
-# The stable orchestrator must call every publisher, perform SignPath preflight,
-# carry one reviewed-notes artifact, and verify public artifacts afterwards.
+# The stable orchestrator calls every publisher, carries one reviewed-notes
+# artifact for public channels, and explicitly excludes desktop publication from
+# postflight until Electron signing/updater work is complete.
 for publisher_job in cli npm desktop; do
 	require_pattern "^  ${publisher_job}:$" "$stable_workflow"
 	require_pattern "inputs\.publish_${publisher_job}" "$stable_workflow"
 done
-require_pattern '^  signpath-preflight:$' "$stable_workflow"
-require_pattern 'signing_preflight: true' "$stable_workflow"
-require_pattern 'signing_preflight_verified: true' "$stable_workflow"
+require_pattern 'name: build Electron desktop artifact' "$stable_workflow"
 require_pattern '^  postflight:$' "$stable_workflow"
 require_pattern 'verify-stable-release-artifacts\.sh' "$stable_workflow"
+require_pattern 'VERIFY_DESKTOP_PUBLICATION: "false"' "$stable_workflow"
 require_pattern 'name: orchestrator-reviewed-release-notes' "$stable_workflow"
-for notes_consumer in "$cli_workflow" "$desktop_workflow"; do
-	require_pattern 'name: Download orchestrator-reviewed release notes' "$notes_consumer"
-	require_pattern 'name: orchestrator-reviewed-release-notes' "$notes_consumer"
-done
-
-go run ./cmd/signpath-contract validate
-contract_fingerprint="$(go run ./cmd/signpath-contract fingerprint)"
-require_pattern '^v1:[0-9a-f]{64}$' <(printf '%s\n' "$contract_fingerprint")
+require_pattern 'name: Download orchestrator-reviewed release notes' "$cli_workflow"
+require_pattern 'name: orchestrator-reviewed-release-notes' "$cli_workflow"
 
 # Exercise tag resolution and authorization against a real temporary Git remote.
 git init --bare -q "$test_root/remote.git"
@@ -235,7 +229,7 @@ if EVENT_NAME=workflow_dispatch IN_ORCHESTRATED=false IN_CHANNEL=stable IN_BASE_
 fi
 grep -Eq 'does not match requested version' "$test_root/npm-mismatch.log"
 
-node --test "$repo_root/npm/publish.test.mjs"
+node "$repo_root/npm/publish.test.mjs"
 bash "$repo_root/scripts/release-stable.test.sh"
 
 echo "release workflow contract tests: PASS"

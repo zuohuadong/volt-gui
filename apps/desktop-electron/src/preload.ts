@@ -10,7 +10,7 @@ interface DshConfigPatch {
 }
 
 contextBridge.exposeInMainWorld('electronDsh', {
-  getServerUrl: () => ipcRenderer.invoke('dsh:get-server-url'),
+  getServerConnection: () => ipcRenderer.invoke('dsh:get-server-connection'),
   openFolderDialog: () => ipcRenderer.invoke('dsh:open-folder-dialog'),
   getWorkingDir: () => ipcRenderer.invoke('dsh:get-working-dir'),
   setWorkingDir: (dir: string) => ipcRenderer.invoke('dsh:set-working-dir', dir),

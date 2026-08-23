@@ -15,16 +15,24 @@ export function stripInternalTranscriptBlocks(value: string): string {
   }).trimStart();
 }
 
-export function visibleTranscriptText(value: string): string {
-  return mapOutsideCodeFences(preparedTranscriptText(value), collapseProseRepeats);
+export interface TranscriptVisibilityOptions {
+  officeOutput?: boolean;
 }
 
-export function visibleAssistantTranscriptText(value: string): string {
-  return mapOutsideCodeFences(preparedTranscriptText(value), (section) => collapseProseRepeats(stripInternalHostNotices(section)));
+export function visibleTranscriptText(value: string, options: TranscriptVisibilityOptions = {}): string {
+  return preparedTranscriptText(value, options);
 }
 
-function preparedTranscriptText(value: string): string {
-  return stripOpeningPlanningAside(stripInternalTranscriptBlocks(value));
+export function visibleAssistantTranscriptText(value: string, options: TranscriptVisibilityOptions = {}): string {
+  return mapOutsideCodeFences(preparedTranscriptText(value, options), (section) => collapseProseRepeats(stripInternalHostNotices(section)));
+}
+
+function preparedTranscriptText(value: string, options: TranscriptVisibilityOptions): string {
+  let visible = stripInternalTranscriptBlocks(value);
+  visible = options.officeOutput
+    ? stripOfficeOpeningPlanningAside(stripOfficeOutputAsides(visible))
+    : stripOpeningPlanningAside(visible);
+  return mapOutsideCodeFences(visible, collapseProseRepeats);
 }
 
 function stripInternalHostNotices(value: string): string {
@@ -36,8 +44,26 @@ function stripOpeningPlanningAside(value: string): string {
   if (!match) return value;
   const aside = match[1].trim();
   if (!aside || aside.length > 240 || /(?:^|\n)\s*(?:[-*#>|]|\d+[.)])/.test(aside)) return value;
-  const markers = aside.match(/(?:我需要先|我得先|让我先|让我来|我先(?:分析|整理|检查|思考|核对|确认)|接下来我(?:需要|会)先?)/g) ?? [];
-  return markers.length >= 2 ? match[2] : value;
+  return hasPlanningNarration(aside) ? match[2] : value;
+}
+
+function stripOfficeOpeningPlanningAside(value: string): string {
+  const match = /^([\s\S]*?)\n{2,}(#{1,6}\s+\S[\s\S]*)$/.exec(value);
+  if (!match) return value;
+  const aside = match[1].trim();
+  if (!aside) return value;
+  return hasPlanningNarration(aside) ? match[2] : value;
+}
+
+function hasPlanningNarration(aside: string): boolean {
+  const markers = aside.match(/(?:我需要先|我得先|让我(?:先|来|重新|采用)|我先(?:分析|整理|检查|思考|核对|确认)|我(?:之前|刚才).{0,24}(?:算错|核算错|判断错|规划错|需要重新)|接下来我(?:需要|会)先?)/g) ?? [];
+  return markers.length >= 2;
+}
+
+function stripOfficeOutputAsides(value: string): string {
+  return mapOutsideCodeFences(value, (section) => section
+    .replace(/(?:^|\n{2,})(?:结构|章节|数量|计数)[^\n]{0,80}(?:核对|核验|校验|复核)[^\n]{0,120}(?:与正文一致|已通过|一致)[^\n]*(?=\n{2,}|$)/giu, "\n\n")
+    .replace(/\uFFFD+/g, "")).trimStart();
 }
 
 function mapOutsideCodeFences(value: string, transform: (section: string) => string): string {

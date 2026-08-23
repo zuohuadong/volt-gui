@@ -1,10 +1,7 @@
 import { mount } from "svelte";
-import App from "./App.svelte";
+import ElectronWorkbench from "./components/ElectronWorkbench.svelte";
 import { initAppearance } from "./lib/appearance";
 
-// svadmin/ui design system — provides OKLCH design tokens, component styles,
-// light/dark theme, and admin-ready typography. Workbench-specific layout
-// overrides live in app.css.
 import "@svadmin/ui/app.css";
 import "./app.css";
 
@@ -16,4 +13,4 @@ if (!target) {
 
 initAppearance();
 
-export default mount(App, { target });
+export default mount(ElectronWorkbench, { target });

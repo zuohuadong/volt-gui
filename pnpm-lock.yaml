@@ -56,11 +56,11 @@ importers:
         specifier: ^1.24.0
         version: 1.32.0(svelte@5.56.9)
       '@svadmin/core':
-        specifier: ^0.31.0
-        version: 0.31.0(@tanstack/svelte-query@6.1.38(svelte@5.56.9))(svelte@5.56.9)
+        specifier: ^0.36.3
+        version: 0.36.3(@tanstack/svelte-query@6.1.38(svelte@5.56.9))(svelte@5.56.9)
       '@svadmin/ui':
-        specifier: ^0.38.2
-        version: 0.38.7(@internationalized/date@3.12.3)(@svadmin/core@0.31.0(@tanstack/svelte-query@6.1.38(svelte@5.56.9))(svelte@5.56.9))(@tanstack/svelte-query@6.1.38(svelte@5.56.9))(svelte@5.56.9)
+        specifier: ^0.42.2
+        version: 0.42.2(@internationalized/date@3.12.3)(@svadmin/core@0.36.3(@tanstack/svelte-query@6.1.38(svelte@5.56.9))(svelte@5.56.9))(@tanstack/svelte-query@6.1.38(svelte@5.56.9))(svelte@5.56.9)
       '@tanstack/svelte-query':
         specifier: ^6.1.36
         version: 6.1.38(svelte@5.56.9)
@@ -3063,28 +3063,28 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@svadmin/core@0.31.0':
-    resolution: {integrity: sha512-bd0k0GayYfUdAo1+z0DB1N2WqoyCtq1ELIe2BnWiaSyy/gPmjUVX2f8OwzBEhEUu/JWeHhu3cg+nxqDBt/+fkw==}
+  '@svadmin/core@0.36.3':
+    resolution: {integrity: sha512-Rz1X0oM/285XWLLT+SeLRYizYIjCczVqyeXCcYmR/lhXYL2h/0j5U9siuZxthsmUlVId7Shc9gYSYKclZip9kg==}
     peerDependencies:
-      '@tanstack/svelte-query': ^6.1.29
-      svelte: ^5.0.0
+      '@tanstack/svelte-query': ^6.1.38
+      svelte: ^5.56.8
     peerDependenciesMeta:
       '@tanstack/svelte-query':
         optional: true
       svelte:
         optional: true
 
-  '@svadmin/ui@0.38.7':
-    resolution: {integrity: sha512-FalTUTGMWeWuZx+8ePO3t7cuF+mjMjCwb3wht3AP+4xMIqQeGqaiGhrVBBfSMus7j+PgHjo5MuKv6glktD8Nug==}
+  '@svadmin/ui@0.42.2':
+    resolution: {integrity: sha512-dVSYSAIFqc5ypSWk89KX31H8IqjJyRJCW9FA/cLDtve8BYQ8bQMgLM1duIMss/NicyLQszlmz7d11mofNaTrwg==}
     peerDependencies:
-      '@svadmin/core': ^0.32.2
+      '@svadmin/core': ^0.36.3
       '@svadmin/editor': '*'
-      '@tanstack/svelte-query': ^6.1.29
+      '@tanstack/svelte-query': ^6.1.38
       highlight.js: ^11.11.1
-      isomorphic-dompurify: ^3.15.0
-      marked: ^18.0.0
-      marked-highlight: ^2.2.3
-      svelte: ^5.33.0
+      isomorphic-dompurify: ^3.22.0
+      marked: ^18.0.9
+      marked-highlight: ^2.2.4
+      svelte: ^5.56.8
     peerDependenciesMeta:
       '@svadmin/core':
         optional: true
@@ -3148,15 +3148,15 @@ packages:
     peerDependencies:
       svelte: ^5.0.0
 
-  '@tanstack/svelte-table@9.0.0-alpha.53':
-    resolution: {integrity: sha512-r6tQuto2reHocUNYYZThfaYl9Zjf747mRMGHvT3kdsqgBhGKwQ5d55vWBCJ7KHLYIiYQIuPXde39Kr1fMVl5NA==}
-    engines: {node: '>=16'}
+  '@tanstack/svelte-table@9.1.2':
+    resolution: {integrity: sha512-0tDbl4PAu7Z4+VKaGnJlsfrMTVrnbgsxEQwpVRxnot30psP1GcqbVGOTwA5tf45hX3NYbW3e/9KZerKBrlHO0A==}
+    engines: {node: '>=20'}
     peerDependencies:
       svelte: ^5.0.0
 
-  '@tanstack/table-core@9.0.0-alpha.53':
-    resolution: {integrity: sha512-m2HUn/eD8B0/9rEqDf+Qv6saCCf/ujpWCdIZC2tsTEQIZ5bwm32iWqlPl3layxko2MnyEgSxuSv3238SXnZWJQ==}
-    engines: {node: '>=16'}
+  '@tanstack/table-core@9.1.2':
+    resolution: {integrity: sha512-ONpWQeass1sfg80CWF1NSwQ8r3GiqxA2lT/EdqIcrDEPZ0Z+0mM94eQoFYLPN0Kztzj8TQVb2+PrSZSItqA61g==}
+    engines: {node: '>=20'}
 
   '@tanstack/virtual-core@3.17.7':
     resolution: {integrity: sha512-bp+v10y65sp2H7WpWfIMyxTNfl8ZVfxFTLRjPIFRryi6FV/J33z4IS53WO4pTk36KlvJ4iLiQz+oaydDC1xbcA==}
@@ -8882,25 +8882,25 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@svadmin/core@0.31.0(@tanstack/svelte-query@6.1.38(svelte@5.56.9))(svelte@5.56.9)':
+  '@svadmin/core@0.36.3(@tanstack/svelte-query@6.1.38(svelte@5.56.9))(svelte@5.56.9)':
     optionalDependencies:
       '@tanstack/svelte-query': 6.1.38(svelte@5.56.9)
       svelte: 5.56.9
 
-  '@svadmin/ui@0.38.7(@internationalized/date@3.12.3)(@svadmin/core@0.31.0(@tanstack/svelte-query@6.1.38(svelte@5.56.9))(svelte@5.56.9))(@tanstack/svelte-query@6.1.38(svelte@5.56.9))(svelte@5.56.9)':
+  '@svadmin/ui@0.42.2(@internationalized/date@3.12.3)(@svadmin/core@0.36.3(@tanstack/svelte-query@6.1.38(svelte@5.56.9))(svelte@5.56.9))(@tanstack/svelte-query@6.1.38(svelte@5.56.9))(svelte@5.56.9)':
     dependencies:
       '@floating-ui/dom': 1.8.0
       '@lucide/svelte': 1.32.0(svelte@5.56.9)
       '@tanstack/svelte-store': 0.12.1(svelte@5.56.9)
-      '@tanstack/svelte-table': 9.0.0-alpha.53(svelte@5.56.9)
-      '@tanstack/table-core': 9.0.0-alpha.53
+      '@tanstack/svelte-table': 9.1.2(svelte@5.56.9)
+      '@tanstack/table-core': 9.1.2
       bits-ui: 2.18.1(@internationalized/date@3.12.3)(svelte@5.56.9)
       clsx: 2.1.1
       svelte-sonner: 1.2.1(svelte@5.56.9)
       tailwind-merge: 3.6.0
       tailwind-variants: 3.3.1(tailwind-merge@3.6.0)
     optionalDependencies:
-      '@svadmin/core': 0.31.0(@tanstack/svelte-query@6.1.38(svelte@5.56.9))(svelte@5.56.9)
+      '@svadmin/core': 0.36.3(@tanstack/svelte-query@6.1.38(svelte@5.56.9))(svelte@5.56.9)
       '@tanstack/svelte-query': 6.1.38(svelte@5.56.9)
       svelte: 5.56.9
     transitivePeerDependencies:
@@ -8951,13 +8951,13 @@ snapshots:
       '@tanstack/store': 0.11.1
       svelte: 5.56.9
 
-  '@tanstack/svelte-table@9.0.0-alpha.53(svelte@5.56.9)':
+  '@tanstack/svelte-table@9.1.2(svelte@5.56.9)':
     dependencies:
       '@tanstack/svelte-store': 0.12.1(svelte@5.56.9)
-      '@tanstack/table-core': 9.0.0-alpha.53
+      '@tanstack/table-core': 9.1.2
       svelte: 5.56.9
 
-  '@tanstack/table-core@9.0.0-alpha.53':
+  '@tanstack/table-core@9.1.2':
     dependencies:
       '@tanstack/store': 0.11.1
 

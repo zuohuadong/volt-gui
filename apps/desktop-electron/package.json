@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build:main": "node ./scripts/build-main.mjs",
-    "build:frontend": "node ./scripts/build-frontend.mjs",
+    "build:frontend": "pnpm --filter voltui-desktop-workbench run build:electron && node ./scripts/build-frontend.mjs",
     "build": "pnpm run build:frontend && pnpm run build:main",
     "dev": "tsc --watch",
     "start": "electron dist/main.js",

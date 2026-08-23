@@ -236,11 +236,10 @@ func runOne(ctx context.Context, command string, opts ProbeOptions) ProbeResult 
 	}
 	cmdCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(cmdCtx, exe, parts[1:]...)
-	// Probes run with the same credential-filtered environment as every other
-	// subprocess: inheriting os.Environ() here would bypass the
-	// filter_subprocess_env control and leak registered secrets into probe
-	// output (see secrets.ProcessEnv).
+	cmd := proc.CommandContext(cmdCtx, exe, parts[1:]...)
+	// Always set the env explicitly: leaving cmd.Env nil would inherit the
+	// full process environment and bypass [secrets] filter_subprocess_env for
+	// probes that declare no extra variables of their own.
 	cmd.Env = append(secrets.ProcessEnv(), probe.Env...)
 	prepareProbeCommand(cmd)
 	var stdout, stderr bytes.Buffer

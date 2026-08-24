@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main-v2]
+    branches: [main]
   pull_request:
-    branches: [main-v2]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -146,6 +146,9 @@ jobs:
       - name: Test DSH and renderer
         run: |
           pnpm test
+          pnpm --filter @voltui/desktop-electron run test:config
+          pnpm --filter @voltui/desktop-electron run test:profile
+          pnpm --filter @voltui/desktop-electron run test:security
           pnpm --filter voltui-desktop-workbench run test:unit
 
       - name: Build Electron desktop
@@ -204,7 +207,10 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: "26"
+
+      - name: install
+        run: npm ci
 
       - name: test
         run: npm test

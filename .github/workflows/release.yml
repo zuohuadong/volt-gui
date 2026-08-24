@@ -84,14 +84,14 @@ jobs:
           RELEASE_CHANNEL: ${{ steps.release.outputs.channel }}
         run: |
           set -euo pipefail
-          git fetch origin main-v2
+          git fetch origin main
           sha="$(git rev-parse "$RELEASE_TAG^{commit}")"
-          if ! git merge-base --is-ancestor "$sha" origin/main-v2; then
-            echo "::error::$RELEASE_TAG points to $sha, which is not on main-v2 history"
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error::$RELEASE_TAG points to $sha, which is not on main history"
             exit 1
           fi
-          if [ "$RELEASE_CHANNEL" = "preview" ] && [ "$sha" != "$(git rev-parse origin/main-v2)" ]; then
-            echo "::error::CLI Preview must tag current main-v2; $RELEASE_TAG points to $sha"
+          if [ "$RELEASE_CHANNEL" = "preview" ] && [ "$sha" != "$(git rev-parse origin/main)" ]; then
+            echo "::error::CLI Preview must tag current main; $RELEASE_TAG points to $sha"
             exit 1
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"

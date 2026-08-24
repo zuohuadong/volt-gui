@@ -67,6 +67,7 @@ export class DshServer {
     engine;
     pluginManager;
     options;
+    activeTurn = false;
     constructor(options) {
         this.options = {
             port: 3210,
@@ -75,8 +76,12 @@ export class DshServer {
             ...options,
             allowedOrigins: [...(options.allowedOrigins ?? [])],
         };
-        this.engine = new DshEngine(this.options.config);
-        this.pluginManager = new PluginManager(this.options.config.workingDirectory || process.cwd(), (message) => console.log(`[DSH Server] ${message}`));
+        this.engine = new DshEngine({
+            ...this.options.config,
+            authorizationBroker: this.options.authorizationBroker,
+        });
+        this.engine.setHistory(this.options.initialHistory ?? []);
+        this.pluginManager = new PluginManager(this.options.config.workingDirectory || process.cwd(), (message) => console.log(`[DSH Server] ${message}`), { mcpServers: this.options.mcpServers });
     }
     async start() {
         await this.pluginManager.initializeAll(this.engine);
@@ -140,8 +145,7 @@ export class DshServer {
             return;
         }
         if (url.pathname === '/api/history' && req.method === 'DELETE') {
-            this.engine.clearHistory();
-            writeJson(res, 200, { success: true });
+            await this.clearHistory(res);
             return;
         }
         if (url.pathname === '/api/turn' && req.method === 'POST') {
@@ -175,7 +179,23 @@ export class DshServer {
         this.engine.setModel(body.model.trim());
         writeJson(res, 200, { success: true, model: this.engine.getModel() });
     }
+    async clearHistory(res) {
+        if (this.activeTurn)
+            throw new HttpRequestError(409, 'A turn is currently active');
+        const snapshot = this.engine.getHistory();
+        this.engine.clearHistory();
+        try {
+            await this.options.persistHistory?.([]);
+            writeJson(res, 200, { success: true });
+        }
+        catch (error) {
+            this.engine.setHistory(snapshot);
+            throw error;
+        }
+    }
     async runTurn(req, res) {
+        if (this.activeTurn)
+            throw new HttpRequestError(409, 'A turn is already active');
         const body = await readJsonObject(req, this.options.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES);
         const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
         if (!prompt)
@@ -183,6 +203,8 @@ export class DshServer {
         const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : undefined;
         if (model)
             this.engine.setModel(model);
+        this.activeTurn = true;
+        const historySnapshot = this.engine.getHistory();
         res.writeHead(200, {
             'Content-Type': 'text/event-stream; charset=utf-8',
             'Cache-Control': 'no-cache',
@@ -198,11 +220,16 @@ export class DshServer {
             for await (const event of this.engine.runTurn(prompt, { signal: abortController.signal, model })) {
                 sendEvent(event);
             }
+            await this.options.persistHistory?.(this.engine.getHistory());
             res.write('data: [DONE]\n\n');
         }
         catch (error) {
+            this.engine.setHistory(historySnapshot);
             const message = error instanceof Error ? error.message : String(error);
             sendEvent({ type: 'error', message });
+        }
+        finally {
+            this.activeTurn = false;
         }
         res.end();
     }
@@ -226,6 +253,9 @@ export class DshServer {
         finally {
             await this.pluginManager.destroy();
         }
+    }
+    hasActiveTurn() {
+        return this.activeTurn;
     }
     getEngine() {
         return this.engine;

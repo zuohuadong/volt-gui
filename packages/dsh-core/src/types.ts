@@ -12,6 +12,7 @@ export interface DshConfig {
   compactReasoningInHistory?: boolean;
   enableDegenerationGuard?: boolean;
   workingDirectory?: string;
+  authorizationBroker?: ToolAuthorizationBroker;
 }
 
 export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
@@ -86,8 +87,36 @@ export type DshTurnEvent =
   | { type: 'degeneration_detected'; reason: string; count: number }
   | { type: 'turn_complete'; finishReason: string; totalUsage?: CacheDiagnostics };
 
+export type ToolPermissionMode = 'ask' | 'auto' | 'yolo';
+export type ToolEffect = 'read' | 'write' | 'process' | 'external';
+export type ToolRisk = 'ordinary' | 'high';
+
+export interface ToolAuthorization {
+  effect: ToolEffect;
+  risk: ToolRisk;
+}
+
+export interface ToolAuthorizationRequest {
+  toolCallId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  workingDirectory: string;
+  authorization: ToolAuthorization;
+  signal?: AbortSignal;
+}
+
+export interface ToolAuthorizationDecision {
+  allow: boolean;
+  reason?: string;
+}
+
+export interface ToolAuthorizationBroker {
+  authorize(request: ToolAuthorizationRequest): Promise<ToolAuthorizationDecision>;
+}
+
 export interface ToolHandler {
   schema: ToolSchema;
+  authorization: ToolAuthorization;
   execute: (args: Record<string, unknown>, context: ToolExecutionContext) => Promise<string | { output: string; isError?: boolean }>;
 }
 

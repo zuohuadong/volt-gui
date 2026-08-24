@@ -9,9 +9,11 @@
     "build:frontend": "pnpm --filter voltui-desktop-workbench run build:electron && node ./scripts/build-frontend.mjs",
     "build": "pnpm run build:frontend && pnpm run build:main",
     "test:config": "node --test src/runtime-config.test.mjs",
+    "test:profile": "node --test ../../scripts/electron-profile.test.mjs",
+    "test:security": "node ./scripts/run-security-tests.mjs",
     "dev": "tsc --watch",
     "start": "electron dist/main.js",
-    "dist": "electron-builder --win --x64"
+    "dist": "electron-builder --config electron-builder.mjs --win --x64"
   },
   "devDependencies": {
     "@dsh/core": "workspace:*",

@@ -20,7 +20,7 @@ if [ -n "${FAKE_ADVANCE_WORK:-}" ] && [ ! -e "$FAKE_ADVANCE_WORK/.advanced-by-fa
 	: >"$FAKE_ADVANCE_WORK/.advanced-by-fake-gh"
 	git -C "$FAKE_ADVANCE_WORK" add .advanced-by-fake-gh
 	git -C "$FAKE_ADVANCE_WORK" commit -q -m "advance main during CI"
-	git -C "$FAKE_ADVANCE_WORK" push -q origin main-v2
+	git -C "$FAKE_ADVANCE_WORK" push -q origin main
 fi
 if [ "${FAKE_GH_CONCLUSION:-success}" = pending ]; then
 	printf '[{"headSha":"%s","status":"in_progress","conclusion":""}]\n' "$FAKE_CANDIDATE"
@@ -36,7 +36,7 @@ make_remote() {
 	local work="$test_root/$name-work"
 	local remote="$test_root/$name.git"
 	git init -q --bare "$remote"
-	git init -q -b main-v2 "$work"
+	git init -q -b main "$work"
 	git -C "$work" config user.name test
 	git -C "$work" config user.email test@example.invalid
 	mkdir -p "$work/release-notes"
@@ -48,7 +48,7 @@ make_remote() {
 	git -C "$work" add release-notes/releases.json
 	git -C "$work" commit -q -m "reviewed release notes"
 	git -C "$work" remote add origin "$remote"
-	git -C "$work" push -q origin main-v2
+	git -C "$work" push -q origin main
 	printf '%s\n' "$work"
 }
 
@@ -66,11 +66,11 @@ done
 
 # Advancing main after the atomic tag transaction must not invalidate the
 # immutable Notes candidate selected by the protected relay.
-git clone -q -b main-v2 "$test_root/success.git" "$test_root/success-control"
+git clone -q -b main "$test_root/success.git" "$test_root/success-control"
 git -C "$test_root/success-control" config user.name test
 git -C "$test_root/success-control" config user.email test@example.invalid
 git -C "$test_root/success-control" commit --allow-empty -q -m "advance after tags"
-git -C "$test_root/success-control" push -q origin main-v2
+git -C "$test_root/success-control" push -q origin main
 (
 	cd "$test_root/success-control"
 	GITHUB_OUTPUT="$test_root/success-control.out" RELEASE_REMOTE=origin \
@@ -103,7 +103,7 @@ fi
 # release candidate merely because it contains the older reviewed record.
 stale_notes_work="$(make_remote stale-notes)"
 git -C "$stale_notes_work" commit --allow-empty -q -m "later product change"
-git -C "$stale_notes_work" push -q origin main-v2
+git -C "$stale_notes_work" push -q origin main
 stale_notes_sha="$(git -C "$stale_notes_work" rev-parse HEAD)"
 if (
 	cd "$stale_notes_work"
@@ -116,11 +116,11 @@ if (
 fi
 [ -z "$(git ls-remote --tags --refs "$test_root/stale-notes.git" 'refs/tags/*')" ]
 
-# If main advances while exact-SHA CI is being checked, the no-op main-v2
+# If main advances while exact-SHA CI is being checked, the no-op main
 # refspec makes the atomic push reject all three tags.
 race_work="$(make_remote race)"
 race_sha="$(git -C "$race_work" rev-parse HEAD)"
-git clone -q -b main-v2 "$test_root/race.git" "$test_root/race-advance"
+git clone -q -b main "$test_root/race.git" "$test_root/race-advance"
 git -C "$test_root/race-advance" config user.name test
 git -C "$test_root/race-advance" config user.email test@example.invalid
 if (
@@ -129,11 +129,11 @@ if (
 		FAKE_ADVANCE_WORK="$test_root/race-advance" RELEASE_CI_WAIT_SECONDS=0 \
 		RELEASE_REMOTE=origin "$release_script" 1.19.2
 ); then
-	echo "main-v2 advance during CI unexpectedly created release tags" >&2
+	echo "main advance during CI unexpectedly created release tags" >&2
 	exit 1
 fi
 [ -z "$(git ls-remote --tags --refs "$test_root/race.git" 'refs/tags/*')" ]
-[ "$(git ls-remote "$test_root/race.git" refs/heads/main-v2 | awk 'NR == 1 { print $1 }')" != "$race_sha" ]
+[ "$(git ls-remote "$test_root/race.git" refs/heads/main | awk 'NR == 1 { print $1 }')" != "$race_sha" ]
 
 occupied_work="$(make_remote occupied)"
 occupied_sha="$(git -C "$occupied_work" rev-parse HEAD)"

@@ -51,9 +51,9 @@ push)
 	fi
 	;;
 workflow_dispatch)
-	expected_ref="refs/heads/main-v2"
+	expected_ref="refs/heads/main"
 	if [ "$caller_workflow_sha" != "$caller_sha" ]; then
-		echo "::error::recovery caller workflow SHA is $caller_workflow_sha, expected protected main-v2 SHA $caller_sha" >&2
+		echo "::error::recovery caller workflow SHA is $caller_workflow_sha, expected protected main SHA $caller_sha" >&2
 		exit 1
 	fi
 	;;

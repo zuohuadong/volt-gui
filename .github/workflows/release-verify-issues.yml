@@ -20,7 +20,7 @@ on:
     types: [published]
   push:
     branches:
-      - main-v2
+      - main
     paths:
       - '.github/workflows/release-verify-issues.yml'
       - 'scripts/release-verify-issues.mjs'

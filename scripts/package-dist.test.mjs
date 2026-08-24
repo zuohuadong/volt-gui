@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, test } from "node:test";
 
 import { normalizeDesktopVersion, packageElectronArtifacts } from "./package-dist.mjs";
+import { resolveElectronProfile } from "../apps/desktop-electron/src/electron-profile.ts";
 
 const fixtures = [];
 
@@ -39,10 +40,28 @@ test("copies only current VoltUI installer and portable artifacts", () => {
 
   assert.deepEqual(readdirSync(fixture.outputDir).sort(), [
     "VoltUI Setup 1.2.3.exe.blockmap",
-    "VoltUI-windows-x64-installer-1.2.3.exe",
-    "VoltUI-windows-x64-portable-1.2.3.exe",
+    "voltui-windows-x64-installer-1.2.3.exe",
+    "voltui-windows-x64-portable-1.2.3.exe",
   ]);
-  assert.equal(readFileSync(join(fixture.outputDir, "VoltUI-windows-x64-installer-1.2.3.exe"), "utf8"), "installer");
+  assert.equal(readFileSync(join(fixture.outputDir, "voltui-windows-x64-installer-1.2.3.exe"), "utf8"), "installer");
+});
+
+test("packages artifacts with the selected OEM identity", () => {
+  const fixture = createFixture();
+  mkdirSync(fixture.sourceDir, { recursive: true });
+  writeFileSync(join(fixture.sourceDir, "Anyong Setup 1.2.3.exe"), "installer");
+  writeFileSync(join(fixture.sourceDir, "Anyong 1.2.3.exe"), "portable");
+
+  packageElectronArtifacts({
+    ...fixture,
+    version: "1.2.3",
+    desktopProfile: resolveElectronProfile("anyong"),
+  });
+
+  assert.deepEqual(readdirSync(fixture.outputDir).sort(), [
+    "anyong-windows-x64-installer-1.2.3.exe",
+    "anyong-windows-x64-portable-1.2.3.exe",
+  ]);
 });
 
 test("fails when either Windows executable is missing", () => {

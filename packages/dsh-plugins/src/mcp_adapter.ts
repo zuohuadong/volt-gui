@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { ToolHandler, ToolSchema } from '@dsh/core';
 import type { DshPlugin, McpServerConfig, PluginInitContext } from './types.js';
+import { buildMcpEnvironment } from './workspace_mcp.js';
 
 export class McpPluginAdapter implements DshPlugin {
   public name: string;
@@ -19,17 +20,12 @@ export class McpPluginAdapter implements DshPlugin {
 
   public async init(context: PluginInitContext): Promise<void> {
     try {
-      const cleanEnv: Record<string, string> = {};
-      for (const [k, v] of Object.entries(process.env)) {
-        if (typeof v === 'string') cleanEnv[k] = v;
-      }
-      if (this.serverConfig.env) {
-        Object.assign(cleanEnv, this.serverConfig.env);
-      }
+      const cleanEnv = buildMcpEnvironment(process.env, this.serverConfig.env);
 
       this.transport = new StdioClientTransport({
         command: this.serverConfig.command,
         args: this.serverConfig.args || [],
+        cwd: this.serverConfig.workspaceRoot,
         env: cleanEnv,
       });
 
@@ -65,6 +61,7 @@ export class McpPluginAdapter implements DshPlugin {
     };
 
     return {
+      authorization: { effect: 'external', risk: 'high' },
       schema,
       execute: async (args) => {
         if (!this.client) {

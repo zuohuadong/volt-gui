@@ -53,6 +53,7 @@
 
 | task_id | provider | repo | source_url | title | priority | risk | status | owner | model | needs_model | review_class | branch | change_request_url |
 |---------|----------|------|------------|-------|----------|------|--------|-------|-------|-------------|--------------|--------|--------------------|
+| VOLTGUI-PR103-ELECTRON-FOLLOWUP-20260824 | github | zuohuadong/volt-gui | https://github.com/zuohuadong/volt-gui/pull/103 | 完成 Electron + DSH 上游迁移并永久退役 Wails | high | high | review | codex | gpt-5.6 | - | review-high | codex/electron-dsh-upstream-migration | https://github.com/zuohuadong/volt-gui/pull/103 |
 | VOLTGUI-004 | local | aizhuliren/xgic/anyong-agent | - | 迁移桌面自动发布为 CNB Windows-only | high | medium | done | codex | gpt-5-codex | - | - | main | - |
 | VOLTGUI-003 | local | aizhuliren/xgic/voltui | - | 远端重写后重新提交通用和私有行业 skills | high | low | done | codex | gpt-5-codex | - | - | main | - |
 | VOLTGUI-001 | local | aizhuliren/volt-gui | - | 初始化 agent-team 通用规则与项目 skill 索引 | high | low | done | codex | gpt-5-codex | - | - | main | - |
@@ -74,6 +75,18 @@
 | ANYONG-REVIEW-PR7-20260714 | cnb | aizhuliren/xgic/anyong-agent | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/issues/6 | 审查并合并 Linux runner prerequisites ZIP 修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | fix/desktop-build-linux-prerequisites-zip | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/7 |
 | ANYONG-PREREQUISITES-RELEASE-20260714 | cnb | aizhuliren/xgic/anyong-agent | user-request | 将 Windows prerequisites 解耦为独立版本与 Release | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/tag/prerequisites-v1.0.0 |
 | ANYONG-STREAM-RECOVERY-20260813 | cnb | aizhuliren/xgic/anyong-agent | user-screenshot | 修复 Windows 桌面端重复输出保护直接失败 | high | medium | done | codex | gpt-5.6 | - | review-medium | main | - |
+
+### VOLTGUI-PR103-ELECTRON-FOLLOWUP-20260824 Task Contract
+
+- parent/source/reason：承接 GitHub PR #103 与 2026-08-24 的阻塞审查；用户明确决定 Wails 和 Reasonix 上游同步链完全退役，并授权 Volt 自身 CI/release 控制面迁移到 `main`。同一 PR 分支只补齐 Electron 上线前必须具备的安全、持久化、CI 与安装身份控制。
+- 目标：完成 Electron + DSH 桌面主路径，使工作区文件工具、shell/MCP 调用、配置/API Key/会话持久化、工作区切换、OEM 安装身份和 `main` 分支 CI 契约具备可测试且 fail-closed 的边界；验证后提交并 push 原 PR 分支，等待同一 head 的远端检查和独立 panel 复审，再合并 PR。
+- 非目标：不恢复或维护 Wails；不迁移旧 Wails 会话、不删除旧 Wails 数据；不宣称 Electron 原位覆盖 Wails；不在本次伪造签名、自动更新或公开 stable Desktop 发布；不改写历史许可证、NOTICE 或既有 release evidence；不提交 secrets、`.agents/state/` 或 mailbox 运行态。
+- 验收标准：文件工具只能访问 canonical workspace 内路径并阻止 symlink/缺失目标/glob 越界；DSH 工具执行经过 Electron-owned 授权 broker，shell/Pwsh/MCP 即使 Yolo 也需一次性授权；工作区 MCP 未信任不得启动，子进程环境使用最小 allowlist；Electron 原子持久化配置、工作区状态、trust 和隔离 JSONL 会话，API Key 仅经 `safeStorage` 保存且不可用时拒绝落盘；失败/取消/超步数 turn 不污染历史，工作区切换 prepare/commit 失败保持旧运行时；安装身份由显式 TypeScript build profile 决定并由 Node 26 直接执行合同测试；unsigned 产物明确命名为 `unsigned-review`；Volt GitHub CI/release 控制面绑定真实 `main`；Reasonix/Volt upstream 同步脚本、marker 和 parity 资产删除；`git diff --check` 干净。
+- orchestration.mode：`panel`，risk=high/review-high。主代理是唯一 writer；既有三名只读 reviewer 分别覆盖安全、持久化/spec、构建/发布。候选修改完成后，三路 reviewer 必须针对同一新 head 独立复审；任何一轴 FAIL 都不 push/merge。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-tdd`、`provider-adapter`、`stack-profile-selector`、`electron-desktop`、`typescript`、`svelte-code-writer`、`svelte-core-bestpractices`、`volt-gui-design-language`；遵循 Electron 主进程/预加载/renderer 权限边界、Svelte 5 规范和现有 monorepo 脚本。
+- 影响范围：`apps/desktop-electron/`、`apps/desktop-frontend/`、`packages/dsh-core/`、`packages/dsh-plugins/`、必要的根脚本/测试/工作流/文档和 tracked 构建产物；删除废弃的 upstream sync/parity 资产；旧 `desktop/` Wails 目录不再作为产品验收依赖，除非仅删除或取消引用所必需。
+- 风险与回滚：工具执行和凭据存储属于高风险本地权限面；采用默认拒绝、显式信任、一次性授权、原子文件替换和 workspace 隔离降低影响。push 前可丢弃本 follow-up 提交；push 后只用普通 revert/follow-up 修复，不 force push、不改写已发布 tag。
+- 验证计划：TDD 定向 red/green；DSH/Electron/renderer 单元与类型检查；renderer 和 Electron production build；Windows NSIS/portable review package；workflow/release contract tests；根 Go test/vet 保留 CLI 健康证据但 Wails 不再是门禁；最终 `git diff --check`、候选 diff/secret scan、GitHub 同 head checks 与三轴 panel 复审。
 
 ### ANYONG-STREAM-RECOVERY-20260813 Task Contract
 

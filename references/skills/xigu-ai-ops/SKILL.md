@@ -1,6 +1,6 @@
 ---
 name: xigu-ai-ops
-description: Use when tasks involve 西谷AI (Xigu AI) internal operations, 西谷智灯暗涌系统 product strategy, Chinese AI market context, local regulations, or fork-specific workflow decisions. Covers upstream sync strategy, release workflow, internal tooling, and product-market-fit decisions for the 西谷智灯暗涌系统 coding agent.
+description: Use when tasks involve 西谷AI (Xigu AI) internal operations, 西谷智灯暗涌系统 product strategy, Chinese AI market context, local regulations, or fork-specific workflow decisions. Covers release workflow, internal tooling, and product-market-fit decisions for the 西谷智灯暗涌系统 coding agent.
 ---
 
 # 西谷AI / 西谷智灯暗涌系统运营技能
@@ -17,28 +17,28 @@ description: Use when tasks involve 西谷AI (Xigu AI) internal operations, 西�
 
 ## Fork 筡理策略
 
-### 核心原则：源码与上游保持一致
+### 核心原则：配置优先，外部变更显式评审
 
 | 改动类型 | 是否允许 | 实现方式 |
 |---|---|---|
 | 品牌定制 | ✅ | `VOLTUI_BRAND_NAME` 环境变量 + `[brand]` 配置段 |
 | CI/CD 配置 | ✅ | `.cnb.yml` (CNB CI 管道) |
-| 同步脚本 | ✅ | `scripts/sync-upstream.sh` |
+| 自动上游同步 | ❌ | 同步脚本与定时合并链已永久退役 |
 | 源码硬编码品牌替换 | ❌ | 违反 BrandConfig 设计，破坏上游同步 |
 | 新功能代码 | ⚠️ | 先贡献上游 PR，再在 fork 中享受 |
 
-### 上游同步流程
+### 外部变更引入流程
 
-1. **定时同步**: CNB CI 每天 09:00 CST 自动 `git merge upstream/main`
-2. **冲突解决**: 优先采纳上游版本，保留 `.cnb.yml` 与品牌环境变量定制
-3. **验证**: merge 后运行 Go 门禁、Electron 边界测试、Svelte 检查与 `pnpm run build:desktop`
+1. **禁止自动同步**: CNB CI 不定时 fetch、merge 或创建 upstream sync PR
+2. **显式评审**: 需要引入的外部改动必须形成独立 PR，逐项说明来源与适配范围
+3. **验证**: 合并前运行 Go 门禁、Electron 边界测试、Svelte 检查与 `pnpm run build:desktop`
 
 ### 向上游贡献流程
 
 1. 在 fork 中发现有价值的功能改进
 2. 基于 `upstream/main` 创建干净分支（不含品牌定制）
 3. 推送到 `upstream` 仓库，创建 PR
-4. 上游合并后，下次定时同步自动获取
+4. 上游合并后，仅在确有需要时通过新的显式 PR 引入，不恢复同步链
 
 ## 发布流程
 
@@ -91,7 +91,6 @@ feat: 新功能 → CNB build-only 验证 → GitHub Windows runner → 未签�
 | `.agents/` | Agent team 配置、角色、工作流 | 项目根目录 |
 | `references/skills/` | 技能知识库（含上游 + 西谷智灯暗涌系统专属） | 项目根目录 |
 | `.cnb.yml` | CNB CI/CD 管道配置 | 项目根目录 |
-| `scripts/sync-upstream.sh` | 上游同步脚本 | `scripts/` |
 
 ## Decision Protocol
 
@@ -106,5 +105,5 @@ feat: 新功能 → CNB build-only 验证 → GitHub Windows runner → 未签�
 西谷智灯暗涌系统 fork 的所有改动必须遵循「配置优先」原则：
 - 品牌定制 → BrandConfig 环境变量/配置段
 - CI 定制 → `.cnb.yml`
-- 功能改动 → 先贡献上游 PR
-- 源码始终与上游一致，确保无缝同步
+- 功能改动 → 先评估是否应贡献外部项目，再通过显式 PR 引入
+- 不启用自动 upstream sync，不以定时 merge 维持源码一致

@@ -27,7 +27,7 @@ require_pattern() {
 stable_trigger="$repo_root/.github/workflows/release-stable-trigger.yml"
 require_pattern 'actions: write' "$stable_trigger"
 require_pattern "CONTROL_PLANE_REF.*default_branch" "$stable_trigger"
-require_pattern "CONTROL_PLANE_REF !== 'main-v2'" "$stable_trigger"
+require_pattern "CONTROL_PLANE_REF !== 'main'" "$stable_trigger"
 require_pattern 'createWorkflowDispatch' "$stable_trigger"
 require_pattern "workflow_id: 'release-stable\.yml'" "$stable_trigger"
 require_pattern "allow_recovery: 'false'" "$stable_trigger"
@@ -36,7 +36,7 @@ for retired_workflow in release-preview.yml release-cli-trigger.yml release-desk
 done
 for production_workflow in "$stable_workflow" "$cli_workflow" "$npm_workflow" "$desktop_workflow"; do
 	if sed -n '/^on:/,/^permissions:/p' "$production_workflow" | grep -Eq '^  push:$'; then
-		echo "production workflow must run from protected main-v2, not a tag-controlled workflow" >&2
+		echo "production workflow must run from protected main, not a tag-controlled workflow" >&2
 		exit 1
 	fi
 done
@@ -56,13 +56,13 @@ for publisher in "$cli_workflow" "$npm_workflow"; do
 done
 
 # CLI keeps the real Stable/Preview product contract. Preview remains tied to
-# protected main-v2 while Stable can only publish its approved immutable tag.
+# protected main while Stable can only publish its approved immutable tag.
 require_pattern 'options: \[stable, preview\]' "$cli_workflow"
 sed -n '/^      channel:/,/^      tag:/p' "$cli_workflow" | require_pattern 'default: stable' /dev/stdin
 require_pattern "channel == 'preview'.*'canary'.*'release'" "$cli_workflow"
 require_pattern 'bash scripts/resolve-cli-release\.sh' "$cli_workflow"
-require_pattern 'git merge-base --is-ancestor.*origin/main-v2' "$cli_workflow"
-require_pattern 'CLI Preview must tag current main-v2' "$cli_workflow"
+require_pattern 'git merge-base --is-ancestor.*origin/main' "$cli_workflow"
+require_pattern 'CLI Preview must tag current main' "$cli_workflow"
 
 # Standalone npm recovery is Stable-only and resolves the full sibling-tag set
 # before approval. Every npm path replaces credential-bearing scripts from the
@@ -73,7 +73,7 @@ if sed -n '/^  workflow_dispatch:/,/^  workflow_call:/p' "$npm_workflow" | grep 
 	exit 1
 fi
 require_pattern '^  standalone-candidate:$' "$npm_workflow"
-require_pattern 'standalone npm recovery must run from protected main-v2' "$npm_workflow"
+require_pattern 'standalone npm recovery must run from protected main' "$npm_workflow"
 require_pattern 'RELEASE_TAG="v\$\{BASE_VERSION\}" bash scripts/resolve-stable-release\.sh' "$npm_workflow"
 require_pattern '^    environment: release$' "$npm_workflow"
 require_pattern 'ref: \$\{\{ needs\.cache-guard\.outputs\.candidate_sha \}\}' "$npm_workflow"
@@ -86,7 +86,7 @@ require_pattern 'publishPackages' "$repo_root/npm/build.mjs"
 require_pattern '[A-Za-z]+CandidateSha: candidateSha' "$repo_root/npm/build.mjs"
 
 # Desktop's public dispatch is Stable-only. It resolves one immutable candidate,
-# packages Electron on Windows x64, and uploads an explicitly unsigned artifact.
+# packages Electron on Windows x64, and uploads an explicitly unsigned-review artifact.
 require_pattern 'options: \[stable\]' "$desktop_workflow"
 if sed -n '/^  workflow_dispatch:/,/^  workflow_call:/p' "$desktop_workflow" | grep -Eqi 'preview|canary'; then
 	echo "standalone Desktop dispatch must not expose Preview or Canary" >&2
@@ -102,7 +102,7 @@ require_pattern '^  package:$' "$desktop_workflow"
 require_pattern 'runs-on: windows-latest' "$desktop_workflow"
 require_pattern 'node scripts/set-electron-package-version\.mjs' "$desktop_workflow"
 require_pattern 'pnpm run dist:desktop' "$desktop_workflow"
-require_pattern 'windows-x64-unsigned' "$desktop_workflow"
+require_pattern 'windows-x64-unsigned-review' "$desktop_workflow"
 require_pattern 'Electron production signing is not migrated yet' "$desktop_workflow"
 if grep -Eqi 'signpath/github-action-submit-signing-request|gh release create' "$desktop_workflow"; then
 	echo "unsigned Electron workflow must not submit signing requests or publish a GitHub Release" >&2
@@ -132,8 +132,8 @@ git clone -q "$test_root/remote.git" "$test_root/repo"
 	git config user.name "Release Workflow Test"
 	git config user.email "release-workflow-test@example.invalid"
 	git commit --allow-empty -q -m "candidate"
-	git branch -M main-v2
-	git push -q -u origin main-v2
+	git branch -M main
+	git push -q -u origin main
 
 	git tag v1.2.3
 	git tag npm-v1.2.3
@@ -189,7 +189,7 @@ git clone -q "$test_root/remote.git" "$test_root/repo"
 
 # Keep the product's public channel semantics executable, not just text-matched.
 EVENT_NAME=workflow_call IN_ORCHESTRATED=true IN_CHANNEL=preview \
-	IN_TAG=v1.3.0-preview.42 REF_NAME=main-v2 \
+	IN_TAG=v1.3.0-preview.42 REF_NAME=main \
 	GITHUB_OUTPUT="$test_root/cli-preview.out" bash "$repo_root/scripts/resolve-cli-release.sh"
 grep -Eq '^channel=preview$' "$test_root/cli-preview.out"
 grep -Eq '^prerelease=true$' "$test_root/cli-preview.out"
@@ -201,14 +201,14 @@ if EVENT_NAME=workflow_dispatch IN_ORCHESTRATED=false IN_CHANNEL=preview \
 	echo "unprotected CLI Preview dispatch unexpectedly passed" >&2
 	exit 1
 fi
-grep -Eq 'manual CLI releases must run from protected main-v2' "$test_root/cli-unprotected.log"
+grep -Eq 'manual CLI releases must run from protected main' "$test_root/cli-unprotected.log"
 
 EVENT_NAME=push IN_CHANNEL=stable IN_TAG=desktop-v1.2.3 REF_NAME=v1.2.3 RUN_NUMBER=10 \
 	GITHUB_OUTPUT="$test_root/desktop-stable.out" bash "$repo_root/scripts/resolve-desktop-release.sh"
 grep -Eq '^tag=desktop-v1\.2\.3$' "$test_root/desktop-stable.out"
 grep -Eq '^version=v1\.2\.3$' "$test_root/desktop-stable.out"
 
-if EVENT_NAME=workflow_dispatch IN_CHANNEL=stable IN_TAG='' REF_NAME=main-v2 RUN_NUMBER=50 \
+if EVENT_NAME=workflow_dispatch IN_CHANNEL=stable IN_TAG='' REF_NAME=main RUN_NUMBER=50 \
 	GITHUB_OUTPUT="$test_root/desktop-missing-tag.out" bash "$repo_root/scripts/resolve-desktop-release.sh" \
 	>"$test_root/desktop-missing-tag.log" 2>&1; then
 	echo "tag-less Desktop Stable dispatch unexpectedly passed" >&2
@@ -222,7 +222,7 @@ EVENT_NAME=workflow_call IN_ORCHESTRATED=true IN_CHANNEL=stable IN_BASE_VERSION=
 grep -Eq '^arg=v1\.5\.0$' "$test_root/npm-stable.out"
 
 if EVENT_NAME=workflow_dispatch IN_ORCHESTRATED=false IN_CHANNEL=stable IN_BASE_VERSION=1.5.0 \
-	IN_TAG=npm-v1.5.1 REF_NAME=main-v2 RUN_NUMBER=52 GITHUB_OUTPUT="$test_root/npm-mismatch.out" \
+	IN_TAG=npm-v1.5.1 REF_NAME=main RUN_NUMBER=52 GITHUB_OUTPUT="$test_root/npm-mismatch.out" \
 	bash "$repo_root/scripts/resolve-npm-release.sh" >"$test_root/npm-mismatch.log" 2>&1; then
 	echo "mismatched npm Stable dispatch unexpectedly passed" >&2
 	exit 1

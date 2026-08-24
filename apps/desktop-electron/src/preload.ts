@@ -21,6 +21,14 @@ contextBridge.exposeInMainWorld('electronDsh', {
   closeWindow: () => ipcRenderer.invoke('dsh:window-close'),
   isMaximized: () => ipcRenderer.invoke('dsh:window-is-maximized'),
   toggleDevTools: () => ipcRenderer.invoke('dsh:toggle-devtools'),
+  getPermissionMode: () => ipcRenderer.invoke('dsh:get-permission-mode'),
+  setPermissionMode: (mode: "ask" | "auto" | "yolo") => ipcRenderer.invoke('dsh:set-permission-mode', mode),
+  resolveToolApproval: (requestId: string, decision: "allow_once" | "deny") => ipcRenderer.invoke('dsh:resolve-tool-approval', requestId, decision),
+  onToolApprovalRequested: (callback: (prompt: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, prompt: unknown) => callback(prompt);
+    ipcRenderer.on('dsh:tool-approval-requested', listener);
+    return () => ipcRenderer.removeListener('dsh:tool-approval-requested', listener);
+  },
   onWindowStateChange: (callback: (state: { isMaximized: boolean }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: { isMaximized: boolean }) => callback(state);
     ipcRenderer.on('dsh:window-state-changed', listener);

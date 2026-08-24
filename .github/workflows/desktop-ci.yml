@@ -14,6 +14,7 @@ on:
       - "pnpm-workspace.yaml"
       - "scripts/check-electron-runtime-boundary*.mjs"
       - "scripts/check-runtime-mocks*.mjs"
+      - "scripts/electron-profile.test.mjs"
       - "scripts/package-dist.mjs"
       - "scripts/package-dist.test.mjs"
       - "scripts/set-electron-package-version.mjs"
@@ -31,6 +32,7 @@ on:
       - "pnpm-workspace.yaml"
       - "scripts/check-electron-runtime-boundary*.mjs"
       - "scripts/check-runtime-mocks*.mjs"
+      - "scripts/electron-profile.test.mjs"
       - "scripts/package-dist.mjs"
       - "scripts/package-dist.test.mjs"
       - "scripts/set-electron-package-version.mjs"
@@ -78,6 +80,8 @@ jobs:
         run: |
           pnpm test
           pnpm --filter @voltui/desktop-electron run test:config
+          pnpm --filter @voltui/desktop-electron run test:profile
+          pnpm --filter @voltui/desktop-electron run test:security
           pnpm --filter voltui-desktop-workbench run test:unit
 
       - name: Build Electron desktop

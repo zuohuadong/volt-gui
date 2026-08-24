@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Wait for successful push CI on one immutable main-v2 candidate.
+# Wait for successful push CI on one immutable main candidate.
 set -euo pipefail
 
 if [ "$#" -ne 1 ] || [[ ! "$1" =~ ^[0-9a-f]{40}$ ]]; then
@@ -8,7 +8,7 @@ if [ "$#" -ne 1 ] || [[ ! "$1" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 
 candidate="$1"
-repository="${RELEASE_REPOSITORY:-esengine/DeepSeek-Reasonix}"
+repository="${RELEASE_REPOSITORY:-zuohuadong/volt-gui}"
 wait_seconds="${RELEASE_CI_WAIT_SECONDS:-1800}"
 poll_seconds="${RELEASE_CI_POLL_SECONDS:-10}"
 
@@ -33,7 +33,7 @@ while :; do
 		'[.[] | select(.headSha == $sha and .status == "completed")][0].conclusion // ""' <<<"$runs" 2>/dev/null || true)"
 	case "$conclusion" in
 	success)
-		echo "successful main-v2 push CI verified: $candidate"
+		echo "successful main push CI verified: $candidate"
 		exit 0
 		;;
 	failure | cancelled | timed_out | action_required | startup_failure)
@@ -42,7 +42,7 @@ while :; do
 		;;
 	esac
 	if [ "$SECONDS" -ge "$deadline" ]; then
-		echo "timed out waiting for successful main-v2 CI on $candidate (last status: ${run_status:-missing})" >&2
+		echo "timed out waiting for successful main CI on $candidate (last status: ${run_status:-missing})" >&2
 		exit 1
 	fi
 	sleep "$poll_seconds"

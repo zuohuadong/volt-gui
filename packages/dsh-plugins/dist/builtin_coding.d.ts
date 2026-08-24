@@ -4,9 +4,9 @@ export declare class BuiltinCodingPlugin implements DshPlugin {
     name: string;
     description: string;
     private workingDir;
-    init(context: PluginInitContext): void;
+    private workspacePolicy;
+    init(context: PluginInitContext): Promise<void>;
     getTools(): ToolHandler[];
-    private resolvePath;
     private createReadFileTool;
     private createWriteFileTool;
     private createEditFileTool;

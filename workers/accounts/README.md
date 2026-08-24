@@ -102,7 +102,7 @@ wrangler deploy
 The `id.voltui.io` custom domain route is declared in `wrangler.toml`; point the
 DNS/custom-domain binding at this worker in the Cloudflare dashboard on first deploy.
 
-The steps above are the one-time bootstrap. After that, every merge to `main-v2`
+The steps above are the one-time bootstrap. After that, every merge to `main`
 that touches `workers/accounts/**` redeploys via `.github/workflows/deploy-accounts-worker.yml`
 (same pattern as the crash worker). CI does **not** run migrations — apply new ones
 with `pnpm db:apply:remote` out of band.

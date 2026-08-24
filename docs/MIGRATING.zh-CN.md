@@ -9,7 +9,7 @@ VoltUI 1.0 是一次从零开始的 **Go 重写**。它使用全新的代码库�
 | | 旧版（v1） | VoltUI 1.0+（v2） |
 | --- | --- | --- |
 | 语言 | TypeScript / Node.js | Go |
-| 分支 | [`v1`](https://github.com/zuohuadong/volt-gui/tree/v1)（仅维护） | `main-v2`（默认、活跃开发） |
+| 分支 | [`v1`](https://github.com/zuohuadong/volt-gui/tree/v1)（仅维护） | `main`（默认、活跃开发） |
 | 版本 | `0.x`（最高 v0.54.x） | `1.0.0`+ |
 | 安装 | `npm i -g voltui`（`latest` 标签，固定在 `0.x`） | `npm i -g voltui@next` — `latest` 刻意固定在 `0.x`；也可使用 release 归档或源码构建 |
 | 代码智能 | embedding 语义搜索 + tree-sitter 符号索引 | LSP 辅助代码读取，以及 grep/read_file/glob；语义索引尚未移植 |
@@ -32,7 +32,7 @@ voltui
 每个 GitHub release 都附带预编译归档（`voltui-<os>-<arch>.tar.gz` / `.zip`）和桌面安装包。它们与 npm 是不同的安装渠道：桌面安装包会部署独立的桌面/二进制构建，不会改动通过 `npm i -g` 安装的 CLI，因此两者可以共存——shell 里的 npm `0.53` 与 `1.x` 桌面应用并存是预期行为，不是冲突。也可以从源码构建：
 
 ```sh
-git clone https://github.com/zuohuadong/volt-gui   # 默认分支 main-v2（Go）
+git clone https://github.com/zuohuadong/volt-gui   # 默认分支 main（Go）
 cd volt-gui && make build                        # -> bin/voltui(.exe)
 ```
 

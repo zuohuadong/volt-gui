@@ -1,5 +1,9 @@
 # Desktop Workbench Contract
 
+> Archived Wails-era design contract. Wails is retired and must not be restored;
+> the active Electron/DSH delivery status is tracked in
+> `docs/WORKBENCH_FEATURE_MATRIX.md` and `docs/MIGRATING.md`.
+
 This document defines the next desktop GUI contract for VoltUI. It is the
 upstream product and engineering target for the Svelte workbench rewrite; forks
 can theme or brand it, but the interaction model should stay generic.

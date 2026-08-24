@@ -1,17 +1,8 @@
-# Anyong Workbench Profile for DeepSeek Harness (DSH)
-# Fuses official DSH web services, MCP plugin manager, and Anyong Workbench UI
-
-- id: anyong-ui
-  name: '@volt/dsh-plugin-ui'
-  config:
-    brandName: '西谷智灯暗涌系统 (Anyong DSH)'
-    theme: 'dark'
-    enableDiffView: true
-    enableThinkingAnimation: true
-    intranetMode: true
+# Anyong overrides shared by the official DSH web and headless profiles.
+# New plugins must be installed as profile bundles through `dsh plugin`;
+# an overlay may only override rows supplied by those bundles.
 
 - id: agent-default-model
-  name: '@deepseek-ai/dsh-agent-default-model'
   config:
     provider: deepseek-official
     model: deepseek-chat

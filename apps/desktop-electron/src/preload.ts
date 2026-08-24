@@ -13,7 +13,6 @@ contextBridge.exposeInMainWorld('electronDsh', {
   getServerConnection: () => ipcRenderer.invoke('dsh:get-server-connection'),
   openFolderDialog: () => ipcRenderer.invoke('dsh:open-folder-dialog'),
   getWorkingDir: () => ipcRenderer.invoke('dsh:get-working-dir'),
-  setWorkingDir: (dir: string) => ipcRenderer.invoke('dsh:set-working-dir', dir),
   getConfig: () => ipcRenderer.invoke('dsh:get-config'),
   saveConfig: (config: DshConfigPatch) => ipcRenderer.invoke('dsh:save-config', config),
   minimizeWindow: () => ipcRenderer.invoke('dsh:window-minimize'),

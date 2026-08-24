@@ -24,6 +24,7 @@ main:
             node --test scripts/check-electron-runtime-boundary.test.mjs scripts/check-runtime-mocks.test.mjs
             node scripts/check-electron-runtime-boundary.mjs
             node scripts/check-runtime-mocks.mjs
+            pnpm run test:dsh-integration
             pnpm --filter voltui-desktop-workbench run check
             pnpm --filter voltui-desktop-workbench run test:unit
             pnpm test
@@ -106,6 +107,7 @@ main:
             node --test scripts/check-electron-runtime-boundary.test.mjs scripts/check-runtime-mocks.test.mjs
             node scripts/check-electron-runtime-boundary.mjs
             node scripts/check-runtime-mocks.mjs
+            pnpm run test:dsh-integration
             pnpm --filter voltui-desktop-workbench run check
             pnpm run build:desktop
 

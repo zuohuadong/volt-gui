@@ -8,6 +8,17 @@ import { createWorkspacePathPolicy, writeWorkspaceFile, type WorkspacePathPolicy
 
 const MAX_OUTPUT_CHARS = 32 * 1024; // 32KB max output cap
 
+function validateWorkspaceGlobPattern(pattern: string): void {
+  if (
+    pattern.includes('\0')
+    || path.isAbsolute(pattern)
+    || pattern.split(/[\\/]+/).includes('..')
+    || /[{}()[\]]/.test(pattern)
+  ) {
+    throw new Error('Glob pattern must use only workspace-relative *, **, and ? segments.');
+  }
+}
+
 export class BuiltinCodingPlugin implements DshPlugin {
   public name = 'dsh-builtin-coding';
   public description = 'Standard filesystem, search, and execution tools for DSH';
@@ -269,13 +280,13 @@ export class BuiltinCodingPlugin implements DshPlugin {
       execute: async (args) => {
         const pattern = String(args.pattern);
         try {
-          if (pattern.includes('\0') || path.isAbsolute(pattern) || pattern.split(/[\\/]+/).includes('..')) {
-            throw new Error('Glob pattern must stay inside the workspace.');
-          }
+          validateWorkspaceGlobPattern(pattern);
           const matches = await fg([pattern], {
             cwd: this.workingDir,
             onlyFiles: true,
             followSymbolicLinks: false,
+            braceExpansion: false,
+            extglob: false,
             ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**'],
           });
           const safeMatches: string[] = [];

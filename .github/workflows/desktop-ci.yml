@@ -14,11 +14,15 @@ on:
       - "pnpm-workspace.yaml"
       - "scripts/check-electron-runtime-boundary*.mjs"
       - "scripts/check-runtime-mocks*.mjs"
+      - "scripts/anyong.mjs"
+      - "scripts/bundle.mjs"
+      - "scripts/dsh-integration.test.mjs"
       - "scripts/electron-profile.test.mjs"
       - "scripts/package-dist.mjs"
       - "scripts/package-dist.test.mjs"
       - "scripts/set-electron-package-version.mjs"
       - "scripts/set-electron-package-version.test.mjs"
+      - "profiles/anyong.yml"
   push:
     branches: [main]
     paths:
@@ -32,11 +36,15 @@ on:
       - "pnpm-workspace.yaml"
       - "scripts/check-electron-runtime-boundary*.mjs"
       - "scripts/check-runtime-mocks*.mjs"
+      - "scripts/anyong.mjs"
+      - "scripts/bundle.mjs"
+      - "scripts/dsh-integration.test.mjs"
       - "scripts/electron-profile.test.mjs"
       - "scripts/package-dist.mjs"
       - "scripts/package-dist.test.mjs"
       - "scripts/set-electron-package-version.mjs"
       - "scripts/set-electron-package-version.test.mjs"
+      - "profiles/anyong.yml"
   workflow_dispatch:
 
 permissions:
@@ -78,6 +86,7 @@ jobs:
 
       - name: Test DSH packages and renderer
         run: |
+          pnpm run test:dsh-integration
           pnpm test
           pnpm --filter @voltui/desktop-electron run test:config
           pnpm --filter @voltui/desktop-electron run test:profile

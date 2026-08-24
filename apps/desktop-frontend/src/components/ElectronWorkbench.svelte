@@ -440,6 +440,7 @@
   }
 
   async function chooseWorkspace(): Promise<void> {
+    if (sending) return;
     try {
       const result = await nativeApi().openFolderDialog();
       if (!result) return;
@@ -463,7 +464,7 @@
   }
 
   async function saveSettings(): Promise<void> {
-    if (!config || savingSettings) return;
+    if (!config || savingSettings || sending) return;
     settingsError = "";
     settingsSuccess = "";
     savingSettings = true;
@@ -594,7 +595,7 @@
 
       <section>
         <span class="sidebar__label">上下文</span>
-        <button class="nav-row" type="button" onclick={chooseWorkspace} disabled={!electronApi} title={workingDir}>
+        <button class="nav-row" type="button" onclick={chooseWorkspace} disabled={!electronApi || sending} title={workingDir}>
           <FolderOpen size={15} />
           <span><strong>{workspaceName}</strong><em>工作区</em></span>
           <ChevronRight size={14} />
@@ -804,14 +805,14 @@
         </section>
         <section>
           <div class="settings-section-title"><Folder size={16} /><div><strong>当前工作区</strong><span title={workingDir}>{workingDir}</span></div></div>
-          <button class="secondary-action" type="button" onclick={chooseWorkspace} disabled={!electronApi}><FolderOpen size={15} /> 选择工作区</button>
+          <button class="secondary-action" type="button" onclick={chooseWorkspace} disabled={!electronApi || sending}><FolderOpen size={15} /> 选择工作区</button>
         </section>
         {#if settingsError}<div class="settings-feedback error"><AlertTriangle size={15} /> {settingsError}</div>{/if}
         {#if settingsSuccess}<div class="settings-feedback success"><Check size={15} /> {settingsSuccess}</div>{/if}
       </div>
       <footer>
         <button class="developer-action" type="button" onclick={() => void runNativeCommand((api) => api.toggleDevTools())} disabled={!electronApi}><TerminalSquare size={15} /> 开发者工具</button>
-        <div><button type="button" onclick={() => (settingsOpen = false)}>取消</button><button class="primary-action" type="button" onclick={saveSettings} disabled={!electronApi || savingSettings || !modelDraft.trim() || !baseUrlDraft.trim()}>{#if savingSettings}<LoaderCircle class="spin" size={15} />{/if}保存并重启</button></div>
+        <div><button type="button" onclick={() => (settingsOpen = false)}>取消</button><button class="primary-action" type="button" onclick={saveSettings} disabled={!electronApi || sending || savingSettings || !modelDraft.trim() || !baseUrlDraft.trim()}>{#if savingSettings}<LoaderCircle class="spin" size={15} />{/if}保存并重启</button></div>
       </footer>
     </div>
   {/if}

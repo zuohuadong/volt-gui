@@ -2,10 +2,17 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import rootPackage from '../package.json' with { type: 'json' };
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
 const distDir = path.join(rootDir, 'dist', 'anyong-dsh');
+const dshVersion = rootPackage.dependencies['@deepseek-ai/dsh'];
+
+if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(dshVersion)) {
+  throw new Error(`@deepseek-ai/dsh must use an exact version, got ${JSON.stringify(dshVersion)}`);
+}
 
 async function main() {
   console.log('📦 Bundling Anyong DSH Distribution Package...');
@@ -26,6 +33,9 @@ async function main() {
     version: '1.0.0',
     private: true,
     type: 'module',
+    engines: {
+      node: rootPackage.engines.node,
+    },
     bin: {
       anyong: './scripts/anyong.mjs',
     },
@@ -34,7 +44,7 @@ async function main() {
       web: './scripts/anyong.mjs web',
     },
     dependencies: {
-      '@deepseek-ai/dsh': '^0.1.0-rc.7',
+      '@deepseek-ai/dsh': dshVersion,
     },
   };
 
@@ -45,7 +55,7 @@ async function main() {
   );
 
   console.log(`✓ Distribution bundle generated at ${distDir}`);
-  console.log(`✓ Default profile '${path.join(distDir, 'profiles', 'anyong.yml')}' is bundled and auto-loaded.`);
+  console.log(`✓ Default profile override '${path.join(distDir, 'profiles', 'anyong.yml')}' is bundled and auto-loaded.`);
 }
 
 main().catch((err) => {

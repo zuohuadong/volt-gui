@@ -6,7 +6,6 @@ import_electron.contextBridge.exposeInMainWorld("electronDsh", {
   getServerConnection: () => import_electron.ipcRenderer.invoke("dsh:get-server-connection"),
   openFolderDialog: () => import_electron.ipcRenderer.invoke("dsh:open-folder-dialog"),
   getWorkingDir: () => import_electron.ipcRenderer.invoke("dsh:get-working-dir"),
-  setWorkingDir: (dir) => import_electron.ipcRenderer.invoke("dsh:set-working-dir", dir),
   getConfig: () => import_electron.ipcRenderer.invoke("dsh:get-config"),
   saveConfig: (config) => import_electron.ipcRenderer.invoke("dsh:save-config", config),
   minimizeWindow: () => import_electron.ipcRenderer.invoke("dsh:window-minimize"),

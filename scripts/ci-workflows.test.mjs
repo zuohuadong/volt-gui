@@ -7,6 +7,7 @@
 //   3. The release workflow uploads unsigned-review artifacts and stays fail-closed for signing.
 //   4. Retired Reasonix upstream-sync assets cannot re-enter the repository.
 //   5. ci.yml uses main for push/pull_request and supports workflow_dispatch.
+//   6. Active desktop pipelines verify the locked official DSH integration.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -74,6 +75,17 @@ test("Reasonix upstream synchronization remains retired", () => {
     join(root, "scripts", "sync-upstream.sh"),
     join(root, "scripts", "check-upstream-feature-parity.mjs"),
     join(root, "scripts", "upstream-feature-parity.json"),
+    join(root, ".github", "workflows", "update-acknowledgments.yml"),
+    join(root, ".github", "workflows", "update-star-history.yml"),
+    join(root, ".github", "workflows", "stale-report-sweep.yml"),
+    join(root, ".github", "workflows", "release-verify-issues.yml"),
+    join(root, "scripts", "update-acknowledgments.mjs"),
+    join(root, "scripts", "update-star-history.mjs"),
+    join(root, "scripts", "update-star-history.test.mjs"),
+    join(root, "scripts", "stale-report-sweep.mjs"),
+    join(root, "scripts", "stale-report-sweep.test.mjs"),
+    join(root, "scripts", "release-verify-issues.mjs"),
+    join(root, "scripts", "release-verify-issues.test.mjs"),
   ]) {
     assert.equal(existsSync(path), false, `retired upstream asset must stay absent: ${path}`);
   }
@@ -87,10 +99,18 @@ test("desktop-ci.yml tracks and verifies the active Electron/DSH workspace", () 
     "package.json",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
+    "scripts/anyong.mjs",
+    "scripts/bundle.mjs",
+    "scripts/dsh-integration.test.mjs",
     "scripts/package-dist.mjs",
     "scripts/set-electron-package-version.mjs",
+    "profiles/anyong.yml",
   ]) {
-    assert.ok(desktopCi.includes(`"${path}"`), `paths filter must include ${path}`);
+    assert.equal(
+      (desktopCi.match(new RegExp(`"${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`, "g")) ?? []).length,
+      2,
+      `pull_request and push path filters must include ${path}`,
+    );
   }
   assert.match(desktopCi, /runs-on:\s*windows-latest/);
   assert.match(desktopCi, /node-version:\s*["']26["']/);
@@ -99,6 +119,7 @@ test("desktop-ci.yml tracks and verifies the active Electron/DSH workspace", () 
   assert.match(desktopCi, /@voltui\/desktop-electron run test:config/);
   assert.match(desktopCi, /@voltui\/desktop-electron run test:profile/);
   assert.match(desktopCi, /@voltui\/desktop-electron run test:security/);
+  assert.match(desktopCi, /pnpm run test:dsh-integration/);
   assert.match(desktopCi, /pnpm run build:desktop/);
   assert.match(desktopCi, /pnpm run dist:desktop/);
   assert.doesNotMatch(desktopCi, /desktop\/go\.mod|prod_test|wails/i);
@@ -119,7 +140,22 @@ test("ci.yml: workflow_dispatch added while retaining main push/pull_request", (
   assert.equal((ci.match(/node-version:\s*["']26["']/g) ?? []).length, 2, "CI desktop and site jobs must use Node 26");
   assert.match(
     ci,
+    /desktop:[\s\S]*pnpm run test:dsh-integration[\s\S]*pnpm run build:desktop/,
+    "CI desktop job must verify the official DSH integration before building",
+  );
+  assert.match(
+    ci,
     /site:[\s\S]*working-directory:\s*site[\s\S]*run:\s*npm ci[\s\S]*run:\s*npm test/,
     "site CI must install its locked dependencies before testing",
   );
 });
+
+if (cnb !== null) {
+  test("CNB verifies the official DSH integration in regular and release-ready pipelines", () => {
+    assert.equal(
+      (cnb.match(/pnpm run test:dsh-integration/g) ?? []).length,
+      2,
+      "both CNB Electron validation pipelines must run the DSH integration test",
+    );
+  });
+}

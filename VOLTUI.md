@@ -7,18 +7,18 @@ agent. It is the VoltUI analog of Claude Code's CLAUDE.md.
 ## Fork Identity
 
 - **Project**: 西谷AI 西谷智灯暗涌系统 (volt AI Anyong System)
-- **Upstream**: [VoltUI](https://cnb.cool/aizhuliren/volt-gui) (Go + Wails)
+- **Upstream**: [VoltUI](https://cnb.cool/aizhuliren/volt-gui) (Go CLI/TUI + Electron/DSH/Svelte 5)
 - **Brand mechanism**: `[brand]` config section + `VOLTUI_BRAND_NAME` env var
 - **Constraint**: NEVER hard-code brand name into source code. Use BrandConfig only.
-- **Fork-only files**: `.cnb.yml`, `scripts/sync-upstream.sh`, `暗涌.md`, `references/skills/{anyong-brand-config,cnb-ci-cd,volt-ai-ops}/`
+- **Fork-only files**: `.cnb.yml`, `暗涌.md`, `references/skills/{anyong-brand-config,cnb-ci-cd,volt-ai-ops}/`
 
 ## Conventions
 
 - Go kernel under `internal/`; each package owns one concern and documents it in a
   package comment. Match the surrounding comment density and idiom when editing.
-- One transport-agnostic `control.Controller` sits behind every frontend (chat
-  TUI, HTTP/SSE serve, Wails desktop). Add behavior to the controller, not a
-  frontend, so all three inherit it.
+- Go CLI/TUI and HTTP/SSE behavior belongs behind the transport-agnostic
+  `control.Controller`. Electron desktop uses the separate DSH runtime and must
+  not depend on retired Wails bindings.
 - Cache-first: the system-prompt prefix (base prompt + tools + memory) must stay
   byte-stable across turns so DeepSeek's automatic prefix cache stays warm. Never
   mutate it mid-session — ride the turn tail instead (see `control.Compose`).

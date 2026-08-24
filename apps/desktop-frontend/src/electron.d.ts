@@ -8,6 +8,17 @@ export interface ElectronDshConfig {
   apiKeySet: boolean;
   brandName: string;
   brandShortName: string;
+  managedFields: Array<"model" | "baseURL" | "apiKey">;
+}
+
+export interface ElectronToolApprovalPrompt {
+  requestId: string;
+  toolCallId: string;
+  toolName: string;
+  workingDirectory: string;
+  effect: string;
+  risk: string;
+  args: Record<string, unknown>;
 }
 
 export interface ElectronDshConfigPatch {
@@ -44,6 +55,10 @@ export interface ElectronDshApi {
   closeWindow(): Promise<void>;
   isMaximized(): Promise<boolean>;
   toggleDevTools(): Promise<void>;
+  getPermissionMode(): Promise<"ask" | "auto" | "yolo">;
+  setPermissionMode(mode: "ask" | "auto" | "yolo"): Promise<"ask" | "auto" | "yolo">;
+  resolveToolApproval(requestId: string, decision: "allow_once" | "deny"): Promise<{ success: boolean; error?: string }>;
+  onToolApprovalRequested(callback: (prompt: ElectronToolApprovalPrompt) => void): () => void;
   onWindowStateChange(callback: (state: { isMaximized: boolean }) => void): () => void;
 }
 

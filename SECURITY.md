@@ -7,7 +7,7 @@ and the current 1.x release line.
 
 | Version or branch | Security support |
 | --- | --- |
-| `main-v2` / 1.x releases | Supported |
+| `main` / 1.x releases | Supported |
 | `v1` / 0.x legacy branch | Critical fixes only, where practical |
 | Older releases, forks, or modified builds | Not covered unless the issue is reproducible upstream |
 

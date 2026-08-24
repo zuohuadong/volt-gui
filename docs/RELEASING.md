@@ -4,8 +4,8 @@ How VoltUI ships, who can ship what, and the Preview-before-Stable flow.
 
 ## Branch model: trunk + tags
 
-- **`main-v2`** is the single development line (the v2 / 1.x trunk). Every PR merges here.
-- **Production is a tag, not a branch.** A release is a tagged snapshot of `main-v2`:
+- **`main`** is the single development line (the v2 / 1.x trunk). Every PR merges here.
+- **Production is a tag, not a branch.** A release is a tagged snapshot of `main`:
   `v1.4.0` (CLI), `npm-v1.4.0` (npm), `desktop-v1.4.0` (desktop).
 - **`v1`** is the archived 1.0/legacy line — maintenance only.
 - **Hotfix** an already-released version by branching from its tag, fixing, and tagging again.
@@ -27,7 +27,7 @@ fail-closed; its workflow produces a review artifact, not a public channel:
 - **Preview** is the opt-in Native CLI channel, normally cut every 1–2 days,
   using an immutable protected `vX.Y.Z-preview.N` tag and GitHub prerelease.
 - **Stable** publishes the Native CLI GitHub Release and Homebrew cask. The
-  aligned `desktop-vX.Y.Z` tag authorizes an unsigned Windows x64 review build
+  aligned `desktop-vX.Y.Z` tag authorizes an unsigned-review Windows x64 build
   only; it does not publish a Desktop Release or updater pointer.
 
 Homebrew remains Stable-only because it has no separate prerelease channel.
@@ -43,10 +43,10 @@ npm retains its separate `next` and `canary` dist-tags.
 
 | Action | Who | Mechanism |
 |---|---|---|
-| **Cut Native CLI Preview** | release-tag creator + configured reviewer | create and push a protected `vX.Y.Z-preview.N` tag; a minimal relay dispatches **Release** on protected `main-v2`, which classifies it as Preview, pauses on the `canary` environment, and publishes a GitHub prerelease without touching Homebrew or Latest |
-| **Build Desktop review artifact** | maintainer + configured reviewer | dispatch **Release desktop** on protected `main-v2`; the workflow builds unsigned Windows x64 artifacts and never publishes a Desktop Release |
-| **Ship stable** | release-tag creators + one configured reviewer | atomically push the three stable tags; a minimal tag relay dispatches **Release stable** on protected `main-v2`, which requests one GitHub `release`-environment approval before every channel publishes |
-| **Ship a standalone RC** | release-tag creators + one configured reviewer | push the surface-specific prerelease tag; a minimal relay dispatches the standalone workflow on protected `main-v2`, which requests one `release` approval |
+| **Cut Native CLI Preview** | release-tag creator + configured reviewer | create and push a protected `vX.Y.Z-preview.N` tag; a minimal relay dispatches **Release** on protected `main`, which classifies it as Preview, pauses on the `canary` environment, and publishes a GitHub prerelease without touching Homebrew or Latest |
+| **Build Desktop review artifact** | maintainer + configured reviewer | dispatch **Release desktop** on protected `main`; the workflow builds unsigned Windows x64 artifacts and never publishes a Desktop Release |
+| **Ship stable** | release-tag creators + one configured reviewer | atomically push the three stable tags; a minimal tag relay dispatches **Release stable** on protected `main`, which requests one GitHub `release`-environment approval before every channel publishes |
+| **Ship a standalone RC** | release-tag creators + one configured reviewer | push the surface-specific prerelease tag; a minimal relay dispatches the standalone workflow on protected `main`, which requests one `release` approval |
 
 Native CLI Preview remains operationally fast, while desktop artifacts are
 review-only and require the configured environment approval. A stable release
@@ -61,11 +61,11 @@ artifact and fails if signing inputs or an Authenticode signature are present.
 > environment.
 
 The tag-triggered workflows contain no build or signing steps. They relay only
-the immutable candidate tag to the current workflow on protected `main-v2`.
+the immutable candidate tag to the current workflow on protected `main`.
 The reusable publishers require that protected control plane, while the
 orchestrator resolves the three release tags to one immutable candidate SHA and
 uses that SHA only for build and publication checkouts. Recovery follows the
-same model for an older tag on `main-v2` history. Every publisher revalidates
+same model for an older tag on `main` history. Every publisher revalidates
 its remote release tag immediately before publication. An unprotected branch
 cannot claim that it already passed the approval job.
 
@@ -77,12 +77,12 @@ is required. The desktop workflow receives no signing credentials.
 
 ## The release loop
 
-1. **Develop** — PRs land on `main-v2` (branch auto-deletes on merge).
+1. **Develop** — PRs land on `main` (branch auto-deletes on merge).
 2. **Prepare the release notes without creating a release-only PR by default** —
    Actions → **Prepare release notes**. Enter the intended version, the previous
    desktop tag when needed, and the number of an existing release-bound PR when
-   one is available. The reusable PR must be open, target `main-v2`, come from a
-   branch in this repository, and already include the latest `main-v2`. The
+   one is available. The reusable PR must be open, target `main`, come from a
+   branch in this repository, and already include the latest `main`. The
    workflow commits the generated notes onto that branch, so product changes and
    their release copy share one PR and one review surface. The added commit still
    reruns that PR's required checks.
@@ -105,14 +105,14 @@ is required. The desktop workflow receives no signing credentials.
      git tag v1.4.0-preview.1
      git push origin v1.4.0-preview.1
      ```
-   - Desktop: no public Preview publication; optionally dispatch **Release desktop** for an unsigned review artifact.
+   - Desktop: no public Preview publication; optionally dispatch **Release desktop** for an unsigned-review artifact.
    - CLI: Actions → **Release npm** → `base_version: 1.4.0`
    - Publishes the native CLI as a GitHub prerelease. npm still publishes its
      independent `@canary` channel; Desktop remains unpublished.
 4. **Test** — native CLI testers download the immutable GitHub prerelease;
    desktop users opt into Preview in Settings → Updates; npm CLI testers
    install `voltui@canary`.
-5. **Fix** on `main-v2` via PRs; re-cut Preview as needed (`preview.N` bumps).
+5. **Fix** on `main` via PRs; re-cut Preview as needed (`preview.N` bumps).
    Re-run **Prepare release notes** after material fixes. Reuse the still-open
    release-bound PR when possible; otherwise the workflow updates the same
    dedicated release-notes branch and PR without publishing anything.
@@ -125,8 +125,8 @@ is required. The desktop workflow receives no signing credentials.
    git push --atomic origin v1.4.0 npm-v1.4.0 desktop-v1.4.0
    ```
    The `v1.4.0` tag starts a minimal relay, which dispatches **Release stable**
-   on protected `main-v2`. Its preflight requires all three tags to exist on the
-   exact current `main-v2` commit, renders the reviewed release notes, and runs
+   on protected `main`. Its preflight requires all three tags to exist on the
+   exact current `main` commit, renders the reviewed release notes, and runs
    the cache guard. It then **waits once for a configured reviewer to approve the
    GitHub `release` environment** before invoking all three publishers. The
    approval records the immutable release commit. Before any publisher starts,
@@ -156,7 +156,7 @@ is required. The desktop workflow receives no signing credentials.
 - A dedicated release-notes PR is the safe fallback, not the default. Use it
   when no suitable PR exists, the only candidate PR comes from a fork, or the
   release copy needs an independent approval boundary.
-- Never bypass protected `main-v2` with a direct catalog commit. Reducing PR
+- Never bypass protected `main` with a direct catalog commit. Reducing PR
   frequency must not remove release-copy review, catalog validation, cache
   checks, atomic tags, the single `release` environment approval, or public
   artifact postflight.
@@ -170,13 +170,13 @@ is required. The desktop workflow receives no signing credentials.
   disabled until the Electron signing and updater contracts are complete.
 - A stable `-rc` tag (e.g. `npm-v1.4.0-rc.1`) still ships under `next`, not `canary`.
 - Recover an interrupted stable release by dispatching **Release stable** from
-  protected `main-v2` with the existing `vX.Y.Z` tag. Recovery requires the CLI,
-  npm, and Desktop tags to remain aligned on an ancestor of current `main-v2`,
+  protected `main` with the existing `vX.Y.Z` tag. Recovery requires the CLI,
+  npm, and Desktop tags to remain aligned on an ancestor of current `main`,
   then uses the same single approval and postflight. Never move or recreate the
   published tags to pick up a workflow fix.
 - The Electron desktop workflow currently builds Windows x64 NSIS and portable
   executables on `windows-latest`, verifies their shape and checksums, and uploads
-  them as a short-lived artifact whose name ends in `-unsigned`.
+  them as a short-lived artifact whose name ends in `-unsigned-review`.
 - Electron production signing and updater publication are fail-closed. Setting
   either signing preflight input makes the workflow fail explicitly. The
   workflow must not create a GitHub Desktop Release, update pointer, or public
@@ -185,6 +185,6 @@ is required. The desktop workflow receives no signing credentials.
   `electron-builder --win` or claim that a Windows installer was produced.
 - DeepSeek is an editorial drafting dependency, not a runtime or publishing dependency.
   The API key is available only to the manually dispatched preparation workflow; tag
-  workflows publish the reviewed JSON already committed to `main-v2` and never call a model.
+  workflows publish the reviewed JSON already committed to `main` and never call a model.
 - Windows x64 is the only verified desktop target. macOS, Linux, automatic
   update, code signing, and notarization remain unsupported release claims.

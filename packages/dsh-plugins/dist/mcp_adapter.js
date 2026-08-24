@@ -1,5 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { buildMcpEnvironment } from './workspace_mcp.js';
 export class McpPluginAdapter {
     name;
     description;
@@ -14,17 +15,11 @@ export class McpPluginAdapter {
     }
     async init(context) {
         try {
-            const cleanEnv = {};
-            for (const [k, v] of Object.entries(process.env)) {
-                if (typeof v === 'string')
-                    cleanEnv[k] = v;
-            }
-            if (this.serverConfig.env) {
-                Object.assign(cleanEnv, this.serverConfig.env);
-            }
+            const cleanEnv = buildMcpEnvironment(process.env, this.serverConfig.env);
             this.transport = new StdioClientTransport({
                 command: this.serverConfig.command,
                 args: this.serverConfig.args || [],
+                cwd: this.serverConfig.workspaceRoot,
                 env: cleanEnv,
             });
             this.client = new Client({
@@ -53,6 +48,7 @@ export class McpPluginAdapter {
             },
         };
         return {
+            authorization: { effect: 'external', risk: 'high' },
             schema,
             execute: async (args) => {
                 if (!this.client) {

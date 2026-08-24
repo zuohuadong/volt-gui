@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate the exact remote main-v2 candidate, then push the three immutable
+# Validate the exact remote main candidate, then push the three immutable
 # Stable tags atomically. The v* tag activates the protected Stable relay.
 set -euo pipefail
 
@@ -19,12 +19,12 @@ for command in git gh jq node; do
 	}
 done
 
-candidate="$(git ls-remote --heads "$remote" refs/heads/main-v2 | awk 'NR == 1 { print $1 }')"
+candidate="$(git ls-remote --heads "$remote" refs/heads/main | awk 'NR == 1 { print $1 }')"
 if [[ ! "$candidate" =~ ^[0-9a-f]{40}$ ]]; then
-	echo "cannot resolve $remote/main-v2" >&2
+	echo "cannot resolve $remote/main" >&2
 	exit 1
 fi
-git fetch --quiet --no-tags "$remote" refs/heads/main-v2
+git fetch --quiet --no-tags "$remote" refs/heads/main
 bash "$script_dir/validate-stable-candidate.sh" "$version" "$candidate"
 
 tags=("v$version" "npm-v$version" "desktop-v$version")
@@ -37,11 +37,11 @@ done
 
 bash "$script_dir/verify-release-push-ci.sh" "$candidate"
 
-# Include a no-op main-v2 update in the same atomic transaction. If main-v2
+# Include a no-op main update in the same atomic transaction. If main
 # advanced while CI was running, this refspec becomes a non-fast-forward update
 # and the server rejects every tag instead of burning an unreleasable version.
 git push --atomic "$remote" \
-	"$candidate:refs/heads/main-v2" \
+	"$candidate:refs/heads/main" \
 	"$candidate:refs/tags/${tags[0]}" \
 	"$candidate:refs/tags/${tags[1]}" \
 	"$candidate:refs/tags/${tags[2]}"

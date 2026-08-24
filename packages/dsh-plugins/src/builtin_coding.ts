@@ -4,6 +4,7 @@ import { exec } from 'node:child_process';
 import fg from 'fast-glob';
 import type { ToolHandler } from '@dsh/core';
 import type { DshPlugin, PluginInitContext } from './types.js';
+import { createWorkspacePathPolicy, writeWorkspaceFile, type WorkspacePathPolicy } from './workspace_path.js';
 
 const MAX_OUTPUT_CHARS = 32 * 1024; // 32KB max output cap
 
@@ -11,9 +12,11 @@ export class BuiltinCodingPlugin implements DshPlugin {
   public name = 'dsh-builtin-coding';
   public description = 'Standard filesystem, search, and execution tools for DSH';
   private workingDir: string = process.cwd();
+  private workspacePolicy!: WorkspacePathPolicy;
 
-  public init(context: PluginInitContext): void {
-    this.workingDir = context.workingDirectory;
+  public async init(context: PluginInitContext): Promise<void> {
+    this.workspacePolicy = await createWorkspacePathPolicy(context.workingDirectory);
+    this.workingDir = this.workspacePolicy.root;
   }
 
   public getTools(): ToolHandler[] {
@@ -29,9 +32,6 @@ export class BuiltinCodingPlugin implements DshPlugin {
     ];
   }
 
-  private resolvePath(targetPath: string): string {
-    return path.isAbsolute(targetPath) ? targetPath : path.resolve(this.workingDir, targetPath);
-  }
 
   private createReadFileTool(): ToolHandler {
     return {
@@ -48,9 +48,11 @@ export class BuiltinCodingPlugin implements DshPlugin {
           required: ['path'],
         },
       },
+      authorization: { effect: 'read', risk: 'ordinary' },
       execute: async (args) => {
-        const filePath = this.resolvePath(String(args.path));
+        let filePath = String(args.path);
         try {
+          filePath = await this.workspacePolicy.resolveExisting(filePath, 'file');
           const content = await fs.readFile(filePath, 'utf-8');
           const lines = content.split('\n');
           const offset = Math.max(1, typeof args.offset === 'number' ? args.offset : 1);
@@ -84,12 +86,13 @@ export class BuiltinCodingPlugin implements DshPlugin {
           required: ['path', 'content'],
         },
       },
+      authorization: { effect: 'write', risk: 'ordinary' },
       execute: async (args) => {
-        const filePath = this.resolvePath(String(args.path));
+        let filePath = String(args.path);
         const content = String(args.content ?? '');
         try {
-          await fs.mkdir(path.dirname(filePath), { recursive: true });
-          await fs.writeFile(filePath, content, 'utf-8');
+          filePath = await this.workspacePolicy.resolveWritableFile(filePath);
+          await writeWorkspaceFile(filePath, content);
           return `Successfully wrote ${content.length} bytes to ${filePath}`;
         } catch (err: any) {
           return { output: `Error writing file ${filePath}: ${err.message}`, isError: true };
@@ -113,12 +116,14 @@ export class BuiltinCodingPlugin implements DshPlugin {
           required: ['path', 'old_str', 'new_str'],
         },
       },
+      authorization: { effect: 'write', risk: 'ordinary' },
       execute: async (args) => {
-        const filePath = this.resolvePath(String(args.path));
+        let filePath = String(args.path);
         const oldStr = String(args.old_str ?? '');
         const newStr = String(args.new_str ?? '');
 
         try {
+          filePath = await this.workspacePolicy.resolveExisting(filePath, 'file');
           const content = await fs.readFile(filePath, 'utf-8');
           const occurrences = content.split(oldStr).length - 1;
 
@@ -136,7 +141,7 @@ export class BuiltinCodingPlugin implements DshPlugin {
           }
 
           const updated = content.replace(oldStr, newStr);
-          await fs.writeFile(filePath, updated, 'utf-8');
+          await writeWorkspaceFile(filePath, updated);
           return `Successfully replaced target section in ${filePath}`;
         } catch (err: any) {
           return { output: `Error editing file ${filePath}: ${err.message}`, isError: true };
@@ -158,17 +163,20 @@ export class BuiltinCodingPlugin implements DshPlugin {
           },
         },
       },
+      authorization: { effect: 'read', risk: 'ordinary' },
       execute: async (args) => {
-        const targetDir = this.resolvePath(String(args.path || '.'));
+        let targetDir = String(args.path || '.');
         const recursive = Boolean(args.recursive);
 
         try {
+          targetDir = await this.workspacePolicy.resolveExisting(targetDir, 'directory');
           if (recursive) {
             const entries = await fg(['**/*'], {
               cwd: targetDir,
               deep: 3,
               dot: false,
               onlyFiles: false,
+              followSymbolicLinks: false,
               ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**'],
             });
             return entries.slice(0, 200).join('\n') || '(Empty directory)';
@@ -198,15 +206,18 @@ export class BuiltinCodingPlugin implements DshPlugin {
           required: ['pattern'],
         },
       },
+      authorization: { effect: 'read', risk: 'ordinary' },
       execute: async (args) => {
         const pattern = String(args.pattern);
-        const searchPath = this.resolvePath(String(args.path || '.'));
+        let searchPath = String(args.path || '.');
 
         try {
+          searchPath = await this.workspacePolicy.resolveExisting(searchPath, 'directory');
           const files = await fg(['**/*'], {
             cwd: searchPath,
             onlyFiles: true,
             dot: false,
+            followSymbolicLinks: false,
             ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/*.lock', '**/*.png', '**/*.jpg'],
           });
 
@@ -215,8 +226,8 @@ export class BuiltinCodingPlugin implements DshPlugin {
 
           for (const file of files) {
             if (matches.length >= 100) break;
-            const fullPath = path.join(searchPath, file);
             try {
+              const fullPath = await this.workspacePolicy.resolveExisting(path.join(searchPath, file), 'file');
               const content = await fs.readFile(fullPath, 'utf-8');
               const lines = content.split('\n');
               for (let i = 0; i < lines.length; i++) {
@@ -254,14 +265,25 @@ export class BuiltinCodingPlugin implements DshPlugin {
           required: ['pattern'],
         },
       },
+      authorization: { effect: 'read', risk: 'ordinary' },
       execute: async (args) => {
         const pattern = String(args.pattern);
         try {
+          if (pattern.includes('\0') || path.isAbsolute(pattern) || pattern.split(/[\\/]+/).includes('..')) {
+            throw new Error('Glob pattern must stay inside the workspace.');
+          }
           const matches = await fg([pattern], {
             cwd: this.workingDir,
+            onlyFiles: true,
+            followSymbolicLinks: false,
             ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**'],
           });
-          return matches.slice(0, 150).join('\n') || 'No matching files found.';
+          const safeMatches: string[] = [];
+          for (const match of matches.slice(0, 150)) {
+            const resolved = await this.workspacePolicy.resolveExisting(match, 'file');
+            safeMatches.push(path.relative(this.workingDir, resolved));
+          }
+          return safeMatches.join('\n') || 'No matching files found.';
         } catch (err: any) {
           return { output: `Glob pattern error: ${err.message}`, isError: true };
         }
@@ -283,6 +305,7 @@ export class BuiltinCodingPlugin implements DshPlugin {
           required: ['command'],
         },
       },
+      authorization: { effect: 'process', risk: 'high' },
       execute: async (args, context) => {
         const command = String(args.command);
         const timeout = typeof args.timeout === 'number' ? args.timeout : 60000;
@@ -336,6 +359,7 @@ export class BuiltinCodingPlugin implements DshPlugin {
           required: ['command'],
         },
       },
+      authorization: { effect: 'process', risk: 'high' },
       execute: async (args, context) => {
         const command = String(args.command);
         const timeout = typeof args.timeout === 'number' ? args.timeout : 60000;

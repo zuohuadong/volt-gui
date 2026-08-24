@@ -2,7 +2,7 @@ name: Relay stable release
 run-name: Relay stable release ${{ github.ref_name }}
 
 # The tag event itself has a tag-shaped origin. Relay the immutable tag name to
-# release-stable.yml on protected main-v2 so the release control plane can
+# release-stable.yml on protected main so the release control plane can
 # authorize one immutable candidate without trusting wildcard tag-like branches.
 on:
   push:
@@ -19,14 +19,14 @@ jobs:
     name: dispatch protected stable control plane
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch release-stable.yml on main-v2
+      - name: Dispatch release-stable.yml on main
         uses: actions/github-script@v9
         env:
           RELEASE_TAG: ${{ github.ref_name }}
           CONTROL_PLANE_REF: ${{ github.event.repository.default_branch }}
         with:
           script: |
-            if (process.env.CONTROL_PLANE_REF !== 'main-v2') {
+            if (process.env.CONTROL_PLANE_REF !== 'main') {
               core.setFailed(`Unexpected default branch: ${process.env.CONTROL_PLANE_REF}`);
               return;
             }

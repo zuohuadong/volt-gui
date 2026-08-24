@@ -7,6 +7,7 @@ import type {
   DshTurnEvent,
   ToolExecutionContext,
   ToolCall,
+  ToolAuthorizationDecision,
 } from './types.js';
 import { PrefixCachePipeline } from './prefix_cache.js';
 import { StreamDecoder } from './stream_decoder.js';
@@ -96,11 +97,8 @@ export class DshEngine {
     const activeModel = options?.model || this.config.model;
     let stepCount = 0;
 
-    // Append current user message
     const userMessage: Message = { role: 'user', content: userPrompt };
-    this.history.push(userMessage);
-
-    const activeTurnMessages: Message[] = [];
+    const activeTurnMessages: Message[] = [userMessage];
 
     while (stepCount < maxSteps) {
       stepCount++;
@@ -218,23 +216,54 @@ export class DshEngine {
         const toolHandler = this.tools.get(toolName);
         const parsedArgs = safeParseJson<Record<string, unknown>>(call.function.arguments, {});
 
-        emit({
-          type: 'tool_exec_start',
-          toolCallId: call.id,
-          name: toolName,
-          args: parsedArgs,
-        });
-        while (eventQueue.length > 0) {
-          yield eventQueue.shift()!;
-        }
-
         let output = '';
         let isError = false;
+        let authorized = true;
 
         if (!toolHandler) {
           output = `Error: Tool '${toolName}' is not registered in DSH.`;
           isError = true;
         } else {
+          const authorization = toolHandler.authorization ?? { effect: 'external', risk: 'high' };
+          let decision: ToolAuthorizationDecision = { allow: true };
+
+          if (authorization.effect !== 'read' || authorization.risk !== 'ordinary') {
+            if (!this.config.authorizationBroker) {
+              decision = { allow: false, reason: 'Tool authorization broker is unavailable.' };
+            } else {
+              try {
+                decision = await this.config.authorizationBroker.authorize({
+                  toolCallId: call.id,
+                  toolName,
+                  args: parsedArgs,
+                  workingDirectory: this.config.workingDirectory || process.cwd(),
+                  authorization,
+                  signal: options?.signal,
+                });
+              } catch (err: any) {
+                decision = { allow: false, reason: `Authorization failed: ${err.message}` };
+              }
+            }
+          }
+
+          authorized = decision.allow;
+          if (!authorized) {
+            output = `Tool authorization denied: ${decision.reason || 'Denied by policy.'}`;
+            isError = true;
+          }
+        }
+
+        if (toolHandler && authorized) {
+          emit({
+            type: 'tool_exec_start',
+            toolCallId: call.id,
+            name: toolName,
+            args: parsedArgs,
+          });
+          while (eventQueue.length > 0) {
+            yield eventQueue.shift()!;
+          }
+
           try {
             const context: ToolExecutionContext = {
               toolCallId: call.id,

@@ -45,5 +45,5 @@ non-Windows hosts instead of pretending that Wine/signing support exists.
 | Window | Minimize, maximize, close and DevTools | usable | Every visible native command routes through typed preload IPC with explicit failure handling. |
 | Responsive UI | Desktop and narrow layouts | complete | Runtime screenshots at desktop and 620px widths show no overlap, clipping, or horizontal scroll. |
 | Packaging | Windows x64 NSIS and portable | complete | `pnpm run dist:desktop`, `scripts/package-dist.mjs`, and package-shape tests require both executable forms. |
-| Publication | Production signing and updater | planned | GitHub uploads an explicitly unsigned artifact; signing inputs fail closed and no public Desktop Release is created. |
+| Publication | Production signing and updater | planned | GitHub uploads an explicitly unsigned-review artifact; signing inputs fail closed and no public Desktop Release is created. |
 | Legacy cleanup | Inactive Wails-era source | partial | It is excluded from the Electron entry and runtime gates. Removing the remaining dormant source is a separate cleanup task and must not be presented as active capability. |

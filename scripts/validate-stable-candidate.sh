@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bind a normal official release to the main-v2 commit that introduced or
+# Bind a normal official release to the main commit that introduced or
 # updated its reviewed release-notes record.
 set -euo pipefail
 

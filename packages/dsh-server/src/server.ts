@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import * as http from 'node:http';
-import { DshEngine, type DshConfig } from '@dsh/core';
-import { PluginManager } from '@dsh/plugins';
+import { DshEngine, type DshConfig, type Message, type ToolAuthorizationBroker } from '@dsh/core';
+import { PluginManager, type McpServerConfig } from '@dsh/plugins';
 
 const DEFAULT_MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 const SERVER_CLOSE_GRACE_MS = 1000;
@@ -11,6 +11,10 @@ export interface DshServerOptions {
   host?: string;
   config: DshConfig;
   authToken?: string;
+  authorizationBroker?: ToolAuthorizationBroker;
+  mcpServers?: McpServerConfig[];
+  initialHistory?: Message[];
+  persistHistory?: (messages: Message[]) => Promise<void>;
   allowedOrigins?: string[];
   maxRequestBodyBytes?: number;
 }
@@ -79,6 +83,7 @@ export class DshServer {
   private engine: DshEngine;
   private pluginManager: PluginManager;
   private options: DshServerOptions;
+  private activeTurn = false;
 
   constructor(options: DshServerOptions) {
     this.options = {
@@ -88,10 +93,15 @@ export class DshServer {
       ...options,
       allowedOrigins: [...(options.allowedOrigins ?? [])],
     };
-    this.engine = new DshEngine(this.options.config);
+    this.engine = new DshEngine({
+      ...this.options.config,
+      authorizationBroker: this.options.authorizationBroker,
+    });
+    this.engine.setHistory(this.options.initialHistory ?? []);
     this.pluginManager = new PluginManager(
       this.options.config.workingDirectory || process.cwd(),
       (message) => console.log(`[DSH Server] ${message}`),
+      { mcpServers: this.options.mcpServers },
     );
   }
 
@@ -160,8 +170,7 @@ export class DshServer {
       return;
     }
     if (url.pathname === '/api/history' && req.method === 'DELETE') {
-      this.engine.clearHistory();
-      writeJson(res, 200, { success: true });
+      await this.clearHistory(res);
       return;
     }
     if (url.pathname === '/api/turn' && req.method === 'POST') {
@@ -199,7 +208,21 @@ export class DshServer {
     writeJson(res, 200, { success: true, model: this.engine.getModel() });
   }
 
+  private async clearHistory(res: http.ServerResponse): Promise<void> {
+    if (this.activeTurn) throw new HttpRequestError(409, 'A turn is currently active');
+    const snapshot = this.engine.getHistory();
+    this.engine.clearHistory();
+    try {
+      await this.options.persistHistory?.([]);
+      writeJson(res, 200, { success: true });
+    } catch (error) {
+      this.engine.setHistory(snapshot);
+      throw error;
+    }
+  }
+
   private async runTurn(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (this.activeTurn) throw new HttpRequestError(409, 'A turn is already active');
     const body = await readJsonObject(req, this.options.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES);
     const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
     if (!prompt) throw new HttpRequestError(400, 'Prompt is required');
@@ -207,6 +230,8 @@ export class DshServer {
     const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : undefined;
     if (model) this.engine.setModel(model);
 
+    this.activeTurn = true;
+    const historySnapshot = this.engine.getHistory();
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache',
@@ -222,10 +247,14 @@ export class DshServer {
       for await (const event of this.engine.runTurn(prompt, { signal: abortController.signal, model })) {
         sendEvent(event);
       }
+      await this.options.persistHistory?.(this.engine.getHistory());
       res.write('data: [DONE]\n\n');
     } catch (error: unknown) {
+      this.engine.setHistory(historySnapshot);
       const message = error instanceof Error ? error.message : String(error);
       sendEvent({ type: 'error', message });
+    } finally {
+      this.activeTurn = false;
     }
     res.end();
   }
@@ -248,6 +277,10 @@ export class DshServer {
     } finally {
       await this.pluginManager.destroy();
     }
+  }
+
+  public hasActiveTurn(): boolean {
+    return this.activeTurn;
   }
 
   public getEngine(): DshEngine {

@@ -25,9 +25,6 @@ export interface McpServerConfig {
     command: string;
     args?: string[];
     env?: Record<string, string>;
-}
-export interface DshPluginConfig {
-    plugins?: string[];
-    mcpServers?: Record<string, McpServerConfig>;
+    workspaceRoot: string;
 }
 //# sourceMappingURL=types.d.ts.map

@@ -38,7 +38,7 @@ database_name = "voltui-crash"
 database_id = "54825184-366f-4877-80fc-924efab0239b"
 
 # Skill/MCP registry data plane, folded in from the standalone worker. Before
-# merging (the crash worker auto-deploys on push to main-v2):
+# merging (the crash worker auto-deploys on push to main):
 #   wrangler d1 create voltui-registry   # paste the id below
 #   wrangler d1 execute voltui-registry --remote --file=registry-schema.sql
 [[d1_databases]]

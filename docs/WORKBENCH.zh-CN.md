@@ -1,5 +1,9 @@
 # 桌面工作台契约
 
+> 已归档的 Wails 时代设计契约。Wails 已退役且不得恢复；当前 Electron/DSH
+> 交付状态以 `docs/WORKBENCH_FEATURE_MATRIX.md` 和 `docs/MIGRATING.zh-CN.md`
+> 为准。
+
 本文定义 VoltUI 下一代桌面 GUI 的上游契约。它是 Svelte 工作台重写的产品与工程目标；下游 fork 可以换主题或品牌，但交互模型应保持通用。
 
 ## 目标

@@ -3,8 +3,8 @@ run-name: Release stable ${{ inputs.tag || github.ref_name }}
 
 # Stable publication has exactly one GitHub environment gate. Push the CLI,
 # npm, and desktop tags atomically; release-stable-trigger.yml relays the vX.Y.Z
-# tag to this workflow on protected main-v2. Preflight verifies that all three
-# tags point to the reviewed Notes candidate on main-v2 history, and one GitHub
+# tag to this workflow on protected main. Preflight verifies that all three
+# tags point to the reviewed Notes candidate on main history, and one GitHub
 # approval releases CLI/npm while building the Electron Windows x64 artifact.
 # Desktop publication remains fail-closed until Electron signing and updater
 # verification replace the retired Wails/SignPath pipeline.
@@ -26,12 +26,12 @@ on:
         default: true
         type: boolean
       publish_desktop:
-        description: "Build the unsigned Electron Windows x64 artifact"
+        description: "Build the unsigned-review Electron Windows x64 artifact"
         required: false
         default: true
         type: boolean
       allow_recovery:
-        description: "Allow an existing stable tag on main-v2 history (manual recovery only)"
+        description: "Allow an existing stable tag on main history (manual recovery only)"
         required: false
         default: true
         type: boolean
@@ -64,7 +64,7 @@ jobs:
         with:
           fetch-depth: 0
           # A recovery dispatch uses the fixed workflow/scripts from protected
-          # main-v2. Publishers still check out the immutable approved tag SHA.
+          # main. Publishers still check out the immutable approved tag SHA.
           ref: ${{ github.sha }}
       - uses: actions/setup-go@v7
         with:
@@ -257,4 +257,4 @@ jobs:
       - name: Refresh public changelog
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run pages.yml --ref main-v2
+        run: gh workflow run pages.yml --ref main

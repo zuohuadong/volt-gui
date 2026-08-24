@@ -27,7 +27,7 @@
     X,
   } from "@lucide/svelte";
 
-  import type { ElectronDshApi, ElectronDshConfig, ElectronDshConnection } from "../electron";
+  import type { ElectronDshApi, ElectronDshConfig, ElectronDshConnection, ElectronToolApprovalPrompt } from "../electron";
   import {
     clearDshHistory,
     getDshHealth,
@@ -64,6 +64,12 @@
   }
 
   const electronApi = typeof window !== "undefined" ? window.electronDsh : undefined;
+  const permissionModes = [
+    { id: "ask", label: "Ask", title: "需要授权的工具调用会暂停等待确认" },
+    { id: "auto", label: "Auto", title: "普通工作区写入自动执行，高风险调用仍需确认" },
+    { id: "yolo", label: "YOLO", title: "跳过普通工具提示，高风险和外部调用仍需确认" },
+  ] as const;
+
   const quickStarts = [
     { title: "检查当前项目", prompt: "检查当前项目状态，找出最值得先处理的问题，并给出验证步骤。", icon: Gauge },
     { title: "修复一个问题", prompt: "先阅读项目约定和相关代码，定位当前最明显的故障并完成修复与验证。", icon: Wrench },
@@ -82,6 +88,9 @@
   let activeAssistantId = $state("");
   let abortController = $state<AbortController>();
   let diagnostics = $state<DshCacheDiagnostics>();
+  let permissionMode = $state<"ask" | "auto" | "yolo">("ask");
+  let pendingApproval = $state<ElectronToolApprovalPrompt>();
+  let approvalError = $state("");
   let sidebarCollapsed = $state(false);
   let mobileSidebarOpen = $state(false);
   let settingsOpen = $state(false);
@@ -128,6 +137,26 @@
   function markRuntimeFailure(error: unknown): void {
     runtimeState = "error";
     runtimeError = displayError(error);
+  }
+
+  async function setPermissionMode(next: "ask" | "auto" | "yolo"): Promise<void> {
+    try {
+      permissionMode = await nativeApi().setPermissionMode(next);
+    } catch (error) {
+      approvalError = displayError(error);
+    }
+  }
+
+  async function resolveApproval(decision: "allow_once" | "deny"): Promise<void> {
+    if (!pendingApproval) return;
+    const requestId = pendingApproval.requestId;
+    try {
+      const result = await nativeApi().resolveToolApproval(requestId, decision);
+      if (!result.success) approvalError = result.error || "审批请求已失效。";
+      else pendingApproval = undefined;
+    } catch (error) {
+      approvalError = displayError(error);
+    }
   }
 
   async function runNativeCommand(command: (api: ElectronDshApi) => Promise<void>): Promise<void> {
@@ -226,14 +255,16 @@
 
     try {
       const api = nativeApi();
-      const [nextConnection, nextWorkingDir, nextConfig] = await Promise.all([
+      const [nextConnection, nextWorkingDir, nextConfig, nextPermissionMode] = await Promise.all([
         api.getServerConnection(),
         api.getWorkingDir(),
         api.getConfig(),
+        api.getPermissionMode(),
       ]);
       connection = nextConnection;
       workingDir = nextWorkingDir;
       applyConfig(nextConfig);
+      permissionMode = nextPermissionMode;
 
       const [health, nextTools, history] = await Promise.all([
         getDshHealth(nextConnection),
@@ -367,6 +398,7 @@
       const canceled = error instanceof DOMException && error.name === "AbortError";
       assistantMessage.status = canceled ? "canceled" : "failed";
       assistantMessage.error = displayError(error);
+      pendingApproval = undefined;
       if (!canceled) {
         runtimeState = "error";
         runtimeError = assistantMessage.error;
@@ -491,13 +523,19 @@
   onMount(() => {
     void refreshRuntime(true).then(scrollToBottom);
     let removeWindowStateListener: (() => void) | undefined;
+    let removeApprovalListener: (() => void) | undefined;
     if (electronApi) {
       void electronApi.isMaximized().then((value) => (isMaximized = value)).catch(markRuntimeFailure);
       removeWindowStateListener = electronApi.onWindowStateChange((state) => (isMaximized = state.isMaximized));
+      removeApprovalListener = electronApi.onToolApprovalRequested((prompt) => {
+        pendingApproval = prompt;
+        approvalError = "";
+      });
     }
     return () => {
       abortController?.abort();
       removeWindowStateListener?.();
+      removeApprovalListener?.();
     };
   });
 </script>
@@ -589,6 +627,15 @@
       </div>
     {/if}
 
+    {#if pendingApproval}
+      <section class="approval-card" role="alert" aria-live="assertive">
+        <div class="approval-card__head"><AlertTriangle size={16} /><div><strong>需要确认工具调用</strong><span>{pendingApproval.toolName} · {pendingApproval.risk} · {pendingApproval.effect}</span></div></div>
+        <dl><div><dt>工作区</dt><dd>{pendingApproval.workingDirectory}</dd></div><div><dt>参数</dt><dd><pre>{JSON.stringify(pendingApproval.args, null, 2)}</pre></dd></div></dl>
+        {#if approvalError}<p class="approval-card__error">{approvalError}</p>{/if}
+        <footer><button type="button" onclick={() => void resolveApproval("deny")}>拒绝</button><button class="approval-card__allow" type="button" onclick={() => void resolveApproval("allow_once")}>允许一次</button></footer>
+      </section>
+    {/if}
+
     {#if isEmpty}
       <div class="start-surface">
         <section class="start-copy">
@@ -622,6 +669,11 @@
             <div class="composer__context">
               <span title={workingDir}><Folder size={13} /> {workspaceName}</span>
               <span><Bot size={13} /> {config?.model || "等待模型"}</span>
+              <div class="permission-control" aria-label="工具授权模式">
+                {#each permissionModes as mode (mode.id)}
+                  <button type="button" class:active={permissionMode === mode.id} title={mode.title} onclick={() => void setPermissionMode(mode.id)}>{mode.label}</button>
+                {/each}
+              </div>
             </div>
             <button class="send-button" type="button" onclick={() => void sendMessage()} disabled={!input.trim() || sending || runtimeState !== "ready"} aria-label="发送任务">
               <Send size={16} />
@@ -692,6 +744,11 @@
               <span title={workingDir}><Folder size={13} /> {workspaceName}</span>
               <span><Bot size={13} /> {config?.model || "等待模型"}</span>
               {#if diagnostics}<span><Gauge size={13} /> 缓存 {Math.round(diagnostics.cacheHitRatio * 100)}%</span>{/if}
+              <div class="permission-control" aria-label="工具授权模式">
+                {#each permissionModes as mode (mode.id)}
+                  <button type="button" class:active={permissionMode === mode.id} title={mode.title} onclick={() => void setPermissionMode(mode.id)}>{mode.label}</button>
+                {/each}
+              </div>
             </div>
             {#if sending}
               <button class="stop-button" type="button" onclick={cancelMessage} aria-label="停止任务"><CircleStop size={17} /></button>
@@ -733,11 +790,11 @@
       <div class="settings-dialog__body">
         <section>
           <div class="settings-section-title"><Bot size={16} /><div><strong>模型连接</strong><span>{config?.apiKeySet ? "密钥已配置" : "当前未保存密钥"}</span></div></div>
-          <label>模型名称<input bind:value={modelDraft} autocomplete="off" /></label>
-          <label>接口地址<input bind:value={baseUrlDraft} autocomplete="url" spellcheck="false" /></label>
-          <label>API 密钥<input bind:value={apiKeyDraft} type="password" autocomplete="new-password" placeholder={config?.apiKeySet ? "留空以保留当前密钥" : "免鉴权网关可留空"} /></label>
+          <label>模型名称<input bind:value={modelDraft} autocomplete="off" disabled={config?.managedFields.includes("model")} /></label>
+          <label>接口地址<input bind:value={baseUrlDraft} autocomplete="url" spellcheck="false" disabled={config?.managedFields.includes("baseURL")} /></label>
+          <label>API 密钥<input bind:value={apiKeyDraft} type="password" disabled={config?.managedFields.includes("apiKey")} autocomplete="new-password" placeholder={config?.apiKeySet ? "留空以保留当前密钥" : "免鉴权网关可留空"} /></label>
           {#if config?.apiKeySet}
-            <label class="check-row"><input bind:checked={clearApiKey} type="checkbox" /><span>清除当前已保存的密钥</span></label>
+            <label class="check-row"><input bind:checked={clearApiKey} type="checkbox" disabled={config?.managedFields.includes("apiKey")} /><span>清除当前已保存的密钥</span></label>
           {/if}
         </section>
         <section>
@@ -1128,6 +1185,41 @@
     display: none;
   }
 
+  .approval-card {
+    display: grid;
+    gap: 10px;
+    margin: 12px 18px 0;
+    padding: 12px;
+    border: 1px solid #e7bd75;
+    border-radius: 8px;
+    background: #fff8e8;
+    color: #5f430d;
+  }
+
+  .approval-card__head {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .approval-card__head > div {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .approval-card__head strong { font-size: 12px; }
+  .approval-card__head span { color: #826526; font-size: 10px; }
+  .approval-card dl { display: grid; gap: 7px; margin: 0; }
+  .approval-card dl > div { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; }
+  .approval-card dt { color: #826526; font-size: 10px; font-weight: 650; }
+  .approval-card dd { min-width: 0; margin: 0; color: #4d3b16; font-family: ui-monospace, monospace; font-size: 10px; overflow-wrap: anywhere; }
+  .approval-card pre { max-height: 120px; margin: 0; overflow: auto; white-space: pre-wrap; }
+  .approval-card__error { margin: 0; color: #b42318; font-size: 11px; }
+  .approval-card footer { display: flex; justify-content: flex-end; gap: 8px; }
+  .approval-card footer button { min-height: 30px; padding: 0 10px; border: 1px solid #d4b46f; border-radius: 5px; background: #fff; color: #5f430d; font-size: 11px; font-weight: 650; }
+  .approval-card footer .approval-card__allow { border-color: #2d6a4f; background: #2d6a4f; color: #fff; }
+
   .runtime-banner {
     display: grid;
     grid-template-columns: 18px minmax(0, 1fr) auto auto;
@@ -1317,6 +1409,32 @@
     gap: 12px;
     color: #777a75;
     font-size: 10px;
+  }
+
+  .permission-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid #d7d7d3;
+    border-radius: 6px;
+    background: #f6f7f5;
+  }
+
+  .permission-control button {
+    min-height: 22px;
+    padding: 0 6px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: #747872;
+    font-size: 10px;
+    font-weight: 650;
+  }
+
+  .permission-control button.active {
+    background: #20211f;
+    color: #fff;
   }
 
   .composer__context span {

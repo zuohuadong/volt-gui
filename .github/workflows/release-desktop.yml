@@ -1,8 +1,8 @@
 name: Release desktop
 
 # Electron packaging currently has one verified target: Windows x64. This
-# workflow deliberately uploads a build artifact instead of publishing an
-# unsigned GitHub Release. Public desktop publication stays fail-closed until
+# workflow deliberately uploads an unsigned-review artifact instead of publishing
+# a GitHub Release. Public desktop publication stays fail-closed until
 # the Electron signing and updater contracts have been migrated and verified.
 on:
   workflow_dispatch:
@@ -160,7 +160,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: release
     steps:
-      - run: echo "Approved unsigned Windows x64 artifact build for ${{ needs.resolve.outputs.tag }}"
+      - run: echo "Approved unsigned-review Windows x64 artifact build for ${{ needs.resolve.outputs.tag }}"
 
   package:
     name: Package Electron Windows x64
@@ -196,6 +196,8 @@ jobs:
           node --test scripts/check-electron-runtime-boundary.test.mjs scripts/check-runtime-mocks.test.mjs scripts/package-dist.test.mjs scripts/set-electron-package-version.test.mjs
           node scripts/check-electron-runtime-boundary.mjs
           node scripts/check-runtime-mocks.mjs
+          pnpm --filter @voltui/desktop-electron run test:profile
+          pnpm --filter @voltui/desktop-electron run test:security
           pnpm --filter voltui-desktop-workbench run check
           pnpm --filter voltui-desktop-workbench run test:unit
 
@@ -230,10 +232,10 @@ jobs:
           }
           $lines | Set-Content -LiteralPath dist/SHA256SUMS.txt -Encoding utf8
 
-      - name: Upload unsigned desktop artifact
+      - name: Upload unsigned review desktop artifact
         uses: actions/upload-artifact@v7
         with:
-          name: voltui-${{ needs.resolve.outputs.tag }}-windows-x64-unsigned
+          name: voltui-${{ needs.resolve.outputs.tag }}-windows-x64-unsigned-review
           path: dist/*
           if-no-files-found: error
           retention-days: 14

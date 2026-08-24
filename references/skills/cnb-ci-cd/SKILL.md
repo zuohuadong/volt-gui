@@ -61,9 +61,11 @@ merge-request:
           script: pnpm test
 ```
 
-### Pipeline 4: Crontab sync (daily 09:00 CST)
+### Retired: automated upstream sync
 
-Syncs from upstream `aizhuliren/volt-gui` via `scripts/sync-upstream.sh`, then creates PR via CNB API.
+The former crontab sync and `scripts/sync-upstream.sh` flow are retired. CNB
+must not fetch or merge an upstream branch automatically; external changes enter
+only through an explicit, independently reviewed PR.
 
 ## CNB API Reference
 

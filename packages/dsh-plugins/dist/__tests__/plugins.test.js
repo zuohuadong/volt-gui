@@ -11,7 +11,7 @@ describe('DSH Builtin Coding Tools Tests', () => {
     before(async () => {
         tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-test-'));
         plugin = new BuiltinCodingPlugin();
-        plugin.init({
+        await plugin.init({
             workingDirectory: tmpDir,
             log: () => { },
         });
@@ -51,10 +51,14 @@ describe('DSH Builtin Coding Tools Tests', () => {
         assert.match(res.output, /dsh test/);
         assert.strictEqual(res.isError, false);
     });
-    it('should execute pwsh commands safely with timeout and output capture', async () => {
+    it('should execute pwsh commands safely with timeout and output capture', async (t) => {
         const pwshTool = toolsMap.get('pwsh');
         assert.ok(pwshTool, 'pwsh tool should be registered');
         const res = await pwshTool.execute({ command: 'Write-Output "dsh pwsh test"' }, { workingDirectory: tmpDir });
+        if (res.isError && /ENOENT/.test(res.output)) {
+            t.skip("pwsh is unavailable on this host");
+            return;
+        }
         assert.strictEqual(res.output, 'dsh pwsh test');
         assert.strictEqual(res.isError, false);
     });

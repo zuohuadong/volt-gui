@@ -47,6 +47,7 @@ desktop:
 updater:
   - changed-files:
       - any-glob-to-any-file:
-          - 'apps/desktop-electron/electron-builder.json'
+          - 'apps/desktop-electron/electron-builder.mjs'
+          - 'apps/desktop-electron/src/electron-profile.ts'
           - 'scripts/package-dist.mjs'
           - '.github/workflows/release*.yml'

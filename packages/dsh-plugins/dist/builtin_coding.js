@@ -4,6 +4,14 @@ import { exec } from 'node:child_process';
 import fg from 'fast-glob';
 import { createWorkspacePathPolicy, writeWorkspaceFile } from './workspace_path.js';
 const MAX_OUTPUT_CHARS = 32 * 1024; // 32KB max output cap
+function validateWorkspaceGlobPattern(pattern) {
+    if (pattern.includes('\0')
+        || path.isAbsolute(pattern)
+        || pattern.split(/[\\/]+/).includes('..')
+        || /[{}()[\]]/.test(pattern)) {
+        throw new Error('Glob pattern must use only workspace-relative *, **, and ? segments.');
+    }
+}
 export class BuiltinCodingPlugin {
     name = 'dsh-builtin-coding';
     description = 'Standard filesystem, search, and execution tools for DSH';
@@ -253,13 +261,13 @@ export class BuiltinCodingPlugin {
             execute: async (args) => {
                 const pattern = String(args.pattern);
                 try {
-                    if (pattern.includes('\0') || path.isAbsolute(pattern) || pattern.split(/[\\/]+/).includes('..')) {
-                        throw new Error('Glob pattern must stay inside the workspace.');
-                    }
+                    validateWorkspaceGlobPattern(pattern);
                     const matches = await fg([pattern], {
                         cwd: this.workingDir,
                         onlyFiles: true,
                         followSymbolicLinks: false,
+                        braceExpansion: false,
+                        extglob: false,
                         ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**'],
                     });
                     const safeMatches = [];

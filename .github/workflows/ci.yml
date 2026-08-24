@@ -145,6 +145,7 @@ jobs:
 
       - name: Test DSH and renderer
         run: |
+          pnpm run test:dsh-integration
           pnpm test
           pnpm --filter @voltui/desktop-electron run test:config
           pnpm --filter @voltui/desktop-electron run test:profile

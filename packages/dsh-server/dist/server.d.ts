@@ -18,6 +18,7 @@ export declare class DshServer {
     private pluginManager;
     private options;
     private activeTurn;
+    private acceptingTurns;
     constructor(options: DshServerOptions);
     start(): Promise<string>;
     private handleRequest;
@@ -29,6 +30,8 @@ export declare class DshServer {
     private writeRequestError;
     stop(): Promise<void>;
     hasActiveTurn(): boolean;
+    suspendNewTurns(): boolean;
+    resumeNewTurns(): void;
     getEngine(): DshEngine;
 }
 //# sourceMappingURL=server.d.ts.map

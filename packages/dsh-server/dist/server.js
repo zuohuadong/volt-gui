@@ -51,7 +51,6 @@ async function closeHttpServer(server) {
         return;
     await new Promise((resolve, reject) => {
         const forceClose = setTimeout(() => server.closeAllConnections(), SERVER_CLOSE_GRACE_MS);
-        forceClose.unref();
         server.close((error) => {
             clearTimeout(forceClose);
             if (error)
@@ -68,6 +67,7 @@ export class DshServer {
     pluginManager;
     options;
     activeTurn = false;
+    acceptingTurns = true;
     constructor(options) {
         this.options = {
             port: 3210,
@@ -194,6 +194,8 @@ export class DshServer {
         }
     }
     async runTurn(req, res) {
+        if (!this.acceptingTurns)
+            throw new HttpRequestError(409, 'The runtime is changing configuration');
         if (this.activeTurn)
             throw new HttpRequestError(409, 'A turn is already active');
         const body = await readJsonObject(req, this.options.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES);
@@ -203,6 +205,8 @@ export class DshServer {
         const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : undefined;
         if (model)
             this.engine.setModel(model);
+        if (!this.acceptingTurns)
+            throw new HttpRequestError(409, 'The runtime is changing configuration');
         this.activeTurn = true;
         const historySnapshot = this.engine.getHistory();
         res.writeHead(200, {
@@ -256,6 +260,15 @@ export class DshServer {
     }
     hasActiveTurn() {
         return this.activeTurn;
+    }
+    suspendNewTurns() {
+        if (this.activeTurn)
+            return false;
+        this.acceptingTurns = false;
+        return true;
+    }
+    resumeNewTurns() {
+        this.acceptingTurns = true;
     }
     getEngine() {
         return this.engine;

@@ -61,6 +61,18 @@ describe('DSH Builtin Coding Tools Tests', () => {
     assert.match(String(res), /hello.txt:2: Line 2 - Modified/);
   });
 
+  it('does not let brace or extglob expansion traverse outside the workspace', async () => {
+    const globTool = toolsMap.get('glob');
+    for (const pattern of [
+      '{hello.txt,../outside/secret.txt}',
+      '@(../outside)/secret.txt',
+    ]) {
+      const result = await globTool.execute({ pattern }, { workingDirectory: tmpDir });
+      assert.equal(result.isError, true);
+      assert.match(result.output, /workspace-relative/);
+    }
+  });
+
   it('should execute bash commands safely with timeout and output capture', async () => {
     const bashTool = toolsMap.get('bash');
     const res = await bashTool.execute({ command: 'echo dsh test' }, { workingDirectory: tmpDir });

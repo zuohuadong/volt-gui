@@ -21790,6 +21790,11 @@ async function writeWorkspaceFile(filePath, content) {
 
 // ../../packages/dsh-plugins/dist/builtin_coding.js
 var MAX_OUTPUT_CHARS = 32 * 1024;
+function validateWorkspaceGlobPattern(pattern) {
+  if (pattern.includes("\0") || path3.isAbsolute(pattern) || pattern.split(/[\\/]+/).includes("..") || /[{}()[\]]/.test(pattern)) {
+    throw new Error("Glob pattern must use only workspace-relative *, **, and ? segments.");
+  }
+}
 var BuiltinCodingPlugin = class {
   name = "dsh-builtin-coding";
   description = "Standard filesystem, search, and execution tools for DSH";
@@ -22032,13 +22037,13 @@ var BuiltinCodingPlugin = class {
       execute: async (args) => {
         const pattern = String(args.pattern);
         try {
-          if (pattern.includes("\0") || path3.isAbsolute(pattern) || pattern.split(/[\\/]+/).includes("..")) {
-            throw new Error("Glob pattern must stay inside the workspace.");
-          }
+          validateWorkspaceGlobPattern(pattern);
           const matches = await (0, import_fast_glob.default)([pattern], {
             cwd: this.workingDir,
             onlyFiles: true,
             followSymbolicLinks: false,
+            braceExpansion: false,
+            extglob: false,
             ignore: ["**/node_modules/**", "**/.git/**", "**/dist/**"]
           });
           const safeMatches = [];
@@ -31218,7 +31223,6 @@ async function closeHttpServer(server) {
     return;
   await new Promise((resolve4, reject) => {
     const forceClose = setTimeout(() => server.closeAllConnections(), SERVER_CLOSE_GRACE_MS);
-    forceClose.unref();
     server.close((error2) => {
       clearTimeout(forceClose);
       if (error2)
@@ -31235,6 +31239,7 @@ var DshServer = class {
   pluginManager;
   options;
   activeTurn = false;
+  acceptingTurns = true;
   constructor(options) {
     this.options = {
       port: 3210,
@@ -31360,6 +31365,8 @@ var DshServer = class {
     }
   }
   async runTurn(req, res) {
+    if (!this.acceptingTurns)
+      throw new HttpRequestError(409, "The runtime is changing configuration");
     if (this.activeTurn)
       throw new HttpRequestError(409, "A turn is already active");
     const body = await readJsonObject(req, this.options.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES);
@@ -31369,6 +31376,8 @@ var DshServer = class {
     const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : void 0;
     if (model)
       this.engine.setModel(model);
+    if (!this.acceptingTurns)
+      throw new HttpRequestError(409, "The runtime is changing configuration");
     this.activeTurn = true;
     const historySnapshot = this.engine.getHistory();
     res.writeHead(200, {
@@ -31422,6 +31431,15 @@ var DshServer = class {
   hasActiveTurn() {
     return this.activeTurn;
   }
+  suspendNewTurns() {
+    if (this.activeTurn)
+      return false;
+    this.acceptingTurns = false;
+    return true;
+  }
+  resumeNewTurns() {
+    this.acceptingTurns = true;
+  }
   getEngine() {
     return this.engine;
   }
@@ -31472,9 +31490,22 @@ import * as path4 from "node:path";
 var SESSION_SCHEMA_VERSION = 1;
 var MAX_HISTORY_LINES = 1e4;
 var MAX_MESSAGE_CONTENT = 4 * 1024 * 1024;
+var MAX_REASONING_CONTENT = 4 * 1024 * 1024;
+var MAX_TOOL_CALLS = 128;
+var MAX_TOOL_CALL_ID = 512;
+var MAX_TOOL_NAME = 512;
+var MAX_TOOL_ARGUMENTS = 2 * 1024 * 1024;
 var SAFE_STORAGE_ERROR = "\u7CFB\u7EDF\u5B89\u5168\u5B58\u50A8\u4E0D\u53EF\u7528\uFF0C\u62D2\u7EDD\u5C06 API \u5BC6\u94A5\u5199\u5165\u660E\u6587\u6587\u4EF6\u3002";
 function ensurePlainObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected a JSON object.");
+}
+function isNodeError(error2, code) {
+  return error2 instanceof Error && "code" in error2 && error2.code === code;
+}
+function isPersistedTrustRecord(value) {
+  return Boolean(
+    value && typeof value === "object" && "canonicalRoot" in value && typeof value.canonicalRoot === "string" && "fingerprint" in value && typeof value.fingerprint === "string" && "trustedAt" in value && typeof value.trustedAt === "string"
+  );
 }
 function validMessage(value) {
   ensurePlainObject(value);
@@ -31482,26 +31513,57 @@ function validMessage(value) {
   if (typeof value.content !== "string" || value.content.length > MAX_MESSAGE_CONTENT) {
     throw new Error("Invalid message content.");
   }
+  if (value.toolCalls !== void 0 && !Array.isArray(value.toolCalls)) throw new Error("Invalid tool calls.");
+  const toolCalls = Array.isArray(value.toolCalls) ? value.toolCalls.map(validToolCall) : void 0;
+  if (toolCalls && toolCalls.length > MAX_TOOL_CALLS) throw new Error("Too many tool calls in a message.");
+  if (typeof value.reasoningContent === "string" && value.reasoningContent.length > MAX_REASONING_CONTENT) {
+    throw new Error("Invalid reasoning content.");
+  }
   return {
     role: value.role,
     content: value.content,
     ...typeof value.reasoningContent === "string" ? { reasoningContent: value.reasoningContent } : {},
-    ...Array.isArray(value.toolCalls) ? { toolCalls: value.toolCalls } : {},
+    ...toolCalls ? { toolCalls } : {},
     ...typeof value.toolCallId === "string" ? { toolCallId: value.toolCallId } : {},
     ...typeof value.name === "string" ? { name: value.name } : {}
+  };
+}
+function validToolCall(value) {
+  ensurePlainObject(value);
+  ensurePlainObject(value.function);
+  if (typeof value.id !== "string" || !value.id || value.id.length > MAX_TOOL_CALL_ID) {
+    throw new Error("Invalid tool call id.");
+  }
+  if (value.type !== "function") throw new Error("Invalid tool call type.");
+  if (typeof value.function.name !== "string" || !value.function.name || value.function.name.length > MAX_TOOL_NAME) {
+    throw new Error("Invalid tool call name.");
+  }
+  if (typeof value.function.arguments !== "string" || value.function.arguments.length > MAX_TOOL_ARGUMENTS) {
+    throw new Error("Invalid tool call arguments.");
+  }
+  return {
+    id: value.id,
+    type: "function",
+    function: { name: value.function.name, arguments: value.function.arguments }
   };
 }
 async function atomicWrite(filePath, data, mode = 384) {
   await fs4.mkdir(path4.dirname(filePath), { recursive: true, mode: 448 });
   const tempPath = path4.join(path4.dirname(filePath), `.${path4.basename(filePath)}.${randomUUID()}.tmp`);
-  const handle = await fs4.open(tempPath, "w", mode);
+  let handle;
+  let renamed = false;
   try {
+    handle = await fs4.open(tempPath, "w", mode);
     await handle.writeFile(data);
     await handle.sync();
-  } finally {
     await handle.close();
+    handle = void 0;
+    await fs4.rename(tempPath, filePath);
+    renamed = true;
+  } finally {
+    await handle?.close().catch(() => void 0);
+    if (!renamed) await fs4.rm(tempPath, { force: true }).catch(() => void 0);
   }
-  await fs4.rename(tempPath, filePath);
 }
 async function readJson(filePath) {
   try {
@@ -31510,7 +31572,7 @@ async function readJson(filePath) {
     ensurePlainObject(value);
     return value;
   } catch (error2) {
-    if (error2?.code === "ENOENT") return void 0;
+    if (isNodeError(error2, "ENOENT")) return void 0;
     throw error2;
   }
 }
@@ -31523,19 +31585,21 @@ function resolveVoltHome(appDataPath) {
   return path4.join(appDataPath || process.cwd(), "voltui");
 }
 var ElectronPersistence = class {
-  constructor(root, safeStorage2) {
+  constructor(root, safeStorage2, hooks = {}) {
     this.safeStorage = safeStorage2;
+    this.hooks = hooks;
     this.electronRoot = path4.join(root, "electron");
     this.configPath = path4.join(this.electronRoot, "runtime-config.json");
-    this.credentialPath = path4.join(this.electronRoot, "credentials", "api-key.bin");
+    this.credentialsRoot = path4.join(this.electronRoot, "credentials");
     this.workspaceStatePath = path4.join(this.electronRoot, "workspace-state.json");
     this.trustPath = path4.join(this.electronRoot, "workspace-trust.json");
     this.sessionsRoot = path4.join(this.electronRoot, "sessions");
   }
   safeStorage;
+  hooks;
   electronRoot;
   configPath;
-  credentialPath;
+  credentialsRoot;
   workspaceStatePath;
   trustPath;
   sessionsRoot;
@@ -31547,44 +31611,89 @@ var ElectronPersistence = class {
     if (stored.schemaVersion !== 1 || typeof stored.model !== "string" || typeof stored.baseURL !== "string") {
       throw new Error("Electron runtime configuration is invalid.");
     }
+    const credentialRevision = typeof stored.credentialRevision === "string" ? stored.credentialRevision : "";
+    if (credentialRevision && !/^[a-f0-9]{64}$/.test(credentialRevision)) {
+      throw new Error("Electron runtime credential revision is invalid.");
+    }
     return {
       schemaVersion: 1,
       model: stored.model,
       baseURL: stored.baseURL,
       compactReasoning: stored.compactReasoning !== false,
       degenerationGuard: stored.degenerationGuard !== false,
-      credentialRevision: typeof stored.credentialRevision === "string" ? stored.credentialRevision : ""
+      credentialRevision
     };
   }
-  async loadApiKey() {
+  credentialPathForRevision(revision) {
+    if (!/^[a-f0-9]{64}$/.test(revision)) throw new Error("Electron runtime credential revision is invalid.");
+    return path4.join(this.credentialsRoot, `${revision}.bin`);
+  }
+  async loadApiKey(credentialRevision) {
     try {
-      const encrypted = await fs4.readFile(this.credentialPath);
+      const revision = credentialRevision ?? (await readJson(this.configPath))?.credentialRevision;
+      if (typeof revision !== "string" || revision === "") return "";
       if (!this.safeStorage.isEncryptionAvailable() || this.safeStorage.backend === "basic_text") {
         throw new Error(SAFE_STORAGE_ERROR);
       }
+      const credentialPath = this.credentialPathForRevision(revision);
+      let encrypted;
+      try {
+        encrypted = await fs4.readFile(credentialPath);
+      } catch (error2) {
+        if (!isNodeError(error2, "ENOENT")) throw error2;
+        const legacyCredentialPath = path4.join(this.credentialsRoot, "api-key.bin");
+        encrypted = await fs4.readFile(legacyCredentialPath);
+        if (createHash3("sha256").update(encrypted).digest("hex") !== revision) {
+          throw new Error("Electron runtime credential revision does not match the encrypted credential.");
+        }
+        await atomicWrite(credentialPath, encrypted);
+        await fs4.rm(legacyCredentialPath, { force: true }).catch(() => void 0);
+      }
+      if (createHash3("sha256").update(encrypted).digest("hex") !== revision) {
+        throw new Error("Electron runtime credential revision does not match the encrypted credential.");
+      }
       return this.safeStorage.decryptString(encrypted);
     } catch (error2) {
-      if (error2?.code === "ENOENT") return "";
-      if (error2?.message === SAFE_STORAGE_ERROR) throw error2;
+      if (isNodeError(error2, "ENOENT")) {
+        throw new Error("\u65E0\u6CD5\u8BFB\u53D6\u5DF2\u4FDD\u5B58\u7684 API \u5BC6\u94A5\uFF0C\u8BF7\u91CD\u65B0\u8F93\u5165\u3002");
+      }
+      if (error2 instanceof Error && error2.message === SAFE_STORAGE_ERROR) throw error2;
       throw new Error("\u65E0\u6CD5\u89E3\u5BC6 API \u5BC6\u94A5\uFF0C\u8BF7\u91CD\u65B0\u8F93\u5165\u3002");
     }
   }
   async saveRuntimeConfig(config2, apiKey) {
-    let credentialRevision = "";
+    const stored = await readJson(this.configPath);
+    const previousRevision = typeof stored?.credentialRevision === "string" ? stored.credentialRevision : "";
+    let credentialRevision = previousRevision;
+    let stagedCredentialPath;
+    let stagedCredentialCreated = false;
     if (apiKey === void 0) {
-      const stored = await readJson(this.configPath);
-      credentialRevision = typeof stored?.credentialRevision === "string" ? stored.credentialRevision : "";
+      if (credentialRevision && !/^[a-f0-9]{64}$/.test(credentialRevision)) {
+        throw new Error("Electron runtime credential revision is invalid.");
+      }
     } else if (apiKey) {
       if (!this.safeStorage.isEncryptionAvailable() || this.safeStorage.backend === "basic_text") {
         throw new Error(SAFE_STORAGE_ERROR);
       }
       const encrypted = this.safeStorage.encryptString(apiKey);
       credentialRevision = createHash3("sha256").update(encrypted).digest("hex");
-      await atomicWrite(this.credentialPath, encrypted);
+      stagedCredentialPath = this.credentialPathForRevision(credentialRevision);
+      await atomicWrite(stagedCredentialPath, encrypted);
+      stagedCredentialCreated = credentialRevision !== previousRevision;
     } else if (apiKey === "") {
-      await fs4.rm(this.credentialPath, { force: true });
+      credentialRevision = "";
     }
-    await atomicWrite(this.configPath, JSON.stringify({ schemaVersion: 1, ...config2, credentialRevision }, null, 2));
+    try {
+      await this.hooks.beforeRuntimeConfigCommit?.();
+      await atomicWrite(this.configPath, JSON.stringify({ schemaVersion: 1, ...config2, credentialRevision }, null, 2));
+    } catch (error2) {
+      if (stagedCredentialCreated && stagedCredentialPath) await fs4.rm(stagedCredentialPath, { force: true }).catch(() => void 0);
+      throw error2;
+    }
+    if (previousRevision && previousRevision !== credentialRevision) {
+      await fs4.rm(this.credentialPathForRevision(previousRevision), { force: true }).catch(() => void 0);
+      await fs4.rm(path4.join(this.credentialsRoot, "api-key.bin"), { force: true }).catch(() => void 0);
+    }
   }
   async loadWorkspaceState() {
     const stored = await readJson(this.workspaceStatePath);
@@ -31608,7 +31717,7 @@ var ElectronPersistence = class {
     const stored = await readJson(this.trustPath);
     if (!stored) return [];
     if (!Array.isArray(stored.records)) throw new Error("Electron workspace trust state is invalid.");
-    return stored.records.filter((record2) => record2 && typeof record2 === "object" && typeof record2.canonicalRoot === "string" && typeof record2.fingerprint === "string" && typeof record2.trustedAt === "string");
+    return stored.records.filter(isPersistedTrustRecord);
   }
   async trustWorkspace(record2) {
     const records = (await this.loadTrustRecords()).filter((existing) => existing.canonicalRoot !== record2.canonicalRoot);
@@ -31628,7 +31737,7 @@ var ElectronPersistence = class {
     try {
       raw = await fs4.readFile(filePath, "utf8");
     } catch (error2) {
-      if (error2?.code === "ENOENT") return { messages: [] };
+      if (isNodeError(error2, "ENOENT")) return { messages: [] };
       throw error2;
     }
     const lines = raw.split("\n").filter(Boolean);
@@ -31641,7 +31750,7 @@ var ElectronPersistence = class {
         return validMessage(value.message);
       });
       return { messages };
-    } catch (error2) {
+    } catch {
       const corruptPath = `${filePath}.corrupt-${Date.now()}`;
       await fs4.rename(filePath, corruptPath);
       return { messages: [], warning: `\u4F1A\u8BDD\u6587\u4EF6\u5DF2\u9694\u79BB\u4E3A\u635F\u574F\u5907\u4EFD\uFF1A${path4.basename(corruptPath)}` };
@@ -31908,7 +32017,7 @@ async function loadPersistedState() {
   let persistedKey = "";
   if (!process.env.DEEPSEEK_API_KEY && !process.env.DSH_API_KEY) {
     try {
-      persistedKey = await persistence.loadApiKey();
+      persistedKey = await persistence.loadApiKey(persisted.credentialRevision);
     } catch (error2) {
       console.warn("[Electron Main] \u5DF2\u4FDD\u5B58\u7684 API \u5BC6\u94A5\u4E0D\u53EF\u7528\uFF0C\u9700\u8981\u91CD\u65B0\u8F93\u5165\u3002", error2);
     }
@@ -31987,7 +32096,16 @@ async function replaceDshBackend(target) {
   const previousMcp = activeMcp;
   const previousHistory = previousServer?.getEngine().getHistory() ?? [];
   const launchConfig = previousServer ? { ...nextConfig, port: 0 } : nextConfig;
-  const launched = await launchDshBackend(launchConfig, nextWorkingDir, nextMcp, initialHistory);
+  if (previousServer && !previousServer.suspendNewTurns()) {
+    throw new Error("\u5F53\u524D\u4EFB\u52A1\u6B63\u5728\u6267\u884C\uFF0C\u5B8C\u6210\u6216\u505C\u6B62\u540E\u518D\u5207\u6362\u8FD0\u884C\u914D\u7F6E\u3002");
+  }
+  let launched;
+  try {
+    launched = await launchDshBackend(launchConfig, nextWorkingDir, nextMcp, initialHistory);
+  } catch (error2) {
+    previousServer?.resumeNewTurns();
+    throw error2;
+  }
   let previousStopped = false;
   try {
     if (previousServer) {
@@ -32016,6 +32134,8 @@ async function replaceDshBackend(target) {
         serverUrl = "";
         console.error("[Electron Main] \u65E7 DSH \u8FD0\u884C\u65F6\u6062\u590D\u5931\u8D25:", restoreError);
       }
+    } else {
+      previousServer?.resumeNewTurns();
     }
     throw error2;
   }
@@ -32029,6 +32149,7 @@ async function replaceDshBackend(target) {
 }
 function startDshBackend(resolveTarget = () => ({ config: appConfig, workingDirectory: currentWorkingDir })) {
   const restart = restartQueue.then(() => {
+    if (dshServer?.hasActiveTurn()) throw new Error("\u5F53\u524D\u4EFB\u52A1\u6B63\u5728\u6267\u884C\uFF0C\u5B8C\u6210\u6216\u505C\u6B62\u540E\u518D\u5207\u6362\u8FD0\u884C\u914D\u7F6E\u3002");
     const target = resolveTarget();
     return replaceDshBackend({ ...target, config: { ...target.config } });
   });
@@ -32036,7 +32157,6 @@ function startDshBackend(resolveTarget = () => ({ config: appConfig, workingDire
   return restart;
 }
 async function prepareBackendTarget(directory, allowPrompt) {
-  if (dshServer?.hasActiveTurn()) throw new Error("\u5F53\u524D\u4EFB\u52A1\u6B63\u5728\u6267\u884C\uFF0C\u5B8C\u6210\u6216\u505C\u6B62\u540E\u518D\u5207\u6362\u8FD0\u884C\u914D\u7F6E\u3002");
   const prepared = await prepareWorkspace(directory, allowPrompt);
   const session = persistence ? await persistence.loadSession(prepared.canonicalRoot) : { messages: [] };
   if (session.warning) console.warn("[Electron Main] " + session.warning);
@@ -32161,31 +32281,22 @@ ipcMain.handle("dsh:save-config", async (event, patch) => {
   try {
     const safePatch = patch ?? {};
     assertConfigPatchWritable(safePatch);
-    const candidateConfig = normalizedConfigPatch(appConfig, safePatch);
-    const keyUpdate = managedConfigFields().includes("apiKey") ? void 0 : safePatch.clearApiKey === true ? "" : typeof safePatch.apiKey === "string" && safePatch.apiKey.trim() ? candidateConfig.apiKey : void 0;
-    await startDshBackend(() => ({
-      config: candidateConfig,
-      workingDirectory: currentWorkingDir,
-      commit: async () => {
-        if (persistence) await persistence.saveRuntimeConfig(runtimeConfigForPersistence(candidateConfig), keyUpdate);
-      }
-    }));
+    await startDshBackend(() => {
+      const candidateConfig = normalizedConfigPatch(appConfig, safePatch);
+      const keyUpdate = managedConfigFields().includes("apiKey") ? void 0 : safePatch.clearApiKey === true ? "" : typeof safePatch.apiKey === "string" && safePatch.apiKey.trim() ? candidateConfig.apiKey : void 0;
+      return {
+        config: candidateConfig,
+        workingDirectory: currentWorkingDir,
+        commit: async () => {
+          if (persistence) await persistence.saveRuntimeConfig(runtimeConfigForPersistence(candidateConfig), keyUpdate);
+        }
+      };
+    });
     return { success: true, config: publicConfig(), connection: serverConnection() };
   } catch (error2) {
     const message = error2 instanceof Error ? error2.message : String(error2);
     console.error("\u91CD\u542F\u540E\u7AEF\u670D\u52A1\u5931\u8D25:", error2);
     return { success: false, config: publicConfig(), connection: serverConnection(), error: message };
-  }
-});
-ipcMain.handle("dsh:set-working-dir", async (event, dirPath) => {
-  requireTrustedSender(event);
-  if (typeof dirPath !== "string") return { success: false, error: "\u76EE\u6807\u8DEF\u5F84\u65E0\u6548" };
-  try {
-    const target = await prepareBackendTarget(dirPath, true);
-    await startDshBackend(() => target);
-    return { success: true, workingDir: currentWorkingDir, connection: serverConnection() };
-  } catch (error2) {
-    return { success: false, workingDir: currentWorkingDir, error: error2 instanceof Error ? error2.message : String(error2) };
   }
 });
 ipcMain.handle("dsh:open-folder-dialog", async (event) => {

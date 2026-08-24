@@ -47,7 +47,6 @@ export interface ElectronDshApi {
   getServerConnection(): Promise<ElectronDshConnection>;
   openFolderDialog(): Promise<ElectronDshMutationResult | null>;
   getWorkingDir(): Promise<string>;
-  setWorkingDir(directory: string): Promise<ElectronDshMutationResult>;
   getConfig(): Promise<ElectronDshConfig>;
   saveConfig(config: ElectronDshConfigPatch): Promise<ElectronDshMutationResult>;
   minimizeWindow(): Promise<void>;

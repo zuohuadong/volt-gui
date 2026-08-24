@@ -83,6 +83,8 @@ function scanLocalServiceBoundary(findings, sources) {
     [/authToken:\s*serverAccessToken/, "missing-session-token", "Electron DSH 服务必须使用每进程随机访问令牌。"],
     [/allowedOrigins:\s*\[\s*["']null["']\s*\]/, "missing-origin-allowlist", "Electron DSH 服务必须限制为本地文件渲染 Origin。"],
     [/restartQueue\.then/, "unserialized-restart", "Electron DSH 重启必须串行化，避免遗留旧服务。"],
+    [/hasActiveTurn\(\)/, "unguarded-runtime-restart", "Electron DSH 重启必须拒绝打断活动任务。"],
+    [/suspendNewTurns\(\)/, "unlocked-runtime-swap", "Electron DSH 切换必须先阻止新任务进入旧运行时。"],
   ]) {
     if (!pattern.test(sources.electronMain)) addFinding(findings, boundaryFiles.electronMain, rule, message);
   }
@@ -95,6 +97,9 @@ function scanLocalServiceBoundary(findings, sources) {
   }
   if (!/getServerConnection/.test(sources.electronPreload) || /getServerUrl/.test(sources.electronPreload)) {
     addFinding(findings, boundaryFiles.electronPreload, "unsafe-server-discovery", "preload 必须只暴露带会话令牌的 DSH 连接描述。");
+  }
+  if (/setWorkingDir|dsh:set-working-dir/.test(`${sources.electronPreload}\n${sources.electronMain}`)) {
+    addFinding(findings, boundaryFiles.electronPreload, "renderer-working-directory", "渲染层不能绕过原生目录选择直接指定工作区。");
   }
   if (!/changesOrigin = new URL\(currentConfig\.baseURL\)\.origin !== parsed\.origin/.test(sources.electronRuntimeConfig)
     || !/reusesExistingKey = currentConfig\.apiKey && nextApiKey === undefined && patch\.clearApiKey !== true/.test(sources.electronRuntimeConfig)) {

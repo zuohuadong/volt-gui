@@ -160,7 +160,7 @@ async function loadPersistedState(): Promise<void> {
   let persistedKey = '';
   if (!process.env.DEEPSEEK_API_KEY && !process.env.DSH_API_KEY) {
     try {
-      persistedKey = await persistence.loadApiKey();
+      persistedKey = await persistence.loadApiKey(persisted.credentialRevision);
     } catch (error) {
       console.warn('[Electron Main] 已保存的 API 密钥不可用，需要重新输入。', error);
     }
@@ -266,7 +266,16 @@ async function replaceDshBackend(target: BackendTarget): Promise<DshConnection> 
   const previousMcp = activeMcp;
   const previousHistory = previousServer?.getEngine().getHistory() ?? [];
   const launchConfig = previousServer ? { ...nextConfig, port: 0 } : nextConfig;
-  const launched = await launchDshBackend(launchConfig, nextWorkingDir, nextMcp, initialHistory);
+  if (previousServer && !previousServer.suspendNewTurns()) {
+    throw new Error("当前任务正在执行，完成或停止后再切换运行配置。");
+  }
+  let launched: Awaited<ReturnType<typeof launchDshBackend>>;
+  try {
+    launched = await launchDshBackend(launchConfig, nextWorkingDir, nextMcp, initialHistory);
+  } catch (error) {
+    previousServer?.resumeNewTurns();
+    throw error;
+  }
   let previousStopped = false;
 
   try {
@@ -296,6 +305,8 @@ async function replaceDshBackend(target: BackendTarget): Promise<DshConnection> 
         serverUrl = "";
         console.error("[Electron Main] 旧 DSH 运行时恢复失败:", restoreError);
       }
+    } else {
+      previousServer?.resumeNewTurns();
     }
     throw error;
   }
@@ -313,6 +324,7 @@ function startDshBackend(
   resolveTarget: () => BackendTarget = () => ({ config: appConfig, workingDirectory: currentWorkingDir }),
 ): Promise<DshConnection> {
   const restart = restartQueue.then(() => {
+    if (dshServer?.hasActiveTurn()) throw new Error("当前任务正在执行，完成或停止后再切换运行配置。");
     const target = resolveTarget();
     return replaceDshBackend({ ...target, config: { ...target.config } });
   });
@@ -321,7 +333,6 @@ function startDshBackend(
 }
 
 async function prepareBackendTarget(directory: string, allowPrompt: boolean): Promise<BackendTarget> {
-  if (dshServer?.hasActiveTurn()) throw new Error("当前任务正在执行，完成或停止后再切换运行配置。");
   const prepared = await prepareWorkspace(directory, allowPrompt);
   const session = persistence ? await persistence.loadSession(prepared.canonicalRoot) : { messages: [] as Message[] };
   if (session.warning) console.warn("[Electron Main] " + session.warning);
@@ -458,38 +469,28 @@ ipcMain.handle("dsh:save-config", async (event, patch: AppConfigPatch) => {
   try {
     const safePatch = patch ?? {};
     assertConfigPatchWritable(safePatch);
-    const candidateConfig = normalizedConfigPatch(appConfig, safePatch);
-    const keyUpdate = managedConfigFields().includes("apiKey")
-      ? undefined
-      : safePatch.clearApiKey === true
-        ? ""
-        : typeof safePatch.apiKey === "string" && safePatch.apiKey.trim()
-          ? candidateConfig.apiKey
-          : undefined;
-    await startDshBackend(() => ({
-      config: candidateConfig,
-      workingDirectory: currentWorkingDir,
-      commit: async () => {
-        if (persistence) await persistence.saveRuntimeConfig(runtimeConfigForPersistence(candidateConfig), keyUpdate);
-      },
-    }));
+    await startDshBackend(() => {
+      const candidateConfig = normalizedConfigPatch(appConfig, safePatch);
+      const keyUpdate = managedConfigFields().includes("apiKey")
+        ? undefined
+        : safePatch.clearApiKey === true
+          ? ""
+          : typeof safePatch.apiKey === "string" && safePatch.apiKey.trim()
+            ? candidateConfig.apiKey
+            : undefined;
+      return {
+        config: candidateConfig,
+        workingDirectory: currentWorkingDir,
+        commit: async () => {
+          if (persistence) await persistence.saveRuntimeConfig(runtimeConfigForPersistence(candidateConfig), keyUpdate);
+        },
+      };
+    });
     return { success: true, config: publicConfig(), connection: serverConnection() };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("重启后端服务失败:", error);
     return { success: false, config: publicConfig(), connection: serverConnection(), error: message };
-  }
-});
-
-ipcMain.handle("dsh:set-working-dir", async (event, dirPath: unknown) => {
-  requireTrustedSender(event);
-  if (typeof dirPath !== "string") return { success: false, error: "目标路径无效" };
-  try {
-    const target = await prepareBackendTarget(dirPath, true);
-    await startDshBackend(() => target);
-    return { success: true, workingDir: currentWorkingDir, connection: serverConnection() };
-  } catch (error: unknown) {
-    return { success: false, workingDir: currentWorkingDir, error: error instanceof Error ? error.message : String(error) };
   }
 });
 

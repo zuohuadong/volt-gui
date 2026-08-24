@@ -31369,44 +31369,52 @@ var DshServer = class {
       throw new HttpRequestError(409, "The runtime is changing configuration");
     if (this.activeTurn)
       throw new HttpRequestError(409, "A turn is already active");
-    const body = await readJsonObject(req, this.options.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES);
-    const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
-    if (!prompt)
-      throw new HttpRequestError(400, "Prompt is required");
-    const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : void 0;
-    if (model)
-      this.engine.setModel(model);
-    if (!this.acceptingTurns)
-      throw new HttpRequestError(409, "The runtime is changing configuration");
     this.activeTurn = true;
-    const historySnapshot = this.engine.getHistory();
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive"
-    });
-    const sendEvent = (event) => res.write(`data: ${JSON.stringify(event)}
+    const modelSnapshot = this.engine.getModel();
+    let modelChanged = false;
+    let turnSucceeded = false;
+    try {
+      const body = await readJsonObject(req, this.options.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES);
+      const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+      if (!prompt)
+        throw new HttpRequestError(400, "Prompt is required");
+      const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : void 0;
+      if (model && model !== modelSnapshot) {
+        this.engine.setModel(model);
+        modelChanged = true;
+      }
+      const historySnapshot = this.engine.getHistory();
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive"
+      });
+      const sendEvent = (event) => res.write(`data: ${JSON.stringify(event)}
 
 `);
-    const abortController = new AbortController();
-    res.on("close", () => {
-      if (!res.writableEnded)
-        abortController.abort();
-    });
-    try {
-      for await (const event of this.engine.runTurn(prompt, { signal: abortController.signal, model })) {
-        sendEvent(event);
+      const abortController = new AbortController();
+      res.on("close", () => {
+        if (!res.writableEnded)
+          abortController.abort();
+      });
+      try {
+        for await (const event of this.engine.runTurn(prompt, { signal: abortController.signal, model })) {
+          sendEvent(event);
+        }
+        await this.options.persistHistory?.(this.engine.getHistory());
+        turnSucceeded = true;
+        res.write("data: [DONE]\n\n");
+      } catch (error2) {
+        this.engine.setHistory(historySnapshot);
+        const message = error2 instanceof Error ? error2.message : String(error2);
+        sendEvent({ type: "error", message });
       }
-      await this.options.persistHistory?.(this.engine.getHistory());
-      res.write("data: [DONE]\n\n");
-    } catch (error2) {
-      this.engine.setHistory(historySnapshot);
-      const message = error2 instanceof Error ? error2.message : String(error2);
-      sendEvent({ type: "error", message });
+      res.end();
     } finally {
+      if (modelChanged && !turnSucceeded)
+        this.engine.setModel(modelSnapshot);
       this.activeTurn = false;
     }
-    res.end();
   }
   writeRequestError(res, error2) {
     if (res.headersSent) {

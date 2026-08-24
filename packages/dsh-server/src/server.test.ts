@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import * as http from 'node:http';
 import test from 'node:test';
 import { DshServer } from './server.js';
 
@@ -14,6 +15,47 @@ async function startServer(options: { auth?: boolean; maxRequestBodyBytes?: numb
     maxRequestBodyBytes: options.maxRequestBodyBytes,
   });
   return { server, url: await server.start() };
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for server state');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+function startPartialTurn(url: string, bodyPrefix: string): {
+  request: http.ClientRequest;
+  response: Promise<{ statusCode: number; body: string }>;
+} {
+  let partialRequest: http.ClientRequest | undefined;
+  const response = new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+    const request = http.request(new URL('/api/turn', url), {
+      method: 'POST',
+      headers: {
+        Origin: allowedOrigin,
+        Authorization: `Bearer ${authToken}`,
+        'Content-Type': 'application/json',
+        Connection: 'close',
+      },
+    });
+    request.once('error', reject);
+    request.once('response', (incoming) => {
+      const chunks: Buffer[] = [];
+      incoming.on('data', (chunk: Buffer) => chunks.push(chunk));
+      incoming.once('error', reject);
+      incoming.once('end', () => resolve({
+        statusCode: incoming.statusCode ?? 0,
+        body: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    request.write(bodyPrefix);
+    partialRequest = request;
+  });
+
+  if (!partialRequest) throw new Error('Partial request was not created');
+  return { request: partialRequest, response };
 }
 
 test('Electron server rejects untrusted origins and missing bearer tokens', async (t) => {
@@ -80,4 +122,59 @@ test('runtime suspension rejects new turns before a configuration swap', async (
   });
   assert.equal(response.status, 409);
   assert.deepEqual(await response.json(), { error: 'The runtime is changing configuration' });
+});
+
+test('slow request bodies reserve the turn and rejected requests cannot mutate the model', async (t) => {
+  const { server, url } = await startServer();
+  t.after(() => server.stop());
+
+  const initialModel = server.getEngine().getModel();
+  const slowTurn = startPartialTurn(url, '{"prompt":');
+  await waitFor(() => server.hasActiveTurn());
+
+  assert.equal(server.suspendNewTurns(), false);
+  const concurrent = await fetch(`${url}/api/turn`, {
+    method: 'POST',
+    headers: {
+      Origin: allowedOrigin,
+      Authorization: `Bearer ${authToken}`,
+      'Content-Type': 'application/json',
+      Connection: 'close',
+    },
+    body: JSON.stringify({ prompt: 'must not start', model: 'race-model' }),
+  });
+  assert.equal(concurrent.status, 409);
+  assert.equal(server.getEngine().getModel(), initialModel);
+
+  slowTurn.request.end('}');
+  const invalid = await slowTurn.response;
+  assert.equal(invalid.statusCode, 400);
+  assert.deepEqual(JSON.parse(invalid.body), { error: 'Request body must be valid JSON' });
+  await waitFor(() => !server.hasActiveTurn());
+});
+
+test('failed turns restore request-scoped model changes', async (t) => {
+  const { server, url } = await startServer();
+  t.after(() => server.stop());
+
+  const engine = server.getEngine();
+  const initialModel = engine.getModel();
+  engine.runTurn = async function* () {
+    throw new Error('simulated turn failure');
+  };
+
+  const response = await fetch(`${url}/api/turn`, {
+    method: 'POST',
+    headers: {
+      Origin: allowedOrigin,
+      Authorization: `Bearer ${authToken}`,
+      'Content-Type': 'application/json',
+      Connection: 'close',
+    },
+    body: JSON.stringify({ prompt: 'fail after model selection', model: 'temporary-model' }),
+  });
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /simulated turn failure/);
+  assert.equal(engine.getModel(), initialModel);
+  assert.equal(server.hasActiveTurn(), false);
 });

@@ -1,117 +1,51 @@
 ---
 name: cnb-ci-cd
-description: Use when configuring, debugging, or modifying CNB (Cloud Native Build) CI/CD pipelines for VoltUI/西谷智灯暗涌系统. Covers .cnb.yml structure, auto-release conventional commit workflow, merge-request CI checks, cross-repo PR creation, and CNB Release API.
+description: Use when configuring or reviewing the CNB validation pipeline for the Node 26, Electron, and official DeepSeek Harness architecture.
 ---
 
-# CNB CI/CD Pipeline Configuration
+# CNB CI/CD
 
-This skill covers the CNB (cnb.cool) CI/CD system used for the 西谷智灯暗涌系统 fork of VoltUI.
+## Current Scope
 
-## Architecture Overview
+CNB is a source-validation runner. It uses the exact Node and pnpm versions from
+the repository contract, installs the frozen lockfile, runs official DSH and
+Electron tests, audits production dependencies, and builds the source bundle.
 
-| Component | Responsibility | Trigger |
-|---|---|---|
-| **CNB CI** (`.cnb.yml`) | Version calculation + Windows desktop build + minisign + CNB Release assets | `feat:/fix:` commit to main |
-| **GitHub Actions** (`release.yml`) | Legacy upstream CLI/npm release path | `v*` tag push |
+Windows packaging remains on GitHub's native Windows runner. CNB does not create
+tags, publish releases, sign artifacts, package other platforms, or synchronize
+external source trees.
 
-**Current CNB desktop scope**: CNB Linux Docker runners cross-compile Windows amd64 Wails artifacts and use Linux `nsis`/`makensis` to produce the installer. macOS and Linux desktop artifacts are intentionally disabled until their CNB build strategy is confirmed.
+## Required Pipeline
 
-## .cnb.yml Structure
-
-### Pipeline 1: Build + Test (every push)
 ```yaml
 main:
   push:
     - docker:
-        image: golang:1.26
+        image: node:26.7.0
       stages:
+        - name: install
+          script: pnpm install --frozen-lockfile
+        - name: verify
+          script: |
+            pnpm run test:dsh-integration
+            pnpm test
+            node scripts/check-migration-boundary.mjs
+            pnpm audit --prod --audit-level high
         - name: build
-          script: make build
-        - name: test
-          script: go test ./...
+          script: pnpm run build
 ```
+## Rules
 
-### Pipeline 2: Auto-release (conventional commits only)
+- Pin Node and pnpm to the repository's current approved versions.
+- Never print tokens, registry credentials, provider keys, or secret-bearing URLs.
+- Keep the lockfile frozen in CI.
+- Do not add automatic tag, release, deployment, or external synchronization steps.
+- Do not claim Windows packaging from a Linux source-build result.
 
-SemVer logic:
-- `feat!:` or `fix!:` → major bump (desktop-v{X+1}.0.0)
-- `feat:` → minor bump (desktop-v{X}.{Y+1}.0)
-- `fix:` → patch bump (desktop-v{X}.{Y}.{Z+1})
-- `[skip-release]` → skip entirely
+## Verification
 
-The auto-release pipeline:
-1. Detects conventional commit message
-2. Calculates new version from latest `desktop-v*` tag
-3. Installs Wails, Node/pnpm, and Linux `nsis`
-4. Cross-compiles `windows/amd64`, builds the NSIS installer, signs artifacts, and generates `latest.json`
-5. Creates and pushes `desktop-v*` tag
-6. Creates CNB Release and uploads assets
-
-### Pipeline 3: Merge-request CI
-```yaml
-merge-request:
-  - docker:
-      image: golang:1.26
-    stages:
-      - name: build-check
-        script: make build
-      - name: test
-        script: go test ./...
+```bash
+node --test scripts/ci-workflows.test.mjs
+node scripts/check-migration-boundary.mjs
+git diff --check
 ```
-
-### Pipeline 4: Crontab sync (daily 09:00 CST)
-
-Syncs from upstream `aizhuliren/volt-gui` via `scripts/sync-upstream.sh`, then creates PR via CNB API.
-
-## CNB API Reference
-
-### Create Release
-```
-POST ${CNB_API_ENDPOINT}/${CNB_REPO_SLUG}/-/releases
-Headers: Authorization: Bearer ${CNB_TOKEN}, Content-Type: application/json
-Body: { tag_name, name, body, draft, prerelease }
-```
-
-### Upload Assets (3-step process)
-1. `POST .../asset-upload-url` → get `upload_url` + `verify_url`
-2. `PUT upload_url` → upload file binary
-3. `POST .../asset-upload-confirmation/{token}/{path}?ttl=0` → confirm
-
-### Create Pull Request (cross-repo)
-```
-POST https://api.cnb.cool/{upstream-slug}/-/pulls
-Body: { title, body, head, base }
-```
-For cross-repo: push branch to upstream first, then create PR.
-
-## Tag Namespace Convention
-
-| Tag pattern | What it triggers | Example |
-|---|---|---|
-| `desktop-v*` | CNB desktop release record and artifact upload | `desktop-v1.6.0` |
-| `v*` | Legacy upstream GitHub `release.yml` (CLI/npm) | `v1.6.0` |
-
-**Never mix namespaces** — desktop releases use `desktop-v*`, CLI releases use `v*`.
-
-## Key Environment Variables
-
-| Variable | Source | Usage |
-|---|---|---|
-| `CNB_COMMIT_MESSAGE` | CNB CI runtime | Conventional commit detection |
-| `CNB_REPO_SLUG` | CNB CI runtime | API calls |
-| `CNB_TOKEN` | CNB CI runtime | API authentication |
-| `CNB_API_ENDPOINT` | CNB CI runtime | API base URL (default: https://api.cnb.cool) |
-| `MINISIGN_PRIVATE_KEY` | CNB secret | Desktop artifact signing key |
-| `MINISIGN_PASSWORD` | CNB secret | Desktop artifact signing password |
-| `XIGU_BRAND_NAME: "西谷智灯暗涌系统") |
-| `VOLTUI_BRAND_NAME` | Runtime | Desktop build artifact naming |
-
-## Common Issues
-
-| Problem | Cause | Fix |
-|---|---|---|
-| Release created but no artifacts | CNB asset upload failed after release creation | Check `publish-cnb-release` logs and `CNB_TOKEN` permissions |
-| Signing fails | Missing minisign secrets | Configure `MINISIGN_PRIVATE_KEY` and `MINISIGN_PASSWORD` in CNB |
-| macOS/Linux artifacts missing | They are intentionally disabled in `.cnb.yml` | Enable them only after confirming the CNB build strategy |
-| Cross-repo PR fails: branch not found | Branch not pushed to upstream repo | `git push upstream <branch>` first |
-| Build/test stage fails | Go version mismatch | Update docker image to `golang:1.26` |

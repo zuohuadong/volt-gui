@@ -1,4 +1,4 @@
 interface:
   display_name: "Volt Desktop Experience"
-  short_description: "统一 Volt 桌面端视觉、任务生命周期、可信交互与验证方式"
-  default_prompt: "Use $volt-desktop-experience to design, implement, or review this Volt GUI desktop workflow."
+  short_description: "将桌面体验映射到官方 DSH，并守住 Electron 薄壳边界"
+  default_prompt: "Use $volt-desktop-experience to map this request to official DSH extensions or the Electron shell boundary."

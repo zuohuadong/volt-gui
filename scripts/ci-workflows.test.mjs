@@ -1,210 +1,91 @@
-// Contract test for GitHub Actions workflow + sync script invariants.
-// Run with: node --test scripts/ci-workflows.test.mjs
-//
-// Guards the full-regression-repair-20260711 fixes:
-//   1. release-desktop cache save/restore enable cross-OS archive handoff
-//   2. upstream-sync.sh uses public HTTPS (no SSH) upstream
-//   3. upstream-sync.yml commits as github-actions[bot]
-//   4. missing upstream-sync label does not fail PR creation
-//   5. desktop-ci path filters include root go.mod/go.sum/internal/**
-//   6. ci.yml keeps main-v2 push/pull_request AND adds workflow_dispatch
-//   7. desktop-ci gates the local production packaging regression contract
-//   8. upstream sync preserves VoltUI's fork-specific Windows sandbox boundary
-import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const readIfPresent = (path) => existsSync(path) ? readFileSync(path, "utf8") : null;
-const wf = (name) => readIfPresent(join(root, ".github", "workflows", name));
-const script = (name) => readIfPresent(join(root, "scripts", name));
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const workflow = (name) => readFileSync(path.join(root, ".github", "workflows", name), "utf8");
 
-const releaseDesktop = wf("release-desktop.yml");
-const desktopCi = wf("desktop-ci.yml");
-const ci = wf("ci.yml");
-const upstreamSyncYml = wf("upstream-sync.yml");
-const upstreamSyncSh = script("upstream-sync.sh");
-const upstreamParityManifestPath = join(root, "scripts", "upstream-feature-parity.json");
-const upstreamParityManifest = existsSync(upstreamParityManifestPath)
-  ? JSON.parse(readFileSync(upstreamParityManifestPath, "utf8"))
-  : null;
+test("CI is Node 26 only and verifies the official DSH migration boundary", () => {
+  const ci = workflow("ci.yml");
+  assert.match(ci, /node-version:\s*26\.7\.0/g);
+  assert.match(ci, /pnpm run test:dsh-integration/);
+  assert.match(ci, /node scripts\/check-migration-boundary\.mjs/);
+  assert.doesNotMatch(ci, /setup-go|\bgo test\b|golangci|govulncheck|desktop-frontend|@dsh\//i);
+});
 
-// Collect the `with:` text that follows each actions/cache save|restore step,
-// stopping at the next step or job-level key. Used to assert per-step inputs.
-function cacheWithBlocks(yaml) {
-  const lines = yaml.split("\n");
-  const blocks = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (!/uses:\s*actions\/cache\/(save|restore)@v6\b/.test(lines[i])) continue;
-    const collected = [];
-    for (let j = i + 1; j < lines.length; j++) {
-      // next step (`      - `) or a job/structure key at 2-space indent ends the step
-      if (/^      - /.test(lines[j]) || /^  [A-Za-z]/.test(lines[j])) break;
-      collected.push(lines[j]);
-    }
-    blocks.push({ lineNo: i + 1, uses: lines[i].trim(), text: collected.join("\n") });
-  }
-  return blocks;
-}
+test("CodeQL scans only current JavaScript, TypeScript, and Actions surfaces", () => {
+  const codeql = workflow("codeql.yml");
+  assert.match(codeql, /javascript-typescript/);
+  assert.match(codeql, /actions/);
+  assert.doesNotMatch(codeql, /language:\s*go|build-mode:\s*autobuild/);
+});
 
-if (releaseDesktop !== null) {
-  test("release-desktop.yml: every cache save/restore enables cross-OS archive", () => {
-    const blocks = cacheWithBlocks(releaseDesktop);
-    assert.ok(blocks.length >= 1, "expected at least one actions/cache save/restore step");
-    for (const b of blocks) {
-      assert.match(
-        b.text,
-        /enableCrossOsArchive:\s*true/,
-        `line ${b.lineNo} (${b.uses}): missing enableCrossOsArchive in with: block`
-      );
-      assert.doesNotMatch(
-        b.text,
-        /enable-cross-os-archive:/,
-        `line ${b.lineNo} (${b.uses}): actions/cache input must use camelCase enableCrossOsArchive`
-      );
-    }
-  });
-}
+test("desktop CI packages only the official DSH Electron shell on Windows x64", () => {
+  const desktop = workflow("desktop-ci.yml");
+  const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  assert.match(desktop, /runs-on:\s*windows-latest/);
+  assert.match(desktop, /node-version:\s*26\.7\.0/);
+  assert.match(desktop, /version:\s*11\.23\.0/);
+  assert.match(desktop, /pnpm run dist:desktop/);
+  assert.match(desktop, /pnpm run test:dsh-integration/);
+  assert.match(packageJson.scripts["dist:desktop"], /smoke:package/);
+  assert.doesNotMatch(desktop, /desktop-frontend|packages\/dsh-|check-runtime-mocks|test:config/);
+});
 
-test("upstream-sync.yml requires the sync script to be present", () => {
-  // The GitHub Actions workflow delegates to upstream-sync.sh, so shipping the
-  // yml without the script is never valid. The reverse (script without the yml)
-  // is fine: forks on non-GitHub hosts keep the script for manual sync.
-  if (upstreamSyncYml !== null) {
-    assert.ok(upstreamSyncSh !== null, "upstream-sync.yml requires upstream-sync.sh to be present");
+test("desktop release remains a manual unsigned-review artifact", () => {
+  const release = workflow("release-desktop.yml");
+  const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  assert.match(release, /workflow_dispatch/);
+  assert.match(release, /CSC_IDENTITY_AUTO_DISCOVERY:\s*"false"/);
+  assert.match(release, /Get-AuthenticodeSignature/);
+  assert.match(release, /NotSigned/);
+  assert.match(release, /unsigned-review/);
+  assert.match(packageJson.scripts["dist:desktop"], /smoke:package/);
+  assert.doesNotMatch(release, /gh release create|setup-go|approved_cli_tag|release-stable/);
+});
+
+test("retired release and upstream workflows stay absent", () => {
+  for (const name of [
+    "deploy-accounts-worker.yml",
+    "deploy-crash-worker.yml",
+    "deploy-forum-worker.yml",
+    "release.yml",
+    "release-npm.yml",
+    "release-stable.yml",
+    "release-stable-trigger.yml",
+    "e2e-bot.yml",
+    "upstream-sync.yml",
+  ]) {
+    assert.equal(existsSync(path.join(root, ".github", "workflows", name)), false, name);
   }
 });
 
-if (upstreamSyncSh !== null) {
-  test("upstream-sync.sh uses public HTTPS upstream (no SSH git@ URL)", () => {
-    assert.match(
-      upstreamSyncSh,
-      /https:\/\/github\.com\/esengine\/DeepSeek-Reasonix/,
-      "upstream URL must be public HTTPS"
-    );
-    assert.doesNotMatch(
-      upstreamSyncSh,
-      /git@github\.com:/,
-      "upstream URL must not be SSH (git@github.com)"
-    );
-  });
-
-  test("upstream-sync.sh preserves the fork-specific Windows sandbox boundary", () => {
-    assert.ok(
-      upstreamSyncSh.includes("':(exclude,glob)internal/sandbox/**'"),
-      "sandbox conflicts must be treated as fork-divergent",
-    );
-    assert.ok(
-      upstreamSyncSh.includes("':(exclude)desktop/main.go'"),
-      "desktop helper dispatch conflicts must keep the VoltUI side",
-    );
-    for (const protectedPath of [
-      "internal/winsandbox/",
-      "internal/sandbox/seatbelt_windows.go",
-      "internal/sandbox/seatbelt_windows_test.go",
-      "internal/sandbox/seatbelt_other.go",
-    ]) {
-      assert.ok(
-        upstreamSyncSh.includes(`':(exclude)${protectedPath}'`),
-        `upstream patch stream must exclude ${protectedPath}`,
-      );
-    }
-  });
-
-  test("upstream-sync.sh rejects an invalid sync marker before diffing", () => {
-    const markerValidation = upstreamSyncSh.indexOf('git cat-file -e "$LAST_SYNC^{commit}"');
-    const cumulativeDiff = upstreamSyncSh.indexOf('git diff --name-status -M "$LAST_SYNC" "$UPSTREAM_HEAD"');
-    assert.ok(markerValidation >= 0, "sync must validate a non-empty marker as a fetched commit");
-    assert.ok(cumulativeDiff > markerValidation, "marker validation must happen before cumulative diffing");
-  });
-
-  if (upstreamParityManifest !== null) {
-    test("upstream-sync.sh gates marker advancement on reviewed excluded features", () => {
-      const parityCheck = upstreamSyncSh.indexOf('node "$PARITY_CHECK" "$LAST_SYNC" "$UPSTREAM_HEAD"');
-      const markerWrite = upstreamSyncSh.indexOf('echo "$UPSTREAM_HEAD" > "$MARKER_FILE"');
-      assert.ok(parityCheck >= 0, "sync must run the excluded-feature parity check");
-      assert.ok(markerWrite > parityCheck, "sync marker must advance only after parity check passes");
-      assert.match(upstreamParityManifest.reviewedUpstreamHead, /^[0-9a-f]{40}$/, "parity manifest must pin a reviewed upstream head");
-      const syncExclusions = [...upstreamSyncSh.matchAll(/^\s+'(\:\(exclude(?:,glob)?\)[^']+)'\s*$/gm)].map((match) => match[1]);
-      assert.deepEqual(
-        new Set(upstreamParityManifest.syncExcludedPathspecs),
-        new Set(syncExclusions),
-        "parity manifest must cover every upstream-sync exclusion",
-      );
-      assert.ok(upstreamParityManifest.features.some((feature) => feature.status === "reviewed-deferred"), "deferred features must stay explicit");
-    });
-  }
-
-}
-
-if (upstreamSyncYml !== null) {
-  test("upstream-sync.yml commits as github-actions[bot]", () => {
-    assert.match(upstreamSyncYml, /github-actions\[bot\]/, "must configure github-actions[bot] name");
-    assert.match(
-      upstreamSyncYml,
-      /41898282\+github-actions\[bot\]@users\.noreply\.github\.com/,
-      "must configure the bot noreply email"
-    );
-  });
-
-  test("upstream-sync.yml: missing upstream-sync label does not fail PR creation", () => {
-    // `gh pr create --label` hard-fails when the label is absent in the repo.
-    // The contract: create the PR unconditionally, then attach the label only if
-    // it already exists (never create a remote label).
-    assert.doesNotMatch(
-      upstreamSyncYml,
-      /--label\s+"upstream-sync"/,
-      "gh pr create must not hard-pass --label \"upstream-sync\""
-    );
-    assert.match(
-      upstreamSyncYml,
-      /gh label list/,
-      "must check label existence before attaching"
-    );
-    assert.match(
-      upstreamSyncYml,
-      /--add-label "upstream-sync"/,
-      "must conditionally attach the label via gh pr edit --add-label"
-    );
-  });
-}
-
-test("desktop-ci.yml: path filters include root Go module dependency paths", () => {
-  // Desktop builds compile root-module Go code, so changes to go.mod, go.sum,
-  // and internal/** must trigger desktop-ci. Quoted entries only appear in the
-  // paths filter (go-version-file/cache-dependency-path use prefixed, unquoted
-  // values like desktop/go.mod).
-  assert.match(desktopCi, /"go\.mod"/, 'paths filter must include "go.mod"');
-  assert.match(desktopCi, /"go\.sum"/, 'paths filter must include "go.sum"');
-  assert.match(desktopCi, /"internal\/\*\*"/, 'paths filter must include "internal/**"');
+test("repository governance files match the current runtime", () => {
+  const dependabot = readFileSync(path.join(root, ".github", "dependabot.yml"), "utf8");
+  const labeler = readFileSync(path.join(root, ".github", "labeler.yml"), "utf8");
+  const bugTemplate = readFileSync(path.join(root, ".github", "ISSUE_TEMPLATE", "bug_report.yml"), "utf8");
+  assert.match(dependabot, /package-ecosystem:\s*"npm"/);
+  assert.doesNotMatch(dependabot, /gomod|desktop-frontend/);
+  assert.match(labeler, /apps\/desktop-electron/);
+  assert.doesNotMatch(labeler, /internal\/|packages\/dsh-|apps\/desktop-frontend/);
+  assert.match(bugTemplate, /Official DSH Web workflow/);
+  assert.doesNotMatch(bugTemplate, /Go rewrite|Legacy TypeScript/);
 });
 
-test("desktop-ci.yml: local production packaging regressions are gated on macOS", () => {
-  assert.match(desktopCi, /"prod_test"/, 'paths filter must include "prod_test"');
-  assert.match(
-    desktopCi,
-    /"scripts\/prod-test\.test\.mjs"/,
-    'paths filter must include "scripts/prod-test.test.mjs"',
-  );
-  assert.match(
-    desktopCi,
-    /if:\s*runner\.os == 'macOS'\s*\n\s*run:\s*node --test scripts\/prod-test\.test\.mjs/,
-    "macOS Desktop CI must execute the local production packaging contract",
-  );
+test("CNB validates the same Node 26 source contract", () => {
+  const cnb = readFileSync(path.join(root, ".cnb.yml"), "utf8");
+  assert.match(cnb, /node:26\.7\.0/);
+  assert.match(cnb, /pnpm@11\.23\.0/);
+  assert.match(cnb, /pnpm run test:dsh-integration/);
+  assert.match(cnb, /check-migration-boundary/);
+  assert.doesNotMatch(cnb, /desktop-frontend|check-runtime-mocks|\bgo\b|wails/i);
 });
 
-test("ci.yml: workflow_dispatch added while retaining main-v2 push/pull_request", () => {
-  assert.match(ci, /workflow_dispatch:/, "ci.yml must allow manual dispatch");
-  assert.match(
-    ci,
-    /push:\s*\n\s*branches:\s*\[main-v2\]/,
-    "ci.yml must retain push trigger on main-v2"
-  );
-  assert.match(
-    ci,
-    /pull_request:\s*\n\s*branches:\s*\[main-v2\]/,
-    "ci.yml must retain pull_request trigger on main-v2"
-  );
+test("Pages builds the site with the exact repository Node version", () => {
+  const pages = workflow("pages.yml");
+  assert.match(pages, /node-version:\s*26\.7\.0/);
+  assert.match(pages, /npm ci/);
+  assert.match(pages, /npm run build/);
 });

@@ -6,15 +6,13 @@
 /npm/.stage/
 /voltui
 /voltui.exe
-/reasonix
-/reasonix.exe
 
 # Website (Astro) build output
 /site/dist/
 /site/.astro/
 /site/_preview.png
 
-# Go test/build scratch
+# Test/build scratch
 *.test
 *.out
 *.coverprofile
@@ -22,33 +20,26 @@ coverage.out
 cpu.prof
 mem.prof
 
-# Wails desktop artifacts
-/desktop/build/*
-!/desktop/build/appicon.png
-!/desktop/build/appicon.svg
-/desktop/desktop
-/desktop/frontend/dist/*
-!/desktop/frontend/dist/.gitkeep
-/desktop/frontend/sourcemaps/
-/desktop/frontend/wailsjs/
-/desktop/frontend/package.json.md5
+# Desktop build artifacts
+/apps/desktop-electron/dist-package/
+/apps/desktop-electron/.dsh-runtime/
+/apps/desktop-electron/.node-runtime/
 
 # Environment / local config (voltui.example.toml is a shared template)
 .env
 .env.local
 *.local
 /voltui.toml
-/reasonix.toml
-/desktop/.env
-/desktop/voltui.toml
-/desktop/reasonix.toml
 
 # Node / frontend dependencies and caches
 node_modules/
+apps/desktop-electron/dist/
+apps/desktop-electron/dist-package/
+dist/
 .pnpm-store/
 .npm/
 
-# Project-local VoltUI/Reasonix state; keep the checked-in review command.
+# Project-local VoltUI state; keep the checked-in review command.
 /.voltui/*
 !/.voltui/commands/
 !/.voltui/commands/review.md
@@ -71,6 +62,7 @@ Thumbs.db
 # Scratch / agent working dirs (never committed)
 /tmp/
 /.codex/
+/.agents/evidence/
 servers.local.md
 .mailbox/*.md
 !.mailbox/README.md

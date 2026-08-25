@@ -3,58 +3,26 @@ name: Desktop CI
 on:
   pull_request:
     branches: [main]
-    paths:
+    paths: &desktop_paths
       - ".github/workflows/desktop-ci.yml"
       - ".github/workflows/release-desktop.yml"
-      - "desktop/**"
-      - "go.mod"
-      - "go.sum"
-      - "internal/**"
-      - "prod_test"
-      - "scripts/desktop-build.sh"
-      - "scripts/package-windows-desktop.sh"
-      - "scripts/package-windows-desktop.test.mjs"
-      - "scripts/verify-windows-portable.sh"
-      - "scripts/verify-windows-portable.test.mjs"
-      - "scripts/check-runtime-mocks.mjs"
-      - "scripts/check-runtime-mocks.test.mjs"
-      - "scripts/prod-test.test.mjs"
-      - "scripts/stage-bun-runtime.mjs"
-      - "scripts/stage-computer-use-mcp.mjs"
-      - "scripts/stage-coreutils.mjs"
-      - "scripts/stage-coreutils.test.mjs"
-      - "scripts/stage-windows-prerequisites.mjs"
-      - "scripts/stage-windows-prerequisites.test.mjs"
-      - "scripts/ui-feature-smoke.mjs"
-      - "scripts/workbench-crud-smoke.mjs"
-      - "third_party/coreutils/**"
+      - "apps/desktop-electron/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "profiles/**"
+      - "scripts/anyong.mjs"
+      - "scripts/bundle.mjs"
+      - "scripts/check-electron-runtime-boundary*.mjs"
+      - "scripts/check-migration-boundary.mjs"
+      - "scripts/dsh-integration.test.mjs"
+      - "scripts/electron-profile.test.mjs"
+      - "scripts/package-dist*.mjs"
+      - "scripts/set-electron-package-version*.mjs"
+      - "scripts/smoke-packaged-dsh-runtime*.mjs"
   push:
     branches: [main]
-    paths:
-      - ".github/workflows/desktop-ci.yml"
-      - ".github/workflows/release-desktop.yml"
-      - "desktop/**"
-      - "go.mod"
-      - "go.sum"
-      - "internal/**"
-      - "prod_test"
-      - "scripts/desktop-build.sh"
-      - "scripts/package-windows-desktop.sh"
-      - "scripts/package-windows-desktop.test.mjs"
-      - "scripts/verify-windows-portable.sh"
-      - "scripts/verify-windows-portable.test.mjs"
-      - "scripts/check-runtime-mocks.mjs"
-      - "scripts/check-runtime-mocks.test.mjs"
-      - "scripts/prod-test.test.mjs"
-      - "scripts/stage-bun-runtime.mjs"
-      - "scripts/stage-computer-use-mcp.mjs"
-      - "scripts/stage-coreutils.mjs"
-      - "scripts/stage-coreutils.test.mjs"
-      - "scripts/stage-windows-prerequisites.mjs"
-      - "scripts/stage-windows-prerequisites.test.mjs"
-      - "scripts/ui-feature-smoke.mjs"
-      - "scripts/workbench-crud-smoke.mjs"
-      - "third_party/coreutils/**"
+    paths: *desktop_paths
   workflow_dispatch:
 
 permissions:
@@ -65,89 +33,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: build (${{ matrix.name }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { runner: macos-14, platform: darwin/universal, name: darwin-universal }
-          - { runner: windows-latest, platform: windows/amd64, name: windows-amd64 }
-          - { runner: ubuntu-22.04, platform: linux/amd64, name: linux-amd64 }
-    runs-on: ${{ matrix.runner }}
-    defaults:
-      run:
-        shell: bash
+  windows-x64:
+    name: Electron Windows x64
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: desktop/go.mod
-          cache: true
-          cache-dependency-path: desktop/go.sum
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "26"
-
       - uses: pnpm/action-setup@v6
         with:
-          version: 10
-
-      - name: Runtime production mock gate
-        if: matrix.name == 'linux-amd64'
-        run: |
-          node --test scripts/check-runtime-mocks.test.mjs
-          node scripts/check-runtime-mocks.mjs
-
-      - name: Test Coreutils staging contract
-        run: node --test scripts/stage-coreutils.test.mjs
-
-      - name: Test Windows prerequisites staging contract
-        run: node --test scripts/stage-windows-prerequisites.test.mjs
-
-      - name: Test Windows portable packaging contract
-        if: runner.os == 'Linux'
-        run: node --test scripts/package-windows-desktop.test.mjs scripts/verify-windows-portable.test.mjs
-
-      - name: Test local production packaging contract
-        if: runner.os == 'macOS'
-        run: node --test scripts/prod-test.test.mjs
-
-      - name: Install Linux build deps
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc libgtk-3-dev libwebkit2gtk-4.1-dev
-
-      - name: Install nfpm
-        if: runner.os == 'Linux'
-        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.3
-
-      - name: Install NSIS
-        if: runner.os == 'Windows'
-        run: |
-          choco install nsis -y --no-progress
-          echo "C:\Program Files (x86)\NSIS" >> "$GITHUB_PATH"
-
-      - name: Install create-dmg
-        if: runner.os == 'macOS'
-        run: |
-          brew untap aws/tap || true
-          brew install create-dmg
-
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
-
-      - name: Build desktop package
-        run: scripts/desktop-build.sh "${{ matrix.platform }}" "v0.0.0-ci.${{ github.run_number }}"
-
-      - name: Upload desktop package
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v7
+          version: 11.23.0
+          run_install: false
+      - uses: actions/setup-node@v7
         with:
-          name: desktop-${{ matrix.name }}
+          node-version: 26.7.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Verify runtime and packaging contracts
+        run: |
+          pnpm run test:dsh-integration
+          pnpm test
+          node --test scripts/ci-workflows.test.mjs scripts/package-dist.test.mjs scripts/set-electron-package-version.test.mjs
+          node scripts/check-migration-boundary.mjs
+      - run: pnpm run dist:desktop
+      - name: Verify packaged executables
+        shell: pwsh
+        run: |
+          $artifacts = @(Get-ChildItem -LiteralPath dist -Filter *.exe -File)
+          if ($artifacts.Count -lt 2) {
+            throw "Electron packaging produced $($artifacts.Count) executable(s); expected NSIS and portable artifacts."
+          }
+          $artifacts | ForEach-Object { Write-Host $_.Name }
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: voltui-electron-windows-x64
           path: dist/*
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7

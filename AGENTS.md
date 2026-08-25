@@ -48,49 +48,39 @@
 <!-- AGENT:OVERLAY:START -->
 # Volt GUI Project Overlay
 
-## UI Reference Policy
-
-- Volt GUI 的所有 UI 设计、视觉调整、布局重构、交互补齐、组件状态和信息架构调整，必须先参考 `E:\workspace\aoristlawer` 项目的真实源码与运行结构。
-- 首选参考路径包括 `E:\workspace\aoristlawer\apps\desktop\src\index.css`、`layouts\DashboardLayout.tsx`、`pages\*.tsx`、`components\ui\*.tsx` 和相关业务组件。
-- 不要只做颜色或表层风格模仿。应优先对齐 aoristlawer 的页面结构、侧栏/顶栏节奏、卡片密度、按钮层级、标签页样式、弹窗结构、列表行信息组织和空状态方式。
-- 只有当 Volt GUI 的既有技术栈、Svelte/Wails 约束或当前业务目标明确不适配时，才允许偏离；偏离时需要在回复中说明原因。
-- 除非用户明确指定其他参考对象，后续不要再优先使用 Accio、通用模板、截图臆测或新的外部设计系统作为 Volt GUI UI 的第一参考。
-
-本仓库是 Go CLI/TUI + Wails desktop + Astro docs 的混合项目。执行任务时优先保持现有技术栈和目录边界，不引入新的前端或桌面框架。
+本仓库已经完成到 Node 26 + Electron + 官方 DeepSeek Harness 的架构迁移。不要恢复已删除的旧运行时、renderer、服务端或自动同步链。
 
 ## Stack Profile
 
-- Root module: Go CLI/TUI, `go.mod`, entrypoints in `cmd/`, reusable code in `internal/`.
-- Desktop module: Wails v2 nested module in `desktop/`, with independent `desktop/go.mod` and `desktop/frontend/`.
-- Site: Astro documentation site in `site/`, using npm and Node 26 in CI.
-- Release: GitHub Actions currently targets `main-v2`; CNB 镜像仓库同步时不要改动该分支策略，除非任务明确要求。
+- Runtime: 精确锁定的官方 `@deepseek-ai/dsh`，由 Node 26 直接执行；DSH 负责会话、工具、权限、凭据、工作区和持久化。
+- Desktop: `apps/desktop-electron/` 只负责窗口、安全边界、导航和官方 DSH 子进程生命周期。
+- CLI/distribution: `scripts/anyong.mjs` 与 `scripts/bundle.mjs` 只封装官方 DSH 和 `profiles/anyong.yml`。
+- Site: `site/` 是 Astro 文档站，使用 Node 26 与 npm 锁文件。
+- Release: GitHub 只构建 Windows x64 Electron 未签名评审产物；CNB 只执行同一 Node 26 源码门禁。
 
 ## Required Skills
 
-- 默认先读 `references/skills/INDEX.md`。
-- Desktop UI、UX、布局、组件状态、响应式或信息架构任务必须加载 `.agents/skills/volt-gui-design-language/SKILL.md` 和根目录 `DESIGN.md`。
-- Go/CLI/TUI 任务按仓库现有 Go 代码规范执行：`gofmt`、`go vet`、`go test` 是基础门禁。
-- Desktop/Wails 任务需要同时关注 `desktop/go.mod`、嵌入的 `desktop/frontend/dist`、平台差异和 CGO/WebKit 依赖。
-- Site/Astro 任务需要加载 `typescript`；如涉及部署，再加载 `deployment-target-selector`。
-- 涉及 agent-team 自动化、Task Ledger、mailbox、provider adapter 时加载 `agent-team-automation` 和 `provider-adapter`。
+- 默认先读 `references/private-skills/INDEX.md`，再按需读 `references/skills/INDEX.md`。
+- Electron 主进程、打包、安全或生命周期任务加载 `electron-desktop` 与 `typescript`。
+- Site/Astro 任务加载 `typescript`；涉及部署时再加载 `deployment-target-selector`。
+- Agent-team、Task Ledger、mailbox 或 PR 状态任务加载 `agent-team-automation` 与 `provider-adapter`。
+- 暗涌产品、品牌或 CNB 任务分别加载 `volt-ai-ops`、`anyong-brand-config`、`cnb-ci-cd`。
 
 ## Verification Profile
 
-按改动范围选择最小但真实的验证命令：
+- Core: `pnpm test`，`pnpm run test:dsh-integration`，`pnpm run build`
+- Electron: `node scripts/check-electron-runtime-boundary.mjs`，`pnpm run build:desktop`
+- Migration: `node scripts/check-migration-boundary.mjs`
+- Site: `cd site && npm ci && npm test`
+- Workflows: `node --test scripts/ci-workflows.test.mjs`
+- Skills: `node scripts/check-skills-sync.mjs`
+- Final: `git diff --check`
 
-- Root Go: `gofmt -w <changed-go-files>`，`go vet ./...`，`go test ./...`
-- Desktop Go: `cd desktop && go test ./...`
-- Desktop module hygiene: `cd desktop && go mod tidy && git diff --quiet -- go.mod go.sum`
-- Site: `cd site && npm ci && npm run build`
-- Agent-team config: `agent-team automation smoke .`，`agent-team automation diff-check`
-- Skills sync: `node scripts/check-skills-sync.mjs`
+## Architecture Boundaries
 
-跨模块修改完成前必须运行 `git diff --check`。
-
-## Non-goals By Default
-
-- 不默认迁移 Wails、Astro、Go module 结构或 CI 分支策略。
-- 不在新 UI 中扩展 `--aorist-*`、`--law-*` 或 Accio 命名的兼容样式；新设计使用 Volt 语义和 `DESIGN.md`。
-- 不把本地 secrets、用户配置、`.agents/state/` 运行态、mailbox 消息文件提交进仓库。
-- 不把桌面平台专属依赖强加到 CLI 构建路径。
+- 不新增仓库内 Harness 包、独立 renderer/preload、第二套权限/凭据/会话/持久化实现。
+- 不恢复已删除的旧原生运行时、桌面桥接、账户/论坛/崩溃 Worker、旧发布链或自动外部同步。
+- Electron 只能加载它管理的 DSH loopback origin；保持 `contextIsolation`、sandbox、Node integration 和浏览器权限 fail closed。
+- 官方 DSH 的版本升级必须使用 npm 当前版本、精确锁定并通过集成与打包 smoke。
+- 不提交 secrets、用户配置、`.agents/state/`、mailbox 或生成产物。
 <!-- AGENT:OVERLAY:END -->

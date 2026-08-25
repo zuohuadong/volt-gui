@@ -35,8 +35,27 @@ const ogImage = new URL(`${base}/og.png`, Astro.site).href;
   data-title-zh={titleZh}>
   <slot />
   <script>
-    import '../scripts/site.js';
     import '../scripts/fx.js';
+    const buttons = Array.from(document.querySelectorAll('#lang'));
+    const setLanguage = (value) => {
+      const language = value === 'zh' ? 'zh' : 'en';
+      document.body.dataset.lang = language;
+      document.documentElement.lang = language;
+      const title = document.body.dataset[language === 'zh' ? 'titleZh' : 'titleEn'];
+      if (title) document.title = title;
+      buttons.forEach((button) => { button.textContent = language === 'zh' ? 'EN' : '中文'; });
+      try { localStorage.setItem('voltui-lang', language); } catch {}
+    };
+    buttons.forEach((button) => button.addEventListener('click', () => setLanguage(document.body.dataset.lang === 'zh' ? 'en' : 'zh')));
+    let saved = '';
+    try { saved = localStorage.getItem('voltui-lang') || ''; } catch {}
+    setLanguage(saved || (navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en'));
+    document.querySelectorAll('[data-copy]').forEach((button) => button.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(button.dataset.copy || ''); } catch {}
+      const old = button.textContent;
+      button.textContent = document.body.dataset.lang === 'zh' ? '已复制' : 'Copied';
+      setTimeout(() => { button.textContent = old; }, 1200);
+    }));
   </script>
 </body>
 </html>

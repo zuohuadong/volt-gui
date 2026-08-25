@@ -53,6 +53,7 @@
 
 | task_id | provider | repo | source_url | title | priority | risk | status | owner | model | needs_model | review_class | branch | change_request_url |
 |---------|----------|------|------------|-------|----------|------|--------|-------|-------|-------------|--------------|--------|--------------------|
+| VOLTGUI-PR103-ELECTRON-FOLLOWUP-20260824 | github | zuohuadong/volt-gui | https://github.com/zuohuadong/volt-gui/pull/103 | 完成 Electron + DSH 上游迁移并永久退役 Wails | high | high | review | codex | gpt-5.6 | - | review-high | codex/electron-dsh-upstream-migration | https://github.com/zuohuadong/volt-gui/pull/103 |
 | VOLTGUI-004 | local | aizhuliren/volt/anyong-agent | - | 迁移桌面自动发布为 CNB Windows-only | high | medium | done | codex | gpt-5-codex | - | - | main | - |
 | VOLTGUI-003 | local | aizhuliren/volt/voltui | - | 远端重写后重新提交通用和私有行业 skills | high | low | done | codex | gpt-5-codex | - | - | main | - |
 | VOLTGUI-001 | local | aizhuliren/volt-gui | - | 初始化 agent-team 通用规则与项目 skill 索引 | high | low | done | codex | gpt-5-codex | - | - | main | - |
@@ -73,6 +74,32 @@
 | ANYONG-RELEASE-20260713 | local | aizhuliren/volt/anyong-agent | user-request | 提交 push 并发布 upstream Node 26 同步新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/volt/anyong-agent/-/releases/download/desktop-v0.9.1/latest.json |
 | ANYONG-REVIEW-PR7-20260714 | cnb | aizhuliren/volt/anyong-agent | https://cnb.cool/aizhuliren/volt/anyong-agent/-/issues/6 | 审查并合并 Linux runner prerequisites ZIP 修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | fix/desktop-build-linux-prerequisites-zip | https://cnb.cool/aizhuliren/volt/anyong-agent/-/pull/7 |
 | ANYONG-PREREQUISITES-RELEASE-20260714 | cnb | aizhuliren/volt/anyong-agent | user-request | 将 Windows prerequisites 解耦为独立版本与 Release | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/volt/anyong-agent/-/releases/tag/prerequisites-v1.0.0 |
+| ANYONG-STREAM-RECOVERY-20260813 | cnb | aizhuliren/volt/anyong-agent | user-screenshot | 修复 Windows 桌面端重复输出保护直接失败 | high | medium | done | codex | gpt-5.6 | - | review-medium | main | - |
+
+### VOLTGUI-PR103-ELECTRON-FOLLOWUP-20260824 Task Contract
+
+- parent/source/reason：承接 GitHub PR #103 与 2026-08-24 的阻塞审查；用户明确决定 Wails 和 Reasonix 上游同步链完全退役，并授权 Volt 自身 CI/release 控制面迁移到 `main`。同一 PR 分支只补齐 Electron 上线前必须具备的安全、持久化、CI 与安装身份控制。
+- 目标：完成 Electron + DSH 桌面主路径，使工作区文件工具、shell/MCP 调用、配置/API Key/会话持久化、工作区切换、OEM 安装身份和 `main` 分支 CI 契约具备可测试且 fail-closed 的边界；验证后提交并 push 原 PR 分支，等待同一 head 的远端检查和独立 panel 复审，再合并 PR。
+- 非目标：不恢复或维护 Wails；不迁移旧 Wails 会话、不删除旧 Wails 数据；不宣称 Electron 原位覆盖 Wails；不在本次伪造签名、自动更新或公开 stable Desktop 发布；不改写历史许可证、NOTICE 或既有 release evidence；不提交 secrets、`.agents/state/` 或 mailbox 运行态。
+- 验收标准：文件工具只能访问 canonical workspace 内路径并阻止 symlink/缺失目标/glob 越界；DSH 工具执行经过 Electron-owned 授权 broker，shell/Pwsh/MCP 即使 Yolo 也需一次性授权；工作区 MCP 未信任不得启动，子进程环境使用最小 allowlist；Electron 原子持久化配置、工作区状态、trust 和隔离 JSONL 会话，API Key 仅经 `safeStorage` 保存且不可用时拒绝落盘；失败/取消/超步数 turn 不污染历史，工作区切换 prepare/commit 失败保持旧运行时；安装身份由显式 TypeScript build profile 决定并由 Node 26 直接执行合同测试；unsigned 产物明确命名为 `unsigned-review`；Volt GitHub CI/release 控制面绑定真实 `main`；Reasonix/Volt upstream 同步脚本、marker 和 parity 资产删除；`git diff --check` 干净。
+- orchestration.mode：`panel`，risk=high/review-high。主代理是唯一 writer；既有三名只读 reviewer 分别覆盖安全、持久化/spec、构建/发布。候选修改完成后，三路 reviewer 必须针对同一新 head 独立复审；任何一轴 FAIL 都不 push/merge。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-tdd`、`provider-adapter`、`stack-profile-selector`、`electron-desktop`、`typescript`、`svelte-code-writer`、`svelte-core-bestpractices`、`volt-gui-design-language`；遵循 Electron 主进程/预加载/renderer 权限边界、Svelte 5 规范和现有 monorepo 脚本。
+- 影响范围：`apps/desktop-electron/`、`apps/desktop-frontend/`、`packages/dsh-core/`、`packages/dsh-plugins/`、必要的根脚本/测试/工作流/文档和 tracked 构建产物；删除废弃的 upstream sync/parity 资产；旧 `desktop/` Wails 目录不再作为产品验收依赖，除非仅删除或取消引用所必需。
+- 风险与回滚：工具执行和凭据存储属于高风险本地权限面；采用默认拒绝、显式信任、一次性授权、原子文件替换和 workspace 隔离降低影响。push 前可丢弃本 follow-up 提交；push 后只用普通 revert/follow-up 修复，不 force push、不改写已发布 tag。
+- 验证计划：TDD 定向 red/green；DSH/Electron/renderer 单元与类型检查；renderer 和 Electron production build；Windows NSIS/portable review package；workflow/release contract tests；根 Go test/vet 保留 CLI 健康证据但 Wails 不再是门禁；最终 `git diff --check`、候选 diff/secret scan、GitHub 同 head checks 与三轴 panel 复审。
+
+### ANYONG-STREAM-RECOVERY-20260813 Task Contract
+
+- 目标：修复 Windows 桌面端在模型流输出触发重复保护时直接终止用户请求的问题：以通用、有限的一次恢复替代首次失败，并确保被判定为异常的流片段不会进入后续模型上下文。
+- 非目标：不按 issue、提示词、请求 ID 或模型名称特判；不禁用 UTF-8 或重复保护；不改模型权重、网关配置、凭据、Windows 打包流程或 CNB 发布策略。
+- 验收标准：OpenAI-compatible 流对所有模型执行相同重复检测；首次重复检测后自动重试一次且不把局部文本/推理/工具参数回传；第二次重复检测仍安全终止；重复窗口内的异常尾部不显示；Go 与前端提示回归测试通过。
+- orchestration.mode：`managed`（风险 medium）。唯一 writer 为 orchestrator；完成实现后派一名 isolated、只读 verifier。共享范围仅限本 Contract、候选 diff、`internal/provider/openai`、`internal/agent`、`desktop/frontend/src/lib` 和测试输出；不传递凭据或原始模型输出。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`go-service-development`、`clean-code-guard`；沿用 Go/Wails 现有模块与 Conventional Commits。
+- 影响范围：`internal/provider/openai/stream_degeneration.go`、`internal/provider/openai/openai.go`、`internal/agent/agent.go`、相关 Go 测试，以及必要的 `desktop/frontend/src/lib/user-error.*` 测试；不新增依赖。
+- 风险与回滚：流式恢复会影响用户可见响应时序；仅保留固定大小确认窗口并且至多重试一次。若发现回归，以普通 follow-up `fix:` 回滚该恢复路径，不重写历史或 tag。
+- 验证计划：先跑定向 red/green，再执行 `gofmt`、`go test ./internal/agent ./internal/provider/openai -count=1`、`go test ./... -count=1`、`go vet ./...`、前端 unit/check/build 与 `git diff --check`；独立 verifier 复核无模型名/请求特判、隔离语义和测试证据。
+- interruption_recovery：初始 verifier `.mailbox/011-stream-recovery-verifier.md` 与重派 `.mailbox/012-stream-recovery-verifier-rerun.md` 均因运行时超时而无有效结论；已按恢复策略使用仍在当前会话的 isolated verifier 完成只读复核，`.mailbox/013-stream-recovery-native-verifier.md` 为 PASS。稳定证据为本 Contract、候选 diff、主进程确定性测试输出与该独立报告。
+- completion_evidence：根模块 `go test ./... -count=1`、`go vet ./...` 通过；桌面相关定向 Go test/vet 通过；前端 unit 33 files/174 tests、`svelte-check` 0 errors、Vite build 通过；Windows amd64 的 update-helper/windows-resource/cnbrelease/sign 交叉编译通过；`git diff --check` 通过。独立 verifier `.mailbox/013-stream-recovery-native-verifier.md` PASS。`cd desktop && go test ./...` 仍有 7 个现存打包/签名契约失败（旧 VoltUI 名称、已移除 workflow 与旧 portable fixture），四个相关测试文件和被断言的 release 脚本在本任务基线 `0a63ca806` 中均未改动，故不归因于本次候选 diff。
 
 ### ANYONG-PREREQUISITES-RELEASE-20260714 Task Contract
 

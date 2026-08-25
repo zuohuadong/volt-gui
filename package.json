@@ -1,0 +1,33 @@
+{
+  "name": "volt-gui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=26.7.0 <27"
+  },
+  "packageManager": "pnpm@11.23.0",
+  "bin": {
+    "anyong": "./scripts/anyong.mjs",
+    "dsh-anyong": "./scripts/anyong.mjs"
+  },
+  "scripts": {
+    "build": "node ./scripts/bundle.mjs && pnpm run build:desktop",
+    "test": "pnpm --filter @voltui/desktop-electron run test && node --test ./scripts/check-migration-boundary.test.mjs ./scripts/smoke-packaged-dsh-runtime.test.mjs",
+    "test:dsh-integration": "node --test ./scripts/dsh-integration.test.mjs",
+    "start": "node ./scripts/anyong.mjs",
+    "web": "node ./scripts/anyong.mjs web",
+    "desktop": "pnpm --filter @voltui/desktop-electron run build && pnpm --filter @voltui/desktop-electron run start",
+    "build:desktop": "pnpm --filter @voltui/desktop-electron run build",
+    "dist:desktop": "pnpm --filter @voltui/desktop-electron run build && pnpm --filter @voltui/desktop-electron run dist && pnpm --filter @voltui/desktop-electron run smoke:package && node ./scripts/package-dist.mjs",
+    "dsh": "node ./scripts/anyong.mjs",
+    "bundle": "node ./scripts/bundle.mjs"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.1.1-rc.2"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "@types/node": "26.3.0"
+  }
+}

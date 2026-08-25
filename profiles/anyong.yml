@@ -1,0 +1,8 @@
+# Anyong overrides shared by the official DSH web and headless profiles.
+# New plugins must be installed as profile bundles through `dsh plugin`;
+# an overlay may only override rows supplied by those bundles.
+
+- id: agent-default-model
+  config:
+    provider: deepseek-official
+    model: deepseek-chat

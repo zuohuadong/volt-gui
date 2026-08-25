@@ -1,241 +1,70 @@
-name: Release desktop
+name: Release desktop artifact
 
-# Electron packaging currently has one verified target: Windows x64. This
-# workflow deliberately uploads an unsigned-review artifact instead of publishing
-# a GitHub Release. Public desktop publication stays fail-closed until
-# the Electron signing and updater contracts have been migrated and verified.
 on:
   workflow_dispatch:
     inputs:
-      channel:
-        description: "Artifact channel"
-        type: choice
-        options: [stable]
-        default: stable
-      tag:
-        description: "Desktop tag to build (for example desktop-v1.1.0)"
+      version:
+        description: "Desktop version (MAJOR.MINOR.PATCH)"
         required: true
         type: string
-      signing_preflight:
-        description: "Reserved for the future Electron signing migration"
-        required: false
-        default: false
-        type: boolean
-  workflow_call:
-    inputs:
-      channel:
+      ref:
+        description: "Immutable branch, tag, or commit to package"
         required: true
         type: string
-      tag:
-        required: true
-        type: string
-      base_version:
-        required: false
-        default: ""
-        type: string
-      approved_cli_tag:
-        required: true
-        type: string
-      approved_sha:
-        required: true
-        type: string
-      orchestrated:
-        required: false
-        default: false
-        type: boolean
-      orchestrator:
-        required: false
-        default: stable
-        type: string
-      preview_number:
-        required: false
-        default: ""
-        type: string
-      signing_preflight:
-        required: false
-        default: false
-        type: boolean
-      signing_preflight_verified:
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-desktop-${{ inputs.channel }}
+  group: release-desktop-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
-  resolve:
-    name: Resolve desktop artifact
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.release.outputs.tag }}
-      version: ${{ steps.release.outputs.version }}
-      channel: ${{ steps.release.outputs.channel }}
-      sha: ${{ steps.candidate-orchestrated.outputs.sha || steps.candidate-standalone.outputs.sha }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Resolve version and channel
-        id: release
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          IN_ORCHESTRATED: ${{ inputs.orchestrated }}
-          IN_CHANNEL: ${{ inputs.channel }}
-          IN_TAG: ${{ inputs.tag }}
-          IN_BASE_VERSION: ${{ inputs.base_version }}
-          IN_SIGNING_PREFLIGHT: ${{ inputs.signing_preflight }}
-          REF_NAME: ${{ github.ref_name }}
-          RUN_NUMBER: ${{ github.run_number }}
-          IN_PREVIEW_NUMBER: ${{ inputs.preview_number }}
-        run: bash scripts/resolve-desktop-release.sh
-
-      - name: Resolve orchestrated immutable candidate
-        id: candidate-orchestrated
-        if: ${{ inputs.orchestrated }}
-        env:
-          RELEASE_CHANNEL: ${{ steps.release.outputs.channel }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
-          IN_ORCHESTRATED: ${{ inputs.orchestrated }}
-          IN_ORCHESTRATOR: ${{ inputs.orchestrator }}
-          APPROVED_SHA: ${{ inputs.approved_sha }}
-          CALLER_EVENT_NAME: ${{ github.event_name }}
-          CALLER_REF: ${{ github.ref }}
-          CALLER_REF_PROTECTED: ${{ github.ref_protected }}
-          CALLER_SHA: ${{ github.sha }}
-          CALLER_WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: bash scripts/resolve-desktop-candidate.sh
-
-      - name: Resolve standalone main candidate
-        id: candidate-standalone
-        if: ${{ !inputs.orchestrated }}
-        env:
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
-        run: |
-          set -euo pipefail
-          git fetch origin main --tags
-          candidate="$(git rev-parse "$RELEASE_TAG^{commit}")"
-          git merge-base --is-ancestor "$candidate" origin/main || {
-            echo "::error::$RELEASE_TAG is not on origin/main history"
-            exit 1
-          }
-          echo "sha=$candidate" >> "$GITHUB_OUTPUT"
-
-  orchestration-guard:
-    name: Verify approved release-stable.yml caller
-    needs: resolve
-    if: ${{ inputs.orchestrated }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: Verify caller and approved tag
-        env:
-          ACTUAL_CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
-          EXPECTED_CALLER_WORKFLOW_REF: ${{ format('{0}/.github/workflows/release-stable.yml@{1}', github.repository, github.ref) }}
-          CALLER_EVENT_NAME: ${{ github.event_name }}
-          CALLER_REF: ${{ github.ref }}
-          CALLER_REF_PROTECTED: ${{ github.ref_protected }}
-          CALLER_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          CALLER_SHA: ${{ github.sha }}
-          APPROVED_CLI_TAG: ${{ inputs.approved_cli_tag }}
-          APPROVED_SHA: ${{ inputs.approved_sha }}
-          APPROVED_CHANNEL: stable
-          RELEASE_TAG: ${{ inputs.approved_cli_tag }}
-          VERIFY_RELEASE_CHECKOUT: false
-        run: |
-          bash scripts/verify-release-authorization.sh
-          RELEASE_TAG="${{ inputs.tag }}" APPROVED_SHA="${{ inputs.approved_sha }}" bash scripts/verify-release-tag.sh
-
-  standalone-approval:
-    name: Approve standalone desktop artifact
-    needs: resolve
-    if: ${{ !inputs.orchestrated }}
-    runs-on: ubuntu-latest
-    environment: release
-    steps:
-      - run: echo "Approved unsigned-review Windows x64 artifact build for ${{ needs.resolve.outputs.tag }}"
-
   package:
-    name: Package Electron Windows x64
-    needs: [resolve, orchestration-guard, standalone-approval]
-    if: ${{ always() && needs.resolve.result == 'success' && (needs.orchestration-guard.result == 'success' || needs.orchestration-guard.result == 'skipped') && (needs.standalone-approval.result == 'success' || needs.standalone-approval.result == 'skipped') }}
+    name: Package unsigned Electron Windows x64
     runs-on: windows-latest
+    environment: release
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      DESKTOP_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.resolve.outputs.sha }}
-
+          ref: ${{ inputs.ref }}
       - uses: pnpm/action-setup@v6
         with:
-          version: 11
+          version: 11.23.0
           run_install: false
-
       - uses: actions/setup-node@v7
         with:
-          node-version: "26"
+          node-version: 26.7.0
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-
-      - name: Reject unsupported signing claims
-        if: ${{ inputs.signing_preflight || inputs.signing_preflight_verified }}
-        shell: pwsh
-        run: throw "Electron production signing is not migrated yet; refusing to report a signing preflight or publishable stable package."
-
-      - name: Install workspace dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Verify runtime boundaries and renderer
+      - run: pnpm install --frozen-lockfile
+      - name: Verify candidate
         run: |
-          node --test scripts/check-electron-runtime-boundary.test.mjs scripts/check-runtime-mocks.test.mjs scripts/package-dist.test.mjs scripts/set-electron-package-version.test.mjs
-          node scripts/check-electron-runtime-boundary.mjs
-          node scripts/check-runtime-mocks.mjs
-          pnpm --filter @voltui/desktop-electron run test:profile
-          pnpm --filter @voltui/desktop-electron run test:security
-          pnpm --filter voltui-desktop-workbench run check
-          pnpm --filter voltui-desktop-workbench run test:unit
-
-      - name: Apply release version to Electron metadata
-        shell: pwsh
-        env:
-          RELEASE_VERSION: ${{ needs.resolve.outputs.version }}
-        run: node scripts/set-electron-package-version.mjs
-
-      - name: Package Windows x64 with electron-builder
-        env:
-          DESKTOP_VERSION: ${{ needs.resolve.outputs.version }}
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          pnpm run test:dsh-integration
+          pnpm test
+          node scripts/check-migration-boundary.mjs
+      - name: Set package version
+        run: node scripts/set-electron-package-version.mjs "$env:DESKTOP_VERSION"
+      - name: Package Windows x64
         run: pnpm run dist:desktop
-
-      - name: Generate checksums and verify package shape
+      - name: Confirm artifacts remain unsigned
         shell: pwsh
         run: |
           $artifacts = @(Get-ChildItem -LiteralPath dist -Filter *.exe -File)
-          if ($artifacts.Count -lt 2) {
-            throw "Electron packaging produced $($artifacts.Count) executable(s); expected NSIS and portable artifacts."
-          }
+          if ($artifacts.Count -lt 2) { throw "Expected NSIS and portable executables." }
           foreach ($artifact in $artifacts) {
             $signature = Get-AuthenticodeSignature -LiteralPath $artifact.FullName
             if ($signature.Status -ne 'NotSigned') {
-              throw "Unsigned artifact contract violated for $($artifact.Name): Authenticode status is $($signature.Status)."
+              throw "Unexpected signature state for $($artifact.Name): $($signature.Status)"
             }
+            Get-FileHash -Algorithm SHA256 -LiteralPath $artifact.FullName
           }
-          $lines = $artifacts | Sort-Object Name | ForEach-Object {
-            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$hash  $($_.Name)"
-          }
-          $lines | Set-Content -LiteralPath dist/SHA256SUMS.txt -Encoding utf8
-
-      - name: Upload unsigned review desktop artifact
-        uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7
         with:
-          name: voltui-${{ needs.resolve.outputs.tag }}-windows-x64-unsigned-review
+          name: voltui-windows-x64-${{ inputs.version }}-unsigned-review
           path: dist/*
           if-no-files-found: error
           retention-days: 14

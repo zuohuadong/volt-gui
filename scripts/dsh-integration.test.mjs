@@ -97,5 +97,5 @@ test('distribution bundle pins the same official DSH version', async () => {
 
 test('Node 26 is the supported script runtime', () => {
   assert.equal(Number(process.versions.node.split('.')[0]), 26);
-  assert.equal(rootPackage.engines.node, '>=26');
+  assert.equal(rootPackage.engines.node, '>=26.7.0 <27');
 });

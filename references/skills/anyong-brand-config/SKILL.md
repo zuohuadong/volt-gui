@@ -1,99 +1,35 @@
 ---
 name: anyong-brand-config
-description: Use when configuring, verifying, or debugging the 西谷智灯暗涌系统 (Anyong/Xigu AI) white-label branding on the VoltUI fork. Covers Go BrandConfig, Electron runtime brand environment variables, and GitHub Actions/CNB build behavior.
+description: Use when configuring or verifying Anyong product identity in the Electron profile and official DeepSeek Harness profile patch.
 ---
 
-# 西谷智灯暗涌系统 Brand Configuration
+# 暗涌品牌配置
 
-This skill ensures agents use the **configuration-driven** branding system instead of hardcoding brand names in source code. The upstream VoltUI project provides a complete BrandConfig mechanism — 西谷智灯暗涌系统 is a downstream fork that uses it rather than modifying source files.
+## Sources Of Truth
 
-## Core Rule: Never Hardcode Brand Names in Source Code
+- Electron package identity: `apps/desktop-electron/src/electron-profile.ts`
+- DSH behavior defaults: `profiles/anyong.yml`
+- Installer metadata: `apps/desktop-electron/electron-builder.mjs`
+- Artifact naming: `scripts/package-dist.mjs`
 
-**Forbidden**: Replacing `VoltUI` with `西谷智灯暗涌系统` in `.go`, `.ts`, `.tsx`, `.json`, `.html`, `.css`, `.md` (except CI config files).
+`ELECTRON_DESKTOP_PROFILE=anyong` selects the Anyong Electron identity. The
+default remains `voltui` for the generic package.
 
-**Required**: Use the BrandConfig system to apply 西谷智灯暗涌系统 branding without touching source code.
+## Rules
 
-## BrandConfig Mechanism (3 Layers)
+- Keep product name, application id, executable name, installer id, and artifact
+  slug in one typed Electron profile.
+- Use the official DSH profile/plugin mechanism for product behavior.
+- Do not add a renderer-side brand store, preload API, environment-variable
+  shadow configuration, or direct edits to installed DSH packages.
+- Do not put credentials or provider secrets into a profile, builder config, or
+  generated artifact name.
 
-Priority order: env var > config file > compiled default.
+## Verification
 
-### Layer 1: Environment Variables
-
-| Variable | Maps to | Default |
-|---|---|---|
-| `VOLTUI_BRAND_NAME` | `brand.name` | `VoltUI` |
-| `VOLTUI_BRAND_SHORT_NAME` | `brand.short_name` | (falls back to `brand.name`) |
-| `VOLTUI_BRAND_LOGO` | `brand.logo_path` | (built-in SVG) |
-| `VOLTUI_BRAND_WORDMARK` | `brand.wordmark_path` | (built-in SVG) |
-| `VOLTUI_BRAND_ICON` | `brand.icon_path` | (built-in PNG/ICO) |
-
-For 西谷智灯暗涌系统, set in runtime:
 ```bash
-export VOLTUI_BRAND_NAME="西谷智灯暗涌系统"
+node --test scripts/electron-profile.test.mjs scripts/package-dist.test.mjs
+ELECTRON_DESKTOP_PROFILE=anyong node apps/desktop-electron/src/electron-profile.ts
+pnpm run build:desktop
+git diff --check
 ```
-
-### Layer 2: voltui.toml `[brand]` Section
-
-```toml
-[brand]
-name = "西谷智灯暗涌系统"
-short_name = "西谷智灯暗涌系统"
-# logo_path and wordmark_path can point to custom SVG/PNG files
-# icon_path can point to custom ICO/PNG for tray/taskbar
-```
-
-Resolution: `internal/config/config.go` — `BrandName()`, `BrandShortName()`, `BrandLogoPath()`, etc.
-
-### Layer 3: Compiled Defaults
-
-Source code uses `"VoltUI"` as the compiled-in default. This is intentional — it allows any fork to override via config/env without rebuilding.
-
-The system prompt auto-replacement works as:
-```go
-// ResolveSystemPrompt replaces "VoltUI" placeholder with configured brand name
-brandName := c.BrandName()
-if brandName != "VoltUI" {
-    prompt = strings.ReplaceAll(prompt, "VoltUI", brandName)
-}
-```
-
-## Electron Desktop Branding
-
-`apps/desktop-electron/src/main.ts` reads the display brand at runtime:
-```bash
-VOLTUI_BRAND_NAME="西谷智灯暗涌系统"
-VOLTUI_BRAND_SHORT_NAME="暗涌"
-```
-
-For CNB CI (`.cnb.yml`), set the same Electron variables:
-```yaml
-env:
-  VOLTUI_BRAND_NAME: "西谷智灯暗涌系统"
-  VOLTUI_BRAND_SHORT_NAME: "暗涌"
-```
-
-## Frontend Branding
-
-`apps/desktop-electron/src/main.ts` removes API keys from the public config and adds `brandName` / `brandShortName`. The typed preload returns that public config to `apps/desktop-frontend/src/components/ElectronWorkbench.svelte`; the renderer must not read secrets or invent a second brand source.
-
-## Verification Checklist
-
-When checking if branding is correctly configured:
-
-1. ✅ Source code still says `"VoltUI"` as default — correct
-2. ✅ `.cnb.yml` sets `VOLTUI_BRAND_NAME` and `VOLTUI_BRAND_SHORT_NAME` — correct
-3. ✅ Electron main exposes only public brand fields through preload — correct
-4. ✅ No `西谷智灯暗涌系统` appears in `.go`, `.ts`, `.tsx` source files — correct
-5. ✅ `BrandConfig.Name` default in `config.go` is `"VoltUI"` — correct
-
-## Anti-patterns
-
-| Anti-pattern | Why it's wrong | Correct approach |
-|---|---|---|
-| `sed -i 's/VoltUI/西谷智灯暗涌系统/g' *.go` | Breaks upstream sync, makes 65+ file diffs | Set `VOLTUI_BRAND_NAME=西谷智灯暗涌系统` |
-| Changing `BrandConfig{Name: "VoltUI"}` default | Breaks the whole BrandConfig fallback chain | Use env vars or voltui.toml |
-| Editing `brand.tsx` defaultBrand.name | Breaks runtime brand resolution | Go kernel serves brand info at runtime |
-
-## Directive
-
-All branding customizations in this fork must be configuration-only (env vars, config files, CI settings). Source code must remain identical to upstream for seamless sync.

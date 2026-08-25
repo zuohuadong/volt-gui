@@ -8,52 +8,37 @@ import { fileURLToPath } from "node:url";
 import { scanElectronRuntimeBoundary } from "./check-electron-runtime-boundary.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const fixtureFiles = [
+  "apps/desktop-electron/src/main.ts",
+  "apps/desktop-electron/src/official-dsh-runtime.ts",
+  "apps/desktop-electron/package.json",
+  "apps/desktop-electron/electron-builder.mjs",
+];
 
-test("current Electron renderer is isolated from Wails and mock bridges", async () => {
+test("current Electron shell is isolated around the official DSH runtime", async () => {
   assert.deepEqual(await scanElectronRuntimeBoundary(), []);
 });
 
-test("gate rejects a legacy renderer bridge and functional fallback", async () => {
+test("gate rejects a local Harness import and a non-loopback DSH URL", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "voltui-electron-boundary-"));
   try {
-    const fixtureFiles = [
-      "apps/desktop-frontend/electron.html",
-      "apps/desktop-frontend/src/electron-main.ts",
-      "apps/desktop-frontend/src/components/ElectronWorkbench.svelte",
-      "apps/desktop-electron/src/main.ts",
-      "apps/desktop-electron/src/runtime-config.ts",
-      "apps/desktop-electron/src/preload.ts",
-      "apps/desktop-electron/src/workbench.html",
-      "apps/desktop-electron/scripts/build-frontend.mjs",
-      "packages/dsh-server/src/server.ts",
-    ];
     for (const relativePath of fixtureFiles) {
       const target = path.join(root, relativePath);
       await mkdir(path.dirname(target), { recursive: true });
       await cp(path.join(repositoryRoot, relativePath), target);
     }
 
-    const entryPath = path.join(root, "apps/desktop-frontend/src/electron-main.ts");
-    const fallbackPath = path.join(root, "apps/desktop-electron/src/workbench.html");
-    const runtimeConfigPath = path.join(root, "apps/desktop-electron/src/runtime-config.ts");
-    const serverPath = path.join(root, "packages/dsh-server/src/server.ts");
-    const preloadPath = path.join(root, "apps/desktop-electron/src/preload.ts");
-    await writeFile(entryPath, `${await readFile(entryPath, "utf8")}\nwindow.go.main.App.Version();\n`);
-    await writeFile(fallbackPath, "<button onclick=\"makeMockApp()\">保存</button>");
-    await writeFile(runtimeConfigPath, (await readFile(runtimeConfigPath, "utf8")).replace(
-      "currentConfig.apiKey && nextApiKey === undefined && patch.clearApiKey !== true",
-      "false",
+    const mainPath = path.join(root, "apps/desktop-electron/src/main.ts");
+    const runtimePath = path.join(root, "apps/desktop-electron/src/official-dsh-runtime.ts");
+    await writeFile(mainPath, `${await readFile(mainPath, "utf8")}\nimport "@dsh/server";\n`);
+    await writeFile(runtimePath, (await readFile(runtimePath, "utf8")).replace(
+      "127\\.0\\.0\\.1",
+      "0\\.0\\.0\\.0",
     ));
-    await writeFile(serverPath, `${await readFile(serverPath, "utf8")}\nres.setHeader('Access-Control-Allow-Origin', '*');\n`);
-    await writeFile(preloadPath, `${await readFile(preloadPath, "utf8")}\nipcRenderer.invoke('dsh:set-working-dir', '/tmp');\n`);
 
     const rules = new Set((await scanElectronRuntimeBoundary({ root })).map((finding) => finding.rule));
-    assert.equal(rules.has("wails-global"), true);
-    assert.equal(rules.has("fallback-button"), true);
-    assert.equal(rules.has("fallback-mock"), true);
-    assert.equal(rules.has("wildcard-local-cors"), true);
-    assert.equal(rules.has("endpoint-key-reuse"), true);
-    assert.equal(rules.has("renderer-working-directory"), true);
+    assert.equal(rules.has("local-harness-import"), true);
+    assert.equal(rules.has("loopback-url"), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

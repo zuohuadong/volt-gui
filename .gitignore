@@ -6,15 +6,13 @@
 /npm/.stage/
 /voltui
 /voltui.exe
-/reasonix
-/reasonix.exe
 
 # Website (Astro) build output
 /site/dist/
 /site/.astro/
 /site/_preview.png
 
-# Go test/build scratch
+# Test/build scratch
 *.test
 *.out
 *.coverprofile
@@ -22,27 +20,26 @@ coverage.out
 cpu.prof
 mem.prof
 
-# Desktop (Electron + Frontend) build artifacts
+# Desktop build artifacts
 /apps/desktop-electron/dist-package/
-/apps/desktop-electron/dist/renderer/
-/apps/desktop-electron/dist/workbench.html
-/apps/desktop-frontend/dist-electron/
-/apps/desktop-frontend/dist/*
-!/apps/desktop-frontend/dist/.gitkeep
+/apps/desktop-electron/.dsh-runtime/
+/apps/desktop-electron/.node-runtime/
 
 # Environment / local config (voltui.example.toml is a shared template)
 .env
 .env.local
 *.local
 /voltui.toml
-/reasonix.toml
 
 # Node / frontend dependencies and caches
 node_modules/
+apps/desktop-electron/dist/
+apps/desktop-electron/dist-package/
+dist/
 .pnpm-store/
 .npm/
 
-# Project-local VoltUI/Reasonix state; keep the checked-in review command.
+# Project-local VoltUI state; keep the checked-in review command.
 /.voltui/*
 !/.voltui/commands/
 !/.voltui/commands/review.md

@@ -3,48 +3,26 @@ name: Desktop CI
 on:
   pull_request:
     branches: [main]
-    paths:
+    paths: &desktop_paths
       - ".github/workflows/desktop-ci.yml"
       - ".github/workflows/release-desktop.yml"
       - "apps/desktop-electron/**"
-      - "apps/desktop-frontend/**"
-      - "packages/dsh-*/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
-      - "scripts/check-electron-runtime-boundary*.mjs"
-      - "scripts/check-runtime-mocks*.mjs"
+      - "profiles/**"
       - "scripts/anyong.mjs"
       - "scripts/bundle.mjs"
+      - "scripts/check-electron-runtime-boundary*.mjs"
+      - "scripts/check-migration-boundary.mjs"
       - "scripts/dsh-integration.test.mjs"
       - "scripts/electron-profile.test.mjs"
-      - "scripts/package-dist.mjs"
-      - "scripts/package-dist.test.mjs"
-      - "scripts/set-electron-package-version.mjs"
-      - "scripts/set-electron-package-version.test.mjs"
-      - "profiles/anyong.yml"
+      - "scripts/package-dist*.mjs"
+      - "scripts/set-electron-package-version*.mjs"
+      - "scripts/smoke-packaged-dsh-runtime*.mjs"
   push:
     branches: [main]
-    paths:
-      - ".github/workflows/desktop-ci.yml"
-      - ".github/workflows/release-desktop.yml"
-      - "apps/desktop-electron/**"
-      - "apps/desktop-frontend/**"
-      - "packages/dsh-*/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "scripts/check-electron-runtime-boundary*.mjs"
-      - "scripts/check-runtime-mocks*.mjs"
-      - "scripts/anyong.mjs"
-      - "scripts/bundle.mjs"
-      - "scripts/dsh-integration.test.mjs"
-      - "scripts/electron-profile.test.mjs"
-      - "scripts/package-dist.mjs"
-      - "scripts/package-dist.test.mjs"
-      - "scripts/set-electron-package-version.mjs"
-      - "scripts/set-electron-package-version.test.mjs"
-      - "profiles/anyong.yml"
+    paths: *desktop_paths
   workflow_dispatch:
 
 permissions:
@@ -60,46 +38,23 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-
       - uses: pnpm/action-setup@v6
         with:
-          version: 11
+          version: 11.23.0
           run_install: false
-
       - uses: actions/setup-node@v7
         with:
-          node-version: "26"
+          node-version: 26.7.0
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-
-      - name: Install workspace dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Verify runtime boundaries
-        run: |
-          node --test scripts/check-electron-runtime-boundary.test.mjs scripts/check-runtime-mocks.test.mjs scripts/package-dist.test.mjs scripts/set-electron-package-version.test.mjs
-          node scripts/check-electron-runtime-boundary.mjs
-          node scripts/check-runtime-mocks.mjs
-
-      - name: Check Svelte renderer
-        run: pnpm --filter voltui-desktop-workbench run check
-
-      - name: Test DSH packages and renderer
+      - run: pnpm install --frozen-lockfile
+      - name: Verify runtime and packaging contracts
         run: |
           pnpm run test:dsh-integration
           pnpm test
-          pnpm --filter @voltui/desktop-electron run test:config
-          pnpm --filter @voltui/desktop-electron run test:profile
-          pnpm --filter @voltui/desktop-electron run test:security
-          pnpm --filter voltui-desktop-workbench run test:unit
-
-      - name: Build Electron desktop
-        run: pnpm run build:desktop
-
-      - name: Package Windows x64
-        timeout-minutes: 20
-        run: pnpm run dist:desktop
-
+          node --test scripts/ci-workflows.test.mjs scripts/package-dist.test.mjs scripts/set-electron-package-version.test.mjs
+          node scripts/check-migration-boundary.mjs
+      - run: pnpm run dist:desktop
       - name: Verify packaged executables
         shell: pwsh
         run: |
@@ -108,10 +63,8 @@ jobs:
             throw "Electron packaging produced $($artifacts.Count) executable(s); expected NSIS and portable artifacts."
           }
           $artifacts | ForEach-Object { Write-Host $_.Name }
-
-      - name: Upload desktop package
+      - uses: actions/upload-artifact@v7
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v7
         with:
           name: voltui-electron-windows-x64
           path: dist/*

@@ -155,7 +155,6 @@ h2{font-size:clamp(28px,4vw,42px);line-height:1.12;letter-spacing:-.035em;font-w
 .dl .os{font-weight:600;color:var(--ink);min-width:84px;font-size:15.5px}
 .dl .fn{font-family:var(--mono);font-size:13.5px;color:var(--body);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dl .ar{font-size:13px;color:var(--faint);white-space:nowrap}
-.dl .go{color:var(--accent);font-family:var(--mono)}
 @media(max-width:600px){.dl .ar{display:none}.dl .fn{font-size:12px}}
 
 /* features */

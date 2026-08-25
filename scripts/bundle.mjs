@@ -40,8 +40,8 @@ async function main() {
       anyong: './scripts/anyong.mjs',
     },
     scripts: {
-      start: './scripts/anyong.mjs',
-      web: './scripts/anyong.mjs web',
+      start: 'node ./scripts/anyong.mjs',
+      web: 'node ./scripts/anyong.mjs web',
     },
     dependencies: {
       '@deepseek-ai/dsh': dshVersion,

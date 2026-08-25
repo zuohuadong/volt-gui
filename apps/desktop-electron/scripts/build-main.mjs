@@ -6,7 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 
-console.log("⚡ Bundling Electron Main and Preload with esbuild");
+console.log("Bundling the Electron main process with esbuild");
 
 // ESM bundle 里的 CJS 依赖（如 node-fetch@2）会触发 esbuild 的
 // "Dynamic require of X is not supported" 占位错误。
@@ -21,23 +21,10 @@ await esbuild.build({
   bundle: true,
   platform: "node",
   format: "esm",
-  target: "node20",
-  external: ["electron"],
+  target: "node26",
+  external: ["electron", "@deepseek-ai/dsh"],
   sourcemap: true,
   banner: { js: esmCompatBanner },
 });
 
-// preload 保持 CJS 并用 .cjs 后缀：包根 package.json 是 type:module，
-// 若沿用 .js 会被 Electron 按 ESM 加载而失败。
-await esbuild.build({
-  entryPoints: [path.join(rootDir, "src/preload.ts")],
-  outfile: path.join(rootDir, "dist/preload.cjs"),
-  bundle: true,
-  platform: "node",
-  format: "cjs",
-  target: "node20",
-  external: ["electron"],
-  sourcemap: true,
-});
-
-console.log("✓ Electron Main & Preload bundle completed.");
+console.log("Electron main bundle completed.");

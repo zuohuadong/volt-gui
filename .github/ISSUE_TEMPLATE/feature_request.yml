@@ -1,29 +1,31 @@
 name: Feature request
-description: Suggest an idea or improvement
+description: Suggest an improvement to VoltUI or its supported DSH integration
 title: "[Feature]: "
 labels: ["enhancement"]
 body:
   - type: dropdown
-    id: version-line
+    id: surface
     attributes:
-      label: Version line
-      description: Which line is this for?
+      label: Surface
       options:
-        - "v2 — Go rewrite (1.x), main (active development)"
-        - "v1 — Legacy TypeScript (0.x), maintenance only"
+        - Electron desktop shell
+        - Official DSH profile or plugin
+        - CLI / Node launcher
+        - Documentation site
+        - Packaging / CI
     validations:
       required: true
   - type: textarea
     id: problem
     attributes:
       label: What problem does this solve?
-      description: What are you trying to do, and what gets in the way today?
+      description: Explain the workflow and current limitation.
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
       label: Proposed solution
-      description: How would you like it to work?
+      description: Describe the desired behavior. Product UI changes should use official DSH extension points when available.
     validations:
       required: false

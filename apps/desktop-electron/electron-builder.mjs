@@ -5,15 +5,20 @@ export default {
   productName: profile.productName,
   executableName: profile.executableName,
   directories: { output: "dist-package" },
-  npmRebuild: false,
+  // pnpm deploy stages the complete DSH graph, including peer and optional
+  // packages. electron-builder must not reconstruct that graph itself.
+  beforeBuild: () => false,
+  npmRebuild: true,
   nodeGypRebuild: false,
   buildDependenciesFromSource: false,
   files: [
     "dist/main.js",
-    "dist/preload.cjs",
-    "dist/workbench.html",
-    "dist/renderer/**/*",
     "package.json",
+  ],
+  extraResources: [
+    { from: "../../profiles", to: "profiles", filter: ["anyong.yml"] },
+    { from: ".dsh-runtime/node_modules", to: "dsh-runtime/node_modules" },
+    { from: ".node-runtime", to: "node-runtime" },
   ],
   win: {
     icon: "icon.ico",

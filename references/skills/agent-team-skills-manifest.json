@@ -19,7 +19,7 @@
       "id": "anyong-brand-config",
       "frontmatterName": "anyong-brand-config",
       "path": "references/skills/anyong-brand-config/SKILL.md",
-      "description": "Use when configuring, verifying, or debugging the 西谷智灯暗涌系统 (Anyong/volt AI) white-label branding on the VoltUI fork. Covers Go BrandConfig, Electron runtime brand environment variables, and GitHub Actions/CNB build behavior."
+      "description": "Use when configuring or verifying Anyong product identity in the Electron profile and official DeepSeek Harness profile patch."
     },
     {
       "id": "bun-cli-cross-platform",
@@ -43,7 +43,7 @@
       "id": "cnb-ci-cd",
       "frontmatterName": "cnb-ci-cd",
       "path": "references/skills/cnb-ci-cd/SKILL.md",
-      "description": "Use when configuring, debugging, or modifying CNB (Cloud Native Build) CI/CD pipelines for VoltUI/西谷智灯暗涌系统. Covers .cnb.yml structure, auto-release conventional commit workflow, merge-request CI checks, cross-repo PR creation, and CNB Release API."
+      "description": "Use when configuring or reviewing the CNB validation pipeline for the Node 26, Electron, and official DeepSeek Harness architecture."
     },
     {
       "id": "database-profile-selector",
@@ -199,7 +199,7 @@
       "id": "volt-desktop-experience",
       "frontmatterName": "volt-desktop-experience",
       "path": "references/skills/volt-desktop-experience/SKILL.md",
-      "description": "Use when designing, implementing, or reviewing Volt GUI operational task-lifecycle UX: running message queues and Steer, activity centers, result receipts, structured recovery, explainable approvals, Diff comments to fixes, automation result inboxes, or managed worktree snapshot/Handoff flows. Enforces real Electron/DSH-backed state, safe mutation preflights, Work/Code ownership, and behavioral plus visual verification; pair with the project volt-gui-design-language skill for broad visual or layout work."
+      "description": "Use when mapping operational task-lifecycle UX onto the official DeepSeek Harness surface or reviewing whether an Electron change violates the shell-only boundary."
     },
     {
       "id": "vue-frontend",
@@ -211,7 +211,7 @@
       "id": "volt-ai-ops",
       "frontmatterName": "volt-ai-ops",
       "path": "references/skills/volt-ai-ops/SKILL.md",
-      "description": "Use when tasks involve 西谷AI (volt AI) internal operations, 西谷智灯暗涌系统 product strategy, Chinese AI market context, local regulations, or fork-specific workflow decisions. Covers upstream sync strategy, release workflow, internal tooling, and product-market-fit decisions for the 西谷智灯暗涌系统 coding agent."
+      "description": "Use for volt AI product strategy, Anyong distribution scope, Chinese enterprise constraints, and decisions about official DeepSeek Harness integration."
     }
   ]
 }

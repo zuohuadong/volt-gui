@@ -1,32 +1,23 @@
 # Volt GUI Project Overlay
 
-## UI Reference Policy
-
-- Volt GUI 的所有 UI 设计、视觉调整、布局重构、交互补齐、组件状态和信息架构调整，必须先参考 `E:\workspace\aoristlawer` 项目的真实源码与运行结构。
-- 首选参考路径包括 `E:\workspace\aoristlawer\apps\desktop\src\index.css`、`layouts\DashboardLayout.tsx`、`pages\*.tsx`、`components\ui\*.tsx` 和相关业务组件。
-- 不要只做颜色或表层风格模仿。应优先对齐 aoristlawer 的页面结构、侧栏/顶栏节奏、卡片密度、按钮层级、标签页样式、弹窗结构、列表行信息组织和空状态方式。
-- 只有当 Volt GUI 的既有技术栈、Svelte/Electron/DSH 约束或当前业务目标明确不适配时，才允许偏离；偏离时需要在回复中说明原因。
-- 除非用户明确指定其他参考对象，后续不要再优先使用 Accio、通用模板、截图臆测或新的外部设计系统作为 Volt GUI UI 的第一参考。
-
-本仓库是 Go CLI/TUI + Electron/DSH/Svelte 5 desktop + Astro docs 的混合项目。执行任务时优先保持现有技术栈和目录边界，不引入新的前端或桌面框架。
+本仓库的产品运行时是 Node 26 + Electron + 官方 DeepSeek Harness。DSH Web 是唯一 renderer 和 Harness；本仓库不维护第二套会话、工具、权限、凭据、工作区或持久化实现。
 
 ## Stack Profile
 
-- Root module: Go CLI/TUI, `go.mod`, entrypoints in `cmd/`, reusable code in `internal/`.
-- Desktop workspace: Electron main/preload in `apps/desktop-electron/`, Svelte 5 renderer in `apps/desktop-frontend/`, DSH packages in `packages/dsh-*`.
+- Root workspace: 官方 `@deepseek-ai/dsh`、Node 26 launcher、distribution bundle 与共享 profile patch。
+- Desktop workspace: Electron main process in `apps/desktop-electron/`; no local renderer or preload.
 - Site: Astro documentation site in `site/`, using npm and Node 26 in CI.
-- Release: CNB `.cnb.yml` owns fork desktop automation on `main`; GitHub desktop CI packages Electron with `pnpm run dist:desktop`. Windows x64 is the only verified target; macOS/Linux publication stays fail-closed until signing and updater contracts are confirmed.
+- Release: CNB `.cnb.yml` validates source on `main`; GitHub packages Windows x64 Electron artifacts with `pnpm run dist:desktop`. Public release, signing, updater, macOS and Linux remain fail closed.
 
 ## Required Skills
 
 - 默认先读 `references/private-skills/INDEX.md`，判断是否存在 volt 私有行业 skill；若任务不属于私有技能覆盖范围，再读 `references/skills/INDEX.md`。
 - 项目私有技能安装在 `.voltui/skills/`，VoltUI 可直接发现；`references/private-skills/skills-manifest.json` 是全量清单。
-- Desktop UI、UX、布局、组件状态、响应式或信息架构任务必须加载 `.agents/skills/volt-gui-design-language/SKILL.md` 和根目录 `DESIGN.md`。
-- Go/CLI/TUI 任务按仓库现有 Go 代码规范执行：`gofmt`、`go vet`、`go test` 是基础门禁。
-- Desktop/Electron 任务需要同时关注 `apps/desktop-electron/`、`apps/desktop-frontend/`、根 `pnpm-lock.yaml`、preload/IPC 安全边界与平台打包差异。
+- DSH Web UI 由官方 npm 包提供；需要 UI 能力时优先使用官方 profile/plugin 扩展点，不在仓库中重建 renderer。
+- Desktop/Electron 任务需要关注 `apps/desktop-electron/`、根 `pnpm-lock.yaml`、loopback 导航、浏览器权限和原生依赖打包。
 - Site/Astro 任务需要加载 `typescript`；如涉及部署，再加载 `deployment-target-selector`。
 - 涉及 agent-team 自动化、Task Ledger、mailbox、provider adapter 时加载 `agent-team-automation` 和 `provider-adapter`。
-- **暗涌品牌相关**：加载 `anyong-brand-config` — 禁止在源码中硬编码品牌名，使用 BrandConfig 机制。
+- **暗涌品牌相关**：加载 `anyong-brand-config` — 使用 Electron profile 和 DSH patch，不重建旧品牌配置层。
 - **CNB CI/CD 相关**：加载 `cnb-ci-cd` — 涉及 .cnb.yml、自动发版、CNB API。
 - **西谷AI 内部决策**：加载 `volt-ai-ops` — 涉及产品策略、上游同步、中国市场背景。
 - 半导体 ATE、测试程序、良率/SPC、失效分析、LIMS/OCR 数据组织等行业任务，优先加载 `.voltui/skills/semiconductor-*` 和相关工程/数据技能。
@@ -35,10 +26,12 @@
 
 按改动范围选择最小但真实的验证命令：
 
-- Root Go: `gofmt -w <changed-go-files>`，`go vet ./...`，`go test ./...`
-- Desktop: `pnpm --filter voltui-desktop-workbench run check`，`pnpm --filter voltui-desktop-workbench run test:unit`，`pnpm run build:desktop`
+- Core: `pnpm test`，`pnpm run test:dsh-integration`，`pnpm run build`
+- Desktop: `pnpm run build:desktop`
 - Electron boundary: `node --test scripts/check-electron-runtime-boundary.test.mjs`，`node scripts/check-electron-runtime-boundary.mjs`
 - Site: `cd site && npm ci && npm run build`
+- Migration: `node scripts/check-migration-boundary.mjs`
+- Workflows: `node --test scripts/ci-workflows.test.mjs`
 - Agent-team config: `agent-team automation smoke .`，`agent-team automation diff-check`
 - Skills sync: `node scripts/check-skills-sync.mjs`
 
@@ -46,7 +39,7 @@
 
 ## Non-goals By Default
 
-- 不默认迁移 Electron、DSH、Svelte 5、Astro、Go module 结构或 CI 分支策略。
-- 不在新 UI 中扩展 `--aorist-*`、`--law-*` 或 Accio 命名的兼容样式；新设计使用 Volt 语义和 `DESIGN.md`。
+- 不恢复已删除的旧运行时、本地 Harness、renderer/preload、Worker 服务、发布链或自动外部同步。
+- 不在 Electron 中复制 DSH 已经提供的会话、工具、权限、凭据、工作区或持久化能力。
 - 不把本地 secrets、用户配置、`.agents/state/` 运行态、mailbox 消息文件提交进仓库。
-- 不把桌面平台专属依赖强加到 CLI 构建路径。
+- 不把桌面平台专属依赖强加到 CLI distribution 构建路径。

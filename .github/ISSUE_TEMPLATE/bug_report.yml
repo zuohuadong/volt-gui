@@ -1,36 +1,44 @@
 name: Bug report
-description: Report a bug in voltui
+description: Report a reproducible VoltUI issue
 title: "[Bug]: "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for filing a bug. Pick which version line you're on below — it gets
-        labeled (`v1`/`v2`) automatically, no maintainer action needed.
-  - type: dropdown
-    id: version-line
-    attributes:
-      label: Version line
-      description: Which line are you running?
-      options:
-        - "v2 — Go rewrite (1.x), main (active development)"
-        - "v1 — Legacy TypeScript (0.x), maintenance only"
-    validations:
-      required: true
+        Thanks for filing a bug. Please include the exact VoltUI version and platform.
   - type: input
     id: version
     attributes:
       label: Exact version
-      description: Output of `voltui --version`.
+      description: The version shown by the desktop artifact or package metadata.
       placeholder: e.g. 1.0.0
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS / platform
+      placeholder: e.g. macOS 15.6 (arm64), Windows 11 (x64)
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Electron desktop shell
+        - Official DSH Web workflow
+        - CLI / Node launcher
+        - Documentation site
+        - Packaging / CI
     validations:
       required: true
   - type: textarea
     id: what-happened
     attributes:
       label: What happened?
-      description: A clear description of the bug, and what you expected instead.
+      description: Describe the observed behavior and what you expected instead.
     validations:
       required: true
   - type: textarea
@@ -43,18 +51,11 @@ body:
         3. ...
     validations:
       required: true
-  - type: input
-    id: os
-    attributes:
-      label: OS / platform
-      placeholder: e.g. macOS 15.3 (arm64), Ubuntu 24.04, Windows 11
-    validations:
-      required: true
   - type: textarea
     id: logs
     attributes:
       label: Relevant logs or output
-      description: Paste any error output. Automatically formatted as code.
+      description: Remove credentials and other sensitive values before posting.
       render: shell
     validations:
       required: false

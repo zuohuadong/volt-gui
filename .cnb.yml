@@ -1,118 +1,25 @@
-# CNB 云原生构建配置 — 西谷智灯暗涌系统 (Anyong DSH + Electron Desktop)
-# 参考: https://docs.cnb.cool/zh/build/configuration.md
-#
-# 架构: Node.js 26 + pnpm 11 + DSH (DeepSeek Harness) + Electron 桌面端
-# 目标: 在 Linux runner 验证源码、边界与 Electron bundle；Windows x64 安装包由 GitHub Windows runner 构建
+# CNB validates the Node 26 + official DSH + Electron source distribution.
+# Windows x64 packaging remains on GitHub's Windows runner.
 
 main:
   push:
-    # Pipeline 1: 快速编译与全量测试验证（每次 push 执行）
     - docker:
-        image: node:26
-      env:
-        VOLTUI_BRAND_NAME: "西谷智灯暗涌系统"
-        VOLTUI_BRAND_SHORT_NAME: "暗涌"
+        image: node:26.7.0
       stages:
-        - name: install-deps
+        - name: install
           script: |
             corepack enable
-            corepack prepare pnpm@11 --activate
+            corepack prepare pnpm@11.23.0 --activate
             pnpm install --frozen-lockfile
-
-        - name: run-tests
+        - name: verify
           script: |
-            node --test scripts/check-electron-runtime-boundary.test.mjs scripts/check-runtime-mocks.test.mjs
-            node scripts/check-electron-runtime-boundary.mjs
-            node scripts/check-runtime-mocks.mjs
             pnpm run test:dsh-integration
-            pnpm --filter voltui-desktop-workbench run check
-            pnpm --filter voltui-desktop-workbench run test:unit
             pnpm test
-
-        - name: build-electron-bundle
+            node --test scripts/ci-workflows.test.mjs scripts/package-dist.test.mjs scripts/set-electron-package-version.test.mjs
+            node scripts/check-migration-boundary.mjs
+            pnpm audit --prod --audit-level high
+        - name: build
           script: |
-            pnpm run build:desktop
-
-    # Pipeline 2: 发版就绪验证（仅在约定式提交 feat:/fix: 时触发）
-    # CNB 当前没有经验证的 Windows/Wine 打包工具链，因此绝不在 Linux
-    # runner 上声称已经生成可发布安装包。
-    - docker:
-        image: node:26
-      env:
-        VOLTUI_BRAND_NAME: "西谷智灯暗涌系统"
-        VOLTUI_BRAND_SHORT_NAME: "暗涌"
-      stages:
-        - name: resolve-release-version
-          script: |
-            MSG="${CNB_COMMIT_MESSAGE}"
-
-            if echo "$MSG" | grep -q '\[skip-release\]'; then
-              echo "[skip-release] detected, skipping"
-              touch .release_skip
-              exit 0
-            fi
-
-            if echo "$MSG" | grep -qE '^(feat|fix)(\(.+\))?!?:'; then
-              echo "Conventional commit detected: $MSG"
-            else
-              echo "Not a release commit (need feat:/fix:), skipping"
-              touch .release_skip
-              exit 0
-            fi
-
-            git fetch --tags origin 2>/dev/null || true
-            LATEST_TAG=$(git tag -l --sort=-version:refname | grep -E '^desktop-v[0-9]' | head -1 || true)
-
-            if [ -z "$LATEST_TAG" ]; then
-              DESKTOP_TAG="desktop-v0.1.0"
-            else
-              VERSION_BASE=$(echo "$LATEST_TAG" | sed 's/^desktop-v//')
-              MAJOR=$(echo "$VERSION_BASE" | cut -d. -f1)
-              MINOR=$(echo "$VERSION_BASE" | cut -d. -f2)
-              PATCH=$(echo "$VERSION_BASE" | cut -d. -f3 | cut -d- -f1)
-
-              if echo "$MSG" | grep -qE '^(feat|fix)(\(.+\))?!:'; then
-                NEW_MAJOR=$((MAJOR + 1))
-                DESKTOP_TAG="desktop-v${NEW_MAJOR}.0.0"
-              elif echo "$MSG" | grep -qE '^feat(\(.+\))?:'; then
-                NEW_MINOR=$((MINOR + 1))
-                DESKTOP_TAG="desktop-v${MAJOR}.${NEW_MINOR}.0"
-              else
-                NEW_PATCH=$((PATCH + 1))
-                DESKTOP_TAG="desktop-v${MAJOR}.${MINOR}.${NEW_PATCH}"
-              fi
-            fi
-
-            echo "Calculated candidate version: $DESKTOP_TAG"
-            VERSION="${DESKTOP_TAG#desktop-v}"
-
-            cat > .release_env <<EOF
-            DESKTOP_TAG=$DESKTOP_TAG
-            VERSION=$VERSION
-            LATEST_TAG=$LATEST_TAG
-            EOF
-
-        - name: verify-electron-release-readiness
-          script: |
-            if [ -f .release_skip ]; then
-              exit 0
-            fi
-            . ./.release_env
-
-            corepack enable
-            corepack prepare pnpm@11 --activate
-            pnpm install --frozen-lockfile
-
-            node scripts/set-electron-package-version.mjs "$VERSION"
-            node --test scripts/check-electron-runtime-boundary.test.mjs scripts/check-runtime-mocks.test.mjs
-            node scripts/check-electron-runtime-boundary.mjs
-            node scripts/check-runtime-mocks.mjs
-            pnpm run test:dsh-integration
-            pnpm --filter voltui-desktop-workbench run check
-            pnpm run build:desktop
-
+            pnpm run build
             test -f apps/desktop-electron/dist/main.js
-            test -f apps/desktop-electron/dist/preload.cjs
-            test -f apps/desktop-electron/dist/renderer/electron.html
-            echo "Electron source bundle is release-ready for $DESKTOP_TAG."
-            echo "Windows x64 packaging remains delegated to .github/workflows/release-desktop.yml."
+            test -f dist/anyong-dsh/package.json

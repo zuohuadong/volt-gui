@@ -20,7 +20,7 @@ Windows x64 packaging runs with:
 pnpm run dist:desktop
 ```
 
-The workflow records installer and portable executable hashes and requires their Authenticode status to be `NotSigned`. This is an unsigned-review artifact, not a production release.
+The workflow records hashes for the installer executable and portable ZIP archive, and requires the installer's Authenticode status to be `NotSigned`. The archive is extracted once and runs `Anyong.exe` directly instead of unpacking the complete DSH runtime on every launch. These remain unsigned-review artifacts, not a production release.
 
 ## Future release gates
 

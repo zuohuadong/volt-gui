@@ -31,6 +31,7 @@ test("desktop CI packages only the official DSH Electron shell on Windows x64", 
   assert.match(desktop, /pnpm run dist:desktop/);
   assert.match(desktop, /pnpm run test:dsh-integration/);
   assert.match(packageJson.scripts["dist:desktop"], /smoke:package/);
+  assert.match(desktop, /windows-x64-portable-\*\.zip/);
   assert.doesNotMatch(desktop, /desktop-frontend|packages\/dsh-|check-runtime-mocks|test:config/);
 });
 
@@ -40,6 +41,7 @@ test("desktop release remains a manual unsigned-review artifact", () => {
   assert.match(release, /workflow_dispatch/);
   assert.match(release, /CSC_IDENTITY_AUTO_DISCOVERY:\s*"false"/);
   assert.match(release, /Get-AuthenticodeSignature/);
+  assert.match(release, /windows-x64-portable-\$env:DESKTOP_VERSION\.zip/);
   assert.match(release, /NotSigned/);
   assert.match(release, /unsigned-review/);
   assert.match(packageJson.scripts["dist:desktop"], /smoke:package/);
@@ -59,6 +61,13 @@ test("retired release and upstream workflows stay absent", () => {
     "upstream-sync.yml",
   ]) {
     assert.equal(existsSync(path.join(root, ".github", "workflows", name)), false, name);
+  }
+
+  for (const name of [
+    "publish-desktop-github-release.sh",
+    "verify-desktop-release-directory.sh",
+  ]) {
+    assert.equal(existsSync(path.join(root, "scripts", name)), false, name);
   }
 });
 

@@ -2,7 +2,7 @@ import process from "node:process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type ElectronProfileName = "voltui" | "anyong";
+export type ElectronProfileName = "anyong";
 
 export interface ElectronDesktopProfile {
   productName: string;
@@ -13,15 +13,8 @@ export interface ElectronDesktopProfile {
 }
 
 const profiles = {
-  voltui: Object.freeze({
-    productName: "VoltUI",
-    appId: "com.voltui.desktop",
-    nsisGuid: "voltui-desktop-guid",
-    artifactSlug: "voltui",
-    executableName: "VoltUI",
-  }),
   anyong: Object.freeze({
-    productName: "Anyong",
+    productName: "西谷智灯暗涌平台",
     appId: "cn.aizhuliren.anyong.desktop",
     nsisGuid: "anyong-desktop-guid",
     artifactSlug: "anyong",
@@ -34,7 +27,7 @@ function isElectronProfileName(value: string): value is ElectronProfileName {
 }
 
 export function resolveElectronProfile(
-  name = process.env.ELECTRON_DESKTOP_PROFILE || "voltui",
+  name = process.env.ELECTRON_DESKTOP_PROFILE || "anyong",
 ): Readonly<ElectronDesktopProfile> {
   const profileName = String(name).trim().toLowerCase();
   if (!isElectronProfileName(profileName)) {

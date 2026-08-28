@@ -27,4 +27,15 @@ await esbuild.build({
   banner: { js: esmCompatBanner },
 });
 
+await esbuild.build({
+  entryPoints: [path.join(rootDir, "src/preload.ts")],
+  outfile: path.join(rootDir, "dist/preload.cjs"),
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  target: "node26",
+  external: ["electron"],
+  sourcemap: true,
+});
+
 console.log("Electron main bundle completed.");

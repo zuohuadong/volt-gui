@@ -1,12 +1,12 @@
 name: Bug report
-description: Report a reproducible VoltUI issue
+description: Report a reproducible 西谷智灯暗涌平台 issue
 title: "[Bug]: "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for filing a bug. Please include the exact VoltUI version and platform.
+        Thanks for filing a bug. Please include the exact 暗涌 version and platform.
   - type: input
     id: version
     attributes:

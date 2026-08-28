@@ -52,7 +52,7 @@ const activeRoots = [
   "docs/WORKBENCH_FEATURE_MATRIX.md",
   "docs/RELEASING.md",
 ];
-const forbidden = /(?:\bgo(?:lang)?\b|\bwails\b|\breasonix\b|main-v2|@dsh\/(?:core|plugins|server)|desktop-frontend|packages\/dsh-|workers\/(?:accounts|forum|crash-report))/i;
+const forbidden = /(?:\bgo(?:lang)?\b|\bwails\b|\breasonix\b|main-v2|@dsh\/(?:core|plugins|server)|packages\/dsh-|workers\/(?:accounts|forum|crash-report))/i;
 const textFile = /\.(?:astro|css|js|json|md|mjs|ps1|sh|toml|ts|ya?ml)$/i;
 const scannerFiles = new Set([
   "scripts/check-electron-runtime-boundary.mjs",

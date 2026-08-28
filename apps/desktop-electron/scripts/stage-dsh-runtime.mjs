@@ -23,6 +23,7 @@ const targetHash = createHash("sha256").update(fs.readFileSync(nodeTarget)).dige
 if (targetHash !== sourceHash) throw new Error("staged Node runtime checksum mismatch");
 const result = spawnSync(process.execPath, [
   pnpmEntrypoint,
+  "--config.node-linker=hoisted",
   "--filter",
   "@voltui/desktop-electron",
   "deploy",
@@ -39,15 +40,24 @@ if (result.status !== 0) process.exit(result.status ?? 1);
 
 const required = [
   "node_modules/@deepseek-ai/dsh/lib/bin.js",
-  "node_modules/.pnpm/node_modules/@deepseek-ai/cordis-plugin-group/package.json",
-  "node_modules/.pnpm/node_modules/js-yaml/package.json",
-  "node_modules/.pnpm/node_modules/node-pty/package.json",
-  "node_modules/.pnpm/node_modules/koffi/package.json",
+  "node_modules/@deepseek-ai/dsh-app-boot/package.json",
+  "node_modules/@deepseek-ai/cordis-plugin-group/package.json",
+  "node_modules/js-yaml/package.json",
+  "node_modules/node-pty/package.json",
+  "node_modules/koffi/package.json",
 ];
 for (const relativePath of required) {
   if (!fs.existsSync(path.join(target, relativePath))) {
     throw new Error(`staged DSH runtime is incomplete: ${relativePath}`);
   }
+}
+
+const linkedEntries = [];
+for (const entry of fs.globSync("node_modules/**/*", { cwd: target, withFileTypes: true })) {
+  if (entry.isSymbolicLink()) linkedEntries.push(path.join(entry.parentPath, entry.name));
+}
+if (linkedEntries.length > 0) {
+  throw new Error(`staged DSH runtime contains package links that installers cannot preserve:\n${linkedEntries.join("\n")}`);
 }
 
 const version = spawnSync(process.execPath, [path.join(target, required[0]), "--version"], {

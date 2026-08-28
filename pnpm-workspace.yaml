@@ -201,3 +201,7 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh@0.1.1-rc.2'
   - '@types/node@26.3.0'
   - electron@44.0.0
+  - '@svadmin/core@0.41.0 || 0.41.1'
+  - '@svadmin/ui@0.52.0 || 0.55.1'
+  - '@tanstack/query-core@5.102.6'
+  - '@tanstack/svelte-query@6.1.46'

@@ -22,6 +22,12 @@
 - **西谷AI 内部决策**：加载 `xigu-ai-ops` — 涉及产品策略、上游同步、中国市场背景。
 - 半导体 ATE、测试程序、良率/SPC、失效分析、LIMS/OCR 数据组织等行业任务，优先加载 `.voltui/skills/semiconductor-*` 和相关工程/数据技能。
 
+## Computation & Tool Execution Policy
+
+- **数学计算强制工具化**：凡涉及数值运算、公式求解、统计汇总、良率/SPC 计算、Cpk/Ppk 推导、浮点精度换算、单位转换等数学计算，严禁使用纯文本心算、估算或口算。
+- **工具内置且默认开启**：必须使用运行时内置且默认开启的确定性执行工具（DSH 内置 `tool-pwsh` / `tool-bash` 驱动的 Node.js 26、Python 或 PowerShell 脚本引擎）进行真实计算。
+- **计算过程与证据可溯**：所有计算结论必须基于工具执行返回的真实数据输出，杜绝任何模型数值幻觉与口算偏差。
+
 ## Verification Profile
 
 按改动范围选择最小但真实的验证命令：

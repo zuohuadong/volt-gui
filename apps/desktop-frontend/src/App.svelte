@@ -26,7 +26,7 @@
 
   let client = $state<DshClient>();
   let productName = $state("西谷智灯暗涌平台");
-  let appVersion = $state("1.0.0");
+  let appVersion = $state("0.30.0");
   let workspacePath = $state("");
   let workspaces = $state<Workspace[]>([]);
   let sessions = $state<SessionSummary[]>([]);

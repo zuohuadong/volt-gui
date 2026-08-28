@@ -30,7 +30,7 @@ async function main() {
   // 3. Create pre-configured package.json in dist
   const distPkg = {
     name: 'anyong-dsh-distribution',
-    version: '1.0.0',
+    version: rootPackage.version,
     private: true,
     type: 'module',
     engines: {

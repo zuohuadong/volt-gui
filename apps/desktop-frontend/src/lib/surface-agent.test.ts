@@ -59,6 +59,11 @@ describe("Volt operation surface protocol", () => {
     const prompt = buildVoltSurfacePrompt("创建工作区看板");
     expect(prompt).toContain(VOLT_SURFACE_AGENT_SCHEMA);
     expect(prompt).toContain("不要生成或执行 Svelte、HTML、CSS、JavaScript");
-    expect(prompt).toContain("sessions[");
+    expect(prompt).toContain("sessions(read=id,title,cwd,running,updatedAt");
+  });
+
+  it("accepts object input and preserves the official agent schema", () => {
+    const result = parseVoltSurfaceProposal(proposal());
+    expect(result).toMatchObject({ ok: true, value: { schemaVersion: "surface-agent/v1" } });
   });
 });

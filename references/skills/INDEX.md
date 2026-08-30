@@ -42,12 +42,12 @@ Candidate for a later split:
 
 - `git-pr-review-ops`: safe commit/push/PR review/merge operations. For now, use `provider-adapter` plus project workflow `pr-review-merge.md`.
 
-## Volt Fork 专属 Skills
+## 西谷智灯暗涌系统 Fork 专属 Skills
 
-以下 skill 是 Volt fork 的行业定制，不贡献到上游：
+以下 skill 是西谷AI (Xigu AI) 西谷智灯暗涌系统 fork 的行业定制，不贡献到上游：
 
 | Task area | Skill |
 | --- | --- |
 | 西谷智灯暗涌系统品牌配置、BrandConfig 环境变量、白标定制验证 | `anyong-brand-config` |
 | CNB CI/CD 管道配置、.cnb.yml、自动发版、跨仓库 PR | `cnb-ci-cd` |
-| Volt 内部运营、产品策略、中国市场、上游同步策略 | `volt-ops` |
+| 西谷AI 内部运营、产品策略、中国市场、上游同步策略 | `xigu-ai-ops` |

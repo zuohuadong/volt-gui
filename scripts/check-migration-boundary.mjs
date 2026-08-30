@@ -30,7 +30,7 @@ const activeRoots = [
   "references/skills/anyong-brand-config/SKILL.md",
   "references/skills/cnb-ci-cd/SKILL.md",
   "references/skills/volt-desktop-experience/",
-  "references/skills/volt-ops/SKILL.md",
+  "references/skills/xigu-ai-ops/SKILL.md",
   "AGENTS.md",
   "CHANGELOG.md",
   "暗涌.md",
@@ -53,7 +53,6 @@ const activeRoots = [
   "docs/RELEASING.md",
 ];
 const forbidden = /(?:\bgo(?:lang)?\b|\bwails\b|\breasonix\b|main-v2|@dsh\/(?:core|plugins|server)|packages\/dsh-|workers\/(?:accounts|forum|crash-report))/i;
-const forbiddenBrand = new RegExp(["xi", "gu"].join("") + "|" + ["xg", "ic"].join(""), "i");
 const embeddedSecret = /\bsk_[A-Za-z0-9_-]{20,}\b/;
 const textFile = /(?:\.(?:astro|css|js|json|md|mjs|ps1|sh|toml|ts|ya?ml|log|svg)|^\.env(?:\..*)?$)$/i;
 const scannerFiles = new Set([
@@ -77,7 +76,6 @@ for (const file of tracked.filter((candidate) =>
 for (const file of tracked.filter((candidate) =>
   existsSync(candidate) && textFile.test(candidate) && !scannerFiles.has(candidate))) {
   const source = readFileSync(file, "utf8");
-  if (forbiddenBrand.test(source)) failures.push(`${file}: retired product identity`);
   if (embeddedSecret.test(source)) failures.push(`${file}: embedded secret-like token`);
 }
 

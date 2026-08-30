@@ -11,7 +11,7 @@
 
 ## Required Skills
 
-- 默认先读 `references/private-skills/INDEX.md`，判断是否存在 VOLT 私有行业 skill；若任务不属于私有技能覆盖范围，再读 `references/skills/INDEX.md`。
+- 默认先读 `references/private-skills/INDEX.md`，判断是否存在 XGIC 私有行业 skill；若任务不属于私有技能覆盖范围，再读 `references/skills/INDEX.md`。
 - 项目私有技能安装在 `.voltui/skills/`，VoltUI 可直接发现；`references/private-skills/skills-manifest.json` 是全量清单。
 - DSH Web UI 由官方 npm 包提供；需要 UI 能力时优先使用官方 profile/plugin 扩展点，不在仓库中重建 renderer。
 - Desktop/Electron 任务需要关注 `apps/desktop-electron/`、根 `pnpm-lock.yaml`、loopback 导航、浏览器权限和原生依赖打包。
@@ -19,7 +19,7 @@
 - 涉及 agent-team 自动化、Task Ledger、mailbox、provider adapter 时加载 `agent-team-automation` 和 `provider-adapter`。
 - **暗涌品牌相关**：加载 `anyong-brand-config` — 使用 Electron profile 和 DSH patch，不重建旧品牌配置层。
 - **CNB CI/CD 相关**：加载 `cnb-ci-cd` — 涉及 .cnb.yml、自动发版、CNB API。
-- **Volt 内部决策**：加载 `volt-ops` — 涉及产品策略、上游同步、中国市场背景。
+- **西谷AI 内部决策**：加载 `xigu-ai-ops` — 涉及产品策略、上游同步、中国市场背景。
 - 半导体 ATE、测试程序、良率/SPC、失效分析、LIMS/OCR 数据组织等行业任务，优先加载 `.voltui/skills/semiconductor-*` 和相关工程/数据技能。
 
 ## Computation & Tool Execution Policy

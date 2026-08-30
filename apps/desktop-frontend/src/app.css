@@ -90,6 +90,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .attachment-chip img { width: 20px; height: 20px; border-radius: 3px; object-fit: cover; }
 .attachment-chip button { display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
 .attachment-error { color: oklch(0.48 0.16 25); font-size: 10px; white-space: nowrap; }
+.reference-picker { position: relative; }
+.reference-picker textarea { width: 100%; min-height: 80px; resize: vertical; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); padding: 10px 12px; outline: 0; }
+.reference-picker textarea:focus { border-color: color-mix(in oklch, var(--primary) 60%, var(--border)); box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 12%, transparent); }
+.reference-picker textarea:disabled { opacity: .55; }
+.reference-suggestions { position: absolute; z-index: 5; right: 8px; bottom: calc(100% + 6px); width: min(460px, calc(100vw - 32px)); overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 10px 30px color-mix(in oklch, var(--foreground) 16%, transparent); }
+.reference-suggestions button { display: flex; width: 100%; gap: 8px; align-items: center; padding: 9px 10px; border: 0; background: transparent; color: var(--foreground); text-align: left; cursor: pointer; }
+.reference-suggestions button:hover, .reference-suggestions button.active { background: var(--muted); }
+.reference-suggestions strong, .reference-suggestions small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reference-suggestions strong { max-width: 390px; font-size: 12px; }
+.reference-suggestions small, .reference-loading, .reference-empty { color: var(--muted-foreground); font-size: 11px; }
+.reference-icon { display: grid; width: 20px; place-items: center; color: var(--primary); }
+.reference-loading, .reference-empty { display: flex; gap: 6px; align-items: center; padding: 9px 10px; }
 .permission-selector { display: inline-flex; align-items: center; gap: 4px; color: var(--muted-foreground); font-size: 10px; }
 .permission-selector select { height: 26px; max-width: 125px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); color: var(--foreground); font-size: 10px; }
 .permission-warning { color: oklch(0.48 0.16 25); font-size: 10px; }

@@ -115,18 +115,3 @@
     </div>
   {/if}
 </div>
-
-<style>
-  .reference-picker { position: relative; }
-  textarea { width: 100%; min-height: 80px; resize: vertical; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); padding: 10px 12px; outline: 0; }
-  textarea:focus { border-color: color-mix(in oklch, var(--primary) 60%, var(--border)); box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 12%, transparent); }
-  textarea:disabled { opacity: .55; }
-  .reference-suggestions { position: absolute; z-index: 5; right: 8px; bottom: calc(100% + 6px); width: min(460px, calc(100vw - 32px)); overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 10px 30px color-mix(in oklch, var(--foreground) 16%, transparent); }
-  .reference-suggestions button { display: flex; width: 100%; gap: 8px; align-items: center; padding: 9px 10px; border: 0; background: transparent; color: var(--foreground); text-align: left; cursor: pointer; }
-  .reference-suggestions button:hover, .reference-suggestions button.active { background: var(--muted); }
-  .reference-suggestions strong, .reference-suggestions small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .reference-suggestions strong { max-width: 390px; font-size: 12px; }
-  .reference-suggestions small, .reference-loading, .reference-empty { color: var(--muted-foreground); font-size: 11px; }
-  .reference-icon { display: grid; width: 20px; place-items: center; color: var(--primary); }
-  .reference-loading, .reference-empty { display: flex; gap: 6px; align-items: center; padding: 9px 10px; }
-</style>

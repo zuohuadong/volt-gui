@@ -45,9 +45,6 @@ dist/
 !/.voltui/commands/review.md
 !/.voltui/skills/
 !/.voltui/skills/**
-/.voltui/*
-!/.voltui/commands/
-!/.voltui/commands/review.md
 
 # CodeGraph per-project index (rebuilt locally; never committed)
 .codegraph/

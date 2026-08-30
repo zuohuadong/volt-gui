@@ -13,7 +13,7 @@ Convert raw data into decision-ready analysis with clear assumptions and reprodu
 
 1. Clarify business question, metric definitions, time range, and audience.
 2. Validate schema, missing values, duplicates, outliers, and units.
-3. Compute KPIs and segment by relevant dimensions.
+3. Compute KPIs and segment by relevant dimensions using built-in deterministic execution tools (Node.js/Python/PowerShell); do not rely on mental arithmetic.
 4. Explain drivers, anomalies, and uncertainty.
 5. Produce a concise report or dashboard outline.
 
@@ -26,3 +26,7 @@ Return:
 - KPI table.
 - Driver analysis.
 - Recommended actions.
+
+## Boundaries
+
+Perform all mathematical calculations and statistical metrics via built-in deterministic tools. Never estimate or guess numbers in text.

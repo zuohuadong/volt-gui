@@ -37,7 +37,7 @@ jobs:
           run_install: false
       - uses: actions/setup-node@v7
         with:
-          node-version: 26.7.0
+          node-version: 26.8.1
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -53,18 +53,17 @@ jobs:
       - name: Confirm artifacts remain unsigned
         shell: pwsh
         run: |
-          $artifacts = @(Get-ChildItem -LiteralPath dist -Filter *.exe -File)
-          if ($artifacts.Count -lt 2) { throw "Expected NSIS and portable executables." }
-          foreach ($artifact in $artifacts) {
-            $signature = Get-AuthenticodeSignature -LiteralPath $artifact.FullName
-            if ($signature.Status -ne 'NotSigned') {
-              throw "Unexpected signature state for $($artifact.Name): $($signature.Status)"
-            }
-            Get-FileHash -Algorithm SHA256 -LiteralPath $artifact.FullName
+          $installer = Get-Item -LiteralPath "dist/anyong-windows-x64-installer-$env:DESKTOP_VERSION.exe"
+          $portable = Get-Item -LiteralPath "dist/anyong-windows-x64-portable-$env:DESKTOP_VERSION.zip"
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
+          if ($signature.Status -ne 'NotSigned') {
+            throw "Unexpected signature state for $($installer.Name): $($signature.Status)"
           }
+          Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName
+          Get-FileHash -Algorithm SHA256 -LiteralPath $portable.FullName
       - uses: actions/upload-artifact@v7
         with:
-          name: voltui-windows-x64-${{ inputs.version }}-unsigned-review
+          name: anyong-windows-x64-${{ inputs.version }}-unsigned-review
           path: dist/*
           if-no-files-found: error
           retention-days: 14

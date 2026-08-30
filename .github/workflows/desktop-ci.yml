@@ -44,7 +44,7 @@ jobs:
           run_install: false
       - uses: actions/setup-node@v7
         with:
-          node-version: 26.7.0
+          node-version: 26.8.1
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -55,18 +55,20 @@ jobs:
           node --test scripts/ci-workflows.test.mjs scripts/package-dist.test.mjs scripts/set-electron-package-version.test.mjs
           node scripts/check-migration-boundary.mjs
       - run: pnpm run dist:desktop
-      - name: Verify packaged executables
+      - name: Verify packaged artifacts
         shell: pwsh
         run: |
-          $artifacts = @(Get-ChildItem -LiteralPath dist -Filter *.exe -File)
-          if ($artifacts.Count -lt 2) {
-            throw "Electron packaging produced $($artifacts.Count) executable(s); expected NSIS and portable artifacts."
+          $installers = @(Get-ChildItem -LiteralPath dist -Filter "*-windows-x64-installer-*.exe" -File)
+          $portables = @(Get-ChildItem -LiteralPath dist -Filter "*-windows-x64-portable-*.zip" -File)
+          if ($installers.Count -ne 1 -or $portables.Count -ne 1) {
+            throw "Expected one NSIS installer and one portable ZIP; found installer=$($installers.Count) portable=$($portables.Count)."
           }
-          $artifacts | ForEach-Object { Write-Host $_.Name }
+          Write-Host $installers[0].Name
+          Write-Host $portables[0].Name
       - uses: actions/upload-artifact@v7
         if: github.event_name == 'workflow_dispatch'
         with:
-          name: voltui-electron-windows-x64
+          name: anyong-electron-windows-x64
           path: dist/*
           if-no-files-found: error
           retention-days: 7

@@ -16,7 +16,7 @@ for (const [file, html] of Object.entries(pages)) {
 }
 
 check(pages['index.html'].includes('Electron shell') && pages['index.html'].includes('Official DeepSeek Harness'), 'home names the current runtime');
-check(pages['enterprise/index.html'].includes('unsigned-review') && pages['enterprise/index.html'].includes('Node 26.7.0'), 'enterprise page states packaging gates');
+check(pages['enterprise/index.html'].includes('unsigned-review') && pages['enterprise/index.html'].includes('Node 26.8.1'), 'enterprise page states packaging gates');
 check(pages['docs/index.html'].includes('pnpm install --frozen-lockfile') && pages['docs/index.html'].includes('pnpm run desktop'), 'docs exposes the supported install and run commands');
 check(pages['docs/index.html'].includes('id="install"') && pages['docs/index.html'].includes('id="verify"'), 'docs anchors resolve');
 

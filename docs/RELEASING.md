@@ -2,7 +2,7 @@
 
 ## Candidate
 
-Release candidates are immutable commits verified with Node `26.7.0`, pnpm `11.23.0`, the frozen lockfile and the current official DSH package.
+Release candidates are immutable commits verified with Node `26.8.1`, pnpm `11.23.0`, the frozen lockfile and the current official DSH package.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -20,7 +20,7 @@ Windows x64 packaging runs with:
 pnpm run dist:desktop
 ```
 
-The workflow records installer and portable executable hashes and requires their Authenticode status to be `NotSigned`. This is an unsigned-review artifact, not a production release.
+The workflow records hashes for the installer executable and portable ZIP archive, and requires the installer's Authenticode status to be `NotSigned`. The archive is extracted once and runs `Anyong.exe` directly instead of unpacking the complete DSH runtime on every launch. These remain unsigned-review artifacts, not a production release.
 
 ## Future release gates
 

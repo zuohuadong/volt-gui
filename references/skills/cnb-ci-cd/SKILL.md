@@ -21,7 +21,7 @@ external source trees.
 main:
   push:
     - docker:
-        image: node:26.7.0
+        image: node:26.8.1
       stages:
         - name: install
           script: pnpm install --frozen-lockfile

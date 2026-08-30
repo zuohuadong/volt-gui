@@ -9,6 +9,7 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 
 const boundaryFiles = {
   main: "apps/desktop-electron/src/main.ts",
+  preload: "apps/desktop-electron/src/preload.ts",
   runtime: "apps/desktop-electron/src/official-dsh-runtime.ts",
   package: "apps/desktop-electron/package.json",
   builder: "apps/desktop-electron/electron-builder.mjs",
@@ -40,7 +41,7 @@ export async function scanElectronRuntimeBoundary({ root = repositoryRoot } = {}
     ["node-integration", /nodeIntegration:\s*false/, "Renderer must keep Node integration disabled."],
     ["sandbox", /sandbox:\s*true/, "Renderer must run inside the Electron sandbox."],
     ["window-open", /setWindowOpenHandler\(\(\)\s*=>\s*\(\{\s*action:\s*["']deny["']\s*\}\)\)/, "New windows must be denied."],
-    ["navigation-origin", /will-navigate[\s\S]*origin\s*!==\s*trustedOrigin/, "Navigation must stay on the launched DSH loopback origin."],
+    ["navigation-origin", /will-navigate[\s\S]*targetUrl\.startsWith\(["']file:\/\/["']\)/, "Local renderer navigation must stay on the packaged file origin."],
     ["permission-check", /setPermissionCheckHandler\(\(\)\s*=>\s*false\)/, "Browser permission checks must fail closed."],
     ["permission-request", /setPermissionRequestHandler[\s\S]*callback\(false\)/, "Browser permission requests must fail closed."],
   ]) {
@@ -48,8 +49,16 @@ export async function scanElectronRuntimeBoundary({ root = repositoryRoot } = {}
   }
 
   for (const [rule, pattern, message] of [
+    ["ipc-method-allowlist", /allowedDshMethods\.has\(method\)/, "DSH IPC calls must be limited to an explicit method allowlist."],
+    ["preload-context-bridge", /contextBridge\.exposeInMainWorld\(["']voltDesktop["']/, "Renderer APIs must be exposed through contextBridge."],
+    ["preload-dsh-request", /desktop:dsh-request/, "Preload must proxy DSH requests through the isolated main process."],
+  ]) {
+    requirePattern(findings, rule === "preload-context-bridge" || rule === "preload-dsh-request" ? sources.preload : sources.main, rule === "preload-context-bridge" || rule === "preload-dsh-request" ? boundaryFiles.preload : boundaryFiles.main, rule, pattern, message);
+  }
+
+  for (const [rule, pattern, message] of [
     ["local-harness-import", /["']@dsh\//, "Electron must not import the retired in-repository Harness."],
-    ["renderer-bundle", /desktop-frontend|workbench\.html|preload\.(?:ts|cjs)/, "Electron must not package or load the retired renderer/preload bridge."],
+    ["renderer-bundle", /workbench\.html|dist\/renderer/, "Electron must not package the retired renderer bundle."],
     ["remote-content", /loadURL\((?!dshUrl)/, "Electron may only load the URL published by its managed DSH process."],
     ["electron-node-child", /ELECTRON_RUN_AS_NODE/, "Electron must not substitute its embedded Node version for the staged Node 26 runtime."],
   ]) {
@@ -103,7 +112,7 @@ export async function scanElectronRuntimeBoundary({ root = repositoryRoot } = {}
     sources.builder,
     boundaryFiles.builder,
     "retired-renderer-package",
-    /desktop-frontend|preload\.cjs|workbench\.html|dist\/renderer/,
+    /workbench\.html|dist\/renderer/,
     "electron-builder must not package retired renderer assets.",
   );
 

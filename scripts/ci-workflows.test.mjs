@@ -9,7 +9,7 @@ const workflow = (name) => readFileSync(path.join(root, ".github", "workflows", 
 
 test("CI is Node 26 only and verifies the official DSH migration boundary", () => {
   const ci = workflow("ci.yml");
-  assert.match(ci, /node-version:\s*26\.7\.0/g);
+  assert.match(ci, /node-version:\s*26\.8\.1/g);
   assert.match(ci, /pnpm run test:dsh-integration/);
   assert.match(ci, /node scripts\/check-migration-boundary\.mjs/);
   assert.doesNotMatch(ci, /setup-go|\bgo test\b|golangci|govulncheck|desktop-frontend|@dsh\//i);
@@ -25,12 +25,16 @@ test("CodeQL scans only current JavaScript, TypeScript, and Actions surfaces", (
 test("desktop CI packages only the official DSH Electron shell on Windows x64", () => {
   const desktop = workflow("desktop-ci.yml");
   const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  const electronPackageJson = JSON.parse(readFileSync(path.join(root, "apps", "desktop-electron", "package.json"), "utf8"));
   assert.match(desktop, /runs-on:\s*windows-latest/);
-  assert.match(desktop, /node-version:\s*26\.7\.0/);
+  assert.match(desktop, /node-version:\s*26\.8\.1/);
   assert.match(desktop, /version:\s*11\.23\.0/);
   assert.match(desktop, /pnpm run dist:desktop/);
   assert.match(desktop, /pnpm run test:dsh-integration/);
   assert.match(packageJson.scripts["dist:desktop"], /smoke:package/);
+  assert.match(electronPackageJson.scripts.dist, /install:electron/);
+  assert.equal(electronPackageJson.scripts["install:electron"], "install-electron");
+  assert.match(desktop, /windows-x64-portable-\*\.zip/);
   assert.doesNotMatch(desktop, /desktop-frontend|packages\/dsh-|check-runtime-mocks|test:config/);
 });
 
@@ -40,6 +44,7 @@ test("desktop release remains a manual unsigned-review artifact", () => {
   assert.match(release, /workflow_dispatch/);
   assert.match(release, /CSC_IDENTITY_AUTO_DISCOVERY:\s*"false"/);
   assert.match(release, /Get-AuthenticodeSignature/);
+  assert.match(release, /windows-x64-portable-\$env:DESKTOP_VERSION\.zip/);
   assert.match(release, /NotSigned/);
   assert.match(release, /unsigned-review/);
   assert.match(packageJson.scripts["dist:desktop"], /smoke:package/);
@@ -60,6 +65,13 @@ test("retired release and upstream workflows stay absent", () => {
   ]) {
     assert.equal(existsSync(path.join(root, ".github", "workflows", name)), false, name);
   }
+
+  for (const name of [
+    "publish-desktop-github-release.sh",
+    "verify-desktop-release-directory.sh",
+  ]) {
+    assert.equal(existsSync(path.join(root, "scripts", name)), false, name);
+  }
 });
 
 test("repository governance files match the current runtime", () => {
@@ -76,7 +88,7 @@ test("repository governance files match the current runtime", () => {
 
 test("CNB validates the same Node 26 source contract", () => {
   const cnb = readFileSync(path.join(root, ".cnb.yml"), "utf8");
-  assert.match(cnb, /node:26\.7\.0/);
+  assert.match(cnb, /node:26\.8\.1/);
   assert.match(cnb, /pnpm@11\.23\.0/);
   assert.match(cnb, /pnpm run test:dsh-integration/);
   assert.match(cnb, /check-migration-boundary/);
@@ -85,7 +97,7 @@ test("CNB validates the same Node 26 source contract", () => {
 
 test("Pages builds the site with the exact repository Node version", () => {
   const pages = workflow("pages.yml");
-  assert.match(pages, /node-version:\s*26\.7\.0/);
+  assert.match(pages, /node-version:\s*26\.8\.1/);
   assert.match(pages, /npm ci/);
   assert.match(pages, /npm run build/);
 });

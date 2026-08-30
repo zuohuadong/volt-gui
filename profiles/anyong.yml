@@ -4,5 +4,35 @@
 
 - id: agent-default-model
   config:
-    provider: deepseek-official
-    model: deepseek-chat
+    provider: xg-gomodel
+    model: vlm
+
+# XG 内置 GOModel 网关。密钥只通过官方 DSH 凭据引用解析，绝不写入此文件。
+- id: llm-pi-ai
+  name: '@deepseek-ai/dsh-llm-pi-ai'
+  config:
+    providers:
+      xg-gomodel:
+        displayName: XG GOModel
+        apiKeyEnv: XG_GOMODEL_API_KEY
+        api: openai-completions
+        baseURL: http://192.168.1.47:9010/v1
+        compat:
+          supportsDeveloperRole: false
+          maxTokensField: max_tokens
+        models:
+          - id: vlm
+            name: VLM (Qwen Text Alias)
+            input: [text]
+            contextWindow: 65536
+            maxTokens: 32768
+          - id: deepseek-v4-flash
+            name: DeepSeek V4 Flash
+            input: [text]
+            contextWindow: 1048576
+            maxTokens: 32768
+          - id: qwen3.8-flash-next
+            name: Qwen 3.8 Flash Next
+            input: [text]
+            contextWindow: 1048576
+            maxTokens: 32768

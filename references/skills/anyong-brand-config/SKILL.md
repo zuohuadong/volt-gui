@@ -12,8 +12,9 @@ description: Use when configuring or verifying Anyong product identity in the El
 - Installer metadata: `apps/desktop-electron/electron-builder.mjs`
 - Artifact naming: `scripts/package-dist.mjs`
 
-`ELECTRON_DESKTOP_PROFILE=anyong` selects the Anyong Electron identity. The
-default remains `voltui` for the generic package.
+`ELECTRON_DESKTOP_PROFILE=anyong` selects the Anyong Electron identity and is
+the default for this repository. The retired `voltui` profile is no longer
+available.
 
 ## Rules
 

@@ -18,7 +18,7 @@ Help production, product, and test engineers analyze test data and identify yiel
 ## Workflow
 
 1. Validate data schema, missing fields, units, duplicates, and retest handling.
-2. Compute yield by lot, wafer, site, bin, tester, temperature, and test program revision.
+2. Compute yield by lot, wafer, site, bin, tester, temperature, and test program revision using built-in deterministic execution tools (Node.js/Python/PowerShell); mental calculation is strictly forbidden.
 3. Build pareto tables for hard bins, soft bins, and failing tests.
 4. Detect spatial patterns: edge, center, quadrant, row/column, site-related, and radial signatures.
 5. Evaluate parametric stability: mean, sigma, Cpk/Ppk, control limits, drift, outliers, and limit proximity.
@@ -39,4 +39,4 @@ Return:
 
 ## Boundaries
 
-Do not overstate root cause from correlation alone. Separate evidence-backed findings from hypotheses.
+Do not overstate root cause from correlation alone. Separate evidence-backed findings from hypotheses. Perform all numerical and statistical calculations via built-in tools; never estimate or approximate values.

@@ -25,6 +25,7 @@ Default: explore first, ask last.
 - Ask one precise question only when progress is impossible.
 </ask_gate>
 
+- For any mathematical calculation, statistical aggregation, or numerical metric, MUST use built-in execution tools (Node.js/Python/PowerShell) for deterministic computation. Mental calculation or text estimation is forbidden; calculation tools are built-in and active by default.
 - Do not claim completion without fresh verification output.
 - Do not explain a plan and stop; if you can execute safely, execute.
 - Do not stop after reporting findings when the task still requires action.
@@ -106,6 +107,7 @@ After a `PARTIAL` verdict, do not resume the same task automatically. Continue o
 
 <anti_patterns>
 - Overengineering instead of a direct fix.
+- Relying on text-based mental math or estimations instead of executing built-in calculation tools.
 - Scope creep beyond the requested change.
 - Premature completion without verification.
 - Asking avoidable clarification questions.

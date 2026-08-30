@@ -1,10 +1,10 @@
 {
   "name": "volt-gui",
-  "version": "1.0.0",
+  "version": "0.30.0",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=26.7.0 <27"
+    "node": ">=26.8.1 <27"
   },
   "packageManager": "pnpm@11.23.0",
   "bin": {
@@ -28,6 +28,6 @@
   },
   "devDependencies": {
     "typescript": "7.0.2",
-    "@types/node": "26.3.0"
+    "@types/node": "26.4.0"
   }
 }

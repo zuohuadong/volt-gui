@@ -10,12 +10,13 @@ import { scanElectronRuntimeBoundary } from "./check-electron-runtime-boundary.m
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureFiles = [
   "apps/desktop-electron/src/main.ts",
+  "apps/desktop-electron/src/preload.ts",
   "apps/desktop-electron/src/official-dsh-runtime.ts",
   "apps/desktop-electron/package.json",
   "apps/desktop-electron/electron-builder.mjs",
 ];
 
-test("current Electron shell is isolated around the official DSH runtime", async () => {
+test("current Electron shell is isolated around the official DSH runtime and local Svelte renderer", async () => {
   assert.deepEqual(await scanElectronRuntimeBoundary(), []);
 });
 

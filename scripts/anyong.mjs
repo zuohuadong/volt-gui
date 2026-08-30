@@ -25,6 +25,10 @@ function runDsh(args) {
     env: process.env,
   });
 
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.once(signal, () => child.kill(signal));
+  }
+
   child.on('error', (error) => {
     console.error(`[Anyong DSH] Failed to start the locked DSH runtime: ${error.message}`);
     process.exit(1);
@@ -51,6 +55,7 @@ if (isHeadless) {
 } else if (isWeb || userArgs.length === 0) {
   const cleanArgs = userArgs.slice(1);
   runDsh([
+    '--profile',
     'web',
     '--patch',
     defaultProfilePatch,

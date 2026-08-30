@@ -21,10 +21,11 @@ function createResources(platform = "win32") {
   const files = [
     path.join(resources, "node-runtime", platform === "win32" ? "node.exe" : "node"),
     path.join(resources, "dsh-runtime", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"),
-    path.join(resources, "dsh-runtime", "node_modules", ".pnpm", "node_modules", "@deepseek-ai", "cordis-plugin-group", "package.json"),
-    path.join(resources, "dsh-runtime", "node_modules", ".pnpm", "node_modules", "js-yaml", "package.json"),
-    path.join(resources, "dsh-runtime", "node_modules", ".pnpm", "node_modules", "node-pty", "package.json"),
-    path.join(resources, "dsh-runtime", "node_modules", ".pnpm", "node_modules", "koffi", "package.json"),
+    path.join(resources, "dsh-runtime", "node_modules", "@deepseek-ai", "dsh-app-boot", "package.json"),
+    path.join(resources, "dsh-runtime", "node_modules", "@deepseek-ai", "cordis-plugin-group", "package.json"),
+    path.join(resources, "dsh-runtime", "node_modules", "js-yaml", "package.json"),
+    path.join(resources, "dsh-runtime", "node_modules", "node-pty", "package.json"),
+    path.join(resources, "dsh-runtime", "node_modules", "koffi", "package.json"),
     path.join(resources, "profiles", "anyong.yml"),
   ];
   for (const file of files) {

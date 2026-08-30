@@ -2,34 +2,36 @@
 
 ## Product Surface
 
-The official DeepSeek Harness Web UI is the only desktop product surface. This
-repository does not own a renderer, component library, theme layer, or parallel
-workbench implementation.
+The official DeepSeek Harness runtime remains the source of truth for sessions,
+tools, permissions, credentials, and persistence. VoltUI owns a thin local
+Svelte 5 workbench for presentation and management views, using the official
+loopback RPC/event APIs rather than reimplementing runtime state.
 
 ## Electron Shell
 
 Electron owns only native desktop concerns:
 
 - window creation and single-instance behavior;
-- loopback-only navigation to the managed DSH Web process;
+- loopback-only access to the managed DSH runtime APIs;
 - sandbox, context isolation, browser permission denial, and external-window denial;
 - DSH child-process startup, shutdown, crash handling, and packaging;
 - product name, application identifier, executable name, and installer metadata.
 
-The shell must not expose a preload API, duplicate DSH persistence, or render a
-fallback application. Startup failure is an explicit native error, not a second
-product surface.
+The shell exposes only a narrow preload API for window controls, workspace
+selection, runtime bootstrap, and runtime-error reporting. It must not duplicate
+DSH persistence or run a second backend. Startup failure is rendered inside the
+workbench so the app does not produce an unsolicited blocking error popup.
 
 ## DSH Extensions
 
-Product behavior and UI customization must use supported official DSH profile
-or plugin extension points. `profiles/anyong.yml` may override rows supplied by
-the official profile; it must not recreate official plugins or private runtime
-state.
+Product behavior and UI customization use official DSH RPC/event APIs and
+supported profile or plugin extension points. `profiles/anyong.yml` may override
+rows supplied by the official profile; it must not recreate official plugins or
+private runtime state.
 
-When the official extension model cannot express a requested UI change, treat
-that as an upstream DSH requirement. Do not copy the official renderer into this
-repository.
+When the official APIs cannot express a requested runtime capability, treat that
+as an upstream DSH requirement. Do not copy official renderer assets or create a
+parallel Harness backend in this repository.
 
 ## Site
 
@@ -39,6 +41,7 @@ features, or release channels.
 
 ## Verification
 
-For presentation or shell changes, verify the real official DSH Web surface and
-the Electron window. A mock page, copied renderer, static HTML fallback, or a
-successful process launch without a usable UI is not acceptance evidence.
+For presentation or shell changes, verify the official DSH runtime APIs and the
+Electron window. The local renderer must use real loopback session, history,
+prompt, model, and workspace flows; a mock page or parallel persistence layer is
+not acceptance evidence.

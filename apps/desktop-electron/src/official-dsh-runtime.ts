@@ -1,12 +1,17 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { createRequire } from "node:module";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Readable } from "node:stream";
+import { isMap, parseDocument, type Document } from "yaml";
 
 const require = createRequire(import.meta.url);
 const STARTUP_TIMEOUT_MS = 180_000;
 const STOP_TIMEOUT_MS = 5_000;
+const MAX_DIAGNOSTIC_LINES = 20;
+const STARTUP_RETRY_DELAY_MS = 500;
 const DSH_URL_PATTERN = /^dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?$)/;
+export const WELCOME_NOTICE_VERSION = "2026-08-13.1";
 
 export interface OfficialDshRuntimeOptions {
   dshBin: string;
@@ -20,12 +25,99 @@ export interface OfficialDshRuntimeOptions {
   onExit?: (code: number | null, signal: NodeJS.Signals | null) => void;
 }
 
+function isTransientStartupExit(error: unknown): error is Error {
+  return error instanceof Error
+    && /Official DSH exited before startup: code=1 signal=null/.test(error.message);
+}
+
+export async function startOfficialDshWithRetry(
+  runtime: { start(): Promise<string> },
+  retryDelayMs = STARTUP_RETRY_DELAY_MS,
+): Promise<string> {
+  try {
+    return await runtime.start();
+  } catch (error) {
+    if (!isTransientStartupExit(error)) throw error;
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    try {
+      return await runtime.start();
+    } catch (retryError) {
+      const message = retryError instanceof Error ? retryError.message : String(retryError);
+      throw new Error(`Official DSH failed after one automatic retry.\n${message}`, { cause: retryError });
+    }
+  }
+}
+
+export function rethrowUnlessBrokenPipe(error: NodeJS.ErrnoException): void {
+  if (error.code !== "EPIPE") throw error;
+}
+
+function waitForChildClose(child: ChildProcessByStdio<null, Readable, Readable>, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (closed: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(closed);
+    };
+    const timeout = setTimeout(() => finish(false), timeoutMs);
+    child.once("close", () => finish(true));
+  });
+}
+
+async function terminateWindowsProcessTree(pid: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const taskkill = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    taskkill.once("error", () => resolve());
+    taskkill.once("close", () => resolve());
+  });
+}
+
 export function resolveOfficialDshBin(resourcesPath?: string): string {
   if (resourcesPath) {
     return path.join(resourcesPath, "dsh-runtime", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
   }
   const packageJson = require.resolve("@deepseek-ai/dsh/package.json");
   return path.join(path.dirname(packageJson), "lib", "bin.js");
+}
+
+function readSettingsDocument(settingsPath: string): Document {
+  const source = existsSync(settingsPath) ? readFileSync(settingsPath, "utf8") : "{}\n";
+  const document = parseDocument(source);
+  if (document.errors.length > 0) {
+    throw new Error(`Official DSH settings are invalid: ${settingsPath}\n${document.errors[0].message}`);
+  }
+  if (document.contents !== null && !isMap(document.contents)) {
+    throw new Error(`Official DSH settings must contain a YAML mapping: ${settingsPath}`);
+  }
+  return document;
+}
+
+function writeSettingsDocument(settingsPath: string, document: Document): void {
+  const temporaryPath = `${settingsPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(temporaryPath, document.toString(), { encoding: "utf8", flag: "wx", mode: 0o600 });
+    renameSync(temporaryPath, settingsPath);
+  } finally {
+    rmSync(temporaryPath, { force: true });
+  }
+}
+
+export function acknowledgeOfficialDshWelcomeNotice(dshHome: string): void {
+  mkdirSync(dshHome, { recursive: true });
+  const settingsPath = path.join(dshHome, "settings.yaml");
+  const document = readSettingsDocument(settingsPath);
+
+  const currentVersion = document.getIn(["ui-onboarding", "welcomeNoticeVersion"]);
+  if (currentVersion === WELCOME_NOTICE_VERSION) return;
+
+  document.setIn(["ui-onboarding", "welcomeNoticeVersion"], WELCOME_NOTICE_VERSION);
+  writeSettingsDocument(settingsPath, document);
 }
 
 export class OfficialDshRuntime {
@@ -43,6 +135,9 @@ export class OfficialDshRuntime {
 
   async start(): Promise<string> {
     if (this.child) throw new Error("Official DSH is already running.");
+
+    this.validatePaths();
+    acknowledgeOfficialDshWelcomeNotice(this.options.dshHome);
 
     const executable = this.options.executable || process.execPath;
     const child = spawn(executable, [
@@ -73,18 +168,32 @@ export class OfficialDshRuntime {
         void this.stop();
       }, this.options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS);
       let stdoutBuffer = "";
+      let stderrBuffer = "";
+      const diagnostics: string[] = [];
       let settled = false;
+
+      const remember = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        diagnostics.push(trimmed);
+        if (diagnostics.length > MAX_DIAGNOSTIC_LINES) diagnostics.shift();
+        this.options.onLog?.(trimmed);
+      };
+
+      const diagnosticText = () => diagnostics.length > 0
+        ? `\nDSH output:\n${diagnostics.join("\n")}`
+        : "";
 
       const fail = (error: Error) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
-        reject(error);
+        reject(new Error(`${error.message}${diagnosticText()}`, { cause: error }));
       };
       const handleLine = (line: string) => {
         const trimmed = line.trim();
         if (!trimmed) return;
-        this.options.onLog?.(trimmed);
+        remember(trimmed);
         const match = trimmed.match(DSH_URL_PATTERN);
         if (!match || settled) return;
         settled = true;
@@ -102,10 +211,15 @@ export class OfficialDshRuntime {
       });
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk: string) => {
-        for (const line of chunk.split(/\r?\n/)) handleLine(line);
+        stderrBuffer += chunk;
+        const lines = stderrBuffer.split(/\r?\n/);
+        stderrBuffer = lines.pop() ?? "";
+        for (const line of lines) handleLine(line);
       });
       child.once("error", (error) => fail(error));
-      child.once("exit", (code, signal) => {
+      child.once("close", (code, signal) => {
+        handleLine(stdoutBuffer);
+        handleLine(stderrBuffer);
         this.child = null;
         this.runtimeUrl = "";
         if (!settled) fail(new Error(`Official DSH exited before startup: code=${code} signal=${signal}`));
@@ -114,19 +228,42 @@ export class OfficialDshRuntime {
     });
   }
 
+  private validatePaths(): void {
+    const { dshBin, dshHome, patchFile, workspace } = this.options;
+    if (!existsSync(dshBin)) throw new Error(`Official DSH launcher is missing: ${dshBin}`);
+    if (!existsSync(patchFile)) throw new Error(`Official DSH profile patch is missing: ${patchFile}`);
+    if (!existsSync(workspace) || !statSync(workspace).isDirectory()) {
+      throw new Error(`Official DSH workspace is unavailable: ${workspace}`);
+    }
+    try {
+      mkdirSync(dshHome, { recursive: true });
+    } catch (error) {
+      throw new Error(`Official DSH home is unavailable: ${dshHome}`, { cause: error });
+    }
+  }
+
   async stop(): Promise<void> {
     const child = this.child;
     if (!child) return;
     this.child = null;
     this.runtimeUrl = "";
 
+    if (process.platform === "win32" && child.pid) {
+      // Windows signals only target the direct child. Kill the complete tree
+      // so the bundled node-runtime process cannot keep the installer locked.
+      await terminateWindowsProcessTree(child.pid);
+      if (!(await waitForChildClose(child, STOP_TIMEOUT_MS))) child.kill("SIGKILL");
+      return;
+    }
+
     await new Promise<void>((resolve) => {
-      if (child.exitCode !== null || child.signalCode !== null) {
+      if ((child.exitCode !== null || child.signalCode !== null)
+        && child.stdout.closed && child.stderr.closed) {
         resolve();
         return;
       }
       const forceStop = setTimeout(() => child.kill("SIGKILL"), STOP_TIMEOUT_MS);
-      child.once("exit", () => {
+      child.once("close", () => {
         clearTimeout(forceStop);
         resolve();
       });

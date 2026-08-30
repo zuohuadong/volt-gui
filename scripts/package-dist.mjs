@@ -17,15 +17,15 @@ export function normalizeDesktopVersion(rawVersion) {
 
 function releaseArtifact(file, version, desktopProfile = profile) {
   const installerName = `${desktopProfile.productName} Setup ${version}.exe`;
-  const portableName = `${desktopProfile.productName} ${version}.exe`;
+  const portableName = `${desktopProfile.productName}-${version}-win.zip`;
   if (file === installerName) {
     return { kind: "installer", targetName: `${desktopProfile.artifactSlug}-windows-x64-installer-${version}.exe` };
   }
   if (file === portableName) {
-    return { kind: "portable", targetName: `${desktopProfile.artifactSlug}-windows-x64-portable-${version}.exe` };
+    return { kind: "portable", targetName: `${desktopProfile.artifactSlug}-windows-x64-portable-${version}.zip` };
   }
   if (file === `${installerName}.blockmap`) {
-    return { kind: "blockmap", targetName: file };
+    return { kind: "blockmap", targetName: `${desktopProfile.artifactSlug}-windows-x64-installer-${version}.exe.blockmap` };
   }
   return null;
 }

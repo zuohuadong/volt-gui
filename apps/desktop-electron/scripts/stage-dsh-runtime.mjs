@@ -11,7 +11,7 @@ const nodeTarget = path.join(nodeTargetDir, process.platform === "win32" ? "node
 const pnpmEntrypoint = process.env.npm_execpath;
 
 if (!pnpmEntrypoint) throw new Error("stage:runtime must be launched through pnpm");
-if (process.version !== "v26.7.0") throw new Error(`Node 26.7.0 is required to stage the desktop runtime; received ${process.version}`);
+if (process.version !== "v26.8.1") throw new Error(`Node 26.8.1 is required to stage the desktop runtime; received ${process.version}`);
 
 fs.rmSync(target, { recursive: true, force: true });
 fs.rmSync(nodeTargetDir, { recursive: true, force: true });

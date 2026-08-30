@@ -17,17 +17,18 @@
     "test:security": "node --test ../../scripts/check-electron-runtime-boundary.test.mjs",
     "test": "pnpm run typecheck && pnpm run test:profile && pnpm run test:runtime && pnpm run test:security",
     "dev": "tsc --watch --noEmit",
-    "start": "pnpm run stage:runtime && electron dist/main.js",
+    "install:electron": "install-electron",
+    "start": "pnpm run install:electron && pnpm run stage:runtime && electron dist/main.js",
     "stage:runtime": "node ./scripts/stage-dsh-runtime.mjs",
     "smoke:package": "node ../../scripts/smoke-packaged-dsh-runtime.mjs",
-    "dist": "pnpm run stage:runtime && electron-builder --config electron-builder.mjs --win --x64 --publish never"
+    "dist": "pnpm run install:electron && pnpm run stage:runtime && electron-builder --config electron-builder.mjs --win --x64 --publish never"
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.1-rc.2",
     "yaml": "2.9.0"
   },
   "devDependencies": {
-    "@types/node": "26.3.0",
+    "@types/node": "26.4.0",
     "electron": "44.0.0",
     "electron-builder": "26.15.3",
     "esbuild": "0.28.2",

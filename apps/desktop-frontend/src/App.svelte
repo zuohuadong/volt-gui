@@ -5,11 +5,12 @@
     CircleCheck, ClipboardList, Code2, Copy, ExternalLink, FileText, FolderOpen,
     History, KeyRound, LoaderCircle, MessageSquare, MessageSquarePlus, Network,
     Pause, Pencil, Play, PanelLeftClose, PanelLeftOpen, Save, Search, Send,
-    Settings2, ShieldAlert, Square, Target, Terminal, Trash2, UserRoundCog,
+    Settings2, ShieldAlert, SlidersHorizontal, Square, Target, Terminal, Trash2, UserRoundCog,
     Wrench, X,
   } from "@lucide/svelte";
   import { Button } from "$components/ui/button";
   import { Textarea } from "$components/ui/textarea";
+  import GeneratedSurface from "$components/GeneratedSurface.svelte";
   import { Input } from "$components/ui/input";
   import { Separator } from "$components/ui/separator";
   import { DataState, SettingsGroup, StatusBadge } from "@svadmin/ui";
@@ -20,7 +21,23 @@
     type PendingApproval, type PendingQuestion, type SessionSummary,
     type SettingsNamespace, type SubagentEntry, type Workspace,
   } from "$lib/dsh-client";
-  import { applyTranscriptEvent, foldHistory, type TodoItem, type TranscriptMessage } from "$lib/transcript";
+  import { assistantMessageForEvent, applyTranscriptEvent, foldHistory, type TodoItem, type TranscriptMessage } from "$lib/transcript";
+  import {
+    applyUiCustomization,
+    buildUiCustomizationPrompt,
+    DEFAULT_UI_CUSTOMIZATION,
+    isUiCustomizationIntent,
+    parseUiCustomization,
+    type UiCustomizationPatch,
+    type UiCustomizationState,
+  } from "$lib/ui-customization";
+  import {
+    buildVoltSurfacePrompt,
+    isSurfaceGenerationIntent,
+    parseVoltSurfaceProposal,
+    validateStoredSurface,
+  } from "$lib/surface-agent";
+  import type { SurfaceSpec } from "@svadmin/surface";
   type View = "conversation" | "knowledge" | "settings";
   type ManagementTab = "overview" | "sessions" | "goals" | "subagents" | "agents" | "models" | "workspaces" | "knowledge" | "settings" | "runtime";
 
@@ -84,6 +101,17 @@
   let pendingApproval = $state<PendingApproval | undefined>();
   let pendingQuestion = $state<PendingQuestion | undefined>();
   let questionAnswers = $state<Record<string, string>>({});
+  let customization = $state<UiCustomizationState>(DEFAULT_UI_CUSTOMIZATION);
+  let customizationOpen = $state(false);
+  let customizationDraft = $state<UiCustomizationPatch | undefined>();
+  let customizationSourceId = $state("");
+  let customizationNotice = $state("");
+  let customizationHistory = $state<UiCustomizationState[]>([]);
+  let surfaceDraft = $state<{ summary?: string; spec: SurfaceSpec }>();
+  let generatedSurface = $state<SurfaceSpec>();
+  let surfaceSourceId = $state("");
+  let surfaceNotice = $state("");
+  let surfaceHistory = $state<Array<SurfaceSpec | undefined>>([]);
   let unsubscribeRuntimeError: (() => void) | undefined;
 
   const activeSession = $derived(sessions.find((item) => item.sessionId === activeSessionId));
@@ -142,9 +170,126 @@
   ]);
 
   onMount(() => {
+    customization = readUiCustomization();
+    generatedSurface = readGeneratedSurface();
+    applyRuntimeCustomization(customization);
     void bootstrap();
     return () => unsubscribeRuntimeError?.();
   });
+
+  function readUiCustomization(): UiCustomizationState {
+    try {
+      const stored = window.localStorage.getItem("voltui.ui-customization");
+      if (!stored) return DEFAULT_UI_CUSTOMIZATION;
+      const parsed = JSON.parse(stored) as Partial<UiCustomizationState>;
+      const result = parseUiCustomization(JSON.stringify({ ...parsed, schemaVersion: "voltui/ui-patch-v1" }));
+      return result.ok ? applyUiCustomization(DEFAULT_UI_CUSTOMIZATION, result.value) : DEFAULT_UI_CUSTOMIZATION;
+    } catch {
+      return DEFAULT_UI_CUSTOMIZATION;
+    }
+  }
+
+  function persistUiCustomization(value: UiCustomizationState): void {
+    try { window.localStorage.setItem("voltui.ui-customization", JSON.stringify(value)); } catch { /* storage is optional */ }
+  }
+
+  function readGeneratedSurface(): SurfaceSpec | undefined {
+    try {
+      const stored = window.localStorage.getItem("voltui.generated-surface");
+      return stored ? validateStoredSurface(JSON.parse(stored)) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  function persistGeneratedSurface(value: SurfaceSpec | undefined): void {
+    try {
+      if (value) window.localStorage.setItem("voltui.generated-surface", JSON.stringify(value));
+      else window.localStorage.removeItem("voltui.generated-surface");
+    } catch {
+      // Browser storage is optional; the validated in-memory surface remains usable.
+    }
+  }
+
+  function applyRuntimeCustomization(value: UiCustomizationState): void {
+    sidebarCollapsed = value.sidebar === "collapsed";
+    activityOpen = value.activity === "visible";
+  }
+
+  function setSidebarCollapsed(collapsed: boolean): void {
+    sidebarCollapsed = collapsed;
+    customization = { ...customization, sidebar: collapsed ? "collapsed" : "expanded" };
+    persistUiCustomization(customization);
+  }
+
+  function setActivityOpen(open: boolean): void {
+    activityOpen = open;
+    customization = { ...customization, activity: open ? "visible" : "hidden" };
+    persistUiCustomization(customization);
+  }
+
+  function applyCustomizationPatch(patch: UiCustomizationPatch): void {
+    customizationHistory = [...customizationHistory.slice(-9), customization];
+    customization = applyUiCustomization(customization, patch);
+    persistUiCustomization(customization);
+    applyRuntimeCustomization(customization);
+    customizationDraft = undefined;
+    customizationNotice = "界面定制已应用，可继续用对话调整或撤销。";
+  }
+
+  function undoCustomization(): void {
+    const previous = customizationHistory.at(-1);
+    if (!previous) return;
+    customizationHistory = customizationHistory.slice(0, -1);
+    customization = previous;
+    persistUiCustomization(customization);
+    applyRuntimeCustomization(customization);
+    customizationNotice = "已撤销上一次界面定制。";
+  }
+
+  function captureCustomization(message: TranscriptMessage | undefined): void {
+    if (!message || message.role !== "assistant" || !message.text || message.id === customizationSourceId) return;
+    const result = parseUiCustomization(message.text);
+    if (!result.ok) return;
+    customizationDraft = result.value;
+    customizationSourceId = message.id;
+    customizationOpen = true;
+    customizationNotice = "检测到对话生成的界面方案，请确认后应用。";
+  }
+
+  function captureSurfaceProposal(message: TranscriptMessage | undefined): void {
+    if (!message || message.role !== "assistant" || !message.text || message.id === surfaceSourceId) return;
+    const result = parseVoltSurfaceProposal(message.text);
+    if (!result.ok) return;
+    surfaceDraft = { summary: result.value.summary, spec: result.value.spec };
+    surfaceSourceId = message.id;
+    customizationOpen = true;
+    surfaceNotice = "检测到 AI 生成的操作界面，请预览并确认后渲染。";
+  }
+
+  function applySurfaceProposal(): void {
+    if (!surfaceDraft) return;
+    surfaceHistory = [...surfaceHistory.slice(-9), generatedSurface];
+    generatedSurface = surfaceDraft.spec;
+    persistGeneratedSurface(generatedSurface);
+    surfaceDraft = undefined;
+    surfaceNotice = "操作界面已渲染；数据由官方 DSH 会话 API 提供。";
+  }
+
+  function removeGeneratedSurface(): void {
+    surfaceHistory = [...surfaceHistory.slice(-9), generatedSurface];
+    generatedSurface = undefined;
+    persistGeneratedSurface(undefined);
+    surfaceNotice = "已移除操作界面。";
+  }
+
+  function undoGeneratedSurface(): void {
+    if (surfaceHistory.length === 0) return;
+    generatedSurface = surfaceHistory.at(-1);
+    surfaceHistory = surfaceHistory.slice(0, -1);
+    persistGeneratedSurface(generatedSurface);
+    surfaceNotice = generatedSurface ? "已恢复上一个操作界面。" : "已撤销操作界面。";
+  }
 
   async function bootstrap(): Promise<void> {
     try {
@@ -268,6 +413,11 @@
     const transcript = applyTranscriptEvent({ messages, todos }, payload.event, payload.view as Record<string, unknown> | undefined);
     messages = transcript.messages;
     todos = transcript.todos;
+    if (payload.event.type === "assistant/message") {
+      const assistantMessage = assistantMessageForEvent(transcript.messages, payload.event);
+      captureCustomization(assistantMessage);
+      captureSurfaceProposal(assistantMessage);
+    }
     if (payload.event.type === "assistant/message" || payload.event.type === "turn/end") sending = false;
   }
 
@@ -276,7 +426,12 @@
     if (!client || !activeSessionId || !text || sending) return;
     input = ""; sending = true; view = "conversation";
     messages = [...messages, { id: `pending-${Date.now()}`, role: "user", text, pending: true }];
-    try { await client.prompt(activeSessionId, text); }
+    const prompt = isSurfaceGenerationIntent(text)
+      ? buildVoltSurfacePrompt(text)
+      : isUiCustomizationIntent(text)
+        ? buildUiCustomizationPrompt(text)
+        : text;
+    try { await client.prompt(activeSessionId, prompt); }
     catch (error) { sending = false; runtimeError = error instanceof Error ? error.message : String(error); }
   }
 
@@ -611,20 +766,20 @@
 {#if loading}
   <main class="loading-screen"><LoaderCircle class="animate-spin" size={24} /><span>正在连接官方 DSH…</span></main>
 {:else}
-  <main class="app-shell">
+  <main class="app-shell" class:compact={customization.density === "compact"}>
     <header class="topbar">
       <div class="brand"><span class="brand-mark"><Bot size={16} /></span><strong>{productName}</strong><span class="version-label">v{appVersion}</span><span class:offline={!!runtimeError} class="status-dot"></span><span class="status-copy">{runtimeError ? "运行异常" : "官方 DSH"}</span></div>
       <div class="topbar-center"><span class="topbar-workspace"><FolderOpen size={13} />{workspaceName}</span>{#if activeSession}<span class="topbar-separator">/</span><span>{sessionTitle(activeSession)}</span>{/if}</div>
     </header>
     <div class:management-active={view === "settings"} class="workspace-layout">
       <aside class:collapsed={sidebarCollapsed} class="sidebar">
-        <div class="sidebar-toolbar"><Button variant="ghost" size="icon-sm" aria-label="折叠侧栏" onclick={() => sidebarCollapsed = !sidebarCollapsed}>{#if sidebarCollapsed}<PanelLeftOpen size={16} />{:else}<PanelLeftClose size={16} />{/if}</Button>{#if !sidebarCollapsed}<Button variant="ghost" size="icon-sm" aria-label="新建会话" onclick={() => void createSession()}><MessageSquarePlus size={16} /></Button>{/if}</div>
+        <div class="sidebar-toolbar"><Button variant="ghost" size="icon-sm" aria-label="折叠侧栏" onclick={() => setSidebarCollapsed(!sidebarCollapsed)}>{#if sidebarCollapsed}<PanelLeftOpen size={16} />{:else}<PanelLeftClose size={16} />{/if}</Button>{#if !sidebarCollapsed}<Button variant="ghost" size="icon-sm" aria-label="新建会话" onclick={() => void createSession()}><MessageSquarePlus size={16} /></Button>{/if}</div>
         {#if !sidebarCollapsed}
           <div class="workspace-picker"><div class="section-label">工作区</div><button class="workspace-row" onclick={() => void pickWorkspace()}><FolderOpen size={15} /><span title={workspacePath}>{workspaceName}</span><ChevronRight size={14} /></button></div>
           <div class="sidebar-search"><Search size={14} /><input aria-label="搜索会话" placeholder="搜索会话" bind:value={sessionQuery} /></div>
           <Separator />
           <div class="session-list"><div class="section-label section-row"><span>会话</span><span class="count-badge">{filteredSessions.length}</span></div>{#if filteredSessions.length === 0}<div class="sidebar-empty"><MessageSquarePlus size={16} /><span>还没有会话</span><small>点击上方按钮新建会话</small></div>{:else}{#each filteredSessions as session (session.sessionId)}<button class:active={session.sessionId === activeSessionId} class="session-row" onclick={() => void selectSession(session.sessionId)}><span class="session-state" class:running={session.running}></span><span class="session-copy"><strong>{sessionTitle(session)}</strong><small>{session.cwd || workspaceName}</small></span><time>{formatTime(session.updatedAt)}</time></button>{/each}{/if}</div>
-          <div class="sidebar-footer"><Button variant="ghost" class={`footer-button${view === "knowledge" ? " active" : ""}`} onclick={() => openKnowledge()}><BookOpen size={15} />知识库</Button><Button variant="ghost" class="footer-button" onclick={() => openManagement("overview")}><Settings2 size={15} />管理</Button><Button variant="ghost" class="footer-button" onclick={() => activityOpen = !activityOpen}><History size={15} />活动记录<span class="footer-spacer"></span><ChevronDown class={!activityOpen ? "rotated" : ""} size={14} /></Button></div>
+          <div class="sidebar-footer"><Button variant="ghost" class={`footer-button${view === "knowledge" ? " active" : ""}`} onclick={() => openKnowledge()}><BookOpen size={15} />知识库</Button><Button variant="ghost" class="footer-button" onclick={() => openManagement("overview")}><Settings2 size={15} />管理</Button><Button variant="ghost" class="footer-button" onclick={() => setActivityOpen(!activityOpen)}><History size={15} />活动记录<span class="footer-spacer"></span><ChevronDown class={!activityOpen ? "rotated" : ""} size={14} /></Button></div>
         {/if}
       </aside>
       <section class="content-area">
@@ -674,15 +829,18 @@
           </div>
         {:else}
           <div class="conversation-shell">
-            <header class="conversation-header"><div class="conversation-title"><div class="eyebrow">{activeSession ? "会话工作台" : "暗涌"}</div><h1>{activeSession ? sessionTitle(activeSession) : "开始一个新会话"}</h1><p>{workspacePath || "选择一个工作区开始"}</p></div><div class="header-actions">{#if activeSession}<span class="model-pill"><Bot size={13} />{selectedModel || "默认模型"}</span>{/if}<Button variant="outline" size="sm" onclick={() => openManagement("overview")}><Settings2 size={14} />管理</Button></div></header>
+            <header class="conversation-header"><div class="conversation-title"><div class="eyebrow">{activeSession ? "会话工作台" : "暗涌"}</div><h1>{customization.title || (activeSession ? sessionTitle(activeSession) : "开始一个新会话")}</h1><p>{customization.subtitle || workspacePath || "选择一个工作区开始"}</p></div><div class="header-actions">{#if activeSession}<span class="model-pill"><Bot size={13} />{selectedModel || "默认模型"}</span>{/if}<Button variant="outline" size="sm" aria-pressed={customizationOpen} onclick={() => customizationOpen = !customizationOpen}><SlidersHorizontal size={14} />界面</Button><Button variant="outline" size="sm" onclick={() => openManagement("overview")}><Settings2 size={14} />管理</Button></div></header>
             {#if runtimeError}<div class="error-banner"><CircleAlert size={15} /><span>{runtimeError}</span><button aria-label="关闭错误" onclick={() => { runtimeError = ""; }}><X size={14} /></button></div>{/if}
+            {#if customizationOpen}<section class="customization-panel" aria-label="界面定制"><div class="customization-panel__header"><div><div class="section-label">对话式界面定制</div><strong>用自然语言改变工作台</strong><p>例如：收起活动面板、使用紧凑密度、把输入框改成四行。</p></div><Button variant="ghost" size="icon-sm" aria-label="关闭界面定制" onclick={() => customizationOpen = false}><X size={14} /></Button></div>{#if customizationNotice}<div class="customization-feedback"><CircleCheck size={14} /><span>{customizationNotice}</span></div>{/if}{#if customizationDraft}<div class="customization-preview"><div><strong>待应用方案</strong><span>来自当前会话的结构化 patch</span></div><code>{JSON.stringify(customizationDraft)}</code><div class="customization-actions"><Button variant="outline" size="sm" onclick={() => customizationDraft = undefined}>忽略</Button><Button size="sm" onclick={() => applyCustomizationPatch(customizationDraft!)}><Check size={13} />应用方案</Button></div></div>{/if}<div class="customization-summary"><span class="mode-chip">{customization.density === "compact" ? "紧凑密度" : "舒适密度"}</span><span>{customization.sidebar === "collapsed" ? "侧栏已收起" : "侧栏已展开"}</span><span>{customization.activity === "visible" ? "活动面板可见" : "活动面板隐藏"}</span><span>{customization.composerRows} 行输入框</span></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={customizationHistory.length === 0} onclick={undoCustomization}>撤销上次</Button><Button variant="ghost" size="sm" onclick={() => { customization = DEFAULT_UI_CUSTOMIZATION; customizationHistory = []; persistUiCustomization(customization); applyRuntimeCustomization(customization); customizationNotice = "已恢复默认界面。"; }}>恢复默认</Button></div></section>{/if}
+            {#if surfaceDraft}<section class="surface-proposal" aria-label="待确认操作界面"><div><div class="section-label">AI 操作界面提案</div><strong>{surfaceDraft.spec.title}</strong><p>{surfaceDraft.summary || `包含 ${surfaceDraft.spec.widgets.length} 个只读组件，确认后才会查询 DSH 数据。`}</p></div><div class="surface-proposal__meta"><span>{surfaceDraft.spec.widgets.length} 个组件</span><span>{surfaceDraft.spec.dataSources.length} 个数据源</span></div><div class="customization-actions"><Button variant="ghost" size="sm" onclick={() => { surfaceDraft = undefined; surfaceNotice = "已忽略操作界面提案。"; }}>忽略</Button><Button size="sm" onclick={applySurfaceProposal}><Check size={13} />确认渲染</Button></div></section>{/if}
+            {#if generatedSurface && client}<section class="generated-surface" aria-label="AI 生成操作界面"><header><div><div class="section-label">AI 生成操作界面</div><strong>{generatedSurface.title}</strong><p>{surfaceNotice || "只读视图，数据来自官方 DSH API。"}</p></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={surfaceHistory.length === 0} onclick={undoGeneratedSurface}>撤销</Button><Button variant="ghost" size="sm" onclick={removeGeneratedSurface}><Trash2 size={13} />移除</Button></div></header><GeneratedSurface spec={generatedSurface} {client} {activeSessionId} onError={(message) => { surfaceNotice = message; }} /></section>{/if}
             <div class="main-grid">
-              <div class="message-scroll" aria-busy={sending}>{#if messages.length === 0}<div class="empty-state"><span class="empty-mark"><Bot size={22} /></span><h2>准备好开始工作</h2><p>官方 DSH 运行时已连接。描述目标，暗涌会在这里呈现计划、工具和结果。</p><div class="quick-actions"><button onclick={() => input = "检查当前项目状态并给出最值得先处理的问题。"}><ClipboardList size={14} />检查当前项目</button><button onclick={() => input = "梳理当前项目的主要模块和启动流程。"}><Code2 size={14} />理解代码结构</button><button onclick={() => input = "运行测试并汇总失败项。"}><Terminal size={14} />运行测试</button></div></div>{:else}{#each messages as message (message.id)}<article class:user={message.role === "user"} class:assistant={message.role === "assistant"} class:tool={message.role === "tool"} class:pending={message.pending} class="message"><div class="message-avatar">{#if message.role === "user"}你{:else if message.role === "tool"}<Wrench size={13} />{:else if message.role === "system"}<CircleAlert size={13} />{:else}<Bot size={13} />{/if}</div><div class="message-body"><div class="message-meta"><span>{message.role === "user" ? "你" : message.role === "tool" ? (message.tool?.name || "工具") : productName}</span>{#if message.seq}<time>#{message.seq}</time>{/if}{#if message.pending}<span class="live-label">等待处理</span>{/if}</div>{#if message.role === "tool" && message.tool}<div class="tool-card"><div class="tool-card-head"><div class="tool-title"><span class:tool-running={message.tool.state === "running"} class="tool-dot"></span><strong>{message.tool.name}</strong><span class="tool-state">{message.tool.state === "running" ? "运行中" : message.tool.state === "error" ? "失败" : "已完成"}</span></div>{#if message.tool.state === "success"}<CircleCheck size={15} class="success-icon" />{:else if message.tool.state === "error"}<CircleAlert size={15} class="error-icon" />{:else}<LoaderCircle class="animate-spin" size={14} />{/if}</div>{#if message.tool.args}<details><summary>查看参数</summary><pre>{message.tool.args}</pre></details>{/if}{#if message.tool.result}<details class="tool-result"><summary>查看输出</summary><pre>{message.tool.result}</pre></details>{/if}</div>{:else}{#if message.reasoning}<details class="reasoning"><summary>显示推理过程</summary><p>{message.reasoning}</p></details>{/if}<div class="message-text">{message.text || "…"}</div>{#if message.usage}<div class="usage-line">输入 {String(message.usage.inputTokens || "-")} · 输出 {String(message.usage.outputTokens || "-")}</div>{/if}{/if}</div></article>{/each}{#if sending}<div class="typing" role="status" aria-atomic="true"><LoaderCircle class="animate-spin" size={14} />DSH 正在执行任务，活动记录会持续更新</div>{/if}{/if}</div>
-              <aside class:open={activityOpen} class="activity-panel"><div class="panel-heading"><div><div class="section-label">活动记录</div><strong>{runningTools.length ? `${runningTools.length} 个工具运行中` : "当前会话轨迹"}</strong></div><Button variant="ghost" size="icon-sm" aria-label="关闭活动面板" onclick={() => activityOpen = false}><X size={14} /></Button></div><div class="activity-summary" aria-label="活动摘要"><div><strong>{runningTools.length}</strong><span>运行中</span></div><div><strong>{completedTools}</strong><span>已完成</span></div><div><strong>{todos.filter((todo) => todo.status === "completed").length}/{todos.length}</strong><span>待办</span></div></div><div class="activity-content">{#if todos.length > 0}<section class="todo-section"><div class="panel-subheading"><ClipboardList size={14} />任务计划</div>{#each todos as todo (todo.content)}<div class="todo-row"><span class:todo-done={todo.status === "completed"} class:todo-active={todo.status === "in_progress"} class="todo-check">{#if todo.status === "completed"}<Check size={12} />{:else if todo.status === "in_progress"}<LoaderCircle class="animate-spin" size={10} />{/if}</span><span>{todo.content}</span><small>{todo.status === "completed" ? "完成" : todo.status === "in_progress" ? "进行中" : "待处理"}</small></div>{/each}</section>{/if}<section class="activity-list"><div class="panel-subheading"><History size={14} />最近活动</div>{#if activityItems.length === 0}<div class="panel-empty"><History size={18} /><p>任务开始后，工具调用和执行状态会显示在这里。</p></div>{:else}{#each activityItems as item (item.id)}<div class:error={item.tool?.state === "error"} class="activity-row"><span class="tool-dot" class:tool-running={item.tool?.state === "running"}></span><span title={item.tool?.name}>{item.tool?.name}</span><small>{item.tool?.state === "running" ? "运行中" : item.tool?.state === "error" ? "失败" : "完成"}</small></div>{/each}{/if}</section></div></aside>
+              <div class="message-scroll" aria-busy={sending}>{#if messages.length === 0}<div class="empty-state"><span class="empty-mark"><Bot size={22} /></span><h2>准备好开始工作</h2><p>官方 DSH 运行时已连接。描述目标，暗涌会在这里呈现计划、工具和结果。</p><div class="quick-actions">{#each (customization.quickActions.length ? customization.quickActions : [{ label: "检查当前项目", prompt: "检查当前项目状态并给出最值得先处理的问题。" }, { label: "理解代码结构", prompt: "梳理当前项目的主要模块和启动流程。" }, { label: "运行测试", prompt: "运行测试并汇总失败项。" }]) as action (action.label)}<button onclick={() => input = action.prompt}><ClipboardList size={14} />{action.label}</button>{/each}</div></div>{:else}{#each messages as message (message.id)}<article class:user={message.role === "user"} class:assistant={message.role === "assistant"} class:tool={message.role === "tool"} class:pending={message.pending} class="message"><div class="message-avatar">{#if message.role === "user"}你{:else if message.role === "tool"}<Wrench size={13} />{:else if message.role === "system"}<CircleAlert size={13} />{:else}<Bot size={13} />{/if}</div><div class="message-body"><div class="message-meta"><span>{message.role === "user" ? "你" : message.role === "tool" ? (message.tool?.name || "工具") : productName}</span>{#if message.seq}<time>#{message.seq}</time>{/if}{#if message.pending}<span class="live-label">等待处理</span>{/if}</div>{#if message.role === "tool" && message.tool}<div class="tool-card"><div class="tool-card-head"><div class="tool-title"><span class:tool-running={message.tool.state === "running"} class="tool-dot"></span><strong>{message.tool.name}</strong><span class="tool-state">{message.tool.state === "running" ? "运行中" : message.tool.state === "error" ? "失败" : "已完成"}</span></div>{#if message.tool.state === "success"}<CircleCheck size={15} class="success-icon" />{:else if message.tool.state === "error"}<CircleAlert size={15} class="error-icon" />{:else}<LoaderCircle class="animate-spin" size={14} />{/if}</div>{#if message.tool.args}<details><summary>查看参数</summary><pre>{message.tool.args}</pre></details>{/if}{#if message.tool.result}<details class="tool-result"><summary>查看输出</summary><pre>{message.tool.result}</pre></details>{/if}</div>{:else}{#if message.reasoning}<details class="reasoning"><summary>显示推理过程</summary><p>{message.reasoning}</p></details>{/if}<div class="message-text">{message.text || "…"}</div>{#if message.usage}<div class="usage-line">输入 {String(message.usage.inputTokens || "-")} · 输出 {String(message.usage.outputTokens || "-")}</div>{/if}{/if}</div></article>{/each}{#if sending}<div class="typing" role="status" aria-atomic="true"><LoaderCircle class="animate-spin" size={14} />DSH 正在执行任务，活动记录会持续更新</div>{/if}{/if}</div>
+              <aside class:open={activityOpen} class="activity-panel"><div class="panel-heading"><div><div class="section-label">活动记录</div><strong>{runningTools.length ? `${runningTools.length} 个工具运行中` : "当前会话轨迹"}</strong></div><Button variant="ghost" size="icon-sm" aria-label="关闭活动面板" onclick={() => setActivityOpen(false)}><X size={14} /></Button></div><div class="activity-summary" aria-label="活动摘要"><div><strong>{runningTools.length}</strong><span>运行中</span></div><div><strong>{completedTools}</strong><span>已完成</span></div><div><strong>{todos.filter((todo) => todo.status === "completed").length}/{todos.length}</strong><span>待办</span></div></div><div class="activity-content">{#if todos.length > 0}<section class="todo-section"><div class="panel-subheading"><ClipboardList size={14} />任务计划</div>{#each todos as todo (todo.content)}<div class="todo-row"><span class:todo-done={todo.status === "completed"} class:todo-active={todo.status === "in_progress"} class="todo-check">{#if todo.status === "completed"}<Check size={12} />{:else if todo.status === "in_progress"}<LoaderCircle class="animate-spin" size={10} />{/if}</span><span>{todo.content}</span><small>{todo.status === "completed" ? "完成" : todo.status === "in_progress" ? "进行中" : "待处理"}</small></div>{/each}</section>{/if}<section class="activity-list"><div class="panel-subheading"><History size={14} />最近活动</div>{#if activityItems.length === 0}<div class="panel-empty"><History size={18} /><p>任务开始后，工具调用和执行状态会显示在这里。</p></div>{:else}{#each activityItems as item (item.id)}<div class:error={item.tool?.state === "error"} class="activity-row"><span class="tool-dot" class:tool-running={item.tool?.state === "running"}></span><span title={item.tool?.name}>{item.tool?.name}</span><small>{item.tool?.state === "running" ? "运行中" : item.tool?.state === "error" ? "失败" : "完成"}</small></div>{/each}{/if}</section></div></aside>
             </div>
             {#if pendingApproval}<div class="interaction-card approval-card"><div class="interaction-icon"><ShieldAlert size={17} /></div><div class="interaction-content"><strong>需要批准工具操作</strong><p>{pendingApproval.reason || `${pendingApproval.toolName} 请求访问工作区资源。`}</p><div class="interaction-actions"><Button variant="outline" size="sm" onclick={() => void respondApproval("rejected")}>拒绝</Button><Button size="sm" onclick={() => void respondApproval("allowed-once")}><Check size={14} />允许一次</Button></div></div></div>{/if}
             {#if pendingQuestion}<div class="interaction-card question-card"><div class="interaction-icon"><CircleAlert size={17} /></div><div class="interaction-content"><strong>DSH 需要你的选择</strong>{#each pendingQuestion.questions as question (String(question.id))}<div class="question-block"><label for={`question-${String(question.id)}`}>{String(question.question || question.header || "请选择")}</label>{#if Array.isArray(question.options) && question.options.length > 0}<select id={`question-${String(question.id)}`} aria-label={String(question.question || question.id)} value={questionAnswers[String(question.id)] || ""} onchange={(event) => questionAnswers[String(question.id)] = (event.currentTarget as HTMLSelectElement).value}><option value="">请选择…</option>{#each question.options as option (String(option.label))}<option value={String(option.label)}>{String(option.label)}</option>{/each}</select>{:else}<Input id={`question-${String(question.id)}`} aria-label={String(question.question || question.id)} placeholder="输入回答" value={questionAnswers[`${String(question.id)}:custom`] || ""} oninput={(event) => questionAnswers[`${String(question.id)}:custom`] = (event.currentTarget as HTMLInputElement).value} />{/if}</div>{/each}<div class="interaction-actions"><Button size="sm" onclick={() => void respondQuestion()}><Send size={14} />提交回答</Button></div></div></div>{/if}
-            <div class="composer"><div class="composer-shell"><Textarea bind:value={input} rows={3} placeholder={activeSessionId ? "描述你要完成的任务…" : "先新建一个会话…"} disabled={!activeSessionId || !!pendingApproval || !!pendingQuestion} onkeydown={(event: KeyboardEvent) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void submit(); } }} /><div class="composer-footer"><div class="composer-context"><span class="mode-chip">队列模式</span><span class="composer-hint">Ctrl / ⌘ + Enter 发送</span></div><div class="composer-actions">{#if !activityOpen}<Button variant="ghost" size="sm" onclick={() => activityOpen = true}><History size={14} />活动</Button>{/if}{#if sending}<Button variant="outline" size="sm" onclick={() => void cancel()}><Square size={13} />停止</Button>{:else}<Button size="sm" disabled={!activeSessionId || !input.trim() || !!pendingApproval || !!pendingQuestion} onclick={() => void submit()}><Send size={13} />发送</Button>{/if}</div></div></div></div>
+            <div class="composer"><div class="composer-shell"><Textarea bind:value={input} rows={customization.composerRows} placeholder={activeSessionId ? "描述任务，或直接说你想如何调整界面…" : "先新建一个会话…"} disabled={!activeSessionId || !!pendingApproval || !!pendingQuestion} onkeydown={(event: KeyboardEvent) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void submit(); } }} /><div class="composer-footer"><div class="composer-context"><span class="mode-chip">队列模式</span><span class="composer-hint">Ctrl / ⌘ + Enter 发送</span></div><div class="composer-actions">{#if !activityOpen}<Button variant="ghost" size="sm" onclick={() => setActivityOpen(true)}><History size={14} />活动</Button>{/if}{#if sending}<Button variant="outline" size="sm" onclick={() => void cancel()}><Square size={13} />停止</Button>{:else}<Button size="sm" disabled={!activeSessionId || !input.trim() || !!pendingApproval || !!pendingQuestion} onclick={() => void submit()}><Send size={13} />发送</Button>{/if}</div></div></div></div>
           </div>
         {/if}
       </section>

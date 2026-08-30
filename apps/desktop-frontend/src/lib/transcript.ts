@@ -80,6 +80,14 @@ export function applyTranscriptEvent(state: TranscriptState, event: SessionEvent
   return { messages, todos };
 }
 
+export function assistantMessageForEvent(
+  messages: readonly TranscriptMessage[],
+  event: SessionEvent,
+): TranscriptMessage | undefined {
+  if (event.type !== "assistant/message") return undefined;
+  return messages.find((message) => message.id === `assistant-${event.seq}` && message.role === "assistant");
+}
+
 export function visibleText(value: unknown): string {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) return value.map((item) => {

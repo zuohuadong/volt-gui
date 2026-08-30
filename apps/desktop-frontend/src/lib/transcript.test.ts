@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyTranscriptEvent, foldHistory, type TranscriptState } from "./transcript";
+import { assistantMessageForEvent, applyTranscriptEvent, foldHistory, type TranscriptState } from "./transcript";
 
 const event = (type: string, seq: number, data: Record<string, unknown>) => ({ type, seq, time: seq, data });
 
@@ -29,5 +29,14 @@ describe("transcript folding", () => {
     ]);
     expect(next.messages).toHaveLength(1);
     expect(next.messages[0].tool).toMatchObject({ callId: "c1", result: "denied", state: "error" });
+  });
+
+  it("selects only the assistant message created by the current event", () => {
+    const previous = { id: "assistant-4", role: "assistant" as const, text: "old proposal", seq: 4 };
+    const currentEvent = event("assistant/message", 5, { message: "new proposal" });
+    const next = applyTranscriptEvent({ messages: [previous], todos: [] }, currentEvent);
+
+    expect(assistantMessageForEvent(next.messages, currentEvent)?.text).toBe("new proposal");
+    expect(assistantMessageForEvent(next.messages, event("turn/end", 6, {}))).toBeUndefined();
   });
 });

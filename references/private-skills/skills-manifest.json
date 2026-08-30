@@ -1,6 +1,6 @@
 {
   "edition": "volt-private-industry",
-  "generatedFrom": "volt-ai-chat/skills/custom",
+  "generatedFrom": "project-private-skills",
   "skillRoot": ".voltui/skills",
   "count": 30,
   "skills": [

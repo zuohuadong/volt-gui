@@ -64,7 +64,7 @@
 - Electron 主进程、打包、安全或生命周期任务加载 `electron-desktop` 与 `typescript`。
 - Site/Astro 任务加载 `typescript`；涉及部署时再加载 `deployment-target-selector`。
 - Agent-team、Task Ledger、mailbox 或 PR 状态任务加载 `agent-team-automation` 与 `provider-adapter`。
-- 暗涌产品、品牌或 CNB 任务分别加载 `volt-ai-ops`、`anyong-brand-config`、`cnb-ci-cd`。
+- 暗涌产品、品牌或 CNB 任务分别加载 `volt-ops`、`anyong-brand-config`、`cnb-ci-cd`。
 
 ## Verification Profile
 

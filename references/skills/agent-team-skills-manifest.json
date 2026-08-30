@@ -208,10 +208,10 @@
       "description": "Use when building, reviewing, or maintaining Vue frontends, including Vue Single-File Components, Composition API, TypeScript, Vite integration, component state, and Vue ecosystem alignment."
     },
     {
-      "id": "volt-ai-ops",
-      "frontmatterName": "volt-ai-ops",
-      "path": "references/skills/volt-ai-ops/SKILL.md",
-      "description": "Use for volt AI product strategy, Anyong distribution scope, Chinese enterprise constraints, and decisions about official DeepSeek Harness integration."
+      "id": "volt-ops",
+      "frontmatterName": "volt-ops",
+      "path": "references/skills/volt-ops/SKILL.md",
+      "description": "Use for Volt product strategy, Volt distribution scope, Chinese enterprise constraints, and decisions about official DeepSeek Harness integration."
     }
   ]
 }

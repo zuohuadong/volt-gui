@@ -1,6 +1,6 @@
-# volt Private Skills Deep Optimization Notes
+# VOLT Private Skills Deep Optimization Notes
 
-This document records optimization opportunities for the private volt / inspection-industry skill pack installed in `.voltui/skills/`.
+This document records optimization opportunities for the private VOLT / inspection-industry skill pack installed in `.voltui/skills/`.
 
 ## Current Baseline
 

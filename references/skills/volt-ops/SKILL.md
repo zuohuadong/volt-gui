@@ -1,9 +1,9 @@
 ---
-name: volt-ai-ops
-description: Use for volt AI product strategy, Anyong distribution scope, Chinese enterprise constraints, and decisions about official DeepSeek Harness integration.
+name: volt-ops
+description: Use for Volt product strategy, Volt distribution scope, Chinese enterprise constraints, and decisions about official DeepSeek Harness integration.
 ---
 
-# 西谷AI / 暗涌运营约束
+# Volt 运营约束
 
 ## 当前产品架构
 

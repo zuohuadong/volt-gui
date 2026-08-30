@@ -6,12 +6,17 @@
     HardDrive, History, KeyRound, LoaderCircle, MessageSquare, MessageSquarePlus, Network,
     Pause, Pencil, Play, PanelLeftClose, PanelLeftOpen, Save, Search, Send,
     Settings2, ShieldAlert, SlidersHorizontal, Square, Target, Terminal, Trash2, UserRoundCog,
-    Wrench, X,
+    Wrench, X, RefreshCw, PlugZap, GitBranch,
   } from "@lucide/svelte";
   import { Button } from "$components/ui/button";
   import { Textarea } from "$components/ui/textarea";
   import GeneratedSurface from "$components/GeneratedSurface.svelte";
   import SmbMounts from "$components/SmbMounts.svelte";
+  import ImageAttachments from "$components/ImageAttachments.svelte";
+  import PermissionSelector from "$components/PermissionSelector.svelte";
+  import ProviderWorkbench from "$components/ProviderWorkbench.svelte";
+  import WorkspaceBrowser from "$components/WorkspaceBrowser.svelte";
+  import ReferencePicker from "$components/ReferencePicker.svelte";
   import { Input } from "$components/ui/input";
   import { Separator } from "$components/ui/separator";
   import { DataState, SettingsGroup, StatusBadge } from "@svadmin/ui";
@@ -20,7 +25,7 @@
     DshClient, type AgentPreset, type ConfigurableProvider, type CredentialView,
     type DshFrame, type DshSkill, type GoalProjection, type ModelGroup,
     type PendingApproval, type PendingQuestion, type SessionSummary,
-    type SettingsNamespace, type SubagentEntry, type Workspace,
+    type PromptContentPart, type SettingsNamespace, type SubagentEntry, type Workspace, type PluginInventoryEntry,
   } from "$lib/dsh-client";
   import { assistantMessageForEvent, applyTranscriptEvent, foldHistory, type TodoItem, type TranscriptMessage } from "$lib/transcript";
   import {
@@ -40,7 +45,7 @@
   } from "$lib/surface-agent";
   import type { SurfaceSpec } from "@svadmin/surface";
   type View = "conversation" | "knowledge" | "settings";
-  type ManagementTab = "overview" | "sessions" | "goals" | "subagents" | "agents" | "models" | "workspaces" | "mounts" | "knowledge" | "settings" | "runtime";
+  type ManagementTab = "overview" | "sessions" | "goals" | "subagents" | "agents" | "models" | "workspaces" | "mounts" | "plugins" | "knowledge" | "settings" | "runtime";
 
   let client = $state<DshClient>();
   let productName = $state("西谷智灯暗涌平台");
@@ -53,6 +58,7 @@
   let messages = $state<TranscriptMessage[]>([]);
   let todos = $state<TodoItem[]>([]);
   let input = $state("");
+  let attachments = $state<Extract<PromptContentPart, { type: "image" }>[]>([]);
   let sessionQuery = $state("");
   let settingsQuery = $state("");
   let managementTab = $state<ManagementTab>("overview");
@@ -71,6 +77,9 @@
   let agentPreview = $state<{ id: string; content: string }>();
   let agentAuthorable = $state(false);
   let agentHasDocument = $state(false);
+  let copyingAgentPreset = $state("");
+  let copyAgentNameDraft = $state("");
+  let confirmingAgentPreset = $state("");
   let editingSessionId = $state("");
   let sessionTitleDraft = $state("");
   let editingWorkspaceId = $state("");
@@ -94,6 +103,10 @@
   let selectedSettingsNs = $state("");
   let settingsDraft = $state("{}");
   let providers = $state<ConfigurableProvider[]>([]);
+  let catalogGroups = $state<ModelGroup[]>([]);
+  let catalogFailures = $state<Array<{ id: string; name: string; message: string }>>([]);
+  let hostInfo = $state<{ version: string; cwd: string; provider?: string; model?: string; attachedSessions: number; home: string; canOpenPath: boolean }>();
+  let pluginInventory = $state<PluginInventoryEntry[]>([]);
   let credentialRefs = $state<string[]>([]);
   let credentials = $state<Record<string, CredentialView>>({});
   let credentialRefDraft = $state("");
@@ -321,12 +334,15 @@
 
   async function refreshManagement(): Promise<void> {
     if (!client) return;
-    const [settingsResult, skillResult, agentResult, providerResult, subagentResult] = await Promise.all([
+    const [settingsResult, skillResult, agentResult, providerResult, subagentResult, catalogResult, hostResult, pluginResult] = await Promise.all([
       client.describeSettings().catch(() => ({ writable: false, hasDocument: false, namespaces: [] })),
       activeSessionId ? client.listSkills(activeSessionId).catch(() => ({ skills: [] })) : Promise.resolve({ skills: [] }),
       client.listAgentPresets().catch(() => ({ presets: [], authorable: false, hasDocument: false })),
       client.listProviders().catch(() => ({ providers: [] })),
       activeSessionId ? client.listSubagents(activeSessionId).catch(() => ({ entries: [], parentAvailable: false })) : Promise.resolve({ entries: [], parentAvailable: false }),
+      client.listModelCatalog().catch(() => ({ groups: [], failures: [] })),
+      client.describeHost().catch(() => undefined),
+      client.listPluginInventory().catch(() => ({ entries: [] })),
     ]);
     settingsWritable = settingsResult.writable;
     settingsHasDocument = settingsResult.hasDocument;
@@ -340,6 +356,10 @@
     agentAuthorable = agentResult.authorable;
     agentHasDocument = agentResult.hasDocument;
     providers = providerResult.providers;
+    catalogGroups = catalogResult.groups;
+    catalogFailures = catalogResult.failures;
+    hostInfo = hostResult;
+    pluginInventory = pluginResult.entries;
     subagents = subagentResult.entries;
     subagentParentAvailable = subagentResult.parentAvailable;
     if (!selectedSubagentId || !subagents.some((item) => item.id === selectedSubagentId)) selectedSubagentId = subagents.find((item) => item.kind === "child")?.id || "";
@@ -424,7 +444,7 @@
 
   async function submit(): Promise<void> {
     const text = input.trim();
-    if (!client || !activeSessionId || !text || sending) return;
+    if (!client || !activeSessionId || (!text && attachments.length === 0) || sending) return;
     input = ""; sending = true; view = "conversation";
     messages = [...messages, { id: `pending-${Date.now()}`, role: "user", text, pending: true }];
     const prompt = isSurfaceGenerationIntent(text)
@@ -432,7 +452,11 @@
       : isUiCustomizationIntent(text)
         ? buildUiCustomizationPrompt(text)
         : text;
-    try { await client.prompt(activeSessionId, prompt); }
+    try {
+      const content: PromptContentPart[] = [...(prompt ? [{ type: "text", text: prompt } satisfies PromptContentPart] : []), ...attachments];
+      await client.prompt(activeSessionId, content);
+      attachments = [];
+    }
     catch (error) { sending = false; runtimeError = error instanceof Error ? error.message : String(error); }
   }
 
@@ -494,6 +518,16 @@
     });
   }
 
+  async function forkSessionAtSeq(seq: number): Promise<void> {
+    if (!client || !activeSessionId) return;
+    await performManagementAction(`session-fork:${activeSessionId}:${seq}`, async () => {
+      const created = await client!.fork(activeSessionId, seq);
+      await refresh();
+      await selectSession(created.sessionId);
+      managementNotice = `已从事件 #${seq} 创建分支会话`;
+    });
+  }
+
   async function archiveManagedSession(sessionId: string): Promise<void> {
     if (!client) return;
     await performManagementAction(`session-archive:${sessionId}`, async () => {
@@ -506,6 +540,15 @@
         todos = [];
       }
       managementNotice = "会话已归档";
+    });
+  }
+
+  async function exportSession(sessionId: string): Promise<void> {
+    const api = window.voltDesktop;
+    if (!api) return;
+    await performManagementAction(`session-export:${sessionId}`, async () => {
+      const result = await api.exportSession(sessionId);
+      managementNotice = result.saved ? `会话已导出到 ${result.path}` : "已取消会话导出";
     });
   }
 
@@ -531,6 +574,28 @@
     await performManagementAction(`agent-open:${agentPreset}`, async () => {
       const result = await client!.openAgentPresetDocument(agentPreset);
       managementNotice = result.opened ? "已打开 Agent 配置文件" : `配置文件位于 ${result.path}`;
+    });
+  }
+
+  async function copyAgentPreset(agentPreset: AgentPreset): Promise<void> {
+    if (!client || agentPreset.trust !== "user") return;
+    const name = copyAgentNameDraft.trim();
+    await performManagementAction(`agent-copy:${agentPreset.id}`, async () => {
+      await client!.copyAgentPreset("user", agentPreset.id, name || undefined);
+      copyingAgentPreset = "";
+      copyAgentNameDraft = "";
+      await refreshManagement();
+      managementNotice = "Agent 预设已复制";
+    });
+  }
+
+  async function removeAgentPreset(agentPreset: AgentPreset): Promise<void> {
+    if (!client || agentPreset.trust !== "user" || agentPreset.isDefault) return;
+    await performManagementAction(`agent-remove:${agentPreset.id}`, async () => {
+      await client!.removeAgentPreset(agentPreset.id);
+      confirmingAgentPreset = "";
+      await refreshManagement();
+      managementNotice = "用户 Agent 预设已移除";
     });
   }
 
@@ -573,6 +638,30 @@
       confirmingWorkspaceId = "";
       await refresh();
       managementNotice = "工作区注册已移除，磁盘文件未删除";
+    });
+  }
+
+  async function moveWorkspace(workspaceId: string, direction: -1 | 1): Promise<void> {
+    if (!client) return;
+    const index = workspaces.findIndex((item) => item.workspaceId === workspaceId);
+    if (index < 0 || index + direction < 0 || index + direction >= workspaces.length) return;
+    const beforeWorkspaceId = direction < 0 ? workspaces[index - 1]?.workspaceId : workspaces[index + 2]?.workspaceId;
+    await performManagementAction(`workspace-order:${workspaceId}`, async () => {
+      await client!.insertWorkspaceBefore(workspaceId, beforeWorkspaceId);
+      await refresh();
+      managementNotice = "工作区顺序已更新";
+    });
+  }
+
+  async function moveWorkspaceSession(workspace: Workspace, sessionId: string, direction: -1 | 1): Promise<void> {
+    if (!client) return;
+    const index = workspace.sessionIds.indexOf(sessionId);
+    if (index < 0 || index + direction < 0 || index + direction >= workspace.sessionIds.length) return;
+    const beforeSessionId = direction < 0 ? workspace.sessionIds[index - 1] : workspace.sessionIds[index + 2];
+    await performManagementAction(`session-order:${sessionId}`, async () => {
+      await client!.insertSessionBefore(workspace.workspaceId, sessionId, beforeSessionId);
+      await refresh();
+      managementNotice = "会话顺序已更新";
     });
   }
 
@@ -724,6 +813,7 @@
       models: "模型与推理",
       workspaces: "工作区与资源",
       mounts: "SMB 共享",
+      plugins: "插件与 MCP",
       knowledge: "知识库与资料",
       settings: "设置与凭据",
       runtime: "运行诊断",
@@ -761,9 +851,28 @@
   }
   function openKnowledgePrompt(prompt: string): void { input = prompt; view = "conversation"; }
   function knowledgeStatusLabel(): string { return skills.length > 0 ? "官方 Skill 知识源已加载" : "等待官方知识插件"; }
+  function permissionNotice(message: string): void { managementNotice = message; }
+  async function handlePaste(event: ClipboardEvent): Promise<void> {
+    const files = event.clipboardData?.files;
+    if (!files?.length) return;
+    const supported = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+    const next: Extract<PromptContentPart, { type: "image" }>[] = [];
+    for (const file of Array.from(files)) {
+      if (!supported.has(file.type) || file.size > 10 * 1024 * 1024) continue;
+      const data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(",", 2)[1] || "");
+        reader.onerror = () => reject(reader.error || new Error("图片读取失败"));
+        reader.readAsDataURL(file);
+      });
+      if (data) next.push({ type: "image", mediaType: file.type as Extract<PromptContentPart, { type: "image" }>["mediaType"], data, name: file.name });
+    }
+    if (next.length) attachments = [...attachments, ...next];
+  }
 </script>
 
 <svelte:head><title>{productName}</title></svelte:head>
+<svelte:window onpaste={(event) => void handlePaste(event)} />
 
 {#if loading}
   <main class="loading-screen"><LoaderCircle class="animate-spin" size={24} /><span>正在连接官方 DSH…</span></main>
@@ -789,7 +898,7 @@
           <div class="management-page">
             <header class="management-header"><div><div class="eyebrow">暗涌管理</div><h1>管理工作台</h1><p>按领域管理模型、工作区、知识来源和运行状态。</p></div><Button variant="outline" size="sm" onclick={() => view = "conversation"}><ChevronRight class="rotate-180" size={14} />返回会话</Button></header>
             <div class="management-body">
-              <nav class="management-nav" aria-label="管理分区"><button class:active={managementTab === "overview"} onclick={() => managementTab = "overview"}><ClipboardList size={15} /><span>总览</span></button><button class:active={managementTab === "sessions"} onclick={() => managementTab = "sessions"}><MessageSquare size={15} /><span>会话</span></button><button class:active={managementTab === "goals"} onclick={() => managementTab = "goals"}><Target size={15} /><span>目标</span></button><button class:active={managementTab === "subagents"} onclick={() => managementTab = "subagents"}><Network size={15} /><span>子 Agent</span></button><button class:active={managementTab === "agents"} onclick={() => managementTab = "agents"}><UserRoundCog size={15} /><span>Agent 预设</span></button><button class:active={managementTab === "models"} onclick={() => managementTab = "models"}><Bot size={15} /><span>模型与推理</span></button><button class:active={managementTab === "workspaces"} onclick={() => managementTab = "workspaces"}><FolderOpen size={15} /><span>工作区</span></button><button class:active={managementTab === "mounts"} onclick={() => managementTab = "mounts"}><HardDrive size={15} /><span>SMB 共享</span></button><button class:active={managementTab === "knowledge"} onclick={() => managementTab = "knowledge"}><BookOpen size={15} /><span>知识库</span></button><button class:active={managementTab === "settings"} onclick={() => managementTab = "settings"}><Settings2 size={15} /><span>设置与凭据</span></button><button class:active={managementTab === "runtime"} onclick={() => managementTab = "runtime"}><ShieldAlert size={15} /><span>运行诊断</span></button></nav>
+              <nav class="management-nav" aria-label="管理分区"><button class:active={managementTab === "overview"} onclick={() => managementTab = "overview"}><ClipboardList size={15} /><span>总览</span></button><button class:active={managementTab === "sessions"} onclick={() => managementTab = "sessions"}><MessageSquare size={15} /><span>会话</span></button><button class:active={managementTab === "goals"} onclick={() => managementTab = "goals"}><Target size={15} /><span>目标</span></button><button class:active={managementTab === "subagents"} onclick={() => managementTab = "subagents"}><Network size={15} /><span>子 Agent</span></button><button class:active={managementTab === "agents"} onclick={() => managementTab = "agents"}><UserRoundCog size={15} /><span>Agent 预设</span></button><button class:active={managementTab === "models"} onclick={() => managementTab = "models"}><Bot size={15} /><span>模型与推理</span></button><button class:active={managementTab === "workspaces"} onclick={() => managementTab = "workspaces"}><FolderOpen size={15} /><span>工作区</span></button><button class:active={managementTab === "mounts"} onclick={() => managementTab = "mounts"}><HardDrive size={15} /><span>SMB 共享</span></button><button class:active={managementTab === "plugins"} onclick={() => managementTab = "plugins"}><PlugZap size={15} /><span>插件与 MCP</span></button><button class:active={managementTab === "knowledge"} onclick={() => managementTab = "knowledge"}><BookOpen size={15} /><span>知识库</span></button><button class:active={managementTab === "settings"} onclick={() => managementTab = "settings"}><Settings2 size={15} /><span>设置与凭据</span></button><button class:active={managementTab === "runtime"} onclick={() => managementTab = "runtime"}><ShieldAlert size={15} /><span>运行诊断</span></button></nav>
               <section class="management-content">
                 <div class="management-toolbar"><div class="section-label">{managementTitle(managementTab)}</div><div class="settings-filter"><Search size={14} /><Input aria-label="筛选管理内容" placeholder="筛选管理内容" bind:value={settingsQuery} /></div></div>
                 {#if managementError}<div class="management-feedback error"><CircleAlert size={14} /><span>{managementError}</span><button aria-label="关闭管理错误" onclick={() => managementError = ""}><X size={13} /></button></div>{/if}
@@ -798,23 +907,28 @@
                   <div class="management-summary-grid"><button onclick={() => managementTab = "sessions"}><span class="summary-icon"><MessageSquare size={16} /></span><strong>会话管理</strong><small>{sessions.length} 个活跃会话，{archivedSessionIds.length} 个已归档</small></button><button onclick={() => managementTab = "goals"}><span class="summary-icon"><Target size={16} /></span><strong>目标</strong><small>{currentGoal ? goalPhaseLabel(currentGoal.goal.phase) : "当前会话暂无目标"}</small></button><button onclick={() => managementTab = "subagents"}><span class="summary-icon"><Network size={16} /></span><strong>子 Agent</strong><small>{subagents.filter((item) => item.kind === "child").length} 个直接子 Agent</small></button><button onclick={() => managementTab = "agents"}><span class="summary-icon"><UserRoundCog size={16} /></span><strong>Agent 预设</strong><small>{agentPresets.length} 个可用预设</small></button><button onclick={() => managementTab = "models"}><span class="summary-icon"><Bot size={16} /></span><strong>模型与推理</strong><small>{selectedModel || "尚未选择模型"}</small></button><button onclick={() => managementTab = "workspaces"}><span class="summary-icon"><FolderOpen size={16} /></span><strong>工作区</strong><small>{workspaces.length} 个已注册工作区</small></button><button onclick={() => managementTab = "knowledge"}><span class="summary-icon"><BookOpen size={16} /></span><strong>知识库</strong><small>{knowledgeStatusLabel()}</small></button><button onclick={() => managementTab = "settings"}><span class="summary-icon"><Settings2 size={16} /></span><strong>设置与凭据</strong><small>{settingsNamespaces.length} 个命名空间，{credentialRefs.length} 个凭据引用</small></button><button onclick={() => managementTab = "runtime"}><span class="summary-icon"><ShieldAlert size={16} /></span><strong>运行状态</strong><small>{runtimeError ? "连接异常" : "官方 DSH 正常"}</small></button></div>
                   <SettingsGroup title="当前会话" description="会话状态、模型和工作区来自官方 DSH 实时状态。"><div class="diagnostic-row"><span>会话</span><strong>{activeSession ? sessionTitle(activeSession) : "未选择"}</strong></div><div class="diagnostic-row"><span>工作区</span><strong>{workspacePath || "未选择"}</strong></div><div class="diagnostic-row"><span>模型</span><strong>{selectedModel || "默认模型"}</strong></div></SettingsGroup>
                 {:else if managementTab === "sessions"}
-                  <SettingsGroup title="会话管理" description="重命名、复制和归档都直接写入官方 DSH。"><div class="management-actions"><Button size="sm" onclick={() => void createSession()}><MessageSquarePlus size={14} />新建会话</Button><Button variant="outline" size="sm" onclick={() => void refresh()}><History size={14} />刷新</Button></div>{#if filteredManagementSessions.length === 0}<DataState state="empty" title="没有匹配的会话" description="调整筛选条件或新建一个会话。" />{:else}<div class="management-list">{#each filteredManagementSessions as item (item.sessionId)}<div class="management-list-row session-management-row"><span class="row-icon"><MessageSquare size={15} /></span><div>{#if editingSessionId === item.sessionId}<Input class="inline-edit-input" aria-label="会话名称" bind:value={sessionTitleDraft} onkeydown={(event) => { if (event.key === "Enter") void saveSessionRename(item.sessionId); if (event.key === "Escape") editingSessionId = ""; }} />{:else}<strong>{sessionTitle(item)}</strong><small>{item.cwd || workspaceName} · {item.agentPreset || "默认 Agent"}</small>{/if}</div>{#if editingSessionId === item.sessionId}<div class="row-actions"><Button size="sm" disabled={!!managementBusy} onclick={() => void saveSessionRename(item.sessionId)}><Check size={13} />保存</Button><Button variant="ghost" size="sm" onclick={() => editingSessionId = ""}>取消</Button></div>{:else}<div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="打开会话" title="打开会话" onclick={() => void selectSession(item.sessionId)}><ExternalLink size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="重命名会话" title="重命名会话" onclick={() => beginSessionRename(item)}><Pencil size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="复制会话" title="复制会话" disabled={!!managementBusy} onclick={() => void duplicateSession(item.sessionId)}><Copy size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="归档会话" title="归档会话" disabled={!!managementBusy} onclick={() => void archiveManagedSession(item.sessionId)}><Archive size={14} /></Button></div>{/if}</div>{/each}</div>{/if}</SettingsGroup>
+                  <SettingsGroup title="会话管理" description="重命名、复制和归档都直接写入官方 DSH。"><div class="management-actions"><Button size="sm" onclick={() => void createSession()}><MessageSquarePlus size={14} />新建会话</Button><Button variant="outline" size="sm" onclick={() => void refresh()}><History size={14} />刷新</Button></div>{#if filteredManagementSessions.length === 0}<DataState state="empty" title="没有匹配的会话" description="调整筛选条件或新建一个会话。" />{:else}<div class="management-list">{#each filteredManagementSessions as item (item.sessionId)}<div class="management-list-row session-management-row"><span class="row-icon"><MessageSquare size={15} /></span><div>{#if editingSessionId === item.sessionId}<Input class="inline-edit-input" aria-label="会话名称" bind:value={sessionTitleDraft} onkeydown={(event) => { if (event.key === "Enter") void saveSessionRename(item.sessionId); if (event.key === "Escape") editingSessionId = ""; }} />{:else}<strong>{sessionTitle(item)}</strong><small>{item.cwd || workspaceName} · {item.agentPreset || "默认 Agent"}</small>{/if}</div>{#if editingSessionId === item.sessionId}<div class="row-actions"><Button size="sm" disabled={!!managementBusy} onclick={() => void saveSessionRename(item.sessionId)}><Check size={13} />保存</Button><Button variant="ghost" size="sm" onclick={() => editingSessionId = ""}>取消</Button></div>{:else}<div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="打开会话" title="打开会话" onclick={() => void selectSession(item.sessionId)}><ExternalLink size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="重命名会话" title="重命名会话" onclick={() => beginSessionRename(item)}><Pencil size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="复制会话" title="复制会话" disabled={!!managementBusy} onclick={() => void duplicateSession(item.sessionId)}><Copy size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="导出会话" title="导出会话" disabled={!!managementBusy} onclick={() => void exportSession(item.sessionId)}><Save size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="归档会话" title="归档会话" disabled={!!managementBusy} onclick={() => void archiveManagedSession(item.sessionId)}><Archive size={14} /></Button></div>{/if}</div>{/each}</div>{/if}</SettingsGroup>
+                  <SettingsGroup title="检查点与分支" description="官方 checkpoint policy 自动保证持久化；回到历史位置使用 DSH 的非破坏性 fork-at-seq。"><div class="management-actions"><StatusBadge status={pluginInventory.some((item) => item.moduleName.includes("session-checkpoint-policy") && item.fiberPhase === "active") ? "success" : "neutral"} label={pluginInventory.some((item) => item.moduleName.includes("session-checkpoint-policy") && item.fiberPhase === "active") ? "自动检查点已启用" : "未检测到活动检查点策略"} /></div>{#if messages.some((message) => typeof message.seq === "number")}<div class="management-list">{#each messages.filter((message) => typeof message.seq === "number").slice(-20).reverse() as message (message.id)}<div class="management-list-row"><span class="row-icon"><GitBranch size={14} /></span><div><strong>事件 #{message.seq}</strong><small>{message.role === "assistant" ? "Agent" : message.role === "user" ? "用户" : "工具"} · {(message.text || message.tool?.name || "事件").slice(0, 80)}</small></div><Button variant="ghost" size="sm" disabled={!!managementBusy} onclick={() => void forkSessionAtSeq(message.seq!)}><GitBranch size={13} />从此分支</Button></div>{/each}</div>{:else}<DataState state="empty" title="暂无可分支事件" description="当前会话产生历史事件后，可以从指定序号创建新会话。" />{/if}</SettingsGroup>
                 {:else if managementTab === "agents"}
                   <SettingsGroup title="Agent 预设" description="选择当前会话的官方 Agent 预设，或查看它的真实配置内容。"><div class="management-actions"><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />刷新预设</Button>{#if agentAuthorable && agentHasDocument}<span class="management-capability">支持用户配置</span>{/if}</div>{#if filteredAgentPresets.length === 0}<DataState state="empty" title="暂无 Agent 预设" description="官方 DSH 尚未返回可用预设。" />{:else}<div class="management-list">{#each filteredAgentPresets as preset (preset.id)}<div class="management-list-row agent-management-row"><span class="row-icon"><UserRoundCog size={15} /></span><div><strong>{agentPresetLabel(preset)}{#if preset.isDefault}<span class="default-badge">默认</span>{/if}</strong><small>{preset.description || preset.id} · {preset.trust === "system" ? "系统" : "用户"}{#if preset.broken} · {preset.broken}{/if}</small></div><div class="row-actions"><Button variant="ghost" size="sm" disabled={!activeSessionId || !!preset.broken || !!managementBusy} onclick={() => void chooseAgentPreset(preset.id)}>{activeSession?.agentPreset === preset.id ? "当前" : "应用"}</Button><Button variant="ghost" size="icon-sm" aria-label="查看 Agent 配置" title="查看 Agent 配置" disabled={!!managementBusy} onclick={() => void previewAgentPreset(preset.id)}><FileText size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="打开 Agent 配置文件" title="打开 Agent 配置文件" disabled={!!managementBusy} onclick={() => void openAgentPresetDocument(preset.id)}><ExternalLink size={14} /></Button></div></div>{/each}</div>{/if}{#if agentPreview}<div class="agent-preview"><div class="agent-preview-heading"><strong>{agentPreview.id}</strong><Button variant="ghost" size="icon-sm" aria-label="关闭预览" onclick={() => agentPreview = undefined}><X size={14} /></Button></div><pre>{agentPreview.content}</pre></div>{/if}</SettingsGroup>
+                  {#if agentAuthorable}<SettingsGroup title="用户预设维护" description="复制和删除只调用官方 Agent preset API；系统预设和默认预设不可删除。"><div class="agent-preset-maintenance"><select aria-label="选择用户 Agent 预设" bind:value={copyingAgentPreset}><option value="">选择用户预设…</option>{#each agentPresets.filter((preset) => preset.trust === "user") as preset (preset.id)}<option value={preset.id}>{agentPresetLabel(preset)}</option>{/each}</select><Input aria-label="副本名称" bind:value={copyAgentNameDraft} placeholder="可选的新名称" /><Button size="sm" disabled={!copyingAgentPreset || !!managementBusy} onclick={() => { const preset = agentPresets.find((item) => item.id === copyingAgentPreset); if (preset) void copyAgentPreset(preset); }}><Copy size={13} />复制</Button>{#if copyingAgentPreset && agentPresets.find((item) => item.id === copyingAgentPreset)?.isDefault !== true}{#if confirmingAgentPreset === copyingAgentPreset}<Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => { const preset = agentPresets.find((item) => item.id === copyingAgentPreset); if (preset) void removeAgentPreset(preset); }}><Trash2 size={13} />确认删除</Button><Button variant="ghost" size="sm" onclick={() => confirmingAgentPreset = ""}>取消</Button>{:else}<Button variant="ghost" size="sm" onclick={() => confirmingAgentPreset = copyingAgentPreset}><Trash2 size={13} />删除</Button>{/if}{/if}</div></SettingsGroup>{/if}
                 {:else if managementTab === "goals"}
                   <SettingsGroup title="目标控制" description="目标状态来自当前会话 projection，写操作使用官方 DSH 的 revision。"><div class="management-actions"><Button size="sm" onclick={() => { if (currentGoal) beginGoalEdit(); else { editingGoal = true; goalObjectiveDraft = ""; goalRoundsDraft = "256"; } }}><Target size={14} />{currentGoal ? "编辑目标" : "创建目标"}</Button>{#if currentGoal && currentGoal.goal.phase === "active"}<Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("pause")}><Pause size={14} />暂停</Button>{:else if currentGoal && (currentGoal.goal.phase === "paused" || currentGoal.goal.phase === "blocked")}<Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("resume")}><Play size={14} />恢复</Button>{/if}{#if currentGoal && currentGoal.goal.phase !== "complete"}<Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("complete")}><Check size={14} />完成</Button>{/if}{#if currentGoal}{#if confirmingGoalClear}<Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("clear")}><Trash2 size={13} />确认清除</Button><Button variant="ghost" size="sm" onclick={() => confirmingGoalClear = false}>取消</Button>{:else}<Button variant="ghost" size="icon-sm" aria-label="清除目标" title="清除目标" onclick={() => confirmingGoalClear = true}><Trash2 size={14} /></Button>{/if}{/if}</div>{#if editingGoal}<div class="goal-editor"><label>目标内容<Input aria-label="目标内容" bind:value={goalObjectiveDraft} placeholder="描述需要持续推进的目标" /></label><label>最大轮次<Input aria-label="最大轮次" type="number" min="1" bind:value={goalRoundsDraft} /></label><div class="row-actions"><Button size="sm" disabled={!!managementBusy} onclick={() => void saveGoal()}><Save size={13} />保存</Button><Button variant="ghost" size="sm" onclick={() => editingGoal = false}>取消</Button></div></div>{/if}{#if currentGoal}<div class="goal-status-grid"><div><span>状态</span><strong>{goalPhaseLabel(currentGoal.goal.phase)}</strong></div><div><span>轮次</span><strong>{currentGoal.roundsStarted} / {currentGoal.goal.maxGoalRounds}</strong></div><div><span>版本</span><strong>{currentGoal.goal.revision}</strong></div></div><div class="goal-objective">{currentGoal.goal.objective}</div>{#if currentGoal.goal.blockedReason}<div class="knowledge-note"><CircleAlert size={14} /><span>{String(currentGoal.goal.blockedReason)}</span></div>{/if}{:else}<DataState state="empty" title="当前会话暂无目标" description="创建一个目标后，官方 DSH 会持续记录状态与轮次。" />{/if}</SettingsGroup>
                 {:else if managementTab === "subagents"}
                   <SettingsGroup title="子 Agent" description="查看直接子 Agent 的历史，并向可继续的子 Agent 发送后续指令。"><div class="management-actions"><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />刷新子 Agent</Button><span class="management-capability">{subagentParentAvailable ? "父会话可用" : "父会话不可用"}</span></div>{#if subagents.length === 0}<DataState state="empty" title="暂无子 Agent" description="当前会话尚未产生直接子 Agent。" />{:else}<div class="management-list">{#each subagents as entry (entry.id)}<div class:chosen={entry.id === selectedSubagentId} class="management-list-row subagent-management-row"><span class="row-icon"><Network size={15} /></span><div><strong>{subagentLabel(entry)}</strong><small>{subagentStatusLabel(entry)}</small></div>{#if entry.kind === "child"}<div class="row-actions"><Button variant="ghost" size="sm" onclick={() => void selectSubagent(entry)}>查看历史</Button>{#if entry.mode === "continuable" && entry.activity === "running"}<Button variant="ghost" size="icon-sm" aria-label="停止子 Agent" title="停止子 Agent" disabled={!!managementBusy} onclick={() => { selectedSubagentId = entry.id; void interruptSelectedSubagent(); }}><Square size={14} /></Button>{/if}</div>{/if}</div>{/each}</div>{/if}{#if selectedSubagent && selectedSubagent.kind === "child"}<div class="subagent-history"><div class="agent-preview-heading"><strong>{subagentLabel(selectedSubagent)} 的历史</strong><span class="management-capability">{selectedSubagent.mode === "continuable" ? "可继续" : "一次性"}</span></div>{#if subagentMessages.length === 0}<DataState state="empty" title="暂无历史消息" description="子 Agent 尚未产生可展示的消息。" />{:else}{#each subagentMessages as message (message.id)}<article class="subagent-message"><div class="message-meta"><strong>{message.role === "assistant" ? "Agent" : message.role === "user" ? "用户" : "工具"}</strong></div><div class="message-text">{message.text}</div></article>{/each}{/if}{#if selectedSubagent.mode === "continuable"}<div class="subagent-composer"><Input aria-label="继续指令" bind:value={subagentPromptDraft} placeholder="向子 Agent 发送后续指令" onkeydown={(event) => { if (event.key === "Enter") void promptSelectedSubagent(); }} /><Button size="sm" disabled={!subagentPromptDraft.trim() || !!managementBusy} onclick={() => void promptSelectedSubagent()}><Send size={13} />发送</Button></div>{/if}</div>{/if}</SettingsGroup>
                 {:else if managementTab === "models"}
-                  <SettingsGroup title="模型目录" description="切换当前会话使用的官方模型。"><div class="card-icon"><Bot size={16} /></div>{#if modelGroups.length === 0}<DataState state="empty" title="尚未加载模型" description="先选择或新建一个会话。" />{:else}{#each modelGroups as group (group.id)}<div class="model-group"><strong>{group.name}</strong>{#each group.models as model (model.id)}<button class:chosen={`${group.id}/${model.id}` === selectedModel} class="model-option" disabled={modelBusy} onclick={() => void chooseModel(group.id, model.id)}><span>{model.name}</span>{#if model.description}<small>{model.description}</small>{/if}{#if `${group.id}/${model.id}` === selectedModel}<Check size={14} />{/if}</button>{/each}</div>{/each}{/if}</SettingsGroup>
+                  <SettingsGroup title="模型目录" description="会话模型和全局 Provider 目录均由官方 DSH 提供。"><div class="management-actions"><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><RefreshCw size={13} />刷新目录</Button>{#if hostInfo}<span class="management-capability">默认 {hostInfo.provider || "自动"}/{hostInfo.model || "自动"}</span>{/if}</div>{#if modelGroups.length === 0}<DataState state="empty" title="尚未加载会话模型" description="先选择或新建一个会话。" />{:else}{#each modelGroups as group (group.id)}<div class="model-group"><strong>{group.name}</strong>{#each group.models as model (model.id)}<button class:chosen={`${group.id}/${model.id}` === selectedModel} class="model-option" disabled={modelBusy} onclick={() => void chooseModel(group.id, model.id)}><span>{model.name}</span>{#if model.description}<small>{model.description}</small>{/if}{#if `${group.id}/${model.id}` === selectedModel}<Check size={14} />{/if}</button>{/each}</div>{/each}{/if}{#if catalogGroups.length > 0}<div class="catalog-divider"><span>全局 Provider 目录</span></div>{#each catalogGroups as group (group.id)}<div class="model-group catalog-group"><strong>{group.name}</strong><small>{group.models.length} 个可用模型</small><div class="catalog-models">{#each group.models as model (model.id)}<span>{model.name}</span>{/each}</div></div>{/each}{/if}{#if catalogFailures.length > 0}<div class="knowledge-note"><CircleAlert size={14} /><span>{catalogFailures.length} 个 Provider 目录读取失败：{catalogFailures.map((item) => item.name).join("、")}</span></div>{/if}</SettingsGroup>
                 {:else if managementTab === "workspaces"}
-                  <SettingsGroup title="工作区注册" description="工作区和会话由官方 DSH 维护，暗涌只提供选择与呈现。"><div class="management-actions"><Button size="sm" onclick={() => void pickWorkspace()}><FolderOpen size={14} />选择工作区</Button><Button variant="outline" size="sm" onclick={() => void refresh()}><History size={14} />刷新</Button></div>{#if filteredWorkspaces.length === 0}<DataState state="empty" title="没有注册工作区" description="选择一个目录后，官方 DSH 会建立工作区记录。" />{:else}<div class="management-list">{#each filteredWorkspaces as item (item.workspaceId)}<div class="management-list-row workspace-management-row"><span class="row-icon"><FolderOpen size={15} /></span><div>{#if editingWorkspaceId === item.workspaceId}<Input class="inline-edit-input" aria-label="工作区名称" bind:value={workspaceTitleDraft} onkeydown={(event) => { if (event.key === "Enter") void saveWorkspaceRename(item.workspaceId); if (event.key === "Escape") editingWorkspaceId = ""; }} />{:else}<strong>{item.title}</strong><small>{item.path}</small>{/if}</div>{#if editingWorkspaceId === item.workspaceId}<div class="row-actions"><Button size="sm" disabled={!!managementBusy} onclick={() => void saveWorkspaceRename(item.workspaceId)}><Check size={13} />保存</Button><Button variant="ghost" size="sm" onclick={() => editingWorkspaceId = ""}>取消</Button></div>{:else}<em>{item.sessionIds.length} 个会话</em><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="进入工作区" title="进入工作区" onclick={() => void enterWorkspace(item)}><ExternalLink size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="在资源管理器打开" title="在资源管理器打开" disabled={!!managementBusy} onclick={() => void openWorkspacePath(item)}><FolderOpen size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="重命名工作区" title="重命名工作区" onclick={() => beginWorkspaceRename(item)}><Pencil size={14} /></Button>{#if confirmingWorkspaceId === item.workspaceId}<Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => void removeWorkspace(item.workspaceId)}><Trash2 size={13} />确认移除</Button><Button variant="ghost" size="sm" onclick={() => confirmingWorkspaceId = ""}>取消</Button>{:else}<Button variant="ghost" size="icon-sm" aria-label="移除工作区注册" title="移除工作区注册" onclick={() => confirmingWorkspaceId = item.workspaceId}><Trash2 size={14} /></Button>{/if}</div>{/if}</div>{/each}</div>{/if}</SettingsGroup>
+                  <SettingsGroup title="工作区注册" description="工作区和会话由官方 DSH 维护，暗涌只提供选择与呈现。"><div class="management-actions"><Button size="sm" onclick={() => void pickWorkspace()}><FolderOpen size={14} />选择工作区</Button><Button variant="outline" size="sm" onclick={() => void refresh()}><History size={14} />刷新</Button></div>{#if filteredWorkspaces.length === 0}<DataState state="empty" title="没有注册工作区" description="选择一个目录后，官方 DSH 会建立工作区记录。" />{:else}<div class="management-list">{#each filteredWorkspaces as item (item.workspaceId)}<div class="management-list-row workspace-management-row"><span class="row-icon"><FolderOpen size={15} /></span><div>{#if editingWorkspaceId === item.workspaceId}<Input class="inline-edit-input" aria-label="工作区名称" bind:value={workspaceTitleDraft} onkeydown={(event) => { if (event.key === "Enter") void saveWorkspaceRename(item.workspaceId); if (event.key === "Escape") editingWorkspaceId = ""; }} />{:else}<strong>{item.title}</strong><small>{item.path}</small>{/if}</div>{#if editingWorkspaceId === item.workspaceId}<div class="row-actions"><Button size="sm" disabled={!!managementBusy} onclick={() => void saveWorkspaceRename(item.workspaceId)}><Check size={13} />保存</Button><Button variant="ghost" size="sm" onclick={() => editingWorkspaceId = ""}>取消</Button></div>{:else}<em>{item.sessionIds.length} 个会话</em><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="进入工作区" title="进入工作区" onclick={() => void enterWorkspace(item)}><ExternalLink size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="在资源管理器打开" title="在资源管理器打开" disabled={!!managementBusy} onclick={() => void openWorkspacePath(item)}><FolderOpen size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="重命名工作区" title="重命名工作区" onclick={() => beginWorkspaceRename(item)}><Pencil size={14} /></Button>{#if confirmingWorkspaceId === item.workspaceId}<Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => void removeWorkspace(item.workspaceId)}><Trash2 size={13} />确认移除</Button><Button variant="ghost" size="sm" onclick={() => confirmingWorkspaceId = ""}>取消</Button>{:else}<Button variant="ghost" size="icon-sm" aria-label="移除工作区注册" title="移除工作区注册" onclick={() => confirmingWorkspaceId = item.workspaceId}><Trash2 size={14} /></Button>{/if}</div>{/if}</div>{/each}</div>{/if}<div class="workspace-browser-divider"><span>目录浏览</span></div>{#if client}<WorkspaceBrowser client={client} onRegistered={() => { void refresh(); void refreshManagement(); }} />{/if}</SettingsGroup>
+                  <SettingsGroup title="官方顺序" description="使用 DSH 的持久排序 API 调整工作区和会话顺序。"><div class="management-list">{#each filteredWorkspaces as workspace, index (workspace.workspaceId)}<div class="management-list-row"><span class="row-icon"><FolderOpen size={15} /></span><div><strong>{workspace.title}</strong><small>{workspace.sessionIds.length} 个会话</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="工作区上移" title="工作区上移" disabled={index === 0 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, -1)}><ChevronDown class="rotate-180" size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="工作区下移" title="工作区下移" disabled={index === filteredWorkspaces.length - 1 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, 1)}><ChevronDown size={14} /></Button></div></div>{#each workspace.sessionIds as sessionId, sessionIndex (sessionId)}<div class="management-list-row nested-order-row"><span class="row-icon"><MessageSquare size={13} /></span><div><strong>{sessionTitle(sessions.find((item) => item.sessionId === sessionId) || { sessionId, updatedAt: 0, running: false, blank: false })}</strong><small>{sessionId}</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="会话上移" title="会话上移" disabled={sessionIndex === 0 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, -1)}><ChevronDown class="rotate-180" size={13} /></Button><Button variant="ghost" size="icon-sm" aria-label="会话下移" title="会话下移" disabled={sessionIndex === workspace.sessionIds.length - 1 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, 1)}><ChevronDown size={13} /></Button></div></div>{/each}{/each}</div></SettingsGroup>
                 {:else if managementTab === "mounts"}
                   <SmbMounts />
+                {:else if managementTab === "plugins"}
+                  <SettingsGroup title="插件与 MCP" description="只读显示官方 DSH Loader 的实时插件清单，不伪造连接或启用状态。"><div class="management-actions"><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><RefreshCw size={13} />刷新清单</Button><span class="management-capability">{pluginInventory.length} 个条目</span></div>{#if pluginInventory.length === 0}<DataState state="empty" title="暂无插件清单" description="官方 DSH 尚未返回 Host Loader 条目。" />{:else}<div class="management-list">{#each pluginInventory.filter((item) => !settingsQuery || `${item.moduleName} ${item.entryId}`.toLowerCase().includes(settingsQuery.toLowerCase())) as plugin (plugin.entryId)}<div class="management-list-row"><span class="row-icon"><PlugZap size={15} /></span><div><strong>{plugin.moduleName}</strong><small>{plugin.entryId}</small></div><StatusBadge status={plugin.enabled ? "success" : "neutral"} label={plugin.enabled ? "已启用" : "未启用"} /><span class={`plugin-phase plugin-phase--${plugin.fiberPhase || "none"}`}>{plugin.fiberPhase || "无运行 Fiber"}</span></div>{/each}</div>{/if}<div class="knowledge-note"><ShieldAlert size={14} /><span>插件启停、安装和 MCP 配置必须通过官方 DSH Profile/设置完成，本界面不维护第二套状态。</span></div></SettingsGroup>
                 {:else if managementTab === "knowledge"}
                   <SettingsGroup title="知识库与资料" description="知识入口接入官方 DSH Skill、工作区文件和会话附件。"><div class="knowledge-health-grid"><div><span>官方 Skill</span><strong>{skills.length}</strong><small>{skills.length ? "已加载" : "未加载"}</small></div><div><span>工作区文件</span><strong>{workspacePath ? "可用" : "未选择"}</strong><small>由 DSH 工具读取</small></div><div><span>会话资料</span><strong>{activeSession ? "可用" : "需会话"}</strong><small>由官方会话管理</small></div><div><span>持久知识库</span><strong>未接入</strong><small>等待官方插件 RPC</small></div></div><div class="knowledge-toolbar"><Button size="sm" onclick={() => void pickWorkspace()}><FolderOpen size={14} />选择知识工作区</Button><Button variant="outline" size="sm" onclick={() => void createSession()}><MessageSquarePlus size={14} />新建资料会话</Button><Button variant="outline" size="sm" onclick={() => openKnowledgePrompt("扫描当前工作区的文档与资料，按目录、类型和用途整理一份知识清单。") }><ClipboardList size={14} />扫描工作区资料</Button><Button variant="outline" size="sm" onclick={() => openKnowledgePrompt("检索当前工作区资料，找出与我的问题最相关的文件、段落和依据，并给出引用路径。") }><Search size={14} />检索工作区</Button><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />刷新知识源</Button></div>{#if skills.length === 0}<DataState state="empty" title="暂无官方知识源" description="选择会话与工作区后，可让 DSH 读取项目资料；持久索引需要官方知识插件。" />{:else}<div class="knowledge-skill-list">{#each skills.filter((skill) => !settingsQuery || `${skill.name} ${skill.description}`.toLowerCase().includes(settingsQuery.toLowerCase())) as skill (skill.name)}<article><div class="skill-heading"><span class="row-icon"><BookOpen size={15} /></span><div><strong>{skill.name}</strong><small>{skill.modelInvocable ? "模型可调用" : "仅用户可调用"}</small></div></div><p>{skill.description}</p>{#if skill.whenToUse}<em>{skill.whenToUse}</em>{/if}</article>{/each}</div>{/if}<div class="knowledge-note"><ShieldAlert size={14} /><span>旧版 SQLite、FTS5 和向量知识库属于已删除的私有 Wails 后端。当前页面只显示官方 DSH 的真实能力，不伪造本地索引状态。</span></div></SettingsGroup>
                 {:else if managementTab === "settings"}
-                  <SettingsGroup title="模型 Provider" description="Provider 目录来自官方 llm.providers。">{#if filteredProviders.length === 0}<DataState state="empty" title="暂无 Provider" description="官方 DSH 尚未返回可配置 Provider。" />{:else}<div class="management-list">{#each filteredProviders as provider (provider.provider)}<div class="management-list-row"><span class="row-icon"><Bot size={15} /></span><div><strong>{provider.displayName}</strong><small>{provider.provider} · {provider.settingsNs}</small></div><StatusBadge status={provider.active ? "success" : "neutral"} label={provider.active ? "已启用" : "未启用"} /></div>{/each}</div>{/if}</SettingsGroup>
+                  <SettingsGroup title="模型 Provider" description="Provider 目录、模型发现与配置地址来自官方 DSH。">{#if client}<ProviderWorkbench {client} providers={filteredProviders} onSelectNamespace={(ns) => selectSettingsNamespace(ns)} />{/if}</SettingsGroup>
                   <SettingsGroup title="凭据" description="官方接口不会返回凭据值，只显示配置状态并接受单向写入。"><div class="credential-form"><Input aria-label="凭据引用名" bind:value={credentialRefDraft} placeholder="例如 DEEPSEEK_API_KEY" /><Input aria-label="凭据值" type="password" bind:value={credentialValueDraft} placeholder="输入后只用于本次写入" /><Button size="sm" disabled={!credentialRefDraft.trim() || !credentialValueDraft || !!managementBusy} onclick={() => void saveCredential()}><KeyRound size={13} />保存凭据</Button></div>{#if credentialRefs.length === 0}<DataState state="empty" title="暂无凭据引用" description="Provider 设置中尚未声明 apiKeyEnv；也可在上方手动输入引用名。" />{:else}<div class="management-list">{#each credentialRefs as ref (ref)}<div class="management-list-row credential-row"><span class="row-icon"><KeyRound size={15} /></span><div><strong>{ref}</strong><small>{credentialSummary(ref)}</small></div><StatusBadge status={credentials[ref]?.configured ? "success" : "neutral"} label={credentials[ref]?.writable === false ? "只读" : "可写"} />{#if credentials[ref]?.configured && credentials[ref]?.writable}{#if confirmingCredentialRef === ref}<Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => void unsetCredential(ref)}><Trash2 size={13} />确认移除</Button><Button variant="ghost" size="sm" onclick={() => confirmingCredentialRef = ""}>取消</Button>{:else}<Button variant="ghost" size="icon-sm" aria-label="移除凭据" title="移除凭据" onclick={() => confirmingCredentialRef = ref}><Trash2 size={14} /></Button>{/if}{/if}</div>{/each}</div>{/if}</SettingsGroup>
                   <SettingsGroup title="设置命名空间" description="以 JSON 对象合并更新用户层；secret 字段保持写入专用，不会显示在这里。"><div class="management-actions"><Button variant="outline" size="sm" disabled={!settingsHasDocument || !!managementBusy} onclick={() => void openSettingsDocument()}><ExternalLink size={14} />打开设置文件</Button><span class="management-capability">{settingsWritable ? "可写" : "只读"}</span></div>{#if settingsNamespaces.length === 0}<DataState state="empty" title="暂无设置命名空间" description="官方 DSH 尚未注册设置项。" />{:else}<div class="settings-editor-grid"><nav class="settings-namespace-list" aria-label="设置命名空间">{#each filteredSettingsNamespaces as namespace (namespace.ns)}<button class:active={namespace.ns === selectedSettingsNamespace()?.ns} onclick={() => selectSettingsNamespace(namespace.ns)}><strong>{namespace.ns}</strong><small>{namespace.applies === "restart" ? "重启生效" : "即时生效"} · r{namespace.revision}</small></button>{/each}</nav><div class="settings-json-editor">{#if selectedSettingsNamespace()}<div class="agent-preview-heading"><strong>{selectedSettingsNamespace()?.ns}</strong><span>{selectedSettingsNamespace()?.secrets.filter((item) => item.set).length} 个 secret 已配置</span></div><Textarea aria-label="设置 JSON" rows={14} bind:value={settingsDraft} spellcheck={false} /><div class="row-actions"><Button size="sm" disabled={!settingsWritable || !!managementBusy} onclick={() => void saveSettingsNamespace()}><Save size={13} />合并更新</Button><Button variant="ghost" size="sm" onclick={() => selectSettingsNamespace(selectedSettingsNamespace()?.ns || "")}>重置编辑</Button></div>{/if}</div></div>{/if}</SettingsGroup>
                 {:else}
@@ -844,7 +958,7 @@
             </div>
             {#if pendingApproval}<div class="interaction-card approval-card"><div class="interaction-icon"><ShieldAlert size={17} /></div><div class="interaction-content"><strong>需要批准工具操作</strong><p>{pendingApproval.reason || `${pendingApproval.toolName} 请求访问工作区资源。`}</p><div class="interaction-actions"><Button variant="outline" size="sm" onclick={() => void respondApproval("rejected")}>拒绝</Button><Button size="sm" onclick={() => void respondApproval("allowed-once")}><Check size={14} />允许一次</Button></div></div></div>{/if}
             {#if pendingQuestion}<div class="interaction-card question-card"><div class="interaction-icon"><CircleAlert size={17} /></div><div class="interaction-content"><strong>DSH 需要你的选择</strong>{#each pendingQuestion.questions as question (String(question.id))}<div class="question-block"><label for={`question-${String(question.id)}`}>{String(question.question || question.header || "请选择")}</label>{#if Array.isArray(question.options) && question.options.length > 0}<select id={`question-${String(question.id)}`} aria-label={String(question.question || question.id)} value={questionAnswers[String(question.id)] || ""} onchange={(event) => questionAnswers[String(question.id)] = (event.currentTarget as HTMLSelectElement).value}><option value="">请选择…</option>{#each question.options as option (String(option.label))}<option value={String(option.label)}>{String(option.label)}</option>{/each}</select>{:else}<Input id={`question-${String(question.id)}`} aria-label={String(question.question || question.id)} placeholder="输入回答" value={questionAnswers[`${String(question.id)}:custom`] || ""} oninput={(event) => questionAnswers[`${String(question.id)}:custom`] = (event.currentTarget as HTMLInputElement).value} />{/if}</div>{/each}<div class="interaction-actions"><Button size="sm" onclick={() => void respondQuestion()}><Send size={14} />提交回答</Button></div></div></div>{/if}
-            <div class="composer"><div class="composer-shell"><Textarea bind:value={input} rows={customization.composerRows} placeholder={activeSessionId ? "描述任务，或直接说你想如何调整界面…" : "先新建一个会话…"} disabled={!activeSessionId || !!pendingApproval || !!pendingQuestion} onkeydown={(event: KeyboardEvent) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void submit(); } }} /><div class="composer-footer"><div class="composer-context"><span class="mode-chip">队列模式</span><span class="composer-hint">Ctrl / ⌘ + Enter 发送</span></div><div class="composer-actions">{#if !activityOpen}<Button variant="ghost" size="sm" onclick={() => setActivityOpen(true)}><History size={14} />活动</Button>{/if}{#if sending}<Button variant="outline" size="sm" onclick={() => void cancel()}><Square size={13} />停止</Button>{:else}<Button size="sm" disabled={!activeSessionId || !input.trim() || !!pendingApproval || !!pendingQuestion} onclick={() => void submit()}><Send size={13} />发送</Button>{/if}</div></div></div></div>
+            <div class="composer"><div class="composer-shell"><ReferencePicker bind:value={input} rows={customization.composerRows} {client} sessionId={activeSessionId} placeholder={activeSessionId ? "描述任务，或输入 @ 查找官方文件/会话引用…" : "先新建一个会话…"} disabled={!activeSessionId || !!pendingApproval || !!pendingQuestion} onSubmit={() => void submit()} /><div class="composer-footer"><div class="composer-context"><span class="mode-chip">队列模式</span><span class="composer-hint">Ctrl / ⌘ + Enter 发送</span>{#if activeSessionId && client}<PermissionSelector {client} sessionId={activeSessionId} permissions={activeSession?.projections?.values?.permissions} onNotice={permissionNotice} />{/if}</div><div class="composer-actions"><ImageAttachments bind:attachments />{#if !activityOpen}<Button variant="ghost" size="sm" onclick={() => setActivityOpen(true)}><History size={14} />活动</Button>{/if}{#if sending}<Button variant="outline" size="sm" onclick={() => void cancel()}><Square size={13} />停止</Button>{:else}<Button size="sm" disabled={!activeSessionId || (!input.trim() && attachments.length === 0) || !!pendingApproval || !!pendingQuestion} onclick={() => void submit()}><Send size={13} />发送</Button>{/if}</div></div></div></div>
           </div>
         {/if}
       </section>

@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -23,13 +25,15 @@ const allowedDshMethods = new Set([
   "session.list", "session.search", "session.create", "session.history", "session.prompt",
   "session.cancel", "session.models", "session.selectModel", "session.rename", "session.fork",
   "session.attachment", "session.updateQueue", "workspace.list", "workspace.create",
-  "workspace.rename", "workspace.delete", "workspace.archiveSession", "host.openPath",
-  "agentPreset.list", "agentPreset.select", "agentPreset.read", "agentPreset.openDocument",
+  "workspace.rename", "workspace.delete", "workspace.insertBefore", "workspace.insertSessionBefore",
+  "workspace.archiveSession", "host.describe", "host.listDirectory", "host.createDirectory", "host.openPath",
+  "agentPreset.list", "agentPreset.select", "agentPreset.read", "agentPreset.copy", "agentPreset.openDocument", "agentPreset.remove",
   "subagent.list", "subagent.history", "subagent.prompt", "subagent.interrupt",
   "goal.create", "goal.edit", "goal.pause",
   "goal.resume", "goal.complete", "goal.clear", "settings.describe", "settings.openDocument",
   "settings.update", "settings.replace", "settings.mutate", "credentials.describe",
   "credentials.set", "credentials.unset", "llm.providers", "llm.models", "llm.discoverModels", "skill.list",
+  "fileReferences/list", "sessionReferenceResolver/candidates", "pluginInventory/list",
 ]);
 
 process.stdout.on("error", rethrowUnlessBrokenPipe);
@@ -207,6 +211,25 @@ ipcMain.handle("desktop:pick-workspace", async () => {
   if (!mainWindow) return null;
   const result = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"] });
   return result.canceled ? null : result.filePaths[0] ?? null;
+});
+ipcMain.handle("desktop:export-session", async (_event, sessionId: unknown) => {
+  if (!dshRuntime?.url) throw new Error("官方 DSH 尚未启动");
+  if (typeof sessionId !== "string" || !sessionId.trim() || sessionId.length > 256) throw new Error("会话 ID 无效");
+  const url = new URL("/api/session.export", dshRuntime.url);
+  url.searchParams.set("sessionId", sessionId);
+  url.searchParams.set("includeDescendants", "true");
+  const preflight = await fetch(url, { method: "HEAD" });
+  if (!preflight.ok) throw new Error(`官方 DSH 导出准备失败（HTTP ${preflight.status}）`);
+  const filename = `dsh-session-${sessionId.replace(/[^A-Za-z0-9_-]/gu, "_")}.zip`;
+  const saveOptions = { defaultPath: path.join(app.getPath("downloads"), filename), filters: [{ name: "ZIP archive", extensions: ["zip"] }] };
+  const selected = mainWindow
+    ? await dialog.showSaveDialog(mainWindow, saveOptions)
+    : await dialog.showSaveDialog(saveOptions);
+  if (selected.canceled || !selected.filePath) return { saved: false as const };
+  const response = await fetch(url);
+  if (!response.ok || !response.body) throw new Error(`官方 DSH 导出失败（HTTP ${response.status}）`);
+  await pipeline(Readable.fromWeb(response.body as import("node:stream/web").ReadableStream), fs.createWriteStream(selected.filePath, { flags: "wx" }));
+  return { saved: true as const, path: selected.filePath };
 });
 ipcMain.handle("desktop:smb-list", async () => requireSmbManager().list());
 ipcMain.handle("desktop:smb-mount", async (_event, request: unknown) => {

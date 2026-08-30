@@ -12,6 +12,7 @@ export interface DesktopShellApi {
   maximize(): Promise<boolean>;
   close(): Promise<void>;
   pickWorkspace(): Promise<string | null>;
+  exportSession(sessionId: string): Promise<{ saved: false } | { saved: true; path: string }>;
   smbList(): Promise<SmbMountView[]>;
   smbMount(request: SmbMountRequest): Promise<SmbMountView>;
   smbUnmount(id: string): Promise<SmbMountView>;

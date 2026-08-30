@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld("voltDesktop", {
   maximize: () => ipcRenderer.invoke("desktop:maximize"),
   close: () => ipcRenderer.invoke("desktop:close"),
   pickWorkspace: () => ipcRenderer.invoke("desktop:pick-workspace"),
+  exportSession: (sessionId: string) => ipcRenderer.invoke("desktop:export-session", sessionId),
   smbList: () => ipcRenderer.invoke("desktop:smb-list"),
   smbMount: (request: unknown) => ipcRenderer.invoke("desktop:smb-mount", request),
   smbUnmount: (id: string) => ipcRenderer.invoke("desktop:smb-unmount", id),

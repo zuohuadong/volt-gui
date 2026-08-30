@@ -52,11 +52,29 @@ describe("DshClient management RPC", () => {
     await client.renameWorkspace("workspace-1", "产品仓库");
     await client.openPath("D:\\workspace\\product");
     await client.deleteWorkspace("workspace-1");
+    await client.describeHost();
+    await client.listDirectory("D:\\workspace");
+    await client.createDirectory("D:\\workspace", "new-project");
 
     expect(calls).toEqual([
       { method: "workspace.rename", payload: { workspaceId: "workspace-1", title: "产品仓库" } },
       { method: "host.openPath", payload: { path: "D:\\workspace\\product" } },
       { method: "workspace.delete", payload: { workspaceId: "workspace-1" } },
+      { method: "host.describe", payload: {} },
+      { method: "host.listDirectory", payload: { path: "D:\\workspace" } },
+      { method: "host.createDirectory", payload: { path: "D:\\workspace", name: "new-project" } },
+    ]);
+  });
+
+  it("supports official model discovery and image prompt content", async () => {
+    const { calls, client } = createClient();
+    await client.listModelCatalog();
+    await client.discoverModels({ settingsNs: "llm-openai", baseURL: "https://example.invalid", apiKey: "secret" });
+    await client.prompt("session-1", [{ type: "text", text: "分析这张图" }, { type: "image", mediaType: "image/png", data: "AA==", name: "diagram.png" }], "steer");
+    expect(calls).toEqual([
+      { method: "llm.models", payload: {} },
+      { method: "llm.discoverModels", payload: { settingsNs: "llm-openai", baseURL: "https://example.invalid", apiKey: "secret" } },
+      { method: "session.prompt", payload: { sessionId: "session-1", mode: "steer", content: [{ type: "text", text: "分析这张图" }, { type: "image", mediaType: "image/png", data: "AA==", name: "diagram.png" }], clientTimeZone: Intl.DateTimeFormat("zh-CN").resolvedOptions().timeZone } },
     ]);
   });
 
@@ -90,6 +108,18 @@ describe("DshClient management RPC", () => {
       { method: "credentials.set", payload: { ref: "DEEPSEEK_API_KEY", value: "secret" } },
       { method: "credentials.unset", payload: { ref: "DEEPSEEK_API_KEY" } },
       { method: "llm.providers", payload: {} },
+    ]);
+  });
+
+  it("maps official reference and plugin inventory remotes", async () => {
+    const { calls, client } = createClient();
+    await client.listFileReferences("session-1", "src/App");
+    await client.listSessionReferenceCandidates("session-1", "迁移");
+    await client.listPluginInventory();
+    expect(calls).toEqual([
+      { method: "fileReferences/list", payload: { args: { agentId: "session-1", query: "src/App" } } },
+      { method: "sessionReferenceResolver/candidates", payload: { args: { agentId: "session-1", query: "迁移" } } },
+      { method: "pluginInventory/list", payload: { args: {} } },
     ]);
   });
 });

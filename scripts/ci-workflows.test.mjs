@@ -91,6 +91,8 @@ test("CNB validates the same Node 26 source contract", () => {
   assert.match(cnb, /runner:/);
   assert.match(cnb, /namespace:\s*group/);
   assert.match(cnb, /tags:\s*[\r\n]+\s+-\s+zhd/);
+  assert.match(cnb, /^ {6}stages:/m);
+  assert.doesNotMatch(cnb, /^ {8}stages:/m);
   assert.match(cnb, /node --version/);
   assert.match(cnb, /Expected Node v26\.8\.1/);
   assert.match(cnb, /Expected pnpm 12\.1\.0/);

@@ -105,6 +105,7 @@ test("CNB validates the same Node 26 source contract", () => {
   assert.match(cnb, /set-electron-package-version\.mjs/);
   assert.match(cnb, /pnpm\.cmd run dist:desktop/);
   assert.match(cnb, /ELECTRON_MIRROR/);
+  assert.match(cnb, /ELECTRON_BUILDER_BINARIES_MIRROR/);
   assert.match(cnb, /CSC_IDENTITY_AUTO_DISCOVERY/);
   assert.match(cnb, /Desktop packaging failed with exit code/);
   assert.match(cnb, /type: git:release/);

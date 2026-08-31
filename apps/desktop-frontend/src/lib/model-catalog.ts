@@ -1,4 +1,4 @@
-import type { DiscoveredModel, ModelGroup, ModelInfo, SettingsNamespace } from "./dsh-client";
+import type { ConfigurableProvider, DiscoveredModel, ModelGroup, ModelInfo, SettingsNamespace } from "./dsh-client";
 
 export type ProviderSettings = {
   namespace: SettingsNamespace;
@@ -15,6 +15,42 @@ export function findProviderSettings(namespaces: SettingsNamespace[], provider: 
     }
   }
   return undefined;
+}
+
+export function resolveProviderSettings(
+  namespaces: SettingsNamespace[],
+  providers: ConfigurableProvider[],
+  provider: string,
+): ProviderSettings | undefined {
+  const descriptor = providers.find((item) => item.provider === provider);
+  if (descriptor) {
+    const namespace = namespaces.find((item) => item.ns === descriptor.settingsNs);
+    if (namespace) {
+      const config = valueAtPath(namespace.value, descriptor.settingsPath);
+      if (config && typeof config === "object" && !Array.isArray(config)) {
+        return { namespace, config: config as Record<string, unknown> };
+      }
+    }
+  }
+  return findProviderSettings(namespaces, provider);
+}
+
+export function providerCredentialRef(
+  namespaces: SettingsNamespace[],
+  providers: ConfigurableProvider[],
+  provider: string,
+): string | undefined {
+  const ref = resolveProviderSettings(namespaces, providers, provider)?.config.apiKeyEnv;
+  return typeof ref === "string" && ref ? ref : undefined;
+}
+
+function valueAtPath(value: unknown, path: string[]): unknown {
+  let current = value;
+  for (const segment of path) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) return undefined;
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
 }
 
 export function enrichModelGroups(groups: ModelGroup[], namespaces: SettingsNamespace[]): ModelGroup[] {
@@ -75,4 +111,15 @@ export function modelCapabilityLabel(model: ModelInfo, unknown = false): string 
   if (model.input?.includes("image")) return "支持图片";
   if (model.input?.includes("text")) return "仅文本";
   return "能力未声明";
+}
+
+export function supportedReasoningEffort(
+  groups: ModelGroup[],
+  provider: string,
+  model: string,
+  requested: string,
+): string | undefined {
+  if (!requested) return undefined;
+  const info = groups.find((group) => group.id === provider)?.models.find((item) => item.id === model);
+  return info?.reasoning?.efforts.some((effort) => effort.id === requested) ? requested : undefined;
 }

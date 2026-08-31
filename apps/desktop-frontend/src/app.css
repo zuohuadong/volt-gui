@@ -1150,3 +1150,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     grid-template-columns: 1fr;
   }
 }
+.session-state.error { background: oklch(0.62 0.21 25); box-shadow: 0 0 0 3px color-mix(in oklch, oklch(0.62 0.21 25) 15%, transparent); }
+.session-health { display: inline-flex; margin-left: 5px; padding: 2px 5px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); font-size: 9px; font-weight: 500; vertical-align: middle; }
+.session-health--running { border-color: color-mix(in oklch, oklch(0.66 0.17 145) 35%, var(--border)); color: oklch(0.42 0.12 145); }
+.session-health--error { border-color: color-mix(in oklch, oklch(0.62 0.21 25) 35%, var(--border)); color: oklch(0.46 0.16 25); }

@@ -39,4 +39,29 @@ describe("transcript folding", () => {
     expect(assistantMessageForEvent(next.messages, currentEvent)?.text).toBe("new proposal");
     expect(assistantMessageForEvent(next.messages, event("turn/end", 6, {}))).toBeUndefined();
   });
+
+  it("hides internal runtime context from user-visible history", () => {
+    const next = applyTranscriptEvent({ messages: [], todos: [] }, event("assistant/message", 7, {
+      message: "Current runtime context. This snapshot supersedes earlier runtime-context snapshots.",
+    }));
+    expect(next.messages).toHaveLength(0);
+    expect(applyTranscriptEvent({ messages: [], todos: [] }, event("assistant/message", 8, {
+      message: { content: [{ type: "text", text: "Current DSH file policy: workspace-write" }] },
+    })).messages).toHaveLength(0);
+  });
+
+  it("removes a streamed runtime context when the final message is filtered", () => {
+    const chunk = applyTranscriptEvent({ messages: [], todos: [] }, event("assistant/chunk", 9, {
+      turn: 1,
+      step: 1,
+      chunk: { type: "text-delta", text: "Current runtime context." },
+    }));
+    expect(chunk.messages).toHaveLength(1);
+    const final = applyTranscriptEvent(chunk, event("assistant/message", 10, {
+      turn: 1,
+      step: 1,
+      message: "Current runtime context. This snapshot supersedes earlier snapshots.",
+    }));
+    expect(final.messages).toHaveLength(0);
+  });
 });

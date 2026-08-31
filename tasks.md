@@ -53,6 +53,7 @@
 
 | task_id | provider | repo | source_url | title | priority | risk | status | owner | model | needs_model | review_class | branch | change_request_url |
 |---------|----------|------|------------|-------|----------|------|--------|-------|-------|-------------|--------------|--------|--------------------|
+| ANYONG-CNB-ISSUES-211-215-20260831 | cnb | aizhuliren/xgic/anyong-agent | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/issues | 修复并关闭全部开放 CNB issues #211-#215 | high | medium | running | codex | gpt-5.6 | - | review-medium | codex/fix-cnb-issues-211-215 | - |
 | VOLTGUI-PR103-ELECTRON-FOLLOWUP-20260824 | github | zuohuadong/volt-gui | https://github.com/zuohuadong/volt-gui/pull/103 | 完成 Electron + DSH 上游迁移并永久退役 Wails | high | high | review | codex | gpt-5.6 | - | review-high | codex/electron-dsh-upstream-migration | https://github.com/zuohuadong/volt-gui/pull/103 |
 | VOLTGUI-004 | local | aizhuliren/volt/anyong-agent | - | 迁移桌面自动发布为 CNB Windows-only | high | medium | done | codex | gpt-5-codex | - | - | main | - |
 | VOLTGUI-003 | local | aizhuliren/volt/voltui | - | 远端重写后重新提交通用和私有行业 skills | high | low | done | codex | gpt-5-codex | - | - | main | - |
@@ -75,6 +76,18 @@
 | ANYONG-REVIEW-PR7-20260714 | cnb | aizhuliren/volt/anyong-agent | https://cnb.cool/aizhuliren/volt/anyong-agent/-/issues/6 | 审查并合并 Linux runner prerequisites ZIP 修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | fix/desktop-build-linux-prerequisites-zip | https://cnb.cool/aizhuliren/volt/anyong-agent/-/pull/7 |
 | ANYONG-PREREQUISITES-RELEASE-20260714 | cnb | aizhuliren/volt/anyong-agent | user-request | 将 Windows prerequisites 解耦为独立版本与 Release | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/volt/anyong-agent/-/releases/tag/prerequisites-v1.0.0 |
 | ANYONG-STREAM-RECOVERY-20260813 | cnb | aizhuliren/volt/anyong-agent | user-screenshot | 修复 Windows 桌面端重复输出保护直接失败 | high | medium | done | codex | gpt-5.6 | - | review-medium | main | - |
+
+### ANYONG-CNB-ISSUES-211-215-20260831 Task Contract
+
+- source：用户要求修复并关闭 `https://cnb.cool/aizhuliren/xgic/anyong-agent/-/issues` 当前全部开放 issue；2026-08-31 读取到 #211、#212、#213、#214、#215 共 5 条。
+- 目标：修复会话工作台原始 Provider 错误、失败后等待状态和内部 runtime context 泄漏；在会话管理展示异常状态和凭据修复入口；统一子 Agent 管理页顶栏与面包屑；锁定已启动会话的 Agent 预设操作；模型刷新不暴露内网 IP，缺少凭据时禁用并引导保存；完成验证、提交、推送后逐条评论并关闭对应 CNB issue。
+- 非目标：不修改官方 DSH 会话、凭据或持久化实现；不新增第二套 Provider、session 或 runtime 状态后端；不升级官方 DSH；不发布新版本、tag 或 Release。
+- 验收标准：官方 Provider 的 `settingsNs/settingsPath` 能正确解析根路径或嵌套凭据；缺 Key 时模型不可发送并提供设置入口；agent error 终止等待状态且不污染其他会话；error turn/end 保留异常标识，成功重开/完成后清除；runtime context 不进入最终可见 transcript；非空会话预设按钮禁用；模型刷新文案不出现内网 IP；子 Agent 页保留平台顶栏和当前位置；前端测试/typecheck/build、Electron/迁移边界、根测试和 DSH 集成通过。
+- orchestration.mode：`managed`，risk=medium。主代理为唯一 writer；候选 diff 由一名独立只读 verifier 按 #211-#215、架构边界与回归风险复核。
+- 相关 skill：`provider-adapter`、`typescript`、`svelte-code-writer`、`svelte-core-bestpractices`、`volt-gui-design-language`；Svelte 5 runes、官方 DSH RPC 和 Electron loopback 安全边界保持不变。
+- 影响范围：`apps/desktop-frontend/src/App.svelte`、`app.css`、`lib/model-catalog.*`、`lib/transcript.*`、新增 `lib/session-health.*` 与 `lib/user-error.*`；任务账本仅记录本次合同与证据。
+- 风险与回滚：错误映射和前端健康状态会影响用户可见提示，但不写入 DSH 持久化；如回归，以普通 revert/follow-up 撤回本提交，不改写历史。
+- 验证计划：前端 Vitest、`svelte-check`、Svelte autofixer、Vite production build；`pnpm test`、`pnpm run test:dsh-integration`、`pnpm run build`；Electron/迁移边界；Playwright mock 截图检查会话、管理、子 Agent、预设和模型页；最终 `git diff --check` 与独立 verifier PASS。
 
 ### VOLTGUI-PR103-ELECTRON-FOLLOWUP-20260824 Task Contract
 

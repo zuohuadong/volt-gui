@@ -37,6 +37,7 @@ export function applyTranscriptEvent(state: TranscriptState, event: SessionEvent
 
   if (event.type === "user/message") {
     const text = visibleText(data.message ?? data.content);
+    if (!text) return { messages, todos };
     const pendingIndex = messages.findIndex((item) => item.pending && item.role === "user" && item.text === text);
     if (pendingIndex >= 0) messages.splice(pendingIndex, 1);
     messages.push({ id: `user-${event.seq}`, role: "user", text, seq: event.seq });
@@ -54,8 +55,13 @@ export function applyTranscriptEvent(state: TranscriptState, event: SessionEvent
     const message = data.message;
     const key = `stream-${String(data.turn ?? "0")}-${String(data.step ?? "0")}`;
     const usage = asRecord(data.usage);
-    const next = { id: `assistant-${event.seq}`, role: "assistant" as const, text: visibleText(message ?? data.content), reasoning: reasoningText(message ?? data.reasoning), pending: false, seq: event.seq, usage };
+    const text = visibleText(message ?? data.content);
+    const next = { id: `assistant-${event.seq}`, role: "assistant" as const, text, reasoning: reasoningText(message ?? data.reasoning), pending: false, seq: event.seq, usage };
     const index = messages.findIndex((item) => item.id === key);
+    if (!text && !next.reasoning) {
+      if (index >= 0) messages.splice(index, 1);
+      return { messages, todos };
+    }
     if (index >= 0) messages[index] = next; else messages.push(next);
   } else if (event.type === "tool/call") {
     const callId = String(data.callId ?? `call-${event.seq}`);
@@ -89,7 +95,7 @@ export function assistantMessageForEvent(
 }
 
 export function visibleText(value: unknown): string {
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return isInternalRuntimeText(value) ? "" : value;
   if (Array.isArray(value)) return value.map((item) => {
     const block = asRecord(item);
     if (block?.type === "reasoning") return "";
@@ -99,11 +105,19 @@ export function visibleText(value: unknown): string {
   const record = asRecord(value);
   if (!record) return value == null ? "" : String(value);
   if (record.type === "reasoning") return "";
-  if (typeof record.text === "string") return record.text;
-  if (typeof record.content === "string") return record.content;
+  if (typeof record.text === "string") return visibleText(record.text);
+  if (typeof record.content === "string") return visibleText(record.content);
   if (Array.isArray(record.content)) return visibleText(record.content);
   if (typeof record.output === "string") return record.output;
-  return JSON.stringify(value, null, 2);
+  const serialized = JSON.stringify(value, null, 2);
+  return isInternalRuntimeText(serialized) ? "" : serialized;
+}
+
+function isInternalRuntimeText(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized.includes("current runtime context.")
+    || normalized.includes("current dsh file policy:")
+    || normalized.includes("runtime context snapshot:");
 }
 
 export function reasoningText(value: unknown): string {

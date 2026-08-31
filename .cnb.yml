@@ -85,7 +85,13 @@ $:
             description: "Unsigned Windows x64 review build for $CNB_BRANCH"
             preRelease: true
             latest: false
-        - name: upload release assets
+        - name: upload installer asset
           script: |
             $ErrorActionPreference = "Stop"
+            $env:CNB_RELEASE_ASSET = "anyong-windows-x64-installer-$($env:CNB_BRANCH -replace '^v', '').exe"
+            node scripts/upload-cnb-release-assets.mjs
+        - name: upload portable asset
+          script: |
+            $ErrorActionPreference = "Stop"
+            $env:CNB_RELEASE_ASSET = "anyong-windows-x64-portable-$($env:CNB_BRANCH -replace '^v', '').zip"
             node scripts/upload-cnb-release-assets.mjs

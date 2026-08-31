@@ -91,8 +91,16 @@ export async function uploadCnbReleaseAssets({ env = process.env, fetchImpl = fe
   const tag = requireEnv(env, "CNB_BRANCH");
   const releaseId = await resolveReleaseId({ fetchImpl, endpoint, slug, tag, token });
   const distDir = env.CNB_DIST_DIR ? path.resolve(env.CNB_DIST_DIR) : path.join(rootDir, "dist");
+  const requestedAsset = String(env.CNB_RELEASE_ASSET || "").trim();
+  const assetPaths = releaseAssetPaths(tag, distDir);
+  const selectedPaths = requestedAsset
+    ? assetPaths.filter((filePath) => path.basename(filePath) === requestedAsset)
+    : assetPaths;
+  if (selectedPaths.length === 0) {
+    throw new Error(`Unknown CNB release asset: ${requestedAsset}`);
+  }
   const uploaded = [];
-  for (const filePath of releaseAssetPaths(tag, distDir)) {
+  for (const filePath of selectedPaths) {
     uploaded.push(await uploadReleaseAsset({ fetchImpl, endpoint, slug, releaseId, token, filePath }));
   }
   return uploaded;

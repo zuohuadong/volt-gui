@@ -50,7 +50,7 @@
 
   let client = $state<DshClient>();
   let productName = $state("西谷智灯暗涌平台");
-  let appVersion = $state("0.31.0");
+  let appVersion = $state("0.31.1");
   let workspacePath = $state("");
   let workspaces = $state<Workspace[]>([]);
   let sessions = $state<SessionSummary[]>([]);
@@ -331,6 +331,7 @@
     workspaces = workspaceResult.items;
     archivedSessionIds = workspaceResult.archivedSessionIds;
     sessions = sessionResult.items.filter((item) => !item.blank && !archivedSessionIds.includes(item.sessionId));
+    if (activeSessionId && !sessions.some((item) => item.sessionId === activeSessionId)) activeSessionId = sessions[0]?.sessionId || "";
     if (!activeSessionId && sessions[0]) await selectSession(sessions[0].sessionId);
   }
 
@@ -402,7 +403,9 @@
       : {};
     modelGroups = enrichModelGroups(modelResult.groups, settingsNamespaces);
     selectedModel = `${modelResult.current.provider}/${modelResult.current.model}`;
-    reasoningEffort = modelResult.current.reasoningEffort || "";
+    const currentInfo = modelResult.groups.find((group) => group.id === modelResult.current.provider)?.models.find((model) => model.id === modelResult.current.model);
+    reasoningEffort = currentInfo?.reasoning?.efforts.some((effort) => effort.id === modelResult.current.reasoningEffort) ? (modelResult.current.reasoningEffort || "") : "";
+    if (modelResult.current.reasoningEffort && !reasoningEffort) { try { await client.selectModel(sessionId, modelResult.current.provider, modelResult.current.model); } catch { /* 清理不兼容参数 */ } }
   }
 
   function sessionTitle(session: SessionSummary): string {
@@ -444,6 +447,11 @@
     return typeof ref === "string" && ref ? ref : undefined;
   }
 
+  function modelCredentialConfigured(provider: string): boolean {
+    const ref = findProviderSettings(settingsNamespaces, provider)?.config.apiKeyEnv;
+    return typeof ref !== "string" || !ref || !!credentials[ref]?.configured;
+  }
+
   async function xgProviderSettings() {
     let providerSettings = findProviderSettings(settingsNamespaces, "xg-gomodel");
     if (providerSettings || !client) return providerSettings;
@@ -483,7 +491,16 @@
     if (payload.type === "session/jobs") return;
     if (payload.type === "session/projection") { void refresh(); return; }
     if (payload.type === "host/session-added" || payload.type === "host/session-status" || payload.type === "host/session-removed" || payload.type === "host/workspace-changed" || payload.type === "host/workspace-removed") { void refresh(); return; }
-    if (payload.type === "host/agent-error") { runtimeError = payload.message || "DSH agent 运行失败"; sending = false; return; }
+    if (payload.type === "host/agent-error") {
+      const message = payload.message || "DSH agent 运行失败";
+      runtimeError = message;
+      sending = false;
+      messages = [
+        ...messages.map((item) => item.pending ? { ...item, pending: false } : item),
+        { id: `agent-error-${Date.now()}`, role: "system", text: message },
+      ];
+      return;
+    }
     if (payload.type !== "session/event" || payload.sessionId !== activeSessionId || !payload.event) return;
     const transcript = applyTranscriptEvent({ messages, todos }, payload.event, payload.view as Record<string, unknown> | undefined);
     messages = transcript.messages;
@@ -511,7 +528,8 @@
       return;
     }
     input = ""; sending = true; view = "conversation";
-    messages = [...messages, { id: `pending-${Date.now()}`, role: "user", text, pending: true }];
+    const pendingId = `pending-${Date.now()}`;
+    messages = [...messages, { id: pendingId, role: "user", text, pending: true }];
     const prompt = isSurfaceGenerationIntent(text)
       ? buildVoltSurfacePrompt(text)
       : isUiCustomizationIntent(text)
@@ -522,7 +540,11 @@
       await client.prompt(activeSessionId, content);
       attachments = [];
     }
-    catch (error) { sending = false; runtimeError = error instanceof Error ? error.message : String(error); }
+    catch (error) {
+      sending = false;
+      messages = messages.map((message) => message.id === pendingId ? { ...message, pending: false } : message);
+      runtimeError = error instanceof Error ? error.message : String(error);
+    }
   }
 
   async function cancel(): Promise<void> {
@@ -585,8 +607,11 @@
     if (!client) return;
     await performManagementAction(`session-fork:${sessionId}`, async () => {
       const created = await client!.fork(sessionId);
+      const source = sessions.find((item) => item.sessionId === sessionId);
+      await client!.rename(created.sessionId, `${source ? sessionTitle(source) : "会话"} - 副本`);
       await refresh();
       await selectSession(created.sessionId);
+      managementNotice = "会话已复制，并已添加“副本”后缀";
     });
   }
 
@@ -635,6 +660,7 @@
   async function chooseAgentPreset(agentPreset: string): Promise<void> {
     if (!client || !activeSessionId) return;
     await performManagementAction(`agent-select:${agentPreset}`, async () => {
+      if (activeSession?.running) throw new Error("当前会话已开始，Agent 预设固定不变；请新建会话后再应用预设。");
       await client!.selectAgentPreset(activeSessionId, agentPreset);
       await refresh();
       managementNotice = "当前会话的 Agent 预设已更新";
@@ -644,6 +670,8 @@
   async function openAgentPresetDocument(agentPreset: string): Promise<void> {
     if (!client) return;
     await performManagementAction(`agent-open:${agentPreset}`, async () => {
+      const preset = agentPresets.find((item) => item.id === agentPreset);
+      if (preset?.trust === "system") throw new Error("官方 Agent 预设为只读，请先复制为用户预设后再编辑。");
       const result = await client!.openAgentPresetDocument(agentPreset);
       managementNotice = result.opened ? "已打开 Agent 配置文件" : `配置文件位于 ${result.path}`;
     });
@@ -1013,8 +1041,8 @@
                   <SettingsGroup title="目标控制" description="目标状态来自当前会话 projection，写操作使用官方 DSH 的 revision。"><div class="management-actions"><Button size="sm" onclick={() => { if (currentGoal) beginGoalEdit(); else { editingGoal = true; goalObjectiveDraft = ""; goalRoundsDraft = "256"; } }}><Target size={14} />{currentGoal ? "编辑目标" : "创建目标"}</Button>{#if currentGoal && currentGoal.goal.phase === "active"}<Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("pause")}><Pause size={14} />暂停</Button>{:else if currentGoal && (currentGoal.goal.phase === "paused" || currentGoal.goal.phase === "blocked")}<Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("resume")}><Play size={14} />恢复</Button>{/if}{#if currentGoal && currentGoal.goal.phase !== "complete"}<Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("complete")}><Check size={14} />完成</Button>{/if}{#if currentGoal}{#if confirmingGoalClear}<Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("clear")}><Trash2 size={13} />确认清除</Button><Button variant="ghost" size="sm" onclick={() => confirmingGoalClear = false}>取消</Button>{:else}<Button variant="ghost" size="icon-sm" aria-label="清除目标" title="清除目标" onclick={() => confirmingGoalClear = true}><Trash2 size={14} /></Button>{/if}{/if}</div>{#if editingGoal}<div class="goal-editor"><label>目标内容<Input aria-label="目标内容" bind:value={goalObjectiveDraft} placeholder="描述需要持续推进的目标" /></label><label>最大轮次<Input aria-label="最大轮次" type="number" min="1" bind:value={goalRoundsDraft} /></label><div class="row-actions"><Button size="sm" disabled={!!managementBusy} onclick={() => void saveGoal()}><Save size={13} />保存</Button><Button variant="ghost" size="sm" onclick={() => editingGoal = false}>取消</Button></div></div>{/if}{#if currentGoal}<div class="goal-status-grid"><div><span>状态</span><strong>{goalPhaseLabel(currentGoal.goal.phase)}</strong></div><div><span>轮次</span><strong>{currentGoal.roundsStarted} / {currentGoal.goal.maxGoalRounds}</strong></div><div><span>版本</span><strong>{currentGoal.goal.revision}</strong></div></div><div class="goal-objective">{currentGoal.goal.objective}</div>{#if currentGoal.goal.blockedReason}<div class="knowledge-note"><CircleAlert size={14} /><span>{String(currentGoal.goal.blockedReason)}</span></div>{/if}{:else}<DataState state="empty" title="当前会话暂无目标" description="创建一个目标后，官方 DSH 会持续记录状态与轮次。" />{/if}</SettingsGroup>
                 {:else if managementTab === "subagents"}
                   <SettingsGroup title="子 Agent" description="查看直接子 Agent 的历史，并向可继续的子 Agent 发送后续指令。"><div class="management-actions"><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />刷新子 Agent</Button><span class="management-capability">{subagentParentAvailable ? "父会话可用" : "父会话不可用"}</span></div>{#if subagents.length === 0}<DataState state="empty" title="暂无子 Agent" description="当前会话尚未产生直接子 Agent。" />{:else}<div class="management-list">{#each subagents as entry (entry.id)}<div class:chosen={entry.id === selectedSubagentId} class="management-list-row subagent-management-row"><span class="row-icon"><Network size={15} /></span><div><strong>{subagentLabel(entry)}</strong><small>{subagentStatusLabel(entry)}</small></div>{#if entry.kind === "child"}<div class="row-actions"><Button variant="ghost" size="sm" onclick={() => void selectSubagent(entry)}>查看历史</Button>{#if entry.mode === "continuable" && entry.activity === "running"}<Button variant="ghost" size="icon-sm" aria-label="停止子 Agent" title="停止子 Agent" disabled={!!managementBusy} onclick={() => { selectedSubagentId = entry.id; void interruptSelectedSubagent(); }}><Square size={14} /></Button>{/if}</div>{/if}</div>{/each}</div>{/if}{#if selectedSubagent && selectedSubagent.kind === "child"}<div class="subagent-history"><div class="agent-preview-heading"><strong>{subagentLabel(selectedSubagent)} 的历史</strong><span class="management-capability">{selectedSubagent.mode === "continuable" ? "可继续" : "一次性"}</span></div>{#if subagentMessages.length === 0}<DataState state="empty" title="暂无历史消息" description="子 Agent 尚未产生可展示的消息。" />{:else}{#each subagentMessages as message (message.id)}<article class="subagent-message"><div class="message-meta"><strong>{message.role === "assistant" ? "Agent" : message.role === "user" ? "用户" : "工具"}</strong></div><div class="message-text">{message.text}</div></article>{/each}{/if}{#if selectedSubagent.mode === "continuable"}<div class="subagent-composer"><Input aria-label="继续指令" bind:value={subagentPromptDraft} placeholder="向子 Agent 发送后续指令" onkeydown={(event) => { if (event.key === "Enter") void promptSelectedSubagent(); }} /><Button size="sm" disabled={!subagentPromptDraft.trim() || !!managementBusy} onclick={() => void promptSelectedSubagent()}><Send size={13} />发送</Button></div>{/if}</div>{/if}</SettingsGroup>
-                {:else if managementTab === "models"}
-                  <SettingsGroup title="模型目录" description="会话模型和全局 Provider 目录均由官方 DSH 提供。"><div class="management-actions"><Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void refreshXgGatewayModels()}><RefreshCw size={13} />从 192.168.1.47 刷新</Button><Button variant="ghost" size="sm" onclick={() => void refreshManagement()}>刷新目录</Button>{#if hostInfo}<span class="management-capability">默认 {hostInfo.provider || "自动"}/{hostInfo.model || "自动"}</span>{/if}</div>{#if modelGroups.length === 0}<DataState state="empty" title="尚未加载会话模型" description="先选择或新建一个会话。" />{:else}{#each modelGroups as group (group.id)}<div class="model-group"><strong>{group.name}</strong>{#each group.models as model (model.id)}<button class:chosen={`${group.id}/${model.id}` === selectedModel} class="model-option" disabled={modelBusy} onclick={() => void chooseModel(group.id, model.id)}><span><strong>{model.name}</strong><small>{modelCapabilityLabel(model, group.id === "xg-gomodel" && unknownModelCapabilities.has(model.id))}{#if model.contextWindow} · 上下文 {model.contextWindow.toLocaleString()}{/if}{#if model.maxTokens} · 输出 {model.maxTokens.toLocaleString()}{/if}</small></span>{#if `${group.id}/${model.id}` === selectedModel}<Check size={14} />{/if}</button>{/each}</div>{/each}{/if}{#if catalogGroups.length > 0}<div class="catalog-divider"><span>全局 Provider 目录</span></div>{#each catalogGroups as group (group.id)}<div class="model-group catalog-group"><strong>{group.name}</strong><small>{group.models.length} 个可用模型</small><div class="catalog-models">{#each group.models as model (model.id)}<span>{model.name}</span>{/each}</div></div>{/each}{/if}{#if catalogFailures.length > 0}<div class="knowledge-note"><CircleAlert size={14} /><span>{catalogFailures.length} 个 Provider 目录读取失败：{catalogFailures.map((item) => item.name).join("、")}</span></div>{/if}</SettingsGroup>
+              {:else if managementTab === "models"}
+                  <SettingsGroup title="模型目录" description="会话模型和全局 Provider 目录均由官方 DSH 提供。"><div class="management-actions"><Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void refreshXgGatewayModels()}><RefreshCw size={13} />从 192.168.1.47 刷新</Button><Button variant="ghost" size="sm" onclick={() => void refreshManagement()}>刷新目录</Button>{#if hostInfo}<span class="management-capability">默认 {hostInfo.provider || "自动"}/{hostInfo.model || "自动"}</span>{/if}</div>{#if modelGroups.length === 0}<DataState state="empty" title="尚未加载会话模型" description="先选择或新建一个会话。" />{:else}{#each modelGroups as group (group.id)}<div class="model-group"><strong>{group.name}</strong>{#each group.models as model (model.id)}<button class:chosen={`${group.id}/${model.id}` === selectedModel} class="model-option" disabled={modelBusy || !modelCredentialConfigured(group.id)} title={modelCredentialConfigured(group.id) ? undefined : "缺少 Provider 凭据，请前往设置与凭据配置"} onclick={() => void chooseModel(group.id, model.id)}><span><strong>{model.name}</strong><small>{modelCredentialConfigured(group.id) ? modelCapabilityLabel(model, group.id === "xg-gomodel" && unknownModelCapabilities.has(model.id)) : "未配置凭据 · 请前往设置与凭据"}{#if model.contextWindow} · 上下文 {model.contextWindow.toLocaleString()}{/if}{#if model.maxTokens} · 输出 {model.maxTokens.toLocaleString()}{/if}</small></span>{#if `${group.id}/${model.id}` === selectedModel}<Check size={14} />{/if}</button>{/each}</div>{/each}{/if}{#if catalogGroups.length > 0}<div class="catalog-divider"><span>全局 Provider 目录</span></div>{#each catalogGroups as group (group.id)}<div class="model-group catalog-group"><strong>{group.name}</strong><small>{group.models.length} 个可用模型</small><div class="catalog-models">{#each group.models as model (model.id)}<span>{model.name}</span>{/each}</div></div>{/each}{/if}{#if catalogFailures.length > 0}<div class="knowledge-note"><CircleAlert size={14} /><span>{catalogFailures.length} 个 Provider 目录读取失败：{catalogFailures.map((item) => item.name).join("、")}</span></div>{/if}</SettingsGroup>
                 {:else if managementTab === "workspaces"}
                   <SettingsGroup title="工作区注册" description="工作区和会话由官方 DSH 维护，暗涌只提供选择与呈现。"><div class="management-actions"><Button size="sm" onclick={() => void pickWorkspace()}><FolderOpen size={14} />选择工作区</Button><Button variant="outline" size="sm" onclick={() => void refresh()}><History size={14} />刷新</Button></div>{#if filteredWorkspaces.length === 0}<DataState state="empty" title="没有注册工作区" description="选择一个目录后，官方 DSH 会建立工作区记录。" />{:else}<div class="management-list">{#each filteredWorkspaces as item (item.workspaceId)}<div class="management-list-row workspace-management-row"><span class="row-icon"><FolderOpen size={15} /></span><div>{#if editingWorkspaceId === item.workspaceId}<Input class="inline-edit-input" aria-label="工作区名称" bind:value={workspaceTitleDraft} onkeydown={(event) => { if (event.key === "Enter") void saveWorkspaceRename(item.workspaceId); if (event.key === "Escape") editingWorkspaceId = ""; }} />{:else}<strong>{item.title}</strong><small>{item.path}</small>{/if}</div>{#if editingWorkspaceId === item.workspaceId}<div class="row-actions"><Button size="sm" disabled={!!managementBusy} onclick={() => void saveWorkspaceRename(item.workspaceId)}><Check size={13} />保存</Button><Button variant="ghost" size="sm" onclick={() => editingWorkspaceId = ""}>取消</Button></div>{:else}<em>{item.sessionIds.length} 个会话</em><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="进入工作区" title="进入工作区" onclick={() => void enterWorkspace(item)}><ExternalLink size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="在资源管理器打开" title="在资源管理器打开" disabled={!!managementBusy} onclick={() => void openWorkspacePath(item)}><FolderOpen size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="重命名工作区" title="重命名工作区" onclick={() => beginWorkspaceRename(item)}><Pencil size={14} /></Button>{#if confirmingWorkspaceId === item.workspaceId}<Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => void removeWorkspace(item.workspaceId)}><Trash2 size={13} />确认移除</Button><Button variant="ghost" size="sm" onclick={() => confirmingWorkspaceId = ""}>取消</Button>{:else}<Button variant="ghost" size="icon-sm" aria-label="移除工作区注册" title="移除工作区注册" onclick={() => confirmingWorkspaceId = item.workspaceId}><Trash2 size={14} /></Button>{/if}</div>{/if}</div>{/each}</div>{/if}<div class="workspace-browser-divider"><span>目录浏览</span></div>{#if client}<WorkspaceBrowser client={client} onRegistered={() => { void refresh(); void refreshManagement(); }} />{/if}</SettingsGroup>
                   <SettingsGroup title="官方顺序" description="使用 DSH 的持久排序 API 调整工作区和会话顺序。"><div class="management-list">{#each filteredWorkspaces as workspace, index (workspace.workspaceId)}<div class="management-list-row"><span class="row-icon"><FolderOpen size={15} /></span><div><strong>{workspace.title}</strong><small>{workspace.sessionIds.length} 个会话</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="工作区上移" title="工作区上移" disabled={index === 0 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, -1)}><ChevronDown class="rotate-180" size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="工作区下移" title="工作区下移" disabled={index === filteredWorkspaces.length - 1 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, 1)}><ChevronDown size={14} /></Button></div></div>{#each workspace.sessionIds as sessionId, sessionIndex (sessionId)}<div class="management-list-row nested-order-row"><span class="row-icon"><MessageSquare size={13} /></span><div><strong>{sessionTitle(sessions.find((item) => item.sessionId === sessionId) || { sessionId, updatedAt: 0, running: false, blank: false })}</strong><small>{sessionId}</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="会话上移" title="会话上移" disabled={sessionIndex === 0 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, -1)}><ChevronDown class="rotate-180" size={13} /></Button><Button variant="ghost" size="icon-sm" aria-label="会话下移" title="会话下移" disabled={sessionIndex === workspace.sessionIds.length - 1 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, 1)}><ChevronDown size={13} /></Button></div></div>{/each}{/each}</div></SettingsGroup>

@@ -1,17 +1,21 @@
 {
   "name": "volt-gui",
-  "version": "0.31.0",
+  "version": "0.31.1",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=26.8.1 <27"
   },
-  "packageManager": "pnpm@11.23.0",
+  "packageManager": "pnpm@12.1.0",
   "bin": {
     "anyong": "./scripts/anyong.mjs",
     "dsh-anyong": "./scripts/anyong.mjs"
   },
   "scripts": {
+    "preinstall": "node ./scripts/ensure-pnpm.mjs",
+    "prebuild": "node ./scripts/ensure-pnpm.mjs",
+    "pretest": "node ./scripts/ensure-pnpm.mjs",
+    "predist:desktop": "node ./scripts/ensure-pnpm.mjs",
     "build": "node ./scripts/bundle.mjs && pnpm run build:desktop",
     "test": "pnpm --filter @voltui/desktop-electron run test && node --test ./scripts/check-migration-boundary.test.mjs ./scripts/smoke-packaged-dsh-runtime.test.mjs && pnpm run check:dsh-plugins",
     "test:dsh-integration": "node --test ./scripts/dsh-integration.test.mjs",

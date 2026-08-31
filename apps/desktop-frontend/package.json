@@ -1,9 +1,12 @@
 {
   "name": "@voltui/desktop-frontend",
-  "version": "0.31.0",
+  "version": "0.31.1",
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "node ../../scripts/ensure-pnpm.mjs",
+    "pretest": "node ../../scripts/ensure-pnpm.mjs",
+    "precheck": "node ../../scripts/ensure-pnpm.mjs",
     "dev": "vite",
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",

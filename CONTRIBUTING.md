@@ -4,11 +4,11 @@ VoltUI accepts changes for the Electron shell, official DSH profile overlay, ver
 
 ## Development
 
-Use Node `26.8.1` with pnpm `11.23.0`:
+Use Node `26.8.1` with pnpm `12.1.0`:
 
 ```sh
 corepack enable
-corepack prepare pnpm@11.23.0 --activate
+corepack prepare pnpm@12.1.0 --activate
 pnpm install --frozen-lockfile
 ```
 

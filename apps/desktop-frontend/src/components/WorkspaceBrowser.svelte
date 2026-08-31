@@ -15,7 +15,7 @@
   async function browse(path?: string): Promise<void> {
     loading = true; error = "";
     try { listing = await client.listDirectory(path); }
-    catch (e) { error = e instanceof Error ? e.message : String(e); }
+    catch (e) { const message = e instanceof Error ? e.message : String(e); error = message.includes("needs the browse capability") ? "当前桌面会话未授予目录浏览权限，请在权限提示中允许浏览工作区，或使用上方“选择工作区”。" : message; }
     finally { loading = false; }
   }
   async function createFolder(): Promise<void> {

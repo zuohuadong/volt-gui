@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DshClient } from "./dsh-client";
+import { DshClient, type PromptContentPart } from "./dsh-client";
 
 function createClient() {
   const calls: Array<{ method: string; payload: unknown }> = [];
@@ -76,6 +76,15 @@ describe("DshClient management RPC", () => {
       { method: "llm.discoverModels", payload: { settingsNs: "llm-openai", baseURL: "https://example.invalid", apiKey: "secret" } },
       { method: "session.prompt", payload: { sessionId: "session-1", mode: "steer", content: [{ type: "text", text: "分析这张图" }, { type: "image", mediaType: "image/png", data: "AA==", name: "diagram.png" }], clientTimeZone: Intl.DateTimeFormat("zh-CN").resolvedOptions().timeZone } },
     ]);
+  });
+
+  it("snapshots reactive prompt content before crossing the transport boundary", async () => {
+    const { calls, client } = createClient();
+    const reactiveContent = new Proxy([{ type: "image", mediaType: "image/png", data: "AA==", name: "x.png" } satisfies PromptContentPart], {});
+    await client.prompt("session-1", reactiveContent);
+    const payload = calls[0].payload as { content: unknown[] };
+    expect(payload.content).toEqual([{ type: "image", mediaType: "image/png", data: "AA==", name: "x.png" }]);
+    expect(Object.getPrototypeOf(payload.content)).toBe(Array.prototype);
   });
 
   it("maps goals, subagents, settings, credentials and providers", async () => {

@@ -27,7 +27,7 @@ main:
             $ErrorActionPreference = "Stop"
             pnpm.cmd run test:dsh-integration
             pnpm.cmd test
-            node --test scripts/ci-workflows.test.mjs scripts/package-dist.test.mjs scripts/set-electron-package-version.test.mjs
+            node --test scripts/ci-workflows.test.mjs scripts/package-dist.test.mjs scripts/pnpm-invocation.test.mjs scripts/set-electron-package-version.test.mjs
             node scripts/check-migration-boundary.mjs
             pnpm.cmd audit --prod --audit-level high
         - name: build

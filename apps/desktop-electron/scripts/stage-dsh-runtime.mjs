@@ -4,14 +4,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { resolvePnpmInvocation } from "./pnpm-invocation.mjs";
+
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const target = path.join(appDir, ".dsh-runtime");
 const nodeTargetDir = path.join(appDir, ".node-runtime");
 const nodeTarget = path.join(nodeTargetDir, process.platform === "win32" ? "node.exe" : "node");
 const pnpmEntrypoint = process.env.npm_execpath;
 
-if (!pnpmEntrypoint) throw new Error("stage:runtime must be launched through pnpm");
 if (process.version !== "v26.8.1") throw new Error(`Node 26.8.1 is required to stage the desktop runtime; received ${process.version}`);
+const pnpm = resolvePnpmInvocation(pnpmEntrypoint);
 
 fs.rmSync(target, { recursive: true, force: true });
 fs.rmSync(nodeTargetDir, { recursive: true, force: true });
@@ -21,8 +23,8 @@ fs.writeFileSync(nodeTarget, nodeBytes, { mode: process.platform === "win32" ? u
 const sourceHash = createHash("sha256").update(nodeBytes).digest("hex");
 const targetHash = createHash("sha256").update(fs.readFileSync(nodeTarget)).digest("hex");
 if (targetHash !== sourceHash) throw new Error("staged Node runtime checksum mismatch");
-const result = spawnSync(process.execPath, [
-  pnpmEntrypoint,
+const result = spawnSync(pnpm.command, [
+  ...pnpm.args,
   "--config.node-linker=hoisted",
   "--filter",
   "@voltui/desktop-electron",

@@ -36,3 +36,51 @@ main:
             pnpm.cmd run build
             if (-not (Test-Path "apps/desktop-electron/dist/main.js")) { throw "Electron main bundle not found" }
             if (-not (Test-Path "dist/anyong-dsh/package.json")) { throw "DSH distribution not found" }
+
+"v*":
+  tag_push:
+    - runner:
+        namespace: group
+        tags:
+          - zhd
+      stages:
+        - name: environment
+          script: |
+            $ErrorActionPreference = "Stop"
+            $nodeVersion = node --version
+            if ($nodeVersion -ne "v26.8.1") { throw "Expected Node v26.8.1, got $nodeVersion" }
+            git --version
+            $pnpmVersion = pnpm.cmd --version
+            if ($pnpmVersion -ne "12.1.0") { throw "Expected pnpm 12.1.0, got $pnpmVersion" }
+        - name: install
+          script: |
+            $ErrorActionPreference = "Stop"
+            pnpm.cmd install --frozen-lockfile
+        - name: verify
+          script: |
+            $ErrorActionPreference = "Stop"
+            pnpm.cmd run test:dsh-integration
+            pnpm.cmd test
+            node scripts/check-migration-boundary.mjs
+        - name: set version
+          script: |
+            $ErrorActionPreference = "Stop"
+            node scripts/set-electron-package-version.mjs "$env:CNB_BRANCH"
+        - name: package
+          script: |
+            $ErrorActionPreference = "Stop"
+            pnpm.cmd run dist:desktop
+            $version = $env:CNB_BRANCH -replace '^desktop-v', '' -replace '^v', ''
+            if (-not (Test-Path "dist/anyong-windows-x64-installer-$version.exe")) { throw "Versioned installer not found" }
+            if (-not (Test-Path "dist/anyong-windows-x64-portable-$version.zip")) { throw "Versioned portable archive not found" }
+        - name: create release
+          type: git:release
+          options:
+            title: $CNB_BRANCH
+            description: "Unsigned Windows x64 review build for $CNB_BRANCH"
+            preRelease: true
+            latest: false
+        - name: upload release assets
+          script: |
+            $ErrorActionPreference = "Stop"
+            node scripts/upload-cnb-release-assets.mjs

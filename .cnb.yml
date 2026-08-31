@@ -15,24 +15,24 @@ main:
             if ($nodeVersion -ne "v26.8.1") { throw "Expected Node v26.8.1, got $nodeVersion" }
             $nodeVersion
             git --version
-            $pnpmVersion = pnpm --version
+            $pnpmVersion = pnpm.cmd --version
             if ($pnpmVersion -ne "12.1.0") { throw "Expected pnpm 12.1.0, got $pnpmVersion" }
             $pnpmVersion
         - name: install
           script: |
             $ErrorActionPreference = "Stop"
-            pnpm install --frozen-lockfile
+            pnpm.cmd install --frozen-lockfile
         - name: verify
           script: |
             $ErrorActionPreference = "Stop"
-            pnpm run test:dsh-integration
-            pnpm test
+            pnpm.cmd run test:dsh-integration
+            pnpm.cmd test
             node --test scripts/ci-workflows.test.mjs scripts/package-dist.test.mjs scripts/set-electron-package-version.test.mjs
             node scripts/check-migration-boundary.mjs
-            pnpm audit --prod --audit-level high
+            pnpm.cmd audit --prod --audit-level high
         - name: build
           script: |
             $ErrorActionPreference = "Stop"
-            pnpm run build
+            pnpm.cmd run build
             if (-not (Test-Path "apps/desktop-electron/dist/main.js")) { throw "Electron main bundle not found" }
             if (-not (Test-Path "dist/anyong-dsh/package.json")) { throw "DSH distribution not found" }

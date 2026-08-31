@@ -96,8 +96,9 @@ test("CNB validates the same Node 26 source contract", () => {
   assert.match(cnb, /node --version/);
   assert.match(cnb, /Expected Node v26\.8\.1/);
   assert.match(cnb, /Expected pnpm 12\.1\.0/);
+  assert.match(cnb, /pnpm\.cmd/);
   assert.match(cnb, /Test-Path/);
-  assert.match(cnb, /pnpm run test:dsh-integration/);
+  assert.match(cnb, /pnpm\.cmd run test:dsh-integration/);
   assert.match(cnb, /check-migration-boundary/);
   assert.doesNotMatch(cnb, /docker:|test -f|desktop-frontend|check-runtime-mocks|\bgo\b|wails/i);
 });

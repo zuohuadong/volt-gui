@@ -104,6 +104,8 @@ test("CNB validates the same Node 26 source contract", () => {
   assert.match(cnb, /Unsupported release tag/);
   assert.match(cnb, /set-electron-package-version\.mjs/);
   assert.match(cnb, /pnpm\.cmd run dist:desktop/);
+  assert.match(cnb, /ELECTRON_MIRROR/);
+  assert.match(cnb, /Desktop packaging failed with exit code/);
   assert.match(cnb, /type: git:release/);
   assert.match(cnb, /preRelease: true/);
   assert.match(cnb, /upload-cnb-release-assets\.mjs/);

@@ -70,7 +70,9 @@ $:
         - name: package
           script: |
             $ErrorActionPreference = "Stop"
+            $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
             pnpm.cmd run dist:desktop
+            if ($LASTEXITCODE -ne 0) { throw "Desktop packaging failed with exit code $LASTEXITCODE" }
             $version = $env:CNB_BRANCH -replace '^desktop-v', '' -replace '^v', ''
             if (-not (Test-Path "dist/anyong-windows-x64-installer-$version.exe")) { throw "Versioned installer not found" }
             if (-not (Test-Path "dist/anyong-windows-x64-portable-$version.zip")) { throw "Versioned portable archive not found" }

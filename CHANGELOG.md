@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.31.1 - 2026-08-31
+
+### Fixed
+
+- Resolved CNB issue regressions across session management, model discovery,
+  workspace browsing, Agent presets, and responsive management UI.
+
 ## 1.0.0 - 2026-08-25
 
 ### Changed

@@ -71,6 +71,7 @@ $:
           script: |
             $ErrorActionPreference = "Stop"
             $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
+            $env:CSC_IDENTITY_AUTO_DISCOVERY = "false"
             pnpm.cmd run dist:desktop
             if ($LASTEXITCODE -ne 0) { throw "Desktop packaging failed with exit code $LASTEXITCODE" }
             $version = $env:CNB_BRANCH -replace '^desktop-v', '' -replace '^v', ''

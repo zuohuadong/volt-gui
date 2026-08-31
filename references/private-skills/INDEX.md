@@ -1,4 +1,4 @@
-# XGIC Private Skills Index
+# VOLT Private Skills Index
 
 This index tracks the project-private skill set installed under `.voltui/skills/`. Load the specific skill body only when the task matches its description.
 

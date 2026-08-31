@@ -54,27 +54,27 @@
 | task_id | provider | repo | source_url | title | priority | risk | status | owner | model | needs_model | review_class | branch | change_request_url |
 |---------|----------|------|------------|-------|----------|------|--------|-------|-------|-------------|--------------|--------|--------------------|
 | VOLTGUI-PR103-ELECTRON-FOLLOWUP-20260824 | github | zuohuadong/volt-gui | https://github.com/zuohuadong/volt-gui/pull/103 | 完成 Electron + DSH 上游迁移并永久退役 Wails | high | high | review | codex | gpt-5.6 | - | review-high | codex/electron-dsh-upstream-migration | https://github.com/zuohuadong/volt-gui/pull/103 |
-| VOLTGUI-004 | local | aizhuliren/xgic/anyong-agent | - | 迁移桌面自动发布为 CNB Windows-only | high | medium | done | codex | gpt-5-codex | - | - | main | - |
-| VOLTGUI-003 | local | aizhuliren/xgic/voltui | - | 远端重写后重新提交通用和私有行业 skills | high | low | done | codex | gpt-5-codex | - | - | main | - |
+| VOLTGUI-004 | local | aizhuliren/volt/anyong-agent | - | 迁移桌面自动发布为 CNB Windows-only | high | medium | done | codex | gpt-5-codex | - | - | main | - |
+| VOLTGUI-003 | local | aizhuliren/volt/voltui | - | 远端重写后重新提交通用和私有行业 skills | high | low | done | codex | gpt-5-codex | - | - | main | - |
 | VOLTGUI-001 | local | aizhuliren/volt-gui | - | 初始化 agent-team 通用规则与项目 skill 索引 | high | low | done | codex | gpt-5-codex | - | - | main | - |
 | VOLTGUI-004 | local | aizhuliren/volt-gui | user-request | 通用 OIDC 员工登录与桌面端 auth gate | high | medium | done | codex | gpt-5.3-codex | - | review-medium | codex/feat-oidc-auth | https://cnb.cool/aizhuliren/volt-gui/-/compare/main...codex/feat-oidc-auth |
 | VOLTGUI-005 | local | aizhuliren/volt-gui | review-merge | Workbench 产品插件框架（通用 upstream 插件层） | high | medium | done | codex | gpt-5.3-codex | - | review-medium | codex/product-plugin-framework | https://cnb.cool/aizhuliren/volt-gui/-/pull/6 |
-| ANYONG-SYNC-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 GitHub upstream/main 更新并保留暗涌 fork 覆盖 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
-| ANYONG-RELEASE-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 构建并发布合并 computer-use MCP 与 Bun runtime 的新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.0/latest.json |
-| ANYONG-SYNC-20260710-2 | local | aizhuliren/xgic/anyong-agent | user-request | 重新合并 fresh GitHub upstream/main 更新 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
-| ANYONG-RELEASE-20260710-3 | local | aizhuliren/xgic/anyong-agent | user-request | 提交推送并发布 Windows Bun staging 修复版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.1/latest.json |
-| ANYONG-VLLM-TOOLS-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 修复 9010 网关后 Qwen vLLM 自动工具调用 400 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | - |
-| ANYONG-CHAT-OUTPUT-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 诊断暗涌桌面对话重复输出与工具调用报错 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
-| ANYONG-RUNTIME-BRAND-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 修复暗涌发行版运行时仍自称 Volt/VoltUI | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
-| ANYONG-SYNC-20260710-3 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 fresh GitHub upstream/main 并保护未提交 OEM 品牌修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
-| ANYONG-PUSH-20260710 | local | aizhuliren/xgic/anyong-agent | user-request | 提交并 push upstream merge 与 OEM 运行时品牌修复 | high | high | done | codex | gpt-5.3-codex | - | review-high | main | - |
-| ANYONG-RELEASE-20260710-4 | local | aizhuliren/xgic/anyong-agent | user-request | 发布包含 upstream 离线工作台与 OEM 运行时品牌默认的 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.2/latest.json |
-| ANYONG-SYNC-20260711 | local | aizhuliren/xgic/anyong-agent | user-request | 合并 fresh upstream 跨平台修复并发布 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.8.3/latest.json |
-| ANYONG-SYNC-20260713 | local | aizhuliren/xgic/anyong-agent | user-request | 重新合并 fresh GitHub upstream/main 更新 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
-| ANYONG-RELEASE-20260713 | local | aizhuliren/xgic/anyong-agent | user-request | 提交 push 并发布 upstream Node 26 同步新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/download/desktop-v0.9.1/latest.json |
-| ANYONG-REVIEW-PR7-20260714 | cnb | aizhuliren/xgic/anyong-agent | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/issues/6 | 审查并合并 Linux runner prerequisites ZIP 修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | fix/desktop-build-linux-prerequisites-zip | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/7 |
-| ANYONG-PREREQUISITES-RELEASE-20260714 | cnb | aizhuliren/xgic/anyong-agent | user-request | 将 Windows prerequisites 解耦为独立版本与 Release | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/releases/tag/prerequisites-v1.0.0 |
-| ANYONG-STREAM-RECOVERY-20260813 | cnb | aizhuliren/xgic/anyong-agent | user-screenshot | 修复 Windows 桌面端重复输出保护直接失败 | high | medium | done | codex | gpt-5.6 | - | review-medium | main | - |
+| ANYONG-SYNC-20260710 | local | aizhuliren/volt/anyong-agent | user-request | 合并 GitHub upstream/main 更新并保留暗涌 fork 覆盖 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
+| ANYONG-RELEASE-20260710 | local | aizhuliren/volt/anyong-agent | user-request | 构建并发布合并 computer-use MCP 与 Bun runtime 的新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/volt/anyong-agent/-/releases/download/desktop-v0.8.0/latest.json |
+| ANYONG-SYNC-20260710-2 | local | aizhuliren/volt/anyong-agent | user-request | 重新合并 fresh GitHub upstream/main 更新 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
+| ANYONG-RELEASE-20260710-3 | local | aizhuliren/volt/anyong-agent | user-request | 提交推送并发布 Windows Bun staging 修复版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/volt/anyong-agent/-/releases/download/desktop-v0.8.1/latest.json |
+| ANYONG-VLLM-TOOLS-20260710 | local | aizhuliren/volt/anyong-agent | user-request | 修复 9010 网关后 Qwen vLLM 自动工具调用 400 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | - |
+| ANYONG-CHAT-OUTPUT-20260710 | local | aizhuliren/volt/anyong-agent | user-request | 诊断暗涌桌面对话重复输出与工具调用报错 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
+| ANYONG-RUNTIME-BRAND-20260710 | local | aizhuliren/volt/anyong-agent | user-request | 修复暗涌发行版运行时仍自称 Volt/VoltUI | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
+| ANYONG-SYNC-20260710-3 | local | aizhuliren/volt/anyong-agent | user-request | 合并 fresh GitHub upstream/main 并保护未提交 OEM 品牌修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
+| ANYONG-PUSH-20260710 | local | aizhuliren/volt/anyong-agent | user-request | 提交并 push upstream merge 与 OEM 运行时品牌修复 | high | high | done | codex | gpt-5.3-codex | - | review-high | main | - |
+| ANYONG-RELEASE-20260710-4 | local | aizhuliren/volt/anyong-agent | user-request | 发布包含 upstream 离线工作台与 OEM 运行时品牌默认的 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/volt/anyong-agent/-/releases/download/desktop-v0.8.2/latest.json |
+| ANYONG-SYNC-20260711 | local | aizhuliren/volt/anyong-agent | user-request | 合并 fresh upstream 跨平台修复并发布 Windows 新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/volt/anyong-agent/-/releases/download/desktop-v0.8.3/latest.json |
+| ANYONG-SYNC-20260713 | local | aizhuliren/volt/anyong-agent | user-request | 重新合并 fresh GitHub upstream/main 更新 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | main | - |
+| ANYONG-RELEASE-20260713 | local | aizhuliren/volt/anyong-agent | user-request | 提交 push 并发布 upstream Node 26 同步新版 | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/volt/anyong-agent/-/releases/download/desktop-v0.9.1/latest.json |
+| ANYONG-REVIEW-PR7-20260714 | cnb | aizhuliren/volt/anyong-agent | https://cnb.cool/aizhuliren/volt/anyong-agent/-/issues/6 | 审查并合并 Linux runner prerequisites ZIP 修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | fix/desktop-build-linux-prerequisites-zip | https://cnb.cool/aizhuliren/volt/anyong-agent/-/pull/7 |
+| ANYONG-PREREQUISITES-RELEASE-20260714 | cnb | aizhuliren/volt/anyong-agent | user-request | 将 Windows prerequisites 解耦为独立版本与 Release | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/volt/anyong-agent/-/releases/tag/prerequisites-v1.0.0 |
+| ANYONG-STREAM-RECOVERY-20260813 | cnb | aizhuliren/volt/anyong-agent | user-screenshot | 修复 Windows 桌面端重复输出保护直接失败 | high | medium | done | codex | gpt-5.6 | - | review-medium | main | - |
 
 ### VOLTGUI-PR103-ELECTRON-FOLLOWUP-20260824 Task Contract
 
@@ -143,10 +143,10 @@
 - 非目标：不发布 macOS/Linux/CLI，不恢复 GitHub `release-desktop.yml`，不改仓库可见性，不 force push、不重写或覆盖既有 tag，不输出 Git/CNB/签名/OEM secret，不修改本轮已验证的产品代码和 workflow 语义。
 - 验收标准：push 前 fresh live `origin/main=9e18bcb5`、最新 CNB desktop tag/Release 为 `desktop-v0.9.0`；最终 HEAD 为 `fix(desktop):` trigger 并按 `.cnb.yml` 计算 `desktop-v0.9.1`；本地 candidate verifier PASS；普通 fast-forward push 后 live main 对齐；CNB pipeline-1/2 与所有 release stages success；tag/Release `desktop-v0.9.1` 指向 trigger；Release 精确包含 Anyong installer、ZIP、`latest.json`；manifest 版本/URL/size/SHA 与 installer 一致；真实 ZIP 保留 Anyong.exe、update helper、computer-use MCP/N-API、Bun、Coreutils/OEM runtime；独立 live verifier PASS。
 - 协作模式：`pipeline`。explorer 只读审计版本、触发、CI、鉴权和回滚；commit/push、CNB 监控与认证下载由 orchestrator 执行；candidate verifier 独立复核 push 前候选；live verifier 独立复核远端 ref/tag/Release/资产；生产凭据和外部写入不委派。
-- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`cnb-ci-cd`、`cicd-release-management`、`anyong-brand-config`、`xigu-ai-ops`；遵循 Conventional Commits、配置优先、`DESKTOP_APP_NAME=Anyong`、CNB Windows amd64 Wails/NSIS 发布边界。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`cnb-ci-cd`、`cicd-release-management`、`anyong-brand-config`、`volt-ops`；遵循 Conventional Commits、配置优先、`DESKTOP_APP_NAME=Anyong`、CNB Windows amd64 Wails/NSIS 发布边界。
 - Stack/Deployment Profile：沿用 Go CLI + Wails v2 desktop + Svelte frontend；部署目标为 CNB Linux Docker runner 交叉构建 Windows amd64，使用 minisign/CNB Release API 发布私有资产；不选择新技术栈、数据库或托管平台。
 - 版本基线：live CNB `origin` 最新 tag 与 Release 均为 `desktop-v0.9.0`；本地 `desktop-v0.12.0` 来自 GitHub upstream tag 且未存在于 origin，不能作为 CNB 版本基线。最终 `fix:` trigger 目标为 `desktop-v0.9.1`。
-- Secrets Strategy：Git 使用已有 credential helper；CNB token、minisign key/password、`XIGU_API_KEY` 仅由本地 credential/CNB secret 注入；命令输出只保留状态、commit/tag、资产元数据和哈希，不显示 secret 值，不读取 `bundled.env` 内容。
+- Secrets Strategy：Git 使用已有 credential helper；CNB token、minisign key/password、`VOLT_API_KEY` 仅由本地 credential/CNB secret 注入；命令输出只保留状态、commit/tag、资产元数据和哈希，不显示 secret 值，不读取 `bundled.env` 内容。
 - 风险：high，涉及远端 `main`、自动 tag/Release、Windows 原生打包、签名和私有资产；失败可能留下已 push 但未发布、部分 tag、空 Release 或资产不完整状态；本地 upstream/origin 同名历史 tag 冲突会误导版本判断。
 - 回滚：push 前失败则停止；push 后不改写历史或旧 tag，使用普通 `fix:` follow-up 修复并发布下一 patch；若 Release 部分生成，先保留证据并仅在明确需要时通过 CNB 管理面撤下，不 force push。
 - 验证计划：fresh live refs/tags/Release；精确版本计算；现有 workflow/YAML/site 与 release tools 门禁；candidate verifier；创建空 `fix(desktop): release upstream Node 26 workflow update` trigger；guarded fast-forward push；轮询 CNB build/tag/Release；下载 manifest、installer、ZIP 校验 API hash/本地 SHA、manifest、ZIP 内容与 OEM 品牌；live verifier。
@@ -160,7 +160,7 @@
 - 非目标：不 push、不触发新发布、不 force push、不移动或覆盖既有 tag、不硬编码暗涌品牌到通用源码、不运行会自动提交或推送的旧同步脚本。
 - 验收标准：fresh `upstream/main` 成为本地 `main` 祖先；无未解决冲突；Anyong 品牌/CNB/构建产物命名与 fork 专属资源保持有效；按实际上游改动运行针对性验证及 `git diff --check`；独立 verifier PASS。
 - 协作模式：`pipeline`。explorer 只读审计上游增量、冲突面和 fork 保护边界；orchestrator 执行受控 merge；verifier 独立复核最终 diff、祖先关系和验证结果；不委派远程写入。
-- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`anyong-brand-config`、`xigu-ai-ops`、`cnb-ci-cd`；遵循 Go CLI + Wails desktop + Svelte frontend + Astro site 的既有目录、测试和配置优先约定。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`anyong-brand-config`、`volt-ops`、`cnb-ci-cd`；遵循 Go CLI + Wails desktop + Svelte frontend + Astro site 的既有目录、测试和配置优先约定。
 - 风险：medium，上游更新可能跨 Go、desktop/frontend、site、workflow 和依赖锁文件；错误选择 ours/theirs 可能破坏 Anyong 品牌、CNB 发布链或 bundled runtime。
 - 回滚：合并提交前使用 `git merge --abort`；合并提交后如需回退，仅创建普通 revert，不重写历史；本轮不推送远端。
 - 验证计划：fresh fetch、ahead/behind 与 `git merge-tree` 预演；按 touched modules 运行 root/desktop Go、frontend/site、workflow/script 专项门禁；品牌/CNB/runtime 关键边界审计；`git diff --check`；独立 verifier。
@@ -174,7 +174,7 @@
 - 非目标：不发布 macOS/Linux/CLI，不硬编码暗涌产品名到通用源码，不改仓库可见性，不 force push、不移动或覆盖旧 tag，不输出 Git/CNB/签名/OEM secret，不运行会自动 `add -A` 或强推的旧同步脚本。
 - 验收标准：merge 结果包含 fresh `upstream/main=95537774` 且无冲突；`.upstream-sync-marker` 对齐；`scripts/desktop-build.sh` 保留 `DESKTOP_APP_NAME`、`RUNTIME_BRAND/defaultBrandName`、OEM `bundled.env`、computer-use/Bun/Coreutils 与 Linux zip fallback；GitHub workflow 更新不扩张 CNB Windows-only 发布边界；root/desktop/frontend/site/release/smoke 相关门禁通过；最终 trigger commit 为 live `main` HEAD；CNB 成功创建 `desktop-v0.8.3`；Release 精确提供 Anyong installer/ZIP/manifest，下载资产的 size/SHA/manifest/运行时资源/OEM 品牌验证通过；独立 verifier PASS。
 - 协作模式：`pipeline`。只读 explorer 审计上游增量与冲突面；orchestrator 在隔离 worktree 完成合并、候选提交、push 与 live 发布监控；独立 candidate verifier 复核合并候选；独立 live verifier 下载并核验真实资产；生产凭据和外部写入不委派。
-- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`agent-team-tdd`、`cnb-ci-cd`、`cicd-release-management`、`anyong-brand-config`、`xigu-ai-ops`；若人工修改 Astro/TypeScript 源码，追加 `typescript`，并遵循既有 Go/Wails/Svelte/Astro/CNB Verification Profile。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`agent-team-tdd`、`cnb-ci-cd`、`cicd-release-management`、`anyong-brand-config`、`volt-ops`；若人工修改 Astro/TypeScript 源码，追加 `typescript`，并遵循既有 Go/Wails/Svelte/Astro/CNB Verification Profile。
 - Stack/Deployment Profile：沿用既有 Go CLI + Wails v2 desktop + Svelte frontend + Astro site；部署目标仍为 CNB Linux runner 交叉构建 Windows amd64 Wails/NSIS 并上传 CNB Release，不选择新栈、数据库或托管平台。
 - 风险：high，39 个上游文件跨 Windows sandbox、desktop/main、CI、smoke 与 site/Astro；发布涉及远端 `main`、自动 tag/Release、Windows 原生资源、签名与私有资产鉴权；任何依赖、网络、签名或 API 失败都可能形成部分发布状态。
 - 回滚：push 前门禁失败则停止并保留隔离 worktree/merge 证据；push 后不改写历史或旧 tag，以普通 follow-up `fix:` 提交修复并发布下一 patch；错误 Release 仅在明确证据支持时通过 CNB 管理面撤下。
@@ -188,11 +188,11 @@
 - 非目标：不发布 macOS/Linux/CLI，不改仓库可见性，不硬编码产品名到通用源码，不重写/force push `main`，不覆盖或重用旧 tag，不输出 CNB/Git/签名/OEM 网关 secret。
 - 验收标准：fresh live `main` 与本地一致，最新 tag 为 `desktop-v0.8.1@d9eee8b7`；`fix(desktop): release OEM runtime branding update` 最终 trigger commit 计算为 `desktop-v0.8.2`；发布前主进程与独立 candidate verifier 通过；push 后 CNB 快速验证与 release pipeline 成功；live tag `desktop-v0.8.2` 指向 trigger commit；Release 存在且包含 `Anyong-windows-amd64-installer.exe`、`Anyong-windows-amd64.zip`、`latest.json`；manifest 的 `version`、canonical installer URL、size、SHA-256 与实际资产一致；真实 zip 包含 `Anyong.exe`、update helper、computer-use MCP server、Windows N-API addon、bundled Bun、Coreutils 安装资源，且可执行文件携带 OEM 中文品牌默认；独立 live verifier PASS。
 - 协作模式：`pipeline`。explorer 只读审计版本、触发、产物、鉴权和回滚；candidate verifier 独立复核本地发布候选；production commit/push/tag/release 由 orchestrator 主进程与 CNB CI 执行，不委派 secret/不可逆写入；live verifier 独立下载并校验发布资产；orchestrator 最终裁决。
-- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`cnb-ci-cd`、`cicd-release-management`、`anyong-brand-config`、`xigu-ai-ops`；遵循现有 Go/Wails/CNB Windows-only 技术栈、Conventional Commits、BrandConfig/OEM build default 与 `DESKTOP_APP_NAME=Anyong` 命名边界。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`cnb-ci-cd`、`cicd-release-management`、`anyong-brand-config`、`volt-ops`；遵循现有 Go/Wails/CNB Windows-only 技术栈、Conventional Commits、BrandConfig/OEM build default 与 `DESKTOP_APP_NAME=Anyong` 命名边界。
 - Stack/Deployment Profile：既有 Go CLI + Wails v2 desktop + Svelte frontend；发布目标为 CNB Linux Docker runner 交叉构建 Windows amd64 Wails/NSIS，并通过 CNB Release API 上传私有资产。决策来源为 `.agents/AGENTS.local.md`、`.cnb.yml`、`references/skills/cnb-ci-cd/SKILL.md`；本轮不选择新栈/数据库/托管平台。
 - 发布序列：先将本 Task Contract 形成 `chore: prepare desktop v0.8.2 release [skip-release]` 本地提交，再创建空 `fix(desktop): release OEM runtime branding update` trigger commit，一次 fast-forward push 以确保最终 HEAD 消息触发 patch release；发布完成后用 `[skip-release]` 协作收尾提交记录 live 证据。
 - 风险：high，涉及远程 `main`、自动 tag/Release、签名私钥、OEM 网关 sidecar、Windows 原生 N-API/Bun/Coreutils 资源和私有下载鉴权；CNB 构建中任一依赖/网络/签名/API 失败都可能产生部分发布状态。
-- Secrets Strategy：Git 仅用一次性 macOS Keychain helper reset；CNB token、minisign key/password、`XIGU_API_KEY` 只由 CI secret 注入；远程 API/资产验证仅使用内存中的 Keychain 凭据并只输出状态/元数据，不显示 secret 值，不读取 `bundled.env` 内容。
+- Secrets Strategy：Git 仅用一次性 macOS Keychain helper reset；CNB token、minisign key/password、`VOLT_API_KEY` 只由 CI secret 注入；远程 API/资产验证仅使用内存中的 Keychain 凭据并只输出状态/元数据，不显示 secret 值，不读取 `bundled.env` 内容。
 - 回滚：push 前任何门禁失败则停止；trigger push 后若尚未生成 tag，以同一 `main` 上的普通 `fix:` follow-up 修复并发布下一 patch；若 tag/Release 已部分生成，不强推/重写 tag，优先用新 patch 修复，仅在明确证据支持且必要时通过 CNB 管理面撤下错误 Release。
 - 验证计划：fresh local/tracking/live refs 与 tag/release 基线；root/desktop Go test+vet、brand/linker 专项、Coreutils/Bun/computer-use stage 脚本测试、frontend check/build、YAML/shell/Node 语法、manifest/release tools 测试、secret scan；candidate verifier；push 后持续读取 CNB build/tag/Release，下载 `latest.json`、installer 和 zip 完成 size/SHA-256/内容/OEM 品牌验证；live verifier。
 - context_isolation：explorer 写 `.mailbox/045-release-explorer-result.md`；candidate verifier 写 `.mailbox/046-release-candidate-verifier-result.md`；live verifier 写 `.mailbox/047-release-live-verifier-result.md`；不向子代理传递凭据值，产物证据以文件路径+哈希/元数据交付。
@@ -206,7 +206,7 @@
 - 验收标准：fresh remote `main` 在 push 前仍为 `6ac16313`；暂存范围恰好为 `desktop/windows_update_handoff_test.go`、`internal/config/brand_test.go`、`internal/config/config.go`、`scripts/desktop-build.sh`、`tasks.md`、`progress.md`；提交信息为 `fix(desktop): embed OEM runtime brand default [skip-release]`；push 后 live `refs/heads/main` 等于本地 HEAD，合并提交和 brand 提交均在远程历史中；`[skip-release]` 被 `.cnb.yml` 明确识别，本轮不生成新发布 tag。
 - 协作模式：`pipeline`。explorer 只读审计提交范围、release-skip 逻辑、remote 分歧和鉴权恢复方案；commit/push 属外部写入，由 orchestrator 主进程执行；verifier 独立复核 local/remote refs、commit 内容和无新 release tag；orchestrator 最终裁决。
 - 预计文件：仅上述六个已验证 dirty 文件进入新提交；已有 merge `b556405d` 与其 upstream 祖先随 push 发布到 remote history。
-- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`cnb-ci-cd`、`anyong-brand-config`、`xigu-ai-ops`；提交遵循 Conventional Commits、配置优先和上游通用性约定。本轮不编辑/分析 `.svelte`，不激活 Svelte 编写 skill。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`cnb-ci-cd`、`anyong-brand-config`、`volt-ops`；提交遵循 Conventional Commits、配置优先和上游通用性约定。本轮不编辑/分析 `.svelte`，不激活 Svelte 编写 skill。
 - 风险：high，涉及 CNB 远程 `main` 外部写入和每次 push 的 CI；当前 `origin` URL 带 `cnb@` 会命中过期凭据并伪装成 `Repository Not Found`，而 macOS Keychain 的 host-only 凭据已证明可读 remote。
 - 鉴权策略：仅将本地 `origin` URL 从带用户名的 `https://cnb@cnb.cool/...` 调整为无 userinfo 的 `https://cnb.cool/...`，使 Git 命中 Keychain host-only 凭据；不读取/输出 token 值，不修改远程仓库权限。
 - 回滚：push 前任何门禁失败则停止；push 后如需回退产品改动，以普通 revert 提交撤销，不重写历史；本地 remote URL 可恢复为原值，但不恢复失效凭据。
@@ -222,7 +222,7 @@
 - 验收标准：fresh `upstream/main` 成为本地 `main` 祖先；无未解决冲突或冲突标记；合并前六个未提交文件的改动在合并后仍存在且语义不变；品牌仍通过 BrandConfig/OEM build default 配置实现；按 upstream 实际变更范围运行真实验证，并获得独立 verifier 证据。
 - 协作模式：`pipeline`。explorer 只读审计 fresh delta、merge-tree 冲突面和本地改动保护点；executor 在隔离 worktree 中完成 merge 及必要的 union 解决；verifier 独立复核合并历史、本地 diff 恢复和测试；orchestrator 最终裁决。
 - 预计影响：Git 历史、upstream 实际增量文件；不主动修改产品文件。当前未提交保护集为 `desktop/windows_update_handoff_test.go`、`internal/config/brand_test.go`、`internal/config/config.go`、`scripts/desktop-build.sh`、`tasks.md`、`progress.md`。
-- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`anyong-brand-config`、`xigu-ai-ops`；按项目 Go/Wails/Astro 边界和上游优先约定执行。本轮若仅合并既有 `.svelte` 提交而不手工编辑，不激活 Svelte 编写 skill。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-automation`、`anyong-brand-config`、`volt-ops`；按项目 Go/Wails/Astro 边界和上游优先约定执行。本轮若仅合并既有 `.svelte` 提交而不手工编辑，不激活 Svelte 编写 skill。
 - 风险：medium，upstream 可能与 OEM 品牌默认、桌面构建或发布覆盖同文件；当前工作树不干净，直接 merge 可能覆盖或混入未提交工作。
 - 回滚：用命名 stash 和隔离 sync worktree 保护本地改动；merge 未完成时可 abort/删除临时 worktree；merge 提交已进入 `main` 后如需回退，只用普通 revert，不 reset/force push。
 - 验证计划：`git fetch upstream`、ahead/behind 与 commit 审计、`git merge-tree`、`git diff --check`、冲突标记扫描；按变更范围运行 root/desktop/frontend/site 窄门禁；比对 stash 前后本地 diff；独立 verifier 给出 PASS/FAIL/PARTIAL。
@@ -250,7 +250,7 @@
 - 非目标：本轮诊断阶段不修改产品源码、不重启或改写生产服务、不变更 9010 路由/鉴权/模型映射，也不把模型重复简单归因于截图或用户操作。
 - 验收标准：形成可复现或可证伪的最小反馈环；列出并逐一检验 3-5 个假设；给出截图证据、相关 file:line、可用的真实 9010/本地测试证据；确认根因或明确剩余唯一缺失的运行时证据；产出后续 TDD 回归 seam。
 - 协作模式：`pipeline`。orchestrator 负责截图解读、现有任务/运行时证据核对和最终裁决；explorer 只读检查 provider -> agent event -> desktop transcript 链路并提交 mailbox；如确认需要修复，再另行进入 `agent-team-tdd` executor -> verifier。
-- 相关 skill：`agent-team-delegation-gate`、`agent-team-diagnose`、`agent-team-automation`、`xigu-ai-ops`；遵循 Go/Wails/Svelte 既有边界与上游优先原则。诊断若需要改动 `.svelte`，后续必须加载 `svelte-code-writer` 和 `svelte-core-bestpractices`。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-diagnose`、`agent-team-automation`、`volt-ops`；遵循 Go/Wails/Svelte 既有边界与上游优先原则。诊断若需要改动 `.svelte`，后续必须加载 `svelte-code-writer` 和 `svelte-core-bestpractices`。
 - 风险：medium，症状同时覆盖模型服务和用户可见桌面对话；仅凭截图可能混淆旧 400 提示与修复后的新响应，错误归因会导致无效客户端补丁。
 - 回滚：本轮只读诊断无产品回滚；协调记录可按任务状态归档。临时诊断产物必须放在非产品路径并在结论前清理或明确标记。
 - 验证计划：检查当前 live 9010 能力与既有 VLLM 修复状态；用截图中的最小问句和工具请求分别验证无工具/有工具流；对照 OpenAI SSE 原始文本、Agent `event.Text`/`event.Message`、持久化 History 与 `mergeStreamingText`；运行相关 Go/前端窄测试或只读 harness。
@@ -263,7 +263,7 @@
 - 非目标：不把桌面端改为直连 8001/8005；不绕过 GoModel 鉴权、别名和路由；不使用 `tool_choice=none` 静默禁用工具；不修改 GLM、图像模型、GoModel 数据库或仓库产品源码。
 - 验收标准：修复前通过 9010 复现精确错误；两个 Qwen unit 均启用 `--enable-auto-tool-choice` 和与现有 XML tool template 匹配的 parser；服务重启后 active/healthy；8001、8005 以及带鉴权的 9010 请求不再返回该 400；至少一个经 9010 的工具请求产生有效 completion/tool-call 响应；原 unit 有可用备份和明确回滚命令。
 - 协作模式：`pipeline`。explorer 只读审计 parser、路由和回滚；生产服务器备份、编辑、重启由 orchestrator 主进程执行；独立 verifier 只读复核 live 服务与 9010 行为。
-- 相关 skill：`agent-team-delegation-gate`、`agent-team-tdd`、`xigu-ai-ops`；沿用项目 Go/Wails/Volt 上游一致性原则，运行时配置优先，不在 fork 中私有特判。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-tdd`、`volt-ops`；沿用项目 Go/Wails/Volt 上游一致性原则，运行时配置优先，不在 fork 中私有特判。
 - 风险：high，涉及正在提供内部模型能力的 GPU4/GPU5 systemd 服务；重启会产生短暂不可用，错误 parser 可能导致文本可生成但工具调用无法结构化。
 - 回滚：修改前复制两个 unit 为带时间戳的 root-only 备份；任一服务启动/健康/工具 smoke 失败时恢复对应备份，执行 `systemctl daemon-reload` 并重启；不修改 9010 GoModel 服务和路由。
 - 验证计划：TDD red 为当前 9010 function-tool 请求的精确 400；green 为 8001/8005 与 9010 的 HTTP/JSON/SSE smoke、systemd active 状态和日志无 parser 启动错误；最后由独立 verifier 复核，仓库运行态记录经 `git diff --check` 检查。
@@ -274,7 +274,7 @@
 - 非目标：不改产品代码、不创建 `feat:` minor 版本、不发布 macOS/Linux/CLI、不修改仓库可见性、不强推或覆盖既有 tag。
 - 验收标准：fresh origin 最新桌面 tag 为 `desktop-v0.8.0`；HEAD `fix:` 计算为 `desktop-v0.8.1`；远端 main 与本地 HEAD 一致；CNB pipeline-1/2 成功；tag/Release 存在；资产为 Anyong installer/zip/latest.json；manifest 的版本、canonical installer URL、size、SHA-256 与 Release 资产一致；真实 zip 包含 Bun/N-API/MCP 资源。
 - 协作模式：`pipeline`，explorer 审计版本与触发提交，生产 commit/push 由 orchestrator 主进程执行，独立 verifier 复核候选和 live Release。
-- 相关 skill：`agent-team-delegation-gate`、`cnb-ci-cd`、`xigu-ai-ops`、`anyong-brand-config`；沿用 resync explorer/executor/verifier 证据。
+- 相关 skill：`agent-team-delegation-gate`、`cnb-ci-cd`、`volt-ops`、`anyong-brand-config`；沿用 resync explorer/executor/verifier 证据。
 - 风险：high，涉及远端 main、自动 tag/Release、私有资产和 Windows 安装包；空 `fix:` 触发提交必须位于 push 的最终 HEAD，否则不会发布。
 - 回滚：push 前停止；构建失败时用普通 `fix:` follow-up 修复并产生下一 patch tag，不强推、不重写 tag；错误 Release 通过 CNB 管理撤回。
 - 验证计划：commit scope/diff 检查；fresh origin refs/tags；本地 staging/Go/manifest 门禁；独立候选 verifier；push 后 CNB status API、git refs、Release API、latest.json 与真实 zip 下载验证。
@@ -285,7 +285,7 @@
 - 非目标：不推送、不触发新发版、不改仓库可见性、不丢弃下游发布修复、不运行会 `add -A`/force push 的旧同步脚本。
 - 验收标准：fresh upstream 头成为本地 `main` 祖先；无未解决冲突；`.cnb.yml` Anyong/CNB canonical URL、`desktop/cmd/sign` env URL 支持、`scripts/desktop-build.sh` Anyong prefix/OEM/portable fallback 与 computer-use Bun/N-API 打包均保留；按实际变更运行测试并由独立 verifier PASS。
 - 协作模式：`pipeline`，explorer 审计 upstream delta/冲突面，executor 完成 merge union，verifier 独立复核，orchestrator 最终裁决。
-- 相关 skill：`agent-team-delegation-gate`、`xigu-ai-ops`、`anyong-brand-config`、`cnb-ci-cd`；遵循现有 Go/Wails/CNB 验证约定。
+- 相关 skill：`agent-team-delegation-gate`、`volt-ops`、`anyong-brand-config`、`cnb-ci-cd`；遵循现有 Go/Wails/CNB 验证约定。
 - 风险：upstream 可能包含 release-please 版本提交并再次改动 `desktop-build.sh`、sign/updater/NSIS；错误选择 ours/theirs 会破坏 Anyong 发布链或 bundled computer-use runtime。
 - 回滚：合并提交前可 `git merge --abort` 并恢复精确 stash；合并提交后仅用普通 revert 回滚本次 merge，不强推、不覆盖 tag。
 - 验证计划：fresh fetch、merge-tree 冲突预演、`git diff --check`、root/desktop/release tools/frontend 按变更范围测试、品牌/URL/Bun/N-API 关键字审计、独立 verifier。
@@ -296,7 +296,7 @@
 - 非目标：不改 Go/Wails 技术栈、不把 Bun 用作主程序构建工具、不重写或替换 N-API addon、不发布 macOS/Linux/CLI、不暴露或提交凭据。
 - 验收标准：明确 Bun 的真实职责；fresh origin tag 基线与版本计算一致；本地发布门禁通过；发布提交使用 `feat:` 触发版本；CNB 构建成功并创建新的 `desktop-v*` tag；Release 至少包含 `Anyong-windows-amd64-installer.exe`、`Anyong-windows-amd64.zip`、`latest.json`，manifest 指向 Anyong installer；远端 `main` 与本地发布提交一致。
 - 协作模式：`pipeline`。explorer 审计版本/打包/runtime，生产 push/tag/release 由 orchestrator 主进程执行（避免把凭据和不可逆外部写入委派），独立 verifier 复核本地发布候选与 live CNB 结果。
-- 相关 skill：`agent-team-delegation-gate`、`agent-team-diagnose`、`agent-team-tdd`、`cnb-ci-cd`、`xigu-ai-ops`、`anyong-brand-config`；遵循项目 Go/Wails/CNB Verification Profile。
+- 相关 skill：`agent-team-delegation-gate`、`agent-team-diagnose`、`agent-team-tdd`、`cnb-ci-cd`、`volt-ops`、`anyong-brand-config`；遵循项目 Go/Wails/CNB Verification Profile。
 - 风险：high，涉及远端 `main`、自动 tag、Windows 安装包、OEM sidecar 与原生 `.node` addon；Bun/MCP 资源会显著增大安装包；CNB token、npm 网络或原生目标不匹配会阻断发布。
 - 回滚：发布前可停止 push；push 后若构建失败，以新的 `fix:` 提交修复并产生 patch 版本，不强推、不覆盖既有 tag；错误 Release 通过 CNB 平台撤回，代码用普通 revert 提交回滚。
 - 验证计划：YAML/shell/Node 语法；Windows 目标 MCP/Bun staging 实测并核对 `.node`/`bun.exe`；修复并锁定语义 provider family 的既有失败测试；Go root/desktop/release tools 测试；前端 release build/check；独立 verifier；push 后持续检查 CNB build、tag、Release 资产与 `latest.json`。
@@ -307,7 +307,7 @@
 - 非目标：不推送、不部署、不触发发布、不把上游通用源码改成硬编码暗涌品牌、不丢弃或擅自提交现有未提交改动。
 - 验收标准：`main` 包含 fresh `upstream/main`；无未解决冲突；合并前已有的 `.cnb.yml`、`desktop/cmd/sign/main_test.go`、`scripts/desktop-build.sh` 改动仍存在；品牌仍通过配置实现；`.upstream-sync-marker` 与 fresh upstream 头一致；针对实际改动运行真实验证并通过或明确记录阻塞。
 - 协作模式：`pipeline`，explorer 先审计上游增量与冲突面，主进程执行合并，独立 verifier 复核结果，orchestrator 最终裁决。
-- 相关 skill：`agent-team-delegation-gate`、`xigu-ai-ops`、`anyong-brand-config`；遵循项目 Go/Wails/Astro 目录边界和 Verification Profile。
+- 相关 skill：`agent-team-delegation-gate`、`volt-ops`、`anyong-brand-config`；遵循项目 Go/Wails/Astro 目录边界和 Verification Profile。
 - 预计影响：Git 历史、`.upstream-sync-marker`、上游实际变更文件；协调记录位于 `tasks.md` / `progress.md`，不提交 `.agents/state/` 或 mailbox 运行态。
 - 风险：上游与 fork 品牌/CNB/发布文件冲突；当前工作区有未提交改动；上游可能包含跨 Go、desktop/frontend、site 的变化。
 - 回滚：合并提交产生前可 `git merge --abort` 并恢复自动暂存；产生后如需回退仅针对本次 merge commit 使用非破坏性 revert，现有未提交改动保持独立。
@@ -327,7 +327,7 @@
 ### VOLTGUI-005 Task Contract (review-merge)
 
 - 目标：审查并合并 CNB PR #6 `codex/product-plugin-framework`，新增通用 Workbench 产品插件框架（配置合约 + workspace-local job/step/artifact store + Wails 绑定 + Svelte bridge/types/resourceProvider + 插件开发文档）。
-- 非目标：不在 XGIC 私有层承载插件机制、不引入 MCP/HTTP/local provider 之外的新 provider 类型、不改既有 `[[plugins]]` MCP 语义、不部署。
+- 非目标：不在 VOLT 私有层承载插件机制、不引入 MCP/HTTP/local provider 之外的新 provider 类型、不改既有 `[[plugins]]` MCP 语义、不部署。
 - 验收标准：`[workbench]` 配置按 id 合并 user/project；`internal/workbench.Store` 实现 CreateJob/UpdateStep/ApproveStep/AddArtifact/ArtifactDir，原子写 0600、ID 清洗防路径穿越；Wails 绑定 `WorkbenchPlugins/WorkbenchProviders/ListJobs/CreateJob/GetJob/UpdateStep/ApproveStep/AddArtifact/ArtifactDir`；**Provider 向前端只暴露 headerKeys/envKeys（键名），绝不暴露 headers/env 值**；render.go 与既有 plugins/mcp 渲染一致（headers/env 建议 `${VAR}`）；TS 类型与 Go model 对齐。
 - 相关 skill：`agent-team-automation`、`provider-adapter`、`typescript`；遵循 `.agents/AGENTS.local.md` Go/Wails/frontend Verification Profile。
 - 风险：medium，跨多 subsystem（internal/config + internal/workbench + desktop + frontend）；安全边界为 provider secrets 不泄露到前端，已逐条验证。
@@ -337,7 +337,7 @@
 
 ### VOLTGUI-003 Task Contract
 
-- 目标：在最新 `origin/main` 基础上重新同步通用 `references/skills/` 与 XGIC 私有 `.voltui/skills/`，新增共享/私有 manifest 和 `scripts/check-skills-sync.mjs`，补回行业深度优化建议。
+- 目标：在最新 `origin/main` 基础上重新同步通用 `references/skills/` 与 VOLT 私有 `.voltui/skills/`，新增共享/私有 manifest 和 `scripts/check-skills-sync.mjs`，补回行业深度优化建议。
 - 非目标：不修改 VoltUI 技能运行时代码、不引入客户原始数据、不写入 secrets、不部署、不调整 CI 分支策略。
 - 验收标准：通用 skills manifest 与 `references/skills/*/SKILL.md` 一致；私有 manifest 与 29 个 `.voltui/skills/*/SKILL.md` 一致；`references/private-skills/INDEX.md` 与 `DEEP_OPTIMIZATION.md` 存在；项目 overlay 优先加载私有技能。
 - 相关 skill：`skill-creator`、`agent-team-automation`、`semiconductor-ate-test-plan`、`semiconductor-test-program-review`、`semiconductor-yield-spc`、`semiconductor-failure-analysis`。

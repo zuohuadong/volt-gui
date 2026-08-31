@@ -11,11 +11,11 @@ importers:
     dependencies:
       '@deepseek-ai/dsh':
         specifier: 0.1.1-rc.2
-        version: 0.1.1-rc.2(c220b5b4f29804e80c86e56137c3ff65)
+        version: 0.1.1-rc.2(ebe737651a506057de5bf91a46b274ad)
     devDependencies:
       '@types/node':
-        specifier: 26.3.0
-        version: 26.3.0
+        specifier: 26.4.0
+        version: 26.4.0
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -24,14 +24,14 @@ importers:
     dependencies:
       '@deepseek-ai/dsh':
         specifier: 0.1.1-rc.2
-        version: 0.1.1-rc.2(c220b5b4f29804e80c86e56137c3ff65)
+        version: 0.1.1-rc.2(ebe737651a506057de5bf91a46b274ad)
       yaml:
         specifier: 2.9.0
         version: 2.9.0
     devDependencies:
       '@types/node':
-        specifier: 26.3.0
-        version: 26.3.0
+        specifier: 26.4.0
+        version: 26.4.0
       electron:
         specifier: 44.0.0
         version: 44.0.0(supports-color@7.2.0)
@@ -51,14 +51,17 @@ importers:
         specifier: 1.34.0
         version: 1.34.0(svelte@5.56.10)
       '@svadmin/core':
-        specifier: 0.41.1
-        version: 0.41.1(@tanstack/svelte-query@6.1.46(svelte@5.56.10))(svelte@5.56.10)
+        specifier: 0.47.1
+        version: 0.47.1(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)
+      '@svadmin/surface':
+        specifier: 0.7.1
+        version: 0.7.1(@svadmin/core@0.47.1(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@svadmin/ui@0.65.1(@internationalized/date@3.12.3)(@svadmin/core@0.47.1(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3))(svelte@5.56.10)
       '@svadmin/ui':
-        specifier: 0.55.1
-        version: 0.55.1(@internationalized/date@3.12.3)(@svadmin/core@0.41.1(@tanstack/svelte-query@6.1.46(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.46(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3)
+        specifier: 0.65.1
+        version: 0.65.1(@internationalized/date@3.12.3)(@svadmin/core@0.47.1(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3)
       '@tanstack/svelte-query':
-        specifier: 6.1.46
-        version: 6.1.46(svelte@5.56.10)
+        specifier: 6.1.48
+        version: 6.1.48(svelte@5.56.10)
       bits-ui:
         specifier: 2.19.0
         version: 2.19.0(@internationalized/date@3.12.3)(svelte@5.56.10)
@@ -86,13 +89,13 @@ importers:
         version: 3.12.3
       '@sveltejs/vite-plugin-svelte':
         specifier: 7.3.0
-        version: 7.3.0(svelte@5.56.10)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
+        version: 7.3.0(svelte@5.56.10)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
       '@tailwindcss/vite':
         specifier: 4.3.3
-        version: 4.3.3(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
+        version: 4.3.3(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
       '@types/node':
-        specifier: 26.3.0
-        version: 26.3.0
+        specifier: 26.4.0
+        version: 26.4.0
       svelte-check:
         specifier: 4.3.2
         version: 4.3.2(picomatch@4.0.5)(svelte@5.56.10)(typescript@5.8.3)
@@ -104,10 +107,10 @@ importers:
         version: 5.8.3
       vite:
         specifier: 8.2.2
-        version: 8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
+        version: 8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
       vitest:
         specifier: 4.0.18
-        version: 4.0.18(@opentelemetry/api@1.9.1)(@types/node@26.3.0)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)
+        version: 4.0.18(@opentelemetry/api@1.9.1)(@types/node@26.4.0)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)
 
 packages:
 
@@ -2706,6 +2709,11 @@ packages:
     peerDependencies:
       svelte: ^5
 
+  '@lucide/svelte@1.35.0':
+    resolution: {integrity: sha512-1I5WeiEFc21HOLv/GR11vuN3MqN/k/mhCEMW7nEtwSAGOcZ0C5ZgI1Y2Rvs/egfKTUiOTw+R9Ys9BJ+GwAKSWw==}
+    peerDependencies:
+      svelte: ^5
+
   '@malept/cross-spawn-promise@2.0.0':
     resolution: {integrity: sha512-1DpKU0Z5ThltBwjNySMC14g0CkbyhCaz9FkhxqNsZI6uAPJXFS8cMXlBKo26FJ8ZuW6S9GCMcR9IO5k2X5/9Fg==}
     engines: {node: '>= 12.13.0'}
@@ -3108,6 +3116,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@sinclair/typebox@0.34.52':
+    resolution: {integrity: sha512-XiMQh7qqVlxZzcVD+kkGMNGMzcTrDMLWI7S4x7z1MkCkbDPrekpZXEUK0eZqZFMuHQg2a2DZOcDIh9o5v3Gonw==}
+
   '@sindresorhus/is@4.6.0':
     resolution: {integrity: sha512-t09vSN3MdfsyCHoFcTRCH/iUtG7OJ0CsjzB8cjAmKc/va/kIgeDI/TxsigdncE/4be734m0cvIYwNaV4i2XqAw==}
     engines: {node: '>=10'}
@@ -3155,28 +3166,35 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@svadmin/core@0.41.1':
-    resolution: {integrity: sha512-GIYKme0EPa5TAGVG/G6Z/IRSUqV/kZCRflAymxEjrSy4XA1QH1P2pkp339AEZbJgZYIKZ/BiVGEO7grGItJ4gQ==}
+  '@svadmin/core@0.47.1':
+    resolution: {integrity: sha512-PbaosTiRKu8et5+Sm7Adnl7lOQ+bcfFEWoJ4IQ6VZCRNG/So9WM7bDEU9Z8RjkussFLflrsMRHEnhY1XRVcQQQ==}
     peerDependencies:
-      '@tanstack/svelte-query': ^6.1.38
-      svelte: ^5.56.8
+      '@tanstack/svelte-query': ^6.1.48
+      svelte: ^5.56.10
     peerDependenciesMeta:
       '@tanstack/svelte-query':
         optional: true
       svelte:
         optional: true
 
-  '@svadmin/ui@0.55.1':
-    resolution: {integrity: sha512-tRxJ+L7AYSxny5jDbuV8UoNFLLLRAUaHu+PDg9Zr47ukhqj5QoyPsp1YRlAXFfprmF5BXoyv8p4wND5+9QW2Zg==}
+  '@svadmin/surface@0.7.1':
+    resolution: {integrity: sha512-yWVE7YG5sJLyLM6uiXAM2/nNFm+94x+W9UllB/G8/YVZzP8SvqBvYPyiEXKE8O9hdtrT4uweXE4tiuEQZ/41vg==}
     peerDependencies:
-      '@svadmin/core': ^0.41.1
-      '@svadmin/editor': '*'
-      '@tanstack/svelte-query': ^6.1.38
-      highlight.js: ^11.11.1
-      isomorphic-dompurify: ^3.22.0
-      marked: ^18.0.9
-      marked-highlight: ^2.2.4
+      '@svadmin/core': '>=0.34.2 <0.48.0'
+      '@svadmin/ui': '>=0.40.6 <0.66.0'
       svelte: ^5.56.8
+
+  '@svadmin/ui@0.65.1':
+    resolution: {integrity: sha512-laXJnzeGHbnHlIje4hlPh9QCaq4foPcaQF9wOJmRL/hFlV/9LJy6rvvR7gVeN5X8WqwBS8GNkOUmTf3GsFGTZg==}
+    peerDependencies:
+      '@svadmin/core': ^0.47.1
+      '@svadmin/editor': '*'
+      '@tanstack/svelte-query': ^6.1.48
+      highlight.js: ^11.12.0
+      isomorphic-dompurify: ^3.23.0
+      marked: ^18.0.11
+      marked-highlight: ^2.2.4
+      svelte: ^5.56.10
     peerDependenciesMeta:
       '@svadmin/core':
         optional: true
@@ -3308,8 +3326,8 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
 
-  '@tanstack/query-core@5.102.6':
-    resolution: {integrity: sha512-jp+GucyQ+fel2ILb8ZLQeqMaAqZL/Bzaj+dKOQiPk4vPdf2rQPEV7heUyEVIhatpY42j4AFHav4DzBa1oTIp/A==}
+  '@tanstack/query-core@5.102.8':
+    resolution: {integrity: sha512-ZNjkJ33CqvPNec/6lZBnHqLc3EVGPZ9ySLhYahU9TcuRFdmwXewuj0c4hwSWcGHqEUwcSrKeZ+oGcvPBqXcQcg==}
 
   '@tanstack/react-virtual@3.14.10':
     resolution: {integrity: sha512-SRyoUbdFMRHuYXMijV5H4ZarQWpXkj3iANq8OFre+pybeVap8ZJjZ3Nz9bVjx4d8PfobVUQUdKyyyHYk3E+djw==}
@@ -3320,8 +3338,8 @@ packages:
   '@tanstack/store@0.11.1':
     resolution: {integrity: sha512-mzTOBhypOuDJAy/D8n2MfUZ1HFkXnmSETviRyhqEC8LUE7/IZQExOTxMANj3KjTofYTkFNpBY67qaVrT41YccA==}
 
-  '@tanstack/svelte-query@6.1.46':
-    resolution: {integrity: sha512-pffKDLPcE17nkyVzimqgzkQYbzsTShbwomZD8xqKhuVHupfbVbGX9mwwsd/pbkBz+MkDtZubD4irKT84UNKxZQ==}
+  '@tanstack/svelte-query@6.1.48':
+    resolution: {integrity: sha512-X+d2LvUImIf1OQiNIlJ5AfHcXrVwKMMvuC1a/6VZclkgg7Td9mSnvZrbpWowR3TFHrzFY80PHVwm+u8End7c3Q==}
     peerDependencies:
       svelte: ^5.25.0
 
@@ -3330,14 +3348,14 @@ packages:
     peerDependencies:
       svelte: ^5.0.0
 
-  '@tanstack/svelte-table@9.1.2':
-    resolution: {integrity: sha512-0tDbl4PAu7Z4+VKaGnJlsfrMTVrnbgsxEQwpVRxnot30psP1GcqbVGOTwA5tf45hX3NYbW3e/9KZerKBrlHO0A==}
+  '@tanstack/svelte-table@9.2.4':
+    resolution: {integrity: sha512-s1A82cJhp3e2Lx3mhVJnhswnGJihBaFNs+gf3/jsDdmKa/zjUDY43Z7kWLZ8408yuNwFG0dR4WGdJ0g8dnuMkQ==}
     engines: {node: '>=20'}
     peerDependencies:
       svelte: ^5.0.0
 
-  '@tanstack/table-core@9.1.2':
-    resolution: {integrity: sha512-ONpWQeass1sfg80CWF1NSwQ8r3GiqxA2lT/EdqIcrDEPZ0Z+0mM94eQoFYLPN0Kztzj8TQVb2+PrSZSItqA61g==}
+  '@tanstack/table-core@9.2.4':
+    resolution: {integrity: sha512-GwdDyGGr6UXAtubF14yAwcXvdaogqfsQgIk89Suebjxob/Rjq2xvfmXsjDF1rQmKmhHsJm9TOY7myxv3i6geJw==}
     engines: {node: '>=20'}
 
   '@tanstack/virtual-core@3.17.8':
@@ -3373,8 +3391,8 @@ packages:
   '@types/node@24.13.3':
     resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
 
-  '@types/node@26.3.0':
-    resolution: {integrity: sha512-L3fgrnchriRC2ExBflb8j4uZZURHZfQsmQeyVzhjcHW4kkwVyo8/0h1B2MVzMTrYUJYu6G7EWs14hW/L9putqw==}
+  '@types/node@26.4.0':
+    resolution: {integrity: sha512-faiGnoIrLH/V8cibOMEAZ8pMw6oXqSukl29ra4mN8GdaB2ZewzeaLj+INpV5N+Z1eKWzY+IzaIZH2EIR6YZRNQ==}
 
   '@types/responselike@1.0.3':
     resolution: {integrity: sha512-H/+L+UkTV33uf49PH5pCAUBVPNj2nDBXTN+qS1dOwyyg24l3CcicicCA7ca+HMvJBZcFgl5r8e+RR6elsb4Lyw==}
@@ -6034,14 +6052,14 @@ snapshots:
       '@deepseek-ai/cordis': 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
       '@deepseek-ai/dsh-invariants': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)
 
-  '@deepseek-ai/dsh-attachment-local@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-attachment@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-home-paths@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))(@types/node@26.3.0)':
+  '@deepseek-ai/dsh-attachment-local@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-attachment@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-home-paths@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))(@types/node@26.4.0)':
     dependencies:
       '@deepseek-ai/cordis': 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
       '@deepseek-ai/dsh-attachment': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))
       '@deepseek-ai/dsh-home-paths': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))
       '@deepseek-ai/dsh-invariants': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)
       '@deepseek-ai/schemastery': 3.18.1
-      sharp: 0.35.3(@types/node@26.3.0)
+      sharp: 0.35.3(@types/node@26.4.0)
     transitivePeerDependencies:
       - '@types/node'
 
@@ -6058,7 +6076,7 @@ snapshots:
       '@deepseek-ai/dsh-invariants': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)
       '@deepseek-ai/dsh-llm': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-attachment@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/dsh-timeout@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))
 
-  '@deepseek-ai/dsh-base@0.1.1-rc.2(32f7c538d7dda785bf191b5066645b86)':
+  '@deepseek-ai/dsh-base@0.1.1-rc.2(fbf35c9fa5fb6a872f3f2e99355bb498)':
     dependencies:
       '@deepseek-ai/cordis': 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
       '@deepseek-ai/cordis-plugin-hmr': 1.0.16(@deepseek-ai/cordis-plugin-timer@1.1.3(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/cordis@4.0.1)
@@ -6068,7 +6086,7 @@ snapshots:
       '@deepseek-ai/dsh-agent-instructions': 0.1.1-rc.2(aea42a70663db470994f4176a9619635)
       '@deepseek-ai/dsh-agent-loop': 0.1.1-rc.2(ecf90c249e2d9dbb5492af64a9f4bd5d)
       '@deepseek-ai/dsh-api-gateway': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-client-connection@0.1.1-rc.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/dsh-typert-registry@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))
-      '@deepseek-ai/dsh-attachment-local': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-attachment@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-home-paths@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))(@types/node@26.3.0)
+      '@deepseek-ai/dsh-attachment-local': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-attachment@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-home-paths@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))(@types/node@26.4.0)
       '@deepseek-ai/dsh-bash-sandbox': 0.1.1-rc.2(32261fed60bdf99896314676329dfd15)
       '@deepseek-ai/dsh-command-compact': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-commands@0.1.1-rc.2(0ecd3a66a950f0a38490382753aa1d93))(@deepseek-ai/dsh-compaction@0.1.1-rc.2(80d45efbb3b7de81b65c253ede5096fd))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))
       '@deepseek-ai/dsh-command-feedback': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-anonymous-user-id@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-home-paths@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-commands@0.1.1-rc.2(0ecd3a66a950f0a38490382753aa1d93))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/dsh-session-telemetry@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-agent@0.1.1-rc.2(c1537a8836b04097f168b024f1e38d85))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/dsh-session@0.1.1-rc.2(a4e4bb24a1f3580ac25e11cfa3c6b8cc)))(@deepseek-ai/dsh-session@0.1.1-rc.2(a4e4bb24a1f3580ac25e11cfa3c6b8cc))
@@ -8072,7 +8090,7 @@ snapshots:
       '@deepseek-ai/dsh-storage-domain': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/dsh-storage@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))
       zod: 4.4.3
 
-  '@deepseek-ai/dsh@0.1.1-rc.2(c220b5b4f29804e80c86e56137c3ff65)':
+  '@deepseek-ai/dsh@0.1.1-rc.2(ebe737651a506057de5bf91a46b274ad)':
     dependencies:
       '@deepseek-ai/cordis': 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
       '@deepseek-ai/cordis-plugin-hmr': 1.0.16(@deepseek-ai/cordis-plugin-timer@1.1.3(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/cordis@4.0.1)
@@ -8082,7 +8100,7 @@ snapshots:
       '@deepseek-ai/dsh-agent-instructions': 0.1.1-rc.2(aea42a70663db470994f4176a9619635)
       '@deepseek-ai/dsh-agent-tool-presentation': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/dsh-tools@0.1.1-rc.2(119bc70f73f8eddebfaa6b47561adeb3))
       '@deepseek-ai/dsh-app-boot': 0.1.1-rc.2(d7ed335ddbfb7670edc51bd2c8928580)
-      '@deepseek-ai/dsh-base': 0.1.1-rc.2(32f7c538d7dda785bf191b5066645b86)
+      '@deepseek-ai/dsh-base': 0.1.1-rc.2(fbf35c9fa5fb6a872f3f2e99355bb498)
       '@deepseek-ai/dsh-client-ui-agent-preset': 0.1.1-rc.2(cd12c37a541add89ad6d3147a9706dc5)
       '@deepseek-ai/dsh-client-ui-cordis': 0.1.1-rc.2(431d38c30483d613dd8b5a3ec4b736f6)
       '@deepseek-ai/dsh-cmdline': 0.1.1-rc.2(@deepseek-ai/cordis-plugin-loader@1.0.2)(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))
@@ -8635,6 +8653,10 @@ snapshots:
     dependencies:
       svelte: 5.56.10
 
+  '@lucide/svelte@1.35.0(svelte@5.56.10)':
+    dependencies:
+      svelte: 5.56.10
+
   '@malept/cross-spawn-promise@2.0.0':
     dependencies:
       cross-spawn: 7.0.6
@@ -8935,6 +8957,8 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.63.0':
     optional: true
 
+  '@sinclair/typebox@0.34.52': {}
+
   '@sindresorhus/is@4.6.0': {}
 
   '@smithy/core@3.33.3':
@@ -8992,26 +9016,33 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@svadmin/core@0.41.1(@tanstack/svelte-query@6.1.46(svelte@5.56.10))(svelte@5.56.10)':
+  '@svadmin/core@0.47.1(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)':
     optionalDependencies:
-      '@tanstack/svelte-query': 6.1.46(svelte@5.56.10)
+      '@tanstack/svelte-query': 6.1.48(svelte@5.56.10)
       svelte: 5.56.10
 
-  '@svadmin/ui@0.55.1(@internationalized/date@3.12.3)(@svadmin/core@0.41.1(@tanstack/svelte-query@6.1.46(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.46(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3)':
+  '@svadmin/surface@0.7.1(@svadmin/core@0.47.1(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@svadmin/ui@0.65.1(@internationalized/date@3.12.3)(@svadmin/core@0.47.1(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3))(svelte@5.56.10)':
+    dependencies:
+      '@sinclair/typebox': 0.34.52
+      '@svadmin/core': 0.47.1(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)
+      '@svadmin/ui': 0.65.1(@internationalized/date@3.12.3)(@svadmin/core@0.47.1(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3)
+      svelte: 5.56.10
+
+  '@svadmin/ui@0.65.1(@internationalized/date@3.12.3)(@svadmin/core@0.47.1(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3)':
     dependencies:
       '@floating-ui/dom': 1.8.0
-      '@lucide/svelte': 1.34.0(svelte@5.56.10)
+      '@lucide/svelte': 1.35.0(svelte@5.56.10)
       '@tanstack/svelte-store': 0.12.1(svelte@5.56.10)
-      '@tanstack/svelte-table': 9.1.2(svelte@5.56.10)
-      '@tanstack/table-core': 9.1.2
+      '@tanstack/svelte-table': 9.2.4(svelte@5.56.10)
+      '@tanstack/table-core': 9.2.4
       bits-ui: 2.19.0(@internationalized/date@3.12.3)(svelte@5.56.10)
       clsx: 2.1.1
       svelte-sonner: 1.2.1(svelte@5.56.10)
       tailwind-merge: 3.6.0
       tailwind-variants: 3.3.1(tailwind-merge@3.6.0)(tailwindcss@4.3.3)
     optionalDependencies:
-      '@svadmin/core': 0.41.1(@tanstack/svelte-query@6.1.46(svelte@5.56.10))(svelte@5.56.10)
-      '@tanstack/svelte-query': 6.1.46(svelte@5.56.10)
+      '@svadmin/core': 0.47.1(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)
+      '@tanstack/svelte-query': 6.1.48(svelte@5.56.10)
       svelte: 5.56.10
     transitivePeerDependencies:
       - '@internationalized/date'
@@ -9022,14 +9053,14 @@ snapshots:
     dependencies:
       acorn: 8.18.0
 
-  '@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.56.10)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))':
+  '@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.56.10)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))':
     dependencies:
       deepmerge: 4.3.1
       magic-string: 1.2.2
       obug: 2.1.4
       svelte: 5.56.10
-      vite: 8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
-      vitefu: 1.1.3(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
+      vite: 8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
+      vitefu: 1.1.3(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
 
   '@swc/helpers@0.5.23':
     dependencies:
@@ -9100,14 +9131,14 @@ snapshots:
       '@tailwindcss/oxide-win32-arm64-msvc': 4.3.3
       '@tailwindcss/oxide-win32-x64-msvc': 4.3.3
 
-  '@tailwindcss/vite@4.3.3(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))':
+  '@tailwindcss/vite@4.3.3(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))':
     dependencies:
       '@tailwindcss/node': 4.3.3
       '@tailwindcss/oxide': 4.3.3
       tailwindcss: 4.3.3
-      vite: 8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
+      vite: 8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
 
-  '@tanstack/query-core@5.102.6': {}
+  '@tanstack/query-core@5.102.8': {}
 
   '@tanstack/react-virtual@3.14.10(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:
@@ -9117,9 +9148,9 @@ snapshots:
 
   '@tanstack/store@0.11.1': {}
 
-  '@tanstack/svelte-query@6.1.46(svelte@5.56.10)':
+  '@tanstack/svelte-query@6.1.48(svelte@5.56.10)':
     dependencies:
-      '@tanstack/query-core': 5.102.6
+      '@tanstack/query-core': 5.102.8
       svelte: 5.56.10
 
   '@tanstack/svelte-store@0.12.1(svelte@5.56.10)':
@@ -9127,13 +9158,13 @@ snapshots:
       '@tanstack/store': 0.11.1
       svelte: 5.56.10
 
-  '@tanstack/svelte-table@9.1.2(svelte@5.56.10)':
+  '@tanstack/svelte-table@9.2.4(svelte@5.56.10)':
     dependencies:
       '@tanstack/svelte-store': 0.12.1(svelte@5.56.10)
-      '@tanstack/table-core': 9.1.2
+      '@tanstack/table-core': 9.2.4
       svelte: 5.56.10
 
-  '@tanstack/table-core@9.1.2':
+  '@tanstack/table-core@9.2.4':
     dependencies:
       '@tanstack/store': 0.11.1
 
@@ -9143,7 +9174,7 @@ snapshots:
     dependencies:
       '@types/http-cache-semantics': 4.2.0
       '@types/keyv': 3.1.4
-      '@types/node': 26.3.0
+      '@types/node': 26.4.0
       '@types/responselike': 1.0.3
 
   '@types/chai@5.2.3':
@@ -9161,13 +9192,13 @@ snapshots:
 
   '@types/fs-extra@9.0.13':
     dependencies:
-      '@types/node': 26.3.0
+      '@types/node': 26.4.0
 
   '@types/http-cache-semantics@4.2.0': {}
 
   '@types/keyv@3.1.4':
     dependencies:
-      '@types/node': 26.3.0
+      '@types/node': 26.4.0
 
   '@types/ms@2.1.0': {}
 
@@ -9175,13 +9206,13 @@ snapshots:
     dependencies:
       undici-types: 7.18.2
 
-  '@types/node@26.3.0':
+  '@types/node@26.4.0':
     dependencies:
       undici-types: 8.3.0
 
   '@types/responselike@1.0.3':
     dependencies:
-      '@types/node': 26.3.0
+      '@types/node': 26.4.0
 
   '@types/retry@0.12.0': {}
 
@@ -9256,13 +9287,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.1
 
-  '@vitest/mocker@4.0.18(vite@7.3.6(@types/node@26.3.0)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0))':
+  '@vitest/mocker@4.0.18(vite@7.3.6(@types/node@26.4.0)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0))':
     dependencies:
       '@vitest/spy': 4.0.18
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 7.3.6(@types/node@26.3.0)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@26.4.0)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)
 
   '@vitest/pretty-format@4.0.18':
     dependencies:
@@ -10721,7 +10752,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.2
-      '@types/node': 26.3.0
+      '@types/node': 26.4.0
       long: 5.3.2
 
   proxy-addr@2.0.7:
@@ -10968,7 +10999,7 @@ snapshots:
 
   setprototypeof@1.2.0: {}
 
-  sharp@0.35.3(@types/node@26.3.0):
+  sharp@0.35.3(@types/node@26.4.0):
     dependencies:
       '@img/colour': 1.1.0
       detect-libc: 2.1.2
@@ -10999,7 +11030,7 @@ snapshots:
       '@img/sharp-win32-arm64': 0.35.3
       '@img/sharp-win32-ia32': 0.35.3
       '@img/sharp-win32-x64': 0.35.3
-      '@types/node': 26.3.0
+      '@types/node': 26.4.0
 
   shebang-command@2.0.0:
     dependencies:
@@ -11287,7 +11318,7 @@ snapshots:
 
   vary@1.1.2: {}
 
-  vite@7.3.6(@types/node@26.3.0)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0):
+  vite@7.3.6(@types/node@26.4.0)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0):
     dependencies:
       esbuild: 0.28.2
       fdir: 6.5.0(picomatch@4.0.5)
@@ -11296,13 +11327,13 @@ snapshots:
       rollup: 4.63.0
       tinyglobby: 0.2.17
     optionalDependencies:
-      '@types/node': 26.3.0
+      '@types/node': 26.4.0
       fsevents: 2.3.3
       jiti: 2.7.0
       lightningcss: 1.33.0
       yaml: 2.9.0
 
-  vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0):
+  vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.5
@@ -11310,20 +11341,20 @@ snapshots:
       rolldown: 1.2.5
       tinyglobby: 0.2.17
     optionalDependencies:
-      '@types/node': 26.3.0
+      '@types/node': 26.4.0
       esbuild: 0.28.2
       fsevents: 2.3.3
       jiti: 2.7.0
       yaml: 2.9.0
 
-  vitefu@1.1.3(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)):
+  vitefu@1.1.3(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)):
     optionalDependencies:
-      vite: 8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
+      vite: 8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
 
-  vitest@4.0.18(@opentelemetry/api@1.9.1)(@types/node@26.3.0)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0):
+  vitest@4.0.18(@opentelemetry/api@1.9.1)(@types/node@26.4.0)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0):
     dependencies:
       '@vitest/expect': 4.0.18
-      '@vitest/mocker': 4.0.18(vite@7.3.6(@types/node@26.3.0)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0))
+      '@vitest/mocker': 4.0.18(vite@7.3.6(@types/node@26.4.0)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0))
       '@vitest/pretty-format': 4.0.18
       '@vitest/runner': 4.0.18
       '@vitest/snapshot': 4.0.18
@@ -11340,11 +11371,11 @@ snapshots:
       tinyexec: 1.3.0
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.1
-      vite: 7.3.6(@types/node@26.3.0)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@26.4.0)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
-      '@types/node': 26.3.0
+      '@types/node': 26.4.0
     transitivePeerDependencies:
       - jiti
       - less

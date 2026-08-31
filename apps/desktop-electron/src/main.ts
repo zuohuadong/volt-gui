@@ -1,8 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -12,6 +14,7 @@ import {
   startOfficialDshWithRetry,
 } from "./official-dsh-runtime.js";
 import { resolveElectronProfile } from "./electron-profile.js";
+import { SmbMountManager } from "./smb-mounts.js";
 
 const electronProfile = resolveElectronProfile();
 app.setName(electronProfile.executableName);
@@ -22,13 +25,15 @@ const allowedDshMethods = new Set([
   "session.list", "session.search", "session.create", "session.history", "session.prompt",
   "session.cancel", "session.models", "session.selectModel", "session.rename", "session.fork",
   "session.attachment", "session.updateQueue", "workspace.list", "workspace.create",
-  "workspace.rename", "workspace.delete", "workspace.archiveSession", "host.openPath",
-  "agentPreset.list", "agentPreset.select", "agentPreset.read", "agentPreset.openDocument",
+  "workspace.rename", "workspace.delete", "workspace.insertBefore", "workspace.insertSessionBefore",
+  "workspace.archiveSession", "host.describe", "host.listDirectory", "host.createDirectory", "host.openPath",
+  "agentPreset.list", "agentPreset.select", "agentPreset.read", "agentPreset.copy", "agentPreset.openDocument", "agentPreset.remove",
   "subagent.list", "subagent.history", "subagent.prompt", "subagent.interrupt",
   "goal.create", "goal.edit", "goal.pause",
   "goal.resume", "goal.complete", "goal.clear", "settings.describe", "settings.openDocument",
   "settings.update", "settings.replace", "settings.mutate", "credentials.describe",
   "credentials.set", "credentials.unset", "llm.providers", "llm.models", "llm.discoverModels", "skill.list",
+  "fileReferences/list", "sessionReferenceResolver/candidates", "pluginInventory/list",
 ]);
 
 process.stdout.on("error", rethrowUnlessBrokenPipe);
@@ -38,6 +43,7 @@ let mainWindow: BrowserWindow | null = null;
 let dshRuntime: OfficialDshRuntime | null = null;
 let quitting = false;
 let dshEventController: AbortController | null = null;
+let smbMountManager: SmbMountManager | null = null;
 let desktopBootstrap = {
   dshReady: false,
   productName: electronProfile.productName,
@@ -68,6 +74,15 @@ function profilePatchPath(): string {
 
 function dshHomePath(): string {
   return process.env.DSH_HOME?.trim() || path.join(app.getPath("userData"), "dsh");
+}
+
+function smbConfigPath(): string {
+  return path.join(app.getPath("userData"), "smb-mounts.json");
+}
+
+function requireSmbManager(): SmbMountManager {
+  if (!smbMountManager) smbMountManager = new SmbMountManager({ configPath: smbConfigPath() });
+  return smbMountManager;
 }
 
 function nodeRuntimePath(): string {
@@ -197,6 +212,45 @@ ipcMain.handle("desktop:pick-workspace", async () => {
   const result = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"] });
   return result.canceled ? null : result.filePaths[0] ?? null;
 });
+ipcMain.handle("desktop:export-session", async (_event, sessionId: unknown) => {
+  if (!dshRuntime?.url) throw new Error("官方 DSH 尚未启动");
+  if (typeof sessionId !== "string" || !sessionId.trim() || sessionId.length > 256) throw new Error("会话 ID 无效");
+  const url = new URL("/api/session.export", dshRuntime.url);
+  url.searchParams.set("sessionId", sessionId);
+  url.searchParams.set("includeDescendants", "true");
+  const preflight = await fetch(url, { method: "HEAD" });
+  if (!preflight.ok) throw new Error(`官方 DSH 导出准备失败（HTTP ${preflight.status}）`);
+  const filename = `dsh-session-${sessionId.replace(/[^A-Za-z0-9_-]/gu, "_")}.zip`;
+  const saveOptions = { defaultPath: path.join(app.getPath("downloads"), filename), filters: [{ name: "ZIP archive", extensions: ["zip"] }] };
+  const selected = mainWindow
+    ? await dialog.showSaveDialog(mainWindow, saveOptions)
+    : await dialog.showSaveDialog(saveOptions);
+  if (selected.canceled || !selected.filePath) return { saved: false as const };
+  const response = await fetch(url);
+  if (!response.ok || !response.body) throw new Error(`官方 DSH 导出失败（HTTP ${response.status}）`);
+  await pipeline(Readable.fromWeb(response.body as import("node:stream/web").ReadableStream), fs.createWriteStream(selected.filePath, { flags: "wx" }));
+  return { saved: true as const, path: selected.filePath };
+});
+ipcMain.handle("desktop:smb-list", async () => requireSmbManager().list());
+ipcMain.handle("desktop:smb-mount", async (_event, request: unknown) => {
+  if (!request || typeof request !== "object") throw new Error("SMB 配置格式无效");
+  return requireSmbManager().mount(request as Parameters<SmbMountManager["mount"]>[0]);
+});
+ipcMain.handle("desktop:smb-unmount", async (_event, id: unknown) => {
+  if (typeof id !== "string") throw new Error("SMB 配置 ID 无效");
+  return requireSmbManager().unmount(id);
+});
+ipcMain.handle("desktop:smb-remove", async (_event, id: unknown) => {
+  if (typeof id !== "string") throw new Error("SMB 配置 ID 无效");
+  return requireSmbManager().remove(id);
+});
+ipcMain.handle("desktop:smb-open", async (_event, localPath: unknown) => {
+  if (typeof localPath !== "string" || !/^[A-Z]:$/iu.test(localPath.trim())) throw new Error("本地路径必须是 Windows 盘符");
+  if (process.platform !== "win32") return { opened: false as const, error: "当前平台不支持打开 SMB 盘符" };
+  const configuredPath = await requireSmbManager().resolveOpenPath(localPath);
+  const error = await shell.openPath(configuredPath);
+  return error ? { opened: false as const, error } : { opened: true as const };
+});
 
 function startDshEventBridge(dshUrl: string): void {
   dshEventController?.abort();
@@ -260,6 +314,7 @@ if (!gotSingleInstanceLock) {
 
   app.whenReady().then(async () => {
     configureBrowserPermissions();
+    void requireSmbManager().mountAuto().catch((error) => console.warn("[Electron] SMB 自动挂载失败", error));
     try {
       await startDesktop();
     } catch (error) {

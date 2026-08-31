@@ -1,10 +1,10 @@
-# XGIC Private Skills Deep Optimization Notes
+# VOLT Private Skills Deep Optimization Notes
 
-This document records optimization opportunities for the private XGIC / inspection-industry skill pack installed in `.voltui/skills/`.
+This document records optimization opportunities for the private VOLT / inspection-industry skill pack installed in `.voltui/skills/`.
 
 ## Current Baseline
 
-- All 29 custom skills from `xgic-ai-chat/skills/custom` are installed as project skills.
+- All 29 custom skills from `volt-ai-chat/skills/custom` are installed as project skills.
 - VoltUI discovers project skills from `.voltui/skills/<skill>/SKILL.md`, so these skills are available without user-level configuration.
 - `references/private-skills/skills-manifest.json` is the full machine-readable inventory.
 - `references/private-skills/INDEX.md` is the human routing index.

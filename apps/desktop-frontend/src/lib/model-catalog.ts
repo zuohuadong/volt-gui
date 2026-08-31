@@ -1,0 +1,78 @@
+import type { DiscoveredModel, ModelGroup, ModelInfo, SettingsNamespace } from "./dsh-client";
+
+export type ProviderSettings = {
+  namespace: SettingsNamespace;
+  config: Record<string, unknown>;
+};
+
+export function findProviderSettings(namespaces: SettingsNamespace[], provider: string): ProviderSettings | undefined {
+  for (const namespace of namespaces) {
+    const providers = (namespace.value as { providers?: unknown } | undefined)?.providers;
+    if (!providers || typeof providers !== "object" || Array.isArray(providers)) continue;
+    const config = (providers as Record<string, unknown>)[provider];
+    if (config && typeof config === "object" && !Array.isArray(config)) {
+      return { namespace, config: config as Record<string, unknown> };
+    }
+  }
+  return undefined;
+}
+
+export function enrichModelGroups(groups: ModelGroup[], namespaces: SettingsNamespace[]): ModelGroup[] {
+  return groups.map((group) => {
+    const configured = findProviderSettings(namespaces, group.id)?.config.models;
+    if (!Array.isArray(configured)) return group;
+    const metadata = new Map<string, Record<string, unknown>>();
+    for (const raw of configured) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const id = (raw as { id?: unknown }).id;
+      if (typeof id === "string") metadata.set(id, raw as Record<string, unknown>);
+    }
+    return {
+      ...group,
+      models: group.models.map((model) => {
+        const configuredModel = metadata.get(model.id);
+        if (!configuredModel) return model;
+        return {
+          ...model,
+          input: Array.isArray(configuredModel.input)
+            ? configuredModel.input.filter((item): item is string => typeof item === "string")
+            : model.input,
+          contextWindow: typeof configuredModel.contextWindow === "number" ? configuredModel.contextWindow : model.contextWindow,
+          maxTokens: typeof configuredModel.maxTokens === "number" ? configuredModel.maxTokens : model.maxTokens,
+        };
+      }),
+    };
+  });
+}
+
+export function mergeDiscoveredModels(discovered: DiscoveredModel[], configured: unknown): { models: Record<string, unknown>[]; unknownCapabilities: Set<string> } {
+  const previous = new Map<string, Record<string, unknown>>();
+  if (Array.isArray(configured)) {
+    for (const raw of configured) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const id = (raw as { id?: unknown }).id;
+      if (typeof id === "string") previous.set(id, raw as Record<string, unknown>);
+    }
+  }
+  const unknownCapabilities = new Set<string>();
+  const models = discovered.map((model) => {
+    const existing = previous.get(model.id);
+    if (!existing || !Array.isArray(existing.input)) unknownCapabilities.add(model.id);
+    return {
+      ...(existing || {}),
+      id: model.id,
+      name: model.name || (typeof existing?.name === "string" ? existing.name : model.id),
+      ...(model.input ? { input: model.input } : (!existing?.input ? { input: ["text"] } : {})),
+      ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
+      ...(model.maxTokens ? { maxTokens: model.maxTokens } : {}),
+    };
+  });
+  return { models, unknownCapabilities };
+}
+
+export function modelCapabilityLabel(model: ModelInfo, unknown = false): string {
+  if (unknown) return "能力待确认";
+  if (model.input?.includes("image")) return "支持图片";
+  if (model.input?.includes("text")) return "仅文本";
+  return "能力未声明";
+}

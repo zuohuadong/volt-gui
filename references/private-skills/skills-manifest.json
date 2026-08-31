@@ -1,8 +1,8 @@
 {
-  "edition": "xgic-private-industry",
-  "generatedFrom": "xgic-ai-chat/skills/custom",
+  "edition": "volt-private-industry",
+  "generatedFrom": "project-private-skills",
   "skillRoot": ".voltui/skills",
-  "count": 29,
+  "count": 30,
   "skills": [
     {
       "id": "api-design",
@@ -280,6 +280,16 @@
       "path": ".voltui/skills/typescript-development/SKILL.md",
       "description": "Develop and review TypeScript code across frontend, backend, libraries, and tooling. Use for type safety, API contracts, refactors, tsconfig, package boundaries, and tests.",
       "name": "Typescript Development",
+      "category": "engineering",
+      "enabled": true,
+      "scope": "project-private"
+    },
+    {
+      "id": "ui-customization",
+      "frontmatterName": "ui-customization",
+      "path": ".voltui/skills/ui-customization/SKILL.md",
+      "description": "Design and review safe conversational UI customization for VoltUI. Use when a user asks to change layout, density, sidebar, activity panels, composer size, labels, or quick actions through natural language.",
+      "name": "UI Customization",
       "category": "engineering",
       "enabled": true,
       "scope": "project-private"

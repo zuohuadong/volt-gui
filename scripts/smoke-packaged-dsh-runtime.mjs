@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageOutput = path.join(root, "apps", "desktop-electron", "dist-package");
-const expectedNodeVersion = "v26.7.0";
+const expectedNodeVersion = "v26.8.1";
 const expectedDshVersion = "0.1.1-rc.2";
 const startupTimeoutMs = 180_000;
 const startupPattern = /^dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?$)/;

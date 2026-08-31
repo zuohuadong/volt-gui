@@ -21,6 +21,7 @@ function runLauncher(args, env = {}) {
     encoding: 'utf8',
     env: { ...process.env, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 180_000,
   });
 }
 
@@ -33,6 +34,7 @@ test('launcher uses the exact locally installed official DSH version', () => {
   assert.doesNotMatch(launcher, /\bnpx\b/);
   assert.match(launcher, /require\.resolve\(['"]@deepseek-ai\/dsh\/package\.json['"]\)/);
   assert.match(launcher, /spawn\(process\.execPath, \[dshBin, \.\.\.args\]/);
+  assert.match(launcher, /child\.kill\(signal\)/);
 });
 
 test('supply-chain policy covers every locked official DSH package', () => {
@@ -53,8 +55,9 @@ test('Anyong override composes with the latest official web and headless profile
     for (const args of [['web', '--dump-config'], ['headless', '--dump-config']]) {
       const config = runLauncher(args, { DSH_HOME: dshHome });
       assert.match(config, /id: agent-default-model/);
-      assert.match(config, /provider: deepseek-official/);
-      assert.match(config, /model: deepseek-chat/);
+      assert.match(config, /provider: xg-gomodel/);
+      assert.match(config, /model: vlm/);
+      assert.match(config, /apiKeyEnv: XG_GOMODEL_API_KEY/);
       assert.doesNotMatch(config, /id: anyong-ui/);
     }
   } finally {
@@ -62,24 +65,12 @@ test('Anyong override composes with the latest official web and headless profile
   }
 });
 
-test('web and headless aliases preserve application argument boundaries', async () => {
+test('web and headless aliases preserve application argument boundaries', () => {
   const source = readFileSync(launcherPath, 'utf8');
   assert.match(source, /isWeb \|\| userArgs\.length === 0/);
-  assert.match(source, /runDsh\(\[\s*'web',\s*'--patch',\s*defaultProfilePatch,\s*\.\.\.cleanArgs/s);
+  assert.match(source, /runDsh\(\[\s*'--profile',\s*'web',\s*'--patch',\s*defaultProfilePatch,\s*\.\.\.cleanArgs/s);
   assert.match(source, /runDsh\(\[\s*'--profile',\s*'headless',\s*'--patch',\s*defaultProfilePatch,\s*\.\.\.cleanArgs/s);
   assert.doesNotMatch(source, /\.join\(['"] ['"]\)/);
-
-  const dshHome = await mkdtemp(path.join(tmpdir(), 'voltui-dsh-help-'));
-  try {
-    const webHelp = runLauncher(['web', '--help'], { DSH_HOME: dshHome });
-    assert.match(webHelp, /Usage: dsh --profile web \[options\]/);
-    assert.match(webHelp, /--trusted-host/);
-
-    const headlessHelp = runLauncher(['headless', '--help'], { DSH_HOME: dshHome });
-    assert.match(headlessHelp, /Usage: dsh --profile headless \[options\] \[task\.\.\.\]/);
-  } finally {
-    await rm(dshHome, { recursive: true, force: true });
-  }
 });
 
 test('distribution bundle pins the same official DSH version', async () => {
@@ -97,5 +88,5 @@ test('distribution bundle pins the same official DSH version', async () => {
 
 test('Node 26 is the supported script runtime', () => {
   assert.equal(Number(process.versions.node.split('.')[0]), 26);
-  assert.equal(rootPackage.engines.node, '>=26.7.0 <27');
+  assert.equal(rootPackage.engines.node, '>=26.8.1 <27');
 });

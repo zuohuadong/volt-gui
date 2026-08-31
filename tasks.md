@@ -53,7 +53,7 @@
 
 | task_id | provider | repo | source_url | title | priority | risk | status | owner | model | needs_model | review_class | branch | change_request_url |
 |---------|----------|------|------------|-------|----------|------|--------|-------|-------|-------------|--------------|--------|--------------------|
-| ANYONG-CNB-ISSUES-211-215-20260831 | cnb | aizhuliren/xgic/anyong-agent | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/issues | 修复并关闭全部开放 CNB issues #211-#215 | high | medium | running | codex | gpt-5.6 | - | review-medium | codex/fix-cnb-issues-211-215 | - |
+| ANYONG-CNB-ISSUES-211-215-20260831 | cnb | aizhuliren/xgic/anyong-agent | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/issues | 修复并关闭全部开放 CNB issues #211-#215 | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/fix-cnb-issues-211-215 | - |
 | VOLTGUI-PR103-ELECTRON-FOLLOWUP-20260824 | github | zuohuadong/volt-gui | https://github.com/zuohuadong/volt-gui/pull/103 | 完成 Electron + DSH 上游迁移并永久退役 Wails | high | high | review | codex | gpt-5.6 | - | review-high | codex/electron-dsh-upstream-migration | https://github.com/zuohuadong/volt-gui/pull/103 |
 | VOLTGUI-004 | local | aizhuliren/volt/anyong-agent | - | 迁移桌面自动发布为 CNB Windows-only | high | medium | done | codex | gpt-5-codex | - | - | main | - |
 | VOLTGUI-003 | local | aizhuliren/volt/voltui | - | 远端重写后重新提交通用和私有行业 skills | high | low | done | codex | gpt-5-codex | - | - | main | - |
@@ -88,6 +88,7 @@
 - 影响范围：`apps/desktop-frontend/src/App.svelte`、`app.css`、`lib/model-catalog.*`、`lib/transcript.*`、新增 `lib/session-health.*` 与 `lib/user-error.*`；任务账本仅记录本次合同与证据。
 - 风险与回滚：错误映射和前端健康状态会影响用户可见提示，但不写入 DSH 持久化；如回归，以普通 revert/follow-up 撤回本提交，不改写历史。
 - 验证计划：前端 Vitest、`svelte-check`、Svelte autofixer、Vite production build；`pnpm test`、`pnpm run test:dsh-integration`、`pnpm run build`；Electron/迁移边界；Playwright mock 截图检查会话、管理、子 Agent、预设和模型页；最终 `git diff --check` 与独立 verifier PASS。
+- completion_evidence：实现提交 `adb29d048` 已推送至 `origin/codex/fix-cnb-issues-211-215`；前端 33 项测试、`svelte-check`、Vite production build、Electron runtime boundary、migration boundary 与 `git diff --check` 通过，独立 verifier 对 #211-#215 全部 PASS。2026-08-31 已通过 CNB API 为 #211、#212、#213、#214、#215 添加修复说明并以 `completed` 原因关闭，随后反查开放 issue `total: 0`。
 
 ### VOLTGUI-PR103-ELECTRON-FOLLOWUP-20260824 Task Contract
 

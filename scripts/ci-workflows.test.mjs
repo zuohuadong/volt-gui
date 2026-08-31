@@ -100,7 +100,8 @@ test("CNB validates the same Node 26 source contract", () => {
   assert.match(cnb, /Test-Path/);
   assert.match(cnb, /pnpm\.cmd run test:dsh-integration/);
   assert.match(cnb, /check-migration-boundary/);
-  assert.match(cnb, /^"v\*":\s*[\r\n]+\s+tag_push:/m);
+  assert.match(cnb, /^\$:\s*[\r\n]+\s+tag_push:/m);
+  assert.match(cnb, /Unsupported release tag/);
   assert.match(cnb, /set-electron-package-version\.mjs/);
   assert.match(cnb, /pnpm\.cmd run dist:desktop/);
   assert.match(cnb, /type: git:release/);

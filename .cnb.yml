@@ -37,7 +37,7 @@ main:
             if (-not (Test-Path "apps/desktop-electron/dist/main.js")) { throw "Electron main bundle not found" }
             if (-not (Test-Path "dist/anyong-dsh/package.json")) { throw "DSH distribution not found" }
 
-"v*":
+$:
   tag_push:
     - runner:
         namespace: group
@@ -47,6 +47,7 @@ main:
         - name: environment
           script: |
             $ErrorActionPreference = "Stop"
+            if ($env:CNB_BRANCH -notmatch '^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw "Unsupported release tag: $env:CNB_BRANCH" }
             $nodeVersion = node --version
             if ($nodeVersion -ne "v26.8.1") { throw "Expected Node v26.8.1, got $nodeVersion" }
             git --version

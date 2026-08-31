@@ -12,6 +12,10 @@
     "dsh-anyong": "./scripts/anyong.mjs"
   },
   "scripts": {
+    "preinstall": "node ./scripts/ensure-pnpm.mjs",
+    "prebuild": "node ./scripts/ensure-pnpm.mjs",
+    "pretest": "node ./scripts/ensure-pnpm.mjs",
+    "predist:desktop": "node ./scripts/ensure-pnpm.mjs",
     "build": "node ./scripts/bundle.mjs && pnpm run build:desktop",
     "test": "pnpm --filter @voltui/desktop-electron run test && node --test ./scripts/check-migration-boundary.test.mjs ./scripts/smoke-packaged-dsh-runtime.test.mjs && pnpm run check:dsh-plugins",
     "test:dsh-integration": "node --test ./scripts/dsh-integration.test.mjs",

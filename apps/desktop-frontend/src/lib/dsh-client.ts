@@ -141,7 +141,7 @@ export class DshClient {
     return this.request("session.history", { sessionId, maxMessages: 80 });
   }
   prompt(sessionId: string, content: string | PromptContentPart[], mode: "queue" | "steer" = "queue"): Promise<{ accepted: true; command?: { kind: "success"; text?: string } }> {
-    const parts = typeof content === "string" ? [{ type: "text", text: content } satisfies PromptContentPart] : content;
+    const parts = typeof content === "string" ? [{ type: "text", text: content } satisfies PromptContentPart] : snapshotPromptContent(content);
     return this.request("session.prompt", { sessionId, mode, content: parts, clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
   }
   cancel(sessionId: string): Promise<{ accepted: true }> { return this.request("session.cancel", { sessionId }); }
@@ -250,4 +250,10 @@ export class DshClient {
       return () => undefined;
     }
   }
+}
+
+function snapshotPromptContent(content: PromptContentPart[]): PromptContentPart[] {
+  return content.map((part) => part.type === "text"
+    ? { type: "text", text: part.text }
+    : { type: "image", mediaType: part.mediaType, data: part.data, ...(part.name ? { name: part.name } : {}) });
 }

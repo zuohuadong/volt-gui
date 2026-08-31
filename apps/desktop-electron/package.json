@@ -8,6 +8,9 @@
     "dist"
   ],
   "scripts": {
+    "prebuild": "node ../../scripts/ensure-pnpm.mjs",
+    "pretest": "node ../../scripts/ensure-pnpm.mjs",
+    "predist": "node ../../scripts/ensure-pnpm.mjs",
     "build:main": "node ./scripts/build-main.mjs",
     "build:frontend": "pnpm --dir ../desktop-frontend build",
     "build": "pnpm run build:frontend && pnpm run build:main",

@@ -86,11 +86,13 @@ $:
             preRelease: true
             latest: false
         - name: upload installer asset
+          timeout: 30m
           script: |
             $ErrorActionPreference = "Stop"
             $env:CNB_RELEASE_ASSET = "anyong-windows-x64-installer-$($env:CNB_BRANCH -replace '^v', '').exe"
             node scripts/upload-cnb-release-assets.mjs
         - name: upload portable asset
+          timeout: 30m
           script: |
             $ErrorActionPreference = "Stop"
             $env:CNB_RELEASE_ASSET = "anyong-windows-x64-portable-$($env:CNB_BRANCH -replace '^v', '').zip"

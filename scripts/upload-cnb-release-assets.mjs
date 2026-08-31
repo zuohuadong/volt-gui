@@ -1,4 +1,4 @@
-import { createReadStream } from "node:fs";
+import { spawn } from "node:child_process";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,21 @@ async function apiRequest(fetchImpl, url, options, label) {
   return response;
 }
 
+async function uploadFileWithCurl(url, filePath) {
+  await new Promise((resolve, reject) => {
+    const child = spawn(
+      "curl.exe",
+      ["--fail", "--show-error", "--progress-bar", "--request", "PUT", "--header", "Content-Type: application/octet-stream", "--upload-file", filePath, url],
+      { stdio: ["ignore", "inherit", "inherit"], windowsHide: true },
+    );
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`curl upload failed with ${signal ? `signal ${signal}` : `exit code ${code}`}`));
+    });
+  });
+}
+
 export function releaseAssetPaths(tag, baseDir = path.join(rootDir, "dist")) {
   const version = normalizeDesktopVersion(tag);
   return [
@@ -42,7 +57,7 @@ async function resolveReleaseId({ fetchImpl, endpoint, slug, tag, token }) {
   return release.id;
 }
 
-async function uploadReleaseAsset({ fetchImpl, endpoint, slug, releaseId, token, filePath }) {
+async function uploadReleaseAsset({ fetchImpl, uploadFileImpl, endpoint, slug, releaseId, token, filePath }) {
   const file = await stat(filePath);
   const assetName = path.basename(filePath);
   const uploadInfoResponse = await apiRequest(
@@ -64,17 +79,7 @@ async function uploadReleaseAsset({ fetchImpl, endpoint, slug, releaseId, token,
     throw new Error(`CNB upload information is incomplete for ${assetName}`);
   }
 
-  await apiRequest(
-    fetchImpl,
-    uploadInfo.upload_url,
-    {
-      method: "PUT",
-      headers: { "Content-Length": String(file.size), "Content-Type": "application/octet-stream" },
-      body: createReadStream(filePath),
-      duplex: "half",
-    },
-    `upload ${assetName}`,
-  );
+  await uploadFileImpl(uploadInfo.upload_url, filePath);
   await apiRequest(
     fetchImpl,
     uploadInfo.verify_url,
@@ -84,7 +89,7 @@ async function uploadReleaseAsset({ fetchImpl, endpoint, slug, releaseId, token,
   return assetName;
 }
 
-export async function uploadCnbReleaseAssets({ env = process.env, fetchImpl = fetch } = {}) {
+export async function uploadCnbReleaseAssets({ env = process.env, fetchImpl = fetch, uploadFileImpl = uploadFileWithCurl } = {}) {
   const token = requireEnv(env, "CNB_TOKEN");
   const endpoint = requireEnv(env, "CNB_API_ENDPOINT").replace(/\/$/, "");
   const slug = requireEnv(env, "CNB_REPO_SLUG");
@@ -101,7 +106,7 @@ export async function uploadCnbReleaseAssets({ env = process.env, fetchImpl = fe
   }
   const uploaded = [];
   for (const filePath of selectedPaths) {
-    uploaded.push(await uploadReleaseAsset({ fetchImpl, endpoint, slug, releaseId, token, filePath }));
+    uploaded.push(await uploadReleaseAsset({ fetchImpl, uploadFileImpl, endpoint, slug, releaseId, token, filePath }));
   }
   return uploaded;
 }

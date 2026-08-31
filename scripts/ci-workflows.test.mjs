@@ -112,6 +112,7 @@ test("CNB validates the same Node 26 source contract", () => {
   assert.match(cnb, /preRelease: true/);
   assert.match(cnb, /name: upload installer asset/);
   assert.match(cnb, /name: upload portable asset/);
+  assert.equal((cnb.match(/timeout:\s*30m/g) || []).length, 2);
   assert.match(cnb, /CNB_RELEASE_ASSET/);
   assert.match(cnb, /upload-cnb-release-assets\.mjs/);
   assert.doesNotMatch(cnb, /docker:|test -f|desktop-frontend|check-runtime-mocks|\bgo\b|wails/i);

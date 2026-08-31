@@ -28,6 +28,7 @@
     type PromptContentPart, type SettingsNamespace, type SubagentEntry, type Workspace, type PluginInventoryEntry,
   } from "$lib/dsh-client";
   import { assistantMessageForEvent, applyTranscriptEvent, foldHistory, type TodoItem, type TranscriptMessage } from "$lib/transcript";
+  import { enrichModelGroups, findProviderSettings, mergeDiscoveredModels, modelCapabilityLabel } from "$lib/model-catalog";
   import {
     applyUiCustomization,
     buildUiCustomizationPrompt,
@@ -49,7 +50,7 @@
 
   let client = $state<DshClient>();
   let productName = $state("西谷智灯暗涌平台");
-  let appVersion = $state("0.30.0");
+  let appVersion = $state("0.31.0");
   let workspacePath = $state("");
   let workspaces = $state<Workspace[]>([]);
   let sessions = $state<SessionSummary[]>([]);
@@ -112,6 +113,7 @@
   let credentialRefDraft = $state("");
   let credentialValueDraft = $state("");
   let confirmingCredentialRef = $state("");
+  let unknownModelCapabilities = $state<Set<string>>(new Set());
   let pendingApproval = $state<PendingApproval | undefined>();
   let pendingQuestion = $state<PendingQuestion | undefined>();
   let questionAnswers = $state<Record<string, string>>({});
@@ -347,6 +349,7 @@
     settingsWritable = settingsResult.writable;
     settingsHasDocument = settingsResult.hasDocument;
     settingsNamespaces = settingsResult.namespaces;
+    modelGroups = enrichModelGroups(modelGroups, settingsNamespaces);
     if (!selectedSettingsNs || !settingsNamespaces.some((item) => item.ns === selectedSettingsNs)) {
       selectedSettingsNs = settingsNamespaces[0]?.ns || "";
       settingsDraft = JSON.stringify(settingsNamespaces[0]?.user || {}, null, 2);
@@ -382,12 +385,22 @@
     view = "conversation";
     pendingApproval = undefined;
     pendingQuestion = undefined;
-    const result = await client.history(sessionId);
+    const [result, modelResult, settingsResult] = await Promise.all([
+      client.history(sessionId),
+      client.models(sessionId),
+      client.describeSettings().catch(() => ({ writable: false, hasDocument: false, namespaces: [] })),
+    ]);
     const transcript = foldHistory(result.events);
     messages = transcript.messages;
     todos = transcript.todos;
-    const modelResult = await client.models(sessionId);
-    modelGroups = modelResult.groups;
+    settingsWritable = settingsResult.writable;
+    settingsHasDocument = settingsResult.hasDocument;
+    settingsNamespaces = settingsResult.namespaces;
+    credentialRefs = collectCredentialRefs(settingsNamespaces);
+    credentials = credentialRefs.length
+      ? (await client.describeCredentials(credentialRefs).catch(() => ({ credentials: {} }))).credentials
+      : {};
+    modelGroups = enrichModelGroups(modelResult.groups, settingsNamespaces);
     selectedModel = `${modelResult.current.provider}/${modelResult.current.model}`;
     reasoningEffort = modelResult.current.reasoningEffort || "";
   }
@@ -420,6 +433,47 @@
     return refs.sort();
   }
 
+  function selectedModelInfo(): ModelGroup["models"][number] | undefined {
+    const [provider, model] = selectedModel.split("/", 2);
+    return modelGroups.find((group) => group.id === provider)?.models.find((item) => item.id === model);
+  }
+
+  function selectedProviderCredentialRef(): string | undefined {
+    const provider = selectedModel.split("/", 1)[0];
+    const ref = findProviderSettings(settingsNamespaces, provider)?.config.apiKeyEnv;
+    return typeof ref === "string" && ref ? ref : undefined;
+  }
+
+  async function xgProviderSettings() {
+    let providerSettings = findProviderSettings(settingsNamespaces, "xg-gomodel");
+    if (providerSettings || !client) return providerSettings;
+    const described = await client.describeSettings();
+    settingsNamespaces = described.namespaces;
+    return findProviderSettings(settingsNamespaces, "xg-gomodel");
+  }
+
+  async function requireConfiguredCredential(config: Record<string, unknown>): Promise<void> {
+    const ref = typeof config.apiKeyEnv === "string" ? config.apiKeyEnv : "";
+    if (!ref || !client) return;
+    const described = await client.describeCredentials([ref]);
+    credentials = { ...credentials, ...described.credentials };
+    if (described.credentials[ref]?.configured) return;
+    credentialRefDraft = ref;
+    throw new Error(`请先保存 ${ref}，再从 192.168.1.47 刷新模型`);
+  }
+
+  async function applyXgModels(namespace: SettingsNamespace, models: Record<string, unknown>[]): Promise<void> {
+    if (!client) return;
+    const updated = await client.updateSettings(namespace.ns, { providers: { "xg-gomodel": { models } } }, namespace.revision);
+    settingsNamespaces = settingsNamespaces.map((item) => item.ns === updated.ns ? updated : item);
+    if (activeSessionId) {
+      const sessionModels = await client.models(activeSessionId);
+      modelGroups = enrichModelGroups(sessionModels.groups, settingsNamespaces);
+      selectedModel = `${sessionModels.current.provider}/${sessionModels.current.model}`;
+    }
+    catalogGroups = (await client.listModelCatalog()).groups;
+  }
+
   function handleFrame(frame: DshFrame): void {
     const payload = frame.payload;
     if (payload.type === "approval/requested") { pendingApproval = { rpcId: frame.rpcId, ...payload } as unknown as PendingApproval; sending = false; return; }
@@ -445,6 +499,17 @@
   async function submit(): Promise<void> {
     const text = input.trim();
     if (!client || !activeSessionId || (!text && attachments.length === 0) || sending) return;
+    const credentialRef = selectedProviderCredentialRef();
+    if (credentialRef && !credentials[credentialRef]?.configured) {
+      credentialRefDraft = credentialRef;
+      runtimeError = `当前模型需要 ${credentialRef}。请先在“管理 > 设置与凭据”中保存凭据。`;
+      openManagement("settings");
+      return;
+    }
+    if (attachments.length > 0 && !(selectedModelInfo()?.input || []).includes("image")) {
+      runtimeError = `当前模型 ${selectedModel || "未选择"} 不支持图片输入，请先选择支持多模态的模型。`;
+      return;
+    }
     input = ""; sending = true; view = "conversation";
     messages = [...messages, { id: `pending-${Date.now()}`, role: "user", text, pending: true }];
     const prompt = isSurfaceGenerationIntent(text)
@@ -474,6 +539,13 @@
       reasoningEffort = result.selected.reasoningEffort || "";
     } catch (error) { runtimeError = error instanceof Error ? error.message : String(error); }
     finally { modelBusy = false; }
+  }
+
+  function chooseModelValue(value: string): void {
+    const selection = modelGroups
+      .flatMap((group) => group.models.map((model) => ({ provider: group.id, model: model.id, value: `${group.id}/${model.id}` })))
+      .find((item) => item.value === value);
+    if (selection) void chooseModel(selection.provider, selection.model);
   }
 
   async function pickWorkspace(): Promise<void> {
@@ -768,6 +840,30 @@
     });
   }
 
+  async function refreshXgGatewayModels(): Promise<void> {
+    if (!client) return;
+    await performManagementAction("models-discover:xg-gomodel", async () => {
+      const providerSettings = await xgProviderSettings();
+      if (!providerSettings) throw new Error("官方 DSH 未返回 xg-gomodel 配置");
+      const { namespace, config } = providerSettings;
+      await requireConfiguredCredential(config);
+      const baseURL = typeof config.baseURL === "string" ? config.baseURL : "";
+      if (!baseURL) throw new Error("xg-gomodel 未配置 Base URL");
+      const discovered = await client!.discoverModels({
+        settingsNs: namespace.ns,
+        provider: "xg-gomodel",
+        baseURL,
+        ...(typeof config.api === "string" ? { api: config.api } : {}),
+      });
+      if (discovered.models.length === 0) throw new Error("192.168.1.47 未返回任何模型");
+      if (!discovered.models.some((model) => model.id === "vlm")) throw new Error("网关模型目录缺少默认模型 vlm，已拒绝覆盖当前配置");
+      const merged = mergeDiscoveredModels(discovered.models, config.models);
+      unknownModelCapabilities = merged.unknownCapabilities;
+      await applyXgModels(namespace, merged.models);
+      managementNotice = `已从 192.168.1.47 刷新 ${discovered.models.length} 个模型`;
+    });
+  }
+
   async function saveCredential(): Promise<void> {
     const ref = credentialRefDraft.trim();
     const value = credentialValueDraft;
@@ -779,6 +875,7 @@
       if (!credentialRefs.includes(ref)) credentialRefs = [...credentialRefs, ref].sort();
       managementNotice = "凭据已保存，实际值不会回显";
     });
+    if (ref === "XG_GOMODEL_API_KEY" && credentials[ref]?.configured) await refreshXgGatewayModels();
   }
 
   async function unsetCredential(ref: string): Promise<void> {
@@ -917,7 +1014,7 @@
                 {:else if managementTab === "subagents"}
                   <SettingsGroup title="子 Agent" description="查看直接子 Agent 的历史，并向可继续的子 Agent 发送后续指令。"><div class="management-actions"><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />刷新子 Agent</Button><span class="management-capability">{subagentParentAvailable ? "父会话可用" : "父会话不可用"}</span></div>{#if subagents.length === 0}<DataState state="empty" title="暂无子 Agent" description="当前会话尚未产生直接子 Agent。" />{:else}<div class="management-list">{#each subagents as entry (entry.id)}<div class:chosen={entry.id === selectedSubagentId} class="management-list-row subagent-management-row"><span class="row-icon"><Network size={15} /></span><div><strong>{subagentLabel(entry)}</strong><small>{subagentStatusLabel(entry)}</small></div>{#if entry.kind === "child"}<div class="row-actions"><Button variant="ghost" size="sm" onclick={() => void selectSubagent(entry)}>查看历史</Button>{#if entry.mode === "continuable" && entry.activity === "running"}<Button variant="ghost" size="icon-sm" aria-label="停止子 Agent" title="停止子 Agent" disabled={!!managementBusy} onclick={() => { selectedSubagentId = entry.id; void interruptSelectedSubagent(); }}><Square size={14} /></Button>{/if}</div>{/if}</div>{/each}</div>{/if}{#if selectedSubagent && selectedSubagent.kind === "child"}<div class="subagent-history"><div class="agent-preview-heading"><strong>{subagentLabel(selectedSubagent)} 的历史</strong><span class="management-capability">{selectedSubagent.mode === "continuable" ? "可继续" : "一次性"}</span></div>{#if subagentMessages.length === 0}<DataState state="empty" title="暂无历史消息" description="子 Agent 尚未产生可展示的消息。" />{:else}{#each subagentMessages as message (message.id)}<article class="subagent-message"><div class="message-meta"><strong>{message.role === "assistant" ? "Agent" : message.role === "user" ? "用户" : "工具"}</strong></div><div class="message-text">{message.text}</div></article>{/each}{/if}{#if selectedSubagent.mode === "continuable"}<div class="subagent-composer"><Input aria-label="继续指令" bind:value={subagentPromptDraft} placeholder="向子 Agent 发送后续指令" onkeydown={(event) => { if (event.key === "Enter") void promptSelectedSubagent(); }} /><Button size="sm" disabled={!subagentPromptDraft.trim() || !!managementBusy} onclick={() => void promptSelectedSubagent()}><Send size={13} />发送</Button></div>{/if}</div>{/if}</SettingsGroup>
                 {:else if managementTab === "models"}
-                  <SettingsGroup title="模型目录" description="会话模型和全局 Provider 目录均由官方 DSH 提供。"><div class="management-actions"><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><RefreshCw size={13} />刷新目录</Button>{#if hostInfo}<span class="management-capability">默认 {hostInfo.provider || "自动"}/{hostInfo.model || "自动"}</span>{/if}</div>{#if modelGroups.length === 0}<DataState state="empty" title="尚未加载会话模型" description="先选择或新建一个会话。" />{:else}{#each modelGroups as group (group.id)}<div class="model-group"><strong>{group.name}</strong>{#each group.models as model (model.id)}<button class:chosen={`${group.id}/${model.id}` === selectedModel} class="model-option" disabled={modelBusy} onclick={() => void chooseModel(group.id, model.id)}><span>{model.name}</span>{#if model.description}<small>{model.description}</small>{/if}{#if `${group.id}/${model.id}` === selectedModel}<Check size={14} />{/if}</button>{/each}</div>{/each}{/if}{#if catalogGroups.length > 0}<div class="catalog-divider"><span>全局 Provider 目录</span></div>{#each catalogGroups as group (group.id)}<div class="model-group catalog-group"><strong>{group.name}</strong><small>{group.models.length} 个可用模型</small><div class="catalog-models">{#each group.models as model (model.id)}<span>{model.name}</span>{/each}</div></div>{/each}{/if}{#if catalogFailures.length > 0}<div class="knowledge-note"><CircleAlert size={14} /><span>{catalogFailures.length} 个 Provider 目录读取失败：{catalogFailures.map((item) => item.name).join("、")}</span></div>{/if}</SettingsGroup>
+                  <SettingsGroup title="模型目录" description="会话模型和全局 Provider 目录均由官方 DSH 提供。"><div class="management-actions"><Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void refreshXgGatewayModels()}><RefreshCw size={13} />从 192.168.1.47 刷新</Button><Button variant="ghost" size="sm" onclick={() => void refreshManagement()}>刷新目录</Button>{#if hostInfo}<span class="management-capability">默认 {hostInfo.provider || "自动"}/{hostInfo.model || "自动"}</span>{/if}</div>{#if modelGroups.length === 0}<DataState state="empty" title="尚未加载会话模型" description="先选择或新建一个会话。" />{:else}{#each modelGroups as group (group.id)}<div class="model-group"><strong>{group.name}</strong>{#each group.models as model (model.id)}<button class:chosen={`${group.id}/${model.id}` === selectedModel} class="model-option" disabled={modelBusy} onclick={() => void chooseModel(group.id, model.id)}><span><strong>{model.name}</strong><small>{modelCapabilityLabel(model, group.id === "xg-gomodel" && unknownModelCapabilities.has(model.id))}{#if model.contextWindow} · 上下文 {model.contextWindow.toLocaleString()}{/if}{#if model.maxTokens} · 输出 {model.maxTokens.toLocaleString()}{/if}</small></span>{#if `${group.id}/${model.id}` === selectedModel}<Check size={14} />{/if}</button>{/each}</div>{/each}{/if}{#if catalogGroups.length > 0}<div class="catalog-divider"><span>全局 Provider 目录</span></div>{#each catalogGroups as group (group.id)}<div class="model-group catalog-group"><strong>{group.name}</strong><small>{group.models.length} 个可用模型</small><div class="catalog-models">{#each group.models as model (model.id)}<span>{model.name}</span>{/each}</div></div>{/each}{/if}{#if catalogFailures.length > 0}<div class="knowledge-note"><CircleAlert size={14} /><span>{catalogFailures.length} 个 Provider 目录读取失败：{catalogFailures.map((item) => item.name).join("、")}</span></div>{/if}</SettingsGroup>
                 {:else if managementTab === "workspaces"}
                   <SettingsGroup title="工作区注册" description="工作区和会话由官方 DSH 维护，暗涌只提供选择与呈现。"><div class="management-actions"><Button size="sm" onclick={() => void pickWorkspace()}><FolderOpen size={14} />选择工作区</Button><Button variant="outline" size="sm" onclick={() => void refresh()}><History size={14} />刷新</Button></div>{#if filteredWorkspaces.length === 0}<DataState state="empty" title="没有注册工作区" description="选择一个目录后，官方 DSH 会建立工作区记录。" />{:else}<div class="management-list">{#each filteredWorkspaces as item (item.workspaceId)}<div class="management-list-row workspace-management-row"><span class="row-icon"><FolderOpen size={15} /></span><div>{#if editingWorkspaceId === item.workspaceId}<Input class="inline-edit-input" aria-label="工作区名称" bind:value={workspaceTitleDraft} onkeydown={(event) => { if (event.key === "Enter") void saveWorkspaceRename(item.workspaceId); if (event.key === "Escape") editingWorkspaceId = ""; }} />{:else}<strong>{item.title}</strong><small>{item.path}</small>{/if}</div>{#if editingWorkspaceId === item.workspaceId}<div class="row-actions"><Button size="sm" disabled={!!managementBusy} onclick={() => void saveWorkspaceRename(item.workspaceId)}><Check size={13} />保存</Button><Button variant="ghost" size="sm" onclick={() => editingWorkspaceId = ""}>取消</Button></div>{:else}<em>{item.sessionIds.length} 个会话</em><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="进入工作区" title="进入工作区" onclick={() => void enterWorkspace(item)}><ExternalLink size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="在资源管理器打开" title="在资源管理器打开" disabled={!!managementBusy} onclick={() => void openWorkspacePath(item)}><FolderOpen size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="重命名工作区" title="重命名工作区" onclick={() => beginWorkspaceRename(item)}><Pencil size={14} /></Button>{#if confirmingWorkspaceId === item.workspaceId}<Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => void removeWorkspace(item.workspaceId)}><Trash2 size={13} />确认移除</Button><Button variant="ghost" size="sm" onclick={() => confirmingWorkspaceId = ""}>取消</Button>{:else}<Button variant="ghost" size="icon-sm" aria-label="移除工作区注册" title="移除工作区注册" onclick={() => confirmingWorkspaceId = item.workspaceId}><Trash2 size={14} /></Button>{/if}</div>{/if}</div>{/each}</div>{/if}<div class="workspace-browser-divider"><span>目录浏览</span></div>{#if client}<WorkspaceBrowser client={client} onRegistered={() => { void refresh(); void refreshManagement(); }} />{/if}</SettingsGroup>
                   <SettingsGroup title="官方顺序" description="使用 DSH 的持久排序 API 调整工作区和会话顺序。"><div class="management-list">{#each filteredWorkspaces as workspace, index (workspace.workspaceId)}<div class="management-list-row"><span class="row-icon"><FolderOpen size={15} /></span><div><strong>{workspace.title}</strong><small>{workspace.sessionIds.length} 个会话</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="工作区上移" title="工作区上移" disabled={index === 0 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, -1)}><ChevronDown class="rotate-180" size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="工作区下移" title="工作区下移" disabled={index === filteredWorkspaces.length - 1 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, 1)}><ChevronDown size={14} /></Button></div></div>{#each workspace.sessionIds as sessionId, sessionIndex (sessionId)}<div class="management-list-row nested-order-row"><span class="row-icon"><MessageSquare size={13} /></span><div><strong>{sessionTitle(sessions.find((item) => item.sessionId === sessionId) || { sessionId, updatedAt: 0, running: false, blank: false })}</strong><small>{sessionId}</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="会话上移" title="会话上移" disabled={sessionIndex === 0 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, -1)}><ChevronDown class="rotate-180" size={13} /></Button><Button variant="ghost" size="icon-sm" aria-label="会话下移" title="会话下移" disabled={sessionIndex === workspace.sessionIds.length - 1 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, 1)}><ChevronDown size={13} /></Button></div></div>{/each}{/each}</div></SettingsGroup>
@@ -947,7 +1044,7 @@
           </div>
         {:else}
           <div class="conversation-shell">
-            <header class="conversation-header"><div class="conversation-title"><div class="eyebrow">{activeSession ? "会话工作台" : "暗涌"}</div><h1>{customization.title || (activeSession ? sessionTitle(activeSession) : "开始一个新会话")}</h1><p>{customization.subtitle || workspacePath || "选择一个工作区开始"}</p></div><div class="header-actions">{#if activeSession}<span class="model-pill"><Bot size={13} />{selectedModel || "默认模型"}</span>{/if}<Button variant="outline" size="sm" aria-pressed={customizationOpen} onclick={() => customizationOpen = !customizationOpen}><SlidersHorizontal size={14} />界面</Button><Button variant="outline" size="sm" onclick={() => openManagement("overview")}><Settings2 size={14} />管理</Button></div></header>
+            <header class="conversation-header"><div class="conversation-title"><div class="eyebrow">{activeSession ? "会话工作台" : "暗涌"}</div><h1>{customization.title || (activeSession ? sessionTitle(activeSession) : "开始一个新会话")}</h1><p>{customization.subtitle || workspacePath || "选择一个工作区开始"}</p></div><div class="header-actions">{#if activeSessionId}<label class="header-model"><Bot size={13} /><span class="sr-only">会话模型</span><select aria-label="选择会话模型" value={selectedModel} disabled={modelBusy || modelGroups.length === 0} onchange={(event) => chooseModelValue(event.currentTarget.value)}>{#if modelGroups.length === 0}<option value={selectedModel}>{selectedModel || "默认模型"}</option>{:else}{#each modelGroups as group (group.id)}<optgroup label={group.name}>{#each group.models as model (model.id)}<option value={`${group.id}/${model.id}`}>{model.name}</option>{/each}</optgroup>{/each}{/if}</select></label>{/if}<Button variant="outline" size="sm" aria-pressed={customizationOpen} onclick={() => customizationOpen = !customizationOpen}><SlidersHorizontal size={14} />界面</Button><Button variant="outline" size="sm" onclick={() => openManagement("overview")}><Settings2 size={14} />管理</Button></div></header>
             {#if runtimeError}<div class="error-banner"><CircleAlert size={15} /><span>{runtimeError}</span><button aria-label="关闭错误" onclick={() => { runtimeError = ""; }}><X size={14} /></button></div>{/if}
             {#if customizationOpen}<section class="customization-panel" aria-label="界面定制"><div class="customization-panel__header"><div><div class="section-label">对话式界面定制</div><strong>用自然语言改变工作台</strong><p>例如：收起活动面板、使用紧凑密度、把输入框改成四行。</p></div><Button variant="ghost" size="icon-sm" aria-label="关闭界面定制" onclick={() => customizationOpen = false}><X size={14} /></Button></div>{#if customizationNotice}<div class="customization-feedback"><CircleCheck size={14} /><span>{customizationNotice}</span></div>{/if}{#if customizationDraft}<div class="customization-preview"><div><strong>待应用方案</strong><span>来自当前会话的结构化 patch</span></div><code>{JSON.stringify(customizationDraft)}</code><div class="customization-actions"><Button variant="outline" size="sm" onclick={() => customizationDraft = undefined}>忽略</Button><Button size="sm" onclick={() => applyCustomizationPatch(customizationDraft!)}><Check size={13} />应用方案</Button></div></div>{/if}<div class="customization-summary"><span class="mode-chip">{customization.density === "compact" ? "紧凑密度" : "舒适密度"}</span><span>{customization.sidebar === "collapsed" ? "侧栏已收起" : "侧栏已展开"}</span><span>{customization.activity === "visible" ? "活动面板可见" : "活动面板隐藏"}</span><span>{customization.composerRows} 行输入框</span></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={customizationHistory.length === 0} onclick={undoCustomization}>撤销上次</Button><Button variant="ghost" size="sm" onclick={() => { customization = DEFAULT_UI_CUSTOMIZATION; customizationHistory = []; persistUiCustomization(customization); applyRuntimeCustomization(customization); customizationNotice = "已恢复默认界面。"; }}>恢复默认</Button></div></section>{/if}
             {#if surfaceDraft}<section class="surface-proposal" aria-label="待确认操作界面"><div><div class="section-label">AI 操作界面提案</div><strong>{surfaceDraft.spec.title}</strong><p>{surfaceDraft.summary || `包含 ${surfaceDraft.spec.widgets.length} 个只读组件，确认后才会查询 DSH 数据。`}</p></div><div class="surface-proposal__meta"><span>{surfaceDraft.spec.widgets.length} 个组件</span><span>{surfaceDraft.spec.dataSources.length} 个数据源</span></div><div class="customization-actions"><Button variant="ghost" size="sm" onclick={() => { surfaceDraft = undefined; surfaceNotice = "已忽略操作界面提案。"; }}>忽略</Button><Button size="sm" onclick={applySurfaceProposal}><Check size={13} />确认渲染</Button></div></section>{/if}

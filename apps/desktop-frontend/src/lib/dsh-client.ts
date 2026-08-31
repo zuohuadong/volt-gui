@@ -15,7 +15,8 @@ export type SessionSummary = {
 export type Workspace = { workspaceId: string; path: string; title: string; sessionIds: string[] };
 export type SessionSearchItem = { sessionId: string; snippet: string };
 export type HistoryEntry = { event: { type: string; seq: number; time: number; data: Record<string, unknown> }; view?: unknown };
-export type ModelGroup = { id: string; name: string; models: { id: string; name: string; description?: string }[] };
+export type ModelInfo = { id: string; name: string; description?: string; input?: string[]; contextWindow?: number; maxTokens?: number; reasoning?: { efforts: Array<{ id: string; name: string }>; defaultEffort?: string } };
+export type ModelGroup = { id: string; name: string; models: ModelInfo[] };
 export type ModelCatalogFailure = { id: string; name: string; message: string };
 export type DirectoryEntry = { name: string; path: string; hidden: boolean };
 export type DirectoryListing = {
@@ -33,7 +34,7 @@ export type PluginInventoryEntry = {
   enabled: boolean;
   fiberPhase: "pending" | "loading" | "active" | "failed" | "unloading" | null;
 };
-export type DiscoveredModel = { id: string; name?: string; contextWindow?: number; maxTokens?: number };
+export type DiscoveredModel = { id: string; name?: string; contextWindow?: number; maxTokens?: number; input?: string[] };
 export type PromptContentPart =
   | { type: "text"; text: string }
   | { type: "image"; mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif"; data: string; name?: string };

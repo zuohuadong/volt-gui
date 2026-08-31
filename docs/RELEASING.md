@@ -24,7 +24,7 @@ The workflow records hashes for the installer executable and portable ZIP archiv
 
 ## CNB tag release
 
-Pushing a semver tag such as `v0.31.2` runs the Windows self-hosted CNB pipeline. The pipeline verifies the candidate, packages the installer and portable ZIP, creates a prerelease named after the tag, and uploads both versioned files as permanent Release attachments.
+Pushing a semver tag such as `v0.31.2` runs the Windows self-hosted CNB pipeline. The pipeline verifies the candidate, packages the installer and portable ZIP, creates a latest formal release named after the tag, and uploads both versioned files as permanent Release attachments.
 
 The pipeline uses CNB's temporary build token and never stores a repository token in source. Releases remain unsigned review builds until signing, updater provenance, and rollback gates are implemented.
 

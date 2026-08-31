@@ -109,7 +109,9 @@ test("CNB validates the same Node 26 source contract", () => {
   assert.match(cnb, /CSC_IDENTITY_AUTO_DISCOVERY/);
   assert.match(cnb, /Desktop packaging failed with exit code/);
   assert.match(cnb, /type: git:release/);
-  assert.match(cnb, /preRelease: true/);
+  assert.match(cnb, /preRelease: false/);
+  assert.match(cnb, /latest: true/);
+  assert.doesNotMatch(cnb, /preRelease: true|latest: false/);
   assert.match(cnb, /name: upload installer asset/);
   assert.match(cnb, /name: upload portable asset/);
   assert.equal((cnb.match(/timeout:\s*30m/g) || []).length, 2);

@@ -82,9 +82,9 @@ $:
           type: git:release
           options:
             title: $CNB_BRANCH
-            description: "Unsigned Windows x64 review build for $CNB_BRANCH"
-            preRelease: true
-            latest: false
+            description: "Unsigned Windows x64 release for $CNB_BRANCH"
+            preRelease: false
+            latest: true
         - name: upload installer asset
           timeout: 30m
           script: |

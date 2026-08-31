@@ -28,7 +28,7 @@ test("desktop CI packages only the official DSH Electron shell on Windows x64", 
   const electronPackageJson = JSON.parse(readFileSync(path.join(root, "apps", "desktop-electron", "package.json"), "utf8"));
   assert.match(desktop, /runs-on:\s*windows-latest/);
   assert.match(desktop, /node-version:\s*26\.8\.1/);
-  assert.match(desktop, /version:\s*11\.23\.0/);
+  assert.match(desktop, /version:\s*12\.1\.0/);
   assert.match(desktop, /pnpm run dist:desktop/);
   assert.match(desktop, /pnpm run test:dsh-integration/);
   assert.match(packageJson.scripts["dist:desktop"], /smoke:package/);
@@ -89,7 +89,7 @@ test("repository governance files match the current runtime", () => {
 test("CNB validates the same Node 26 source contract", () => {
   const cnb = readFileSync(path.join(root, ".cnb.yml"), "utf8");
   assert.match(cnb, /node:26\.8\.1/);
-  assert.match(cnb, /pnpm@11\.23\.0/);
+  assert.match(cnb, /pnpm@12\.1\.0/);
   assert.match(cnb, /pnpm run test:dsh-integration/);
   assert.match(cnb, /check-migration-boundary/);
   assert.doesNotMatch(cnb, /desktop-frontend|check-runtime-mocks|\bgo\b|wails/i);

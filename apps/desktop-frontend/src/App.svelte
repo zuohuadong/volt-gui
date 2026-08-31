@@ -331,6 +331,7 @@
     workspaces = workspaceResult.items;
     archivedSessionIds = workspaceResult.archivedSessionIds;
     sessions = sessionResult.items.filter((item) => !item.blank && !archivedSessionIds.includes(item.sessionId));
+    if (activeSessionId && !sessions.some((item) => item.sessionId === activeSessionId)) activeSessionId = sessions[0]?.sessionId || "";
     if (!activeSessionId && sessions[0]) await selectSession(sessions[0].sessionId);
   }
 
@@ -402,7 +403,9 @@
       : {};
     modelGroups = enrichModelGroups(modelResult.groups, settingsNamespaces);
     selectedModel = `${modelResult.current.provider}/${modelResult.current.model}`;
-    reasoningEffort = modelResult.current.reasoningEffort || "";
+    const currentInfo = modelResult.groups.find((group) => group.id === modelResult.current.provider)?.models.find((model) => model.id === modelResult.current.model);
+    reasoningEffort = currentInfo?.reasoning?.efforts.some((effort) => effort.id === modelResult.current.reasoningEffort) ? (modelResult.current.reasoningEffort || "") : "";
+    if (modelResult.current.reasoningEffort && !reasoningEffort) { try { await client.selectModel(sessionId, modelResult.current.provider, modelResult.current.model); } catch { /* 清理不兼容参数 */ } }
   }
 
   function sessionTitle(session: SessionSummary): string {
@@ -585,8 +588,11 @@
     if (!client) return;
     await performManagementAction(`session-fork:${sessionId}`, async () => {
       const created = await client!.fork(sessionId);
+      const source = sessions.find((item) => item.sessionId === sessionId);
+      await client!.rename(created.sessionId, `${source ? sessionTitle(source) : "会话"} - 副本`);
       await refresh();
       await selectSession(created.sessionId);
+      managementNotice = "会话已复制，并已添加“副本”后缀";
     });
   }
 
@@ -635,6 +641,7 @@
   async function chooseAgentPreset(agentPreset: string): Promise<void> {
     if (!client || !activeSessionId) return;
     await performManagementAction(`agent-select:${agentPreset}`, async () => {
+      if (activeSession?.running) throw new Error("当前会话已开始，Agent 预设固定不变；请新建会话后再应用预设。");
       await client!.selectAgentPreset(activeSessionId, agentPreset);
       await refresh();
       managementNotice = "当前会话的 Agent 预设已更新";
@@ -644,6 +651,8 @@
   async function openAgentPresetDocument(agentPreset: string): Promise<void> {
     if (!client) return;
     await performManagementAction(`agent-open:${agentPreset}`, async () => {
+      const preset = agentPresets.find((item) => item.id === agentPreset);
+      if (preset?.trust === "system") throw new Error("官方 Agent 预设为只读，请先复制为用户预设后再编辑。");
       const result = await client!.openAgentPresetDocument(agentPreset);
       managementNotice = result.opened ? "已打开 Agent 配置文件" : `配置文件位于 ${result.path}`;
     });

@@ -2,7 +2,7 @@
 
 ## Candidate
 
-Release candidates are immutable commits verified with Node `26.8.1`, pnpm `11.23.0`, the frozen lockfile and the current official DSH package.
+Release candidates are immutable commits verified with Node `26.8.1`, pnpm `12.1.0`, the frozen lockfile and the current official DSH package.
 
 ```sh
 pnpm install --frozen-lockfile

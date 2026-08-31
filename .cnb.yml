@@ -9,7 +9,7 @@ main:
         - name: install
           script: |
             corepack enable
-            corepack prepare pnpm@11.23.0 --activate
+            corepack prepare pnpm@12.1.0 --activate
             pnpm install --frozen-lockfile
         - name: verify
           script: |

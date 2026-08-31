@@ -88,11 +88,26 @@ test("repository governance files match the current runtime", () => {
 
 test("CNB validates the same Node 26 source contract", () => {
   const cnb = readFileSync(path.join(root, ".cnb.yml"), "utf8");
-  assert.match(cnb, /node:26\.8\.1/);
-  assert.match(cnb, /pnpm@12\.1\.0/);
+  assert.match(cnb, /runner:/);
+  assert.match(cnb, /namespace:\s*group/);
+  assert.match(cnb, /tags:\s*[\r\n]+\s+-\s+zhd/);
+  assert.match(cnb, /node --version/);
+  assert.match(cnb, /Expected Node v26\.8\.1/);
+  assert.match(cnb, /Expected pnpm 12\.1\.0/);
+  assert.match(cnb, /Test-Path/);
   assert.match(cnb, /pnpm run test:dsh-integration/);
   assert.match(cnb, /check-migration-boundary/);
-  assert.doesNotMatch(cnb, /desktop-frontend|check-runtime-mocks|\bgo\b|wails/i);
+  assert.doesNotMatch(cnb, /docker:|test -f|desktop-frontend|check-runtime-mocks|\bgo\b|wails/i);
+});
+
+test("repository enforces the pinned pnpm version", () => {
+  const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  assert.equal(packageJson.packageManager, "pnpm@12.1.0");
+  assert.equal(packageJson.scripts.preinstall, "node ./scripts/ensure-pnpm.mjs");
+  for (const packagePath of ["apps/desktop-electron/package.json", "apps/desktop-frontend/package.json"]) {
+    const workspacePackage = JSON.parse(readFileSync(path.join(root, packagePath), "utf8"));
+    assert.match(workspacePackage.scripts.prebuild, /ensure-pnpm\.mjs/);
+  }
 });
 
 test("Pages builds the site with the exact repository Node version", () => {

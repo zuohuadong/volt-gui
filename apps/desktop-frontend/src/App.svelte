@@ -566,8 +566,8 @@
       credentialRefDraft = credentialRef;
       runtimeError = `当前模型需要 ${credentialRef}。请先在“管理 > 设置与凭据”中保存凭据。`;
       sessionErrors = { ...sessionErrors, [activeSessionId]: runtimeError };
-      if (textOverride !== undefined) throw new Error(runtimeError);
       openCredentialSettings(credentialRef);
+      if (textOverride !== undefined) throw new Error(runtimeError);
       return;
     }
     if (imageAttachments.length > 0 && !(selectedModelInfo()?.input || []).includes("image")) {

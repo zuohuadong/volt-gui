@@ -23,17 +23,26 @@
   let selectedPreset = $state("");
   let busy = $state(false);
   let confirmFull = $state(false);
+  let confirmSessionId = $state("");
   const options = $derived(permissions?.options?.length ? permissions.options : [
     { value: "workspace-write", label: "工作区可写" },
     { value: "danger-full-access", label: "完全访问" },
   ]);
   const activePreset = $derived(selectedPreset || preset);
 
+  $effect(() => {
+    sessionId;
+    selectedPreset = "";
+    confirmFull = false;
+    confirmSessionId = "";
+  });
+
   async function apply(nextPreset: string): Promise<void> {
     if (!nextPreset || nextPreset === "custom" || nextPreset === preset) return;
     selectedPreset = nextPreset;
     if (nextPreset === "danger-full-access" && !confirmFull) {
       confirmFull = true;
+      confirmSessionId = sessionId;
       return;
     }
     busy = true;
@@ -42,9 +51,11 @@
       onNotice?.(result.command?.text || `权限预设已切换为 ${nextPreset}`);
       selectedPreset = "";
       confirmFull = false;
+      confirmSessionId = "";
     } catch (error) {
       selectedPreset = "";
       confirmFull = false;
+      confirmSessionId = "";
       onNotice?.(error instanceof Error ? error.message : String(error));
     } finally {
       busy = false;
@@ -70,7 +81,7 @@
   </PromptInputSelect>
   {#if confirmFull}
     <span class="permission-warning">完全访问会跳过沙箱确认</span>
-    <Button variant="destructive" size="xs" disabled={busy} onclick={() => void apply("danger-full-access")}>确认</Button>
-    <PromptInputButton aria-label="取消完全访问" disabled={busy} onclick={() => { selectedPreset = ""; confirmFull = false; }}>取消</PromptInputButton>
+    <Button variant="destructive" size="xs" disabled={busy || confirmSessionId !== sessionId} onclick={() => void apply("danger-full-access")}>确认</Button>
+    <PromptInputButton aria-label="取消完全访问" disabled={busy} onclick={() => { selectedPreset = ""; confirmFull = false; confirmSessionId = ""; }}>取消</PromptInputButton>
   {/if}
 </div>

@@ -11,6 +11,9 @@ export function userFacingError(error: unknown): string {
   if (normalized.includes("agent preset is fixed") || normalized.includes("has already started")) {
     return "当前会话已启动，Agent 预设已锁定，请新建会话后再应用其他预设。";
   }
+  if (normalized.includes("needs the browse capability") || normalized.includes("browse capability")) {
+    return "当前桌面会话未授予目录浏览权限，请在权限提示中允许浏览工作区，或使用上方“选择工作区”。";
+  }
   if (normalized.includes("not configured") && normalized.includes("api")) {
     return "当前模型凭据未配置，请前往“管理 > 设置与凭据”完成设置。";
   }

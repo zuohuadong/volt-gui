@@ -14,5 +14,7 @@ describe("userFacingError", () => {
       .toContain("Agent 预设已锁定");
     expect(userFacingError("provider x model vlm does not support reasoning effort high"))
       .toContain("不支持所选推理强度");
+    expect(userFacingError("needs the browse capability to explore directories"))
+      .toContain("未授予目录浏览权限");
   });
 });

@@ -92,9 +92,9 @@
   {#if error}<div class="smb-feedback error" role="alert"><Link2Off size={14} /><span>{error}</span></div>{/if}
   {#if notice}<div class="smb-feedback success" role="status"><Link size={14} /><span>{notice}</span></div>{/if}
   <div class="smb-add-form">
-    <Input aria-label="共享名称" placeholder="共享名称，例如：工程共享" bind:value={displayName} />
-    <Input aria-label="SMB 远程路径" placeholder="\\\\nas\\engineering" bind:value={remotePath} />
-    <Input aria-label="本地盘符" placeholder="Z:" bind:value={localPath} />
+    <Input class="smb-input" aria-label="共享名称" placeholder="共享名称，例如：工程共享" bind:value={displayName} />
+    <Input class="smb-input" aria-label="SMB 远程路径" placeholder="\\\\nas\\engineering" bind:value={remotePath} />
+    <Input class="smb-input" aria-label="本地盘符" placeholder="Z:" bind:value={localPath} />
     <label class="smb-auto-mount"><input type="checkbox" bind:checked={autoMount} />自动挂载</label>
     <Button size="sm" disabled={!displayName.trim() || !remotePath.trim() || !localPath.trim() || !!busy} onclick={() => void mountNew()}><Plus size={14} />挂载</Button>
   </div>

@@ -121,9 +121,12 @@ export function visibleText(value: unknown): string {
 
 function isInternalRuntimeText(value: string): boolean {
   const normalized = value.trim().toLowerCase();
-  return normalized.includes("current runtime context.")
-    || normalized.includes("current dsh file policy:")
-    || normalized.includes("runtime context snapshot:");
+  return normalized.includes("current runtime context")
+    || normalized.includes("current dsh file policy")
+    || normalized.includes("runtime context snapshot")
+    || normalized.includes("this snapshot supersedes earlier")
+    || normalized.includes("dsh file policy:")
+    || normalized.includes("workspace-write");
 }
 
 export function reasoningText(value: unknown): string {

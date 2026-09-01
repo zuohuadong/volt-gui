@@ -11,14 +11,31 @@
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-input: var(--border);
 }
 
-:root { color-scheme: light; --background: oklch(0.975 0.003 255); --foreground: oklch(0.21 0.018 255); --card: oklch(1 0 0); --card-foreground: var(--foreground); --primary: oklch(0.53 0.18 253); --primary-foreground: oklch(0.99 0 0); --muted: oklch(0.95 0.008 255); --muted-foreground: oklch(0.5 0.018 255); --border: oklch(0.89 0.012 255); font-family: Inter, "Segoe UI", "Microsoft YaHei UI", sans-serif; }
+:root {
+  color-scheme: light;
+  --background: #f3f6f5;
+  --foreground: #17212f;
+  --card: #ffffff;
+  --card-foreground: #17212f;
+  --primary: #1f5d4b;
+  --primary-foreground: #ffffff;
+  --ring: #1f5d4b;
+  --muted: #eaf0ee;
+  --muted-foreground: #687386;
+  --border: #dce4e1;
+  --workspace-ink: #17212f;
+  --workspace-soft: #f7faf9;
+  font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+}
 * { box-sizing: border-box; }
 html, body, #app { min-width: 0; height: 100%; min-height: 0; margin: 0; }
 body { overflow: hidden; background: var(--background); color: var(--foreground); }
 button, input, textarea, select { font: inherit; }
-button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid color-mix(in oklch, var(--primary) 72%, white); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid #2c7a61; outline-offset: 1px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; margin: -1px; padding: 0; border: 0; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .loading-screen { display: grid; min-height: 100vh; place-items: center; gap: 10px; color: var(--muted-foreground); font-size: 12px; }
 .app-shell { display: grid; height: 100vh; min-height: 0; overflow: hidden; grid-template-rows: 48px minmax(0, 1fr); }
@@ -1404,4 +1421,407 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .composer-attachment-list {
     max-width: min(240px, 58vw);
   }
+}
+
+/* 输入与聚焦体验强化 */
+.composer-shell:focus-within {
+  border-color: #2c7a61;
+  box-shadow: 0 0 0 2px rgba(44, 122, 97, 0.15), 0 12px 30px rgba(28, 54, 50, 0.1);
+}
+.composer textarea:focus,
+.prompt-input-composer textarea:focus,
+.reference-picker textarea:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* 会话管理与检查点分层优化 */
+.session-management-row {
+  min-height: 56px;
+  padding: 8px 10px;
+}
+.session-management-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+.session-management-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.session-management-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.session-management-path {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  max-width: 100%;
+}
+.session-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.checkpoint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.checkpoint-row {
+  padding: 8px 10px;
+  border-radius: 6px;
+  transition: background-color 0.15s ease;
+}
+.checkpoint-row:hover {
+  background: var(--muted);
+}
+.checkpoint-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.checkpoint-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.checkpoint-role-badge {
+  display: inline-flex;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.checkpoint-detail {
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+
+/* Agent 预设样式统一 */
+.agent-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+.agent-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agent-trust-badge {
+  display: inline-flex;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--background);
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.agent-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.agent-preset-maintenance-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.agent-preset-maintenance-form {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.8fr) minmax(180px, 1.2fr) auto auto;
+  align-items: center;
+  gap: 10px;
+}
+.agent-preset-select {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+}
+
+/* 目标控制卡片化与分级规范 */
+.goal-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+.goal-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.goal-status-card span {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.goal-status-card strong {
+  font-size: 15px;
+  color: var(--foreground);
+}
+.goal-objective-card {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  overflow: hidden;
+}
+.goal-objective-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.goal-objective-body {
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--foreground);
+  white-space: pre-wrap;
+}
+
+/* 模型与推理页面优化 */
+.models-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.models-toolbar-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.model-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.model-group-unconfigured-badge {
+  display: inline-flex;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: color-mix(in oklch, oklch(0.62 0.21 25) 8%, var(--card));
+  border: 1px solid color-mix(in oklch, oklch(0.62 0.21 25) 25%, var(--border));
+  color: oklch(0.48 0.16 25);
+  font-size: 10px;
+}
+.model-selected-check {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+.catalog-group-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+.catalog-models-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px;
+  margin-top: 6px;
+}
+.catalog-model-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+}
+.catalog-model-row strong {
+  font-size: 11px;
+  color: var(--foreground);
+}
+.catalog-model-row small {
+  color: var(--muted-foreground);
+  font-size: 9px;
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
+/* 工作区与目录浏览 */
+.workspace-empty-banner,
+.browser-prompt-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  margin-bottom: 12px;
+}
+.browser-prompt-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.browser-prompt-copy strong {
+  font-size: 12px;
+}
+.browser-prompt-copy small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+/* 插件状态标签与分组 */
+.plugin-row {
+  padding: 8px 10px;
+}
+.plugin-row--disabled {
+  opacity: 0.75;
+}
+.status-badge-capsule {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+}
+.status-badge-capsule--success {
+  background: #e8f2ed;
+  color: #1f5d4b;
+  border: 1px solid #cfe0d8;
+}
+.status-badge-capsule--neutral {
+  background: var(--muted);
+  color: var(--muted-foreground);
+  border: 1px solid var(--border);
+}
+.plugin-phase {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+}
+.plugin-phase--active {
+  background: #e8f2ed;
+  color: #1f5d4b;
+}
+.plugin-phase--failed {
+  background: #fdf2f2;
+  color: #c53030;
+}
+.plugin-phase--none {
+  background: #fffaf0;
+  color: #975a16;
+}
+
+/* 知识库状态卡片 */
+.knowledge-health-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.knowledge-health-card span {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.knowledge-health-card strong {
+  font-size: 15px;
+  color: var(--foreground);
+}
+.knowledge-health-card small {
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+
+/* 运行诊断 Alert 与指标卡片 */
+.status-alert-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 14px;
+}
+.status-alert-banner--success {
+  background: #eef6f2;
+  border: 1px solid #cfe0d8;
+  color: #1f5d4b;
+}
+.status-alert-banner--error {
+  background: #fdf2f2;
+  border: 1px solid #fed7d7;
+  color: #c53030;
+}
+.status-alert-banner div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.status-alert-banner strong {
+  font-size: 12px;
+}
+.status-alert-banner span {
+  font-size: 11px;
+  opacity: 0.9;
+}
+
+.diagnostics-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.diagnostic-metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.diagnostic-metric-card span {
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.diagnostic-metric-card strong {
+  font-size: 16px;
+  color: var(--foreground);
+}
+.diagnostic-metric-card small {
+  color: var(--muted-foreground);
+  font-size: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

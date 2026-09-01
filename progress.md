@@ -132,6 +132,8 @@
 
 <!-- Agent 工作记录按时间倒序排列 -->
 
+[2026-09-01T14:00:00+0800] [codex] [running:ANYONG-AI-ELEMENTS-RELEASE-20260901] 用户再次授权删除两个空、已关闭 workspace：`cnb-94o-1jqtdn5sn`（aizhuliren/volt-gui）与 `cnb-d6k-1jm5115l9`（aizhuliren/xgic/xgic-api）；API 均返回 `delete success`。删除后租户 workspace 为 total=9、running=0、closed=9。基于最新 `origin/main@9d55ac13c` 恢复发布任务，准备重新触发 main pipeline；目标仍为 `v0.31.15`。
+
 [2026-09-01T13:50:00+0800] [codex] [blocked:ANYONG-AI-ELEMENTS-RELEASE-20260901] 用户授权删除 3 个当前仓库的空、已关闭 workspace 后，CNB main pipeline `cnb-s08-1k1dngom2` 仍在 Prepare 阶段失败，错误仍为 `The number of workspaces has exceeded the limit`；environment/install/verify/build 未执行。连续三次同类 Prepare 阻断已确认不是仓库 `.cnb.yml` 的多个 workspace 声明。剩余 11 个已关闭 workspace 属于其他仓库或包含文件/备份，不能在当前授权下删除；当前仓库无 running workspace。未创建 `v0.31.15` tag，未发布 Release。需 CNB 管理员清理租户/Runner 配额或明确授权清理其他仓库 workspace 后，才能继续发布。
 
 [2026-09-01T13:40:00+0800] [codex] [running:ANYONG-AI-ELEMENTS-RELEASE-20260901] 用户已明确授权删除 CNB 旧 workspace。已删除当前仓库对应的 3 个空、已关闭 workspace：`cnb-o1f-1jqsmdumk`、`cnb-ude-1jqbejtmi`、`cnb-mj8-1jphe5968`；API 均返回 `delete success`。本轮基于 `origin/main@c1eabb17` 恢复发布任务，待推送账本提交并重新触发 main pipeline；目标仍为 `v0.31.15`，不改产品代码或 package 版本。

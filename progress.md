@@ -1,5 +1,7 @@
 # Agent Progress Log
 
+[2026-09-01T16:56:25+0800] [codex] [blocked:ANYONG-CNB-DRAFT-STATE-FOLLOWUP-20260901] PARTIAL：`v0.31.17` 精确指向 `3d2e5b2e134e6a9c5edc5567748fce7bbb021e01`，main pipeline `cnb-mgt-1k1e14gkb` 全阶段 success，tag pipeline `cnb-vq6-1k1e18voj` 的 Prepare/environment/install/verify/set version/package 均 success；publish release atomically 仍处于 start，CNB Release 为 draft、非 prerelease、非 latest，目前仅安装包资产，便携 ZIP 上传未完成。多次只读轮询无错误终态，剩余验收全部依赖外部 CNB 上传/流水线状态变化；未删除草稿、未移动/重写 tag、未触发并发重试。恢复时先查询同一 pipeline 与 Release，若流水线成功再执行真实下载 hash/ZIP/NotSigned 验收；若失败则保留现场并创建新的明确 follow-up。
+
 [2026-09-01T16:30:00+0800] [codex] [running:ANYONG-CNB-DRAFT-STATE-FOLLOWUP-20260901] `v0.31.16` package 已成功，publish 阶段上传安装包/便携 ZIP 后因 CNB 草稿回读短暂 `is_latest=true` 被脚本误判，随后清理请求以 HTTP 204 成功但脚本只接受 200，最终报 cleanup failed；未正式发布。`v0.31.16` 保持不可变并记录失败，后续修复接受 DELETE 204 且草稿判断仅依赖 `draft=true`，实际版本递增为 `v0.31.17`。
 
 [2026-09-01T15:35:00+0800] [codex] [running:ANYONG-CNB-ZIP-ASSEMBLY-FOLLOWUP-20260901] `v0.31.15` tag pipeline `cnb-um8-1k1dtriqj` 的 verify/environment/install/set version 成功，package 在生成 installer/portable 后因 PowerShell 未加载 `System.IO.Compression.ZipFile` 失败并跳过 publish；Release 未创建，tag 保持精确指向候选提交。已创建 high-risk follow-up，仅修复 `.cnb.yml` 显式 `Add-Type -AssemblyName System.IO.Compression.FileSystem`，修复后的实际发布版本递增为 `v0.31.16`，不移动或覆盖失败 tag。

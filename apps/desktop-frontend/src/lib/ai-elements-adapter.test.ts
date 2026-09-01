@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildQuestionAnswers, extractSources, questionsAnswered, toolPresentation } from "./ai-elements-adapter";
+import { buildQuestionAnswers, extractSources, questionsAnswered, toolErrorTrace, toolPresentation } from "./ai-elements-adapter";
 
 describe("AI Elements adapters", () => {
   it("extracts real source and citation parts without duplicates", () => {
@@ -35,6 +35,12 @@ describe("AI Elements adapters", () => {
     expect(toolPresentation({ callId: "3", name: "render_report", state: "success", result: "report body", view: {
       artifact: { title: "报告", content: "report body", kind: "text" },
     } }).artifact).toMatchObject({ title: "报告", kind: "text", content: "report body" });
+  });
+
+  it("uses StackTrace only for real structured or stack-shaped DSH errors", () => {
+    expect(toolErrorTrace({ callId: "4", name: "exec", state: "error", result: "Error: boom\n    at run (D:/workspace/app.ts:12:4)" })).toContain("app.ts:12:4");
+    expect(toolErrorTrace({ callId: "5", name: "exec", state: "error", result: JSON.stringify({ error: { stack: "Error: bad\n at main (index.ts:1:2)" } }) })).toContain("index.ts:1:2");
+    expect(toolErrorTrace({ callId: "6", name: "exec", state: "error", result: "命令执行失败" })).toBeUndefined();
   });
 
   it("requires every DSH question to have the matching answer kind", () => {

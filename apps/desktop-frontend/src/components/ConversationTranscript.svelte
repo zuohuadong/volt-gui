@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { Bot, ClipboardList, LoaderCircle } from "@lucide/svelte";
+  import { Bot, ClipboardList } from "@lucide/svelte";
   import {
     ChainOfThought,
     ChainOfThoughtContent,
     ChainOfThoughtHeader,
     Conversation,
     ConversationEmptyState,
+    ConversationDownload,
     ConversationParts,
     ConversationScrollButton,
     Context,
@@ -17,15 +18,20 @@
     InlineCitationText,
     Message,
     MessageParts,
+    Loader,
     Reasoning,
     Response,
     Sources,
+    StackTrace,
+    Shimmer,
+    Suggestion,
+    Suggestions,
     TokensWithCost,
     Tool,
   } from "@svadmin/ai-elements";
   import StructuredToolResult from "$components/StructuredToolResult.svelte";
   import type { ChatMessage } from "@svadmin/core";
-  import { hasStructuredToolOutput, toolPresentation } from "$lib/ai-elements-adapter";
+  import { hasStructuredToolOutput, toolErrorTrace, toolPresentation } from "$lib/ai-elements-adapter";
   import type { TranscriptMessage } from "$lib/transcript";
 
   interface QuickAction {
@@ -48,12 +54,19 @@
 
   const aiMessages = $derived(messages.map(toAiMessage));
 
+  function messageRole(message: TranscriptMessage): ChatMessage["role"] {
+    if (message.role === "user") return "user";
+    if (message.role === "system") return "system";
+    return "assistant";
+  }
+
   function toAiMessage(message: TranscriptMessage): ChatMessage {
     return {
       id: message.id,
-      role: message.role === "user" ? "user" : message.role === "system" ? "system" : "assistant",
-      content: message.text,
-      timestamp: message.seq ?? 0,
+      role: messageRole(message),
+      parts: [{ type: "text", text: message.text }],
+      status: message.pending ? "streaming" : "complete",
+      createdAt: message.seq ?? 0,
     };
   }
 
@@ -81,20 +94,25 @@
 </script>
 
 <Conversation messages={aiMessages} isStreaming={sending} class="conversation-root">
+  {#if messages.length > 0}
+    <div class="conversation-controls">
+      <ConversationDownload messages={aiMessages} filename={`${productName}-conversation.md`} title="下载对话" />
+    </div>
+  {/if}
   <ConversationParts.Content class="message-scroll">
     {#if messages.length === 0}
       <ConversationEmptyState title="准备好开始工作" description="官方 DSH 运行时已连接。描述目标，暗涌会在这里呈现计划、工具和结果。" class="empty-state">
         <span class="empty-mark"><Bot size={22} /></span>
-        <div class="quick-actions">
+        <Suggestions ariaLabel="快捷建议" class="quick-actions">
           {#each quickActions as action (action.label)}
-            <button type="button" onclick={() => onPromptSelect(action.prompt)}><ClipboardList size={14} />{action.label}</button>
+            <Suggestion suggestion={action.prompt} onclick={onPromptSelect}><ClipboardList size={14} />{action.label}</Suggestion>
           {/each}
-        </div>
+        </Suggestions>
       </ConversationEmptyState>
     {:else}
       {#each messages as message (message.id)}
         <Message
-          message={toAiMessage(message)}
+          from={messageRole(message)}
           class={`transcript-message ${message.role === "tool" ? "tool-message" : ""} ${message.pending ? "pending" : ""}`}
         >
           <MessageParts.Content class={message.role === "user" ? "user-content" : message.role === "tool" ? "tool-content" : "assistant-content"}>
@@ -106,6 +124,7 @@
             {#if message.role === "tool" && message.tool}
               {@const presentation = toolPresentation(message.tool)}
               {@const structuredOutput = hasStructuredToolOutput(presentation)}
+              {@const errorTrace = toolErrorTrace(message.tool)}
               <Tool
                 name={message.tool.name}
                 input={message.tool.args || undefined}
@@ -117,6 +136,7 @@
               {#if message.tool.state !== "error" && (message.tool.result || message.tool.view)}
                 <StructuredToolResult tool={message.tool} />
               {/if}
+              {#if errorTrace}<StackTrace trace={errorTrace} title="错误堆栈" />{/if}
             {:else}
               {#if message.reasoning}
                 <ChainOfThought defaultOpen={!!message.pending} class="message-reasoning">
@@ -171,7 +191,7 @@
         </Message>
       {/each}
       {#if sending}
-        <div class="typing" role="status" aria-atomic="true"><LoaderCircle class="animate-spin" size={14} />DSH 正在执行任务，活动记录会持续更新</div>
+        <div class="typing" role="status" aria-atomic="true"><Loader size={14} label="DSH 正在执行任务" /><Shimmer as="span" text="DSH 正在执行任务，活动记录会持续更新" /></div>
       {/if}
       <div class="conversation-latest-sentinel" aria-hidden="true" {@attach observeLatest}></div>
     {/if}

@@ -6,6 +6,7 @@
     ChainOfThoughtHeader,
     ChainOfThoughtStep,
     Plan,
+    Queue,
     Task,
   } from "@svadmin/ai-elements";
   import { Button } from "$components/ui/button";
@@ -35,6 +36,12 @@
     detail: message.tool?.state === "error" ? "执行失败" : message.tool?.state === "success" ? "已完成" : "运行中",
   })));
   const taskStatus = $derived(failedTools > 0 ? "failed" as const : sending || runningTools.length > 0 ? "running" as const : activityItems.length > 0 ? "complete" as const : "queued" as const);
+  const queueItems = $derived(activityItems.map((message) => ({
+    id: message.id,
+    title: message.tool?.name || "工具",
+    description: message.tool?.state === "error" ? "执行失败" : message.tool?.state === "success" ? "已完成" : "运行中",
+    status: message.tool?.state === "error" ? "failed" as const : message.tool?.state === "success" ? "complete" as const : "running" as const,
+  })));
 </script>
 
 <aside class:open class="activity-panel">
@@ -59,6 +66,7 @@
       steps={taskSteps}
       open
     />
+    {#if queueItems.length > 0}<Queue items={queueItems} title="执行队列" />{/if}
     <ChainOfThought defaultOpen={activityItems.length > 0} class="activity-chain">
       <ChainOfThoughtHeader>执行轨迹</ChainOfThoughtHeader>
       <ChainOfThoughtContent>

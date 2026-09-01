@@ -3,7 +3,7 @@
   import {
     Archive, BookOpen, Bot, Check, ChevronDown, ChevronRight, CircleAlert,
     CircleCheck, ClipboardList, Copy, ExternalLink, FileText, FolderOpen,
-    HardDrive, History, KeyRound, LoaderCircle, MessageSquare, MessageSquarePlus, Network,
+    HardDrive, History, KeyRound, MessageSquare, MessageSquarePlus, Network,
     Pause, Pencil, Play, PanelLeftClose, PanelLeftOpen, Save, Search, Send,
     Settings2, ShieldAlert, SlidersHorizontal, Square, Target, Trash2, UserRoundCog,
     X, RefreshCw, PlugZap, GitBranch,
@@ -13,18 +13,15 @@
   import GeneratedSurface from "$components/GeneratedSurface.svelte";
   import ConversationTranscript from "$components/ConversationTranscript.svelte";
   import ActivityPanel from "$components/ActivityPanel.svelte";
-  import ModelPicker from "$components/ModelPicker.svelte";
+  import DshPromptComposer from "$components/DshPromptComposer.svelte";
   import PendingInteractions from "$components/PendingInteractions.svelte";
-  import { PromptInput } from "@svadmin/ai-elements";
   import SmbMounts from "$components/SmbMounts.svelte";
-  import ImageAttachments from "$components/ImageAttachments.svelte";
-  import PermissionSelector from "$components/PermissionSelector.svelte";
   import ProviderWorkbench from "$components/ProviderWorkbench.svelte";
   import WorkspaceBrowser from "$components/WorkspaceBrowser.svelte";
-  import ReferencePicker from "$components/ReferencePicker.svelte";
   import { Input } from "$components/ui/input";
   import { Separator } from "$components/ui/separator";
   import { DataState, SettingsGroup, StatusBadge } from "@svadmin/ui";
+  import { Loader } from "@svadmin/ai-elements";
   import { setResources } from "@svadmin/core";
   import {
     DshClient, type AgentPreset, type ConfigurableProvider, type CredentialView,
@@ -67,7 +64,6 @@
   let messages = $state<TranscriptMessage[]>([]);
   let todos = $state<TodoItem[]>([]);
   let input = $state("");
-  let attachments = $state<Extract<PromptContentPart, { type: "image" }>[]>([]);
   let sessionQuery = $state("");
   let settingsQuery = $state("");
   let managementTab = $state<ManagementTab>("overview");
@@ -562,22 +558,24 @@
     }
   }
 
-  async function submit(): Promise<void> {
-    const text = input.trim();
-    if (!client || !activeSessionId || (!text && attachments.length === 0) || sending) return;
+  async function submit(textOverride?: string, imageAttachments: Extract<PromptContentPart, { type: "image" }>[] = []): Promise<void> {
+    const text = (textOverride ?? input).trim();
+    if (!client || !activeSessionId || (!text && imageAttachments.length === 0) || sending) return;
     const credentialRef = selectedProviderCredentialRef();
     if (credentialRef && !credentials[credentialRef]?.configured) {
       credentialRefDraft = credentialRef;
       runtimeError = `当前模型需要 ${credentialRef}。请先在“管理 > 设置与凭据”中保存凭据。`;
       sessionErrors = { ...sessionErrors, [activeSessionId]: runtimeError };
+      if (textOverride !== undefined) throw new Error(runtimeError);
       openCredentialSettings(credentialRef);
       return;
     }
-    if (attachments.length > 0 && !(selectedModelInfo()?.input || []).includes("image")) {
+    if (imageAttachments.length > 0 && !(selectedModelInfo()?.input || []).includes("image")) {
       runtimeError = `当前模型 ${selectedModel || "未选择"} 不支持图片输入，请先选择支持多模态的模型。`;
-      return;
+      throw new Error(runtimeError);
     }
-    input = ""; sending = true; view = "conversation";
+    if (textOverride === undefined) input = "";
+    sending = true; view = "conversation";
     const pendingId = `pending-${Date.now()}`;
     messages = [...messages, { id: pendingId, role: "user", text, pending: true }];
     const prompt = isSurfaceGenerationIntent(text)
@@ -586,9 +584,8 @@
         ? buildUiCustomizationPrompt(text)
         : text;
     try {
-      const content: PromptContentPart[] = [...(prompt ? [{ type: "text", text: prompt } satisfies PromptContentPart] : []), ...attachments];
+      const content: PromptContentPart[] = [...(prompt ? [{ type: "text", text: prompt } satisfies PromptContentPart] : []), ...imageAttachments];
       await client.prompt(activeSessionId, content);
-      attachments = [];
     }
     catch (error) {
       sending = false;
@@ -596,6 +593,7 @@
       runtimeError = userFacingError(error);
       sessionErrors = { ...sessionErrors, [activeSessionId]: runtimeError };
       if (runtimeError.includes("设置与凭据")) openManagement("settings");
+      if (textOverride !== undefined) throw error;
     }
   }
 
@@ -1027,30 +1025,12 @@
   function openKnowledgePrompt(prompt: string): void { input = prompt; view = "conversation"; }
   function knowledgeStatusLabel(): string { return skills.length > 0 ? "官方 Skill 知识源已加载" : "等待官方知识插件"; }
   function permissionNotice(message: string): void { managementNotice = message; }
-  async function handlePaste(event: ClipboardEvent): Promise<void> {
-    const files = event.clipboardData?.files;
-    if (!files?.length) return;
-    const supported = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
-    const next: Extract<PromptContentPart, { type: "image" }>[] = [];
-    for (const file of Array.from(files)) {
-      if (!supported.has(file.type) || file.size > 10 * 1024 * 1024) continue;
-      const data = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result).split(",", 2)[1] || "");
-        reader.onerror = () => reject(reader.error || new Error("图片读取失败"));
-        reader.readAsDataURL(file);
-      });
-      if (data) next.push({ type: "image", mediaType: file.type as Extract<PromptContentPart, { type: "image" }>["mediaType"], data, name: file.name });
-    }
-    if (next.length) attachments = [...attachments, ...next];
-  }
 </script>
 
 <svelte:head><title>{productName}</title></svelte:head>
-<svelte:window onpaste={(event) => void handlePaste(event)} />
 
 {#if loading}
-  <main class="loading-screen"><LoaderCircle class="animate-spin" size={24} /><span>正在连接官方 DSH…</span></main>
+  <main class="loading-screen"><Loader size={24} label="正在连接官方 DSH" /><span>正在连接官方 DSH…</span></main>
 {:else}
   <main class="app-shell" class:compact={customization.density === "compact"}>
     <header class="topbar">
@@ -1122,7 +1102,7 @@
           </div>
         {:else}
           <div class="conversation-shell">
-            <header class="conversation-header"><div class="conversation-title"><div class="eyebrow">{activeSession ? "会话工作台" : "暗涌"}</div><h1>{customization.title || (activeSession ? sessionTitle(activeSession) : "开始一个新会话")}</h1><p>{customization.subtitle || workspacePath || "选择一个工作区开始"}</p></div><div class="header-actions">{#if activeSessionId}<ModelPicker groups={modelGroups} selected={selectedModel} disabled={modelBusy} onSelect={(provider, model) => void chooseModel(provider, model)} />{/if}<Button variant="outline" size="sm" aria-pressed={customizationOpen} onclick={() => customizationOpen = !customizationOpen}><SlidersHorizontal size={14} />界面</Button><Button variant="outline" size="sm" onclick={() => openManagement("overview")}><Settings2 size={14} />管理</Button></div></header>
+            <header class="conversation-header"><div class="conversation-title"><div class="eyebrow">{activeSession ? "会话工作台" : "暗涌"}</div><h1>{customization.title || (activeSession ? sessionTitle(activeSession) : "开始一个新会话")}</h1><p>{customization.subtitle || workspacePath || "选择一个工作区开始"}</p></div><div class="header-actions"><Button variant="outline" size="sm" aria-pressed={customizationOpen} onclick={() => customizationOpen = !customizationOpen}><SlidersHorizontal size={14} />界面</Button><Button variant="outline" size="sm" onclick={() => openManagement("overview")}><Settings2 size={14} />管理</Button></div></header>
             {#if runtimeError}<div class="error-banner"><CircleAlert size={15} /><span>{runtimeError}</span>{#if runtimeError.includes("设置与凭据") || !selectedProviderCredentialReady}<Button variant="ghost" size="sm" onclick={() => openManagement("settings")}><KeyRound size={13} />去配置</Button>{/if}<button aria-label="关闭错误" onclick={() => { runtimeError = ""; }}><X size={14} /></button></div>{/if}
             {#if customizationOpen}<section class="customization-panel" aria-label="界面定制"><div class="customization-panel__header"><div><div class="section-label">对话式界面定制</div><strong>用自然语言改变工作台</strong><p>例如：收起活动面板、使用紧凑密度、把输入框改成四行。</p></div><Button variant="ghost" size="icon-sm" aria-label="关闭界面定制" onclick={() => customizationOpen = false}><X size={14} /></Button></div>{#if customizationNotice}<div class="customization-feedback"><CircleCheck size={14} /><span>{customizationNotice}</span></div>{/if}{#if customizationDraft}<div class="customization-preview"><div><strong>待应用方案</strong><span>来自当前会话的结构化 patch</span></div><code>{JSON.stringify(customizationDraft)}</code><div class="customization-actions"><Button variant="outline" size="sm" onclick={() => customizationDraft = undefined}>忽略</Button><Button size="sm" onclick={() => applyCustomizationPatch(customizationDraft!)}><Check size={13} />应用方案</Button></div></div>{/if}<div class="customization-summary"><span class="mode-chip">{customization.density === "compact" ? "紧凑密度" : "舒适密度"}</span><span>{customization.sidebar === "collapsed" ? "侧栏已收起" : "侧栏已展开"}</span><span>{customization.activity === "visible" ? "活动面板可见" : "活动面板隐藏"}</span><span>{customization.composerRows} 行输入框</span></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={customizationHistory.length === 0} onclick={undoCustomization}>撤销上次</Button><Button variant="ghost" size="sm" onclick={() => { customization = DEFAULT_UI_CUSTOMIZATION; customizationHistory = []; persistUiCustomization(customization); applyRuntimeCustomization(customization); customizationNotice = "已恢复默认界面。"; }}>恢复默认</Button></div></section>{/if}
             {#if surfaceDraft}<section class="surface-proposal" aria-label="待确认操作界面"><div><div class="section-label">AI 操作界面提案</div><strong>{surfaceDraft.spec.title}</strong><p>{surfaceDraft.summary || `包含 ${surfaceDraft.spec.widgets.length} 个只读组件，确认后才会查询 DSH 数据。`}</p></div><div class="surface-proposal__meta"><span>{surfaceDraft.spec.widgets.length} 个组件</span><span>{surfaceDraft.spec.dataSources.length} 个数据源</span></div><div class="customization-actions"><Button variant="ghost" size="sm" onclick={() => { surfaceDraft = undefined; surfaceNotice = "已忽略操作界面提案。"; }}>忽略</Button><Button size="sm" onclick={applySurfaceProposal}><Check size={13} />确认渲染</Button></div></section>{/if}
@@ -1147,18 +1127,25 @@
               onApproval={(outcome) => void respondApproval(outcome)}
               onQuestion={() => void respondQuestion()}
             />
-            <div class="composer"><div class="composer-shell"><PromptInput
+            <div class="composer"><div class="composer-shell"><DshPromptComposer
               bind:value={input}
+              {client}
+              sessionId={activeSessionId}
+              {skills}
+              rows={customization.composerRows}
               disabled={!activeSessionId || !!pendingApproval || !!pendingQuestion}
               loading={sending}
-              status={sending ? "streaming" : "ready"}
-              ariaLabel="任务输入"
-              onstop={() => void cancel()}
-              class="prompt-input-shell"
-            >
-              <ReferencePicker bind:value={input} rows={customization.composerRows} {client} sessionId={activeSessionId} placeholder={activeSessionId ? "描述任务，或输入 @ 查找官方文件/会话引用…" : "先新建一个会话…"} disabled={!activeSessionId || !!pendingApproval || !!pendingQuestion} onSubmit={() => void submit()} />
-                <div class="composer-footer"><div class="composer-context"><span class="mode-chip">队列模式</span><span class="composer-hint">Ctrl / ⌘ + Enter 发送</span>{#if activeSessionId && client}<PermissionSelector {client} sessionId={activeSessionId} permissions={activeSession?.projections?.values?.permissions} onNotice={permissionNotice} />{/if}</div><div class="composer-actions"><ImageAttachments bind:attachments />{#if !activityOpen}<Button variant="ghost" size="sm" onclick={() => setActivityOpen(true)}><History size={14} />活动</Button>{/if}{#if sending}<Button variant="outline" size="sm" onclick={() => void cancel() }><Square size={13} />停止</Button>{:else}<Button size="sm" disabled={!activeSessionId || (!input.trim() && attachments.length === 0) || !!pendingApproval || !!pendingQuestion} onclick={() => void submit()}><Send size={13} />发送</Button>{/if}</div></div>
-            </PromptInput></div></div>
+              {selectedModel}
+              {modelGroups}
+              {modelBusy}
+              contextPermissions={activeSession?.projections?.values?.permissions}
+              {activityOpen}
+              onModelSelect={(provider, model) => void chooseModel(provider, model)}
+              onPermissionNotice={permissionNotice}
+              onActivityOpen={() => setActivityOpen(true)}
+              onSubmit={(text, images) => submit(text, images)}
+              onStop={() => void cancel()}
+            /></div></div>
           </div>
         {/if}
       </section>

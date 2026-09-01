@@ -93,7 +93,7 @@
   padding: 0 4px;
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.06);
-  font-size: 9px;
+  font-size: 10.5px;
   font-weight: 600;
 }
 
@@ -177,14 +177,14 @@
   border-radius: 4px;
   background: #eef4f1;
   color: #2c7a61;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
 }
 
 .plugin-id-tag {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted-foreground);
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -219,7 +219,7 @@
 
 .plugin-vendor-tag {
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .plugin-tag-list {
@@ -235,7 +235,7 @@
   border-radius: 3px;
   background: var(--muted);
   color: var(--muted-foreground);
-  font-size: 9px;
+  font-size: 10.5px;
 }
 
 .plugin-empty-search {
@@ -324,8 +324,8 @@
 }
 
 .mcp-tech-meta code {
-  font-size: 10px;
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  font-family: var(--font-mono);
 }
 
 .mcp-phase-badge {
@@ -334,7 +334,7 @@
   border-radius: 4px;
   background: #e8f2ed;
   color: #1f5d4b;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .mcp-protocols-card {
@@ -494,7 +494,7 @@
   margin: 0;
   padding: 12px 14px;
   background: #f8fbfa;
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.6;
   color: var(--foreground);
@@ -508,4 +508,3 @@
     grid-template-columns: 1fr;
   }
 }
-

@@ -12,6 +12,7 @@
     resolveProviderSettings,
   } from "$lib/model-catalog";
   import { t } from "$lib/i18n";
+  import { userFacingError } from "$lib/user-error";
 
   let {
     client,
@@ -57,7 +58,7 @@
       inlineKeyNotice = t("settings.credentialSaved");
       await onCredentialSaved?.(credentialRef);
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      error = userFacingError(e);
     } finally {
       savingKey = false;
     }
@@ -78,7 +79,7 @@
         apiKey: inlineKeyDraft.trim() || undefined,
       });
       discovered = result.models;
-    } catch (e) { error = e instanceof Error ? e.message : String(e); }
+    } catch (e) { error = userFacingError(e); }
     finally { busy = false; }
   }
 </script>

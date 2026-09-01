@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,6 +7,7 @@ import { parse } from "yaml";
 
 import {
   acknowledgeOfficialDshWelcomeNotice,
+  migrateLegacyDshCredentials,
   OfficialDshRuntime,
   resolveOfficialDshBin,
   rethrowUnlessBrokenPipe,
@@ -35,6 +36,44 @@ test("ignores only closed GUI log pipes", () => {
     () => rethrowUnlessBrokenPipe(Object.assign(new Error("denied"), { code: "EACCES" })),
     /denied/,
   );
+});
+
+test("migrates legacy official DSH credentials into a new branded home", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "voltui-dsh-credential-migration-"));
+  const legacyHome = path.join(root, "voltui", "dsh");
+  const targetHome = path.join(root, "Anyong", "dsh");
+  const source = "version: 1\nrefs: { XG_GOMODEL_API_KEY: test-value }\n";
+  await mkdir(legacyHome, { recursive: true });
+  await writeFile(path.join(legacyHome, ".credentials.yaml"), source);
+  try {
+    const result = migrateLegacyDshCredentials(targetHome, [legacyHome]);
+    assert.equal(result.migratedFrom, path.join(legacyHome, ".credentials.yaml"));
+    assert.deepEqual(result.warnings, []);
+    assert.equal(await readFile(path.join(targetHome, ".credentials.yaml"), "utf8"), source);
+  } finally {
+    await removeTempRoot(root);
+  }
+});
+
+test("never overwrites credentials already stored in the current DSH home", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "voltui-dsh-credential-preserve-"));
+  const legacyHome = path.join(root, "voltui", "dsh");
+  const targetHome = path.join(root, "Anyong", "dsh");
+  await mkdir(legacyHome, { recursive: true });
+  await mkdir(targetHome, { recursive: true });
+  await writeFile(path.join(legacyHome, ".credentials.yaml"), "version: 1\nrefs: { XG_GOMODEL_API_KEY: old-value }\n");
+  await writeFile(path.join(targetHome, ".credentials.yaml"), "version: 1\nrefs: { XG_GOMODEL_API_KEY: current-value }\n");
+  try {
+    const result = migrateLegacyDshCredentials(targetHome, [legacyHome]);
+    assert.equal(result.migratedFrom, undefined);
+    assert.deepEqual(result.warnings, []);
+    assert.equal(
+      await readFile(path.join(targetHome, ".credentials.yaml"), "utf8"),
+      "version: 1\nrefs: { XG_GOMODEL_API_KEY: current-value }\n",
+    );
+  } finally {
+    await removeTempRoot(root);
+  }
 });
 
 test("acknowledges the official DSH welcome notice without replacing user settings", async () => {

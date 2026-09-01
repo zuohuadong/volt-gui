@@ -8,6 +8,7 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 import {
+  migrateLegacyDshCredentials,
   OfficialDshRuntime,
   resolveOfficialDshBin,
   rethrowUnlessBrokenPipe,
@@ -88,6 +89,15 @@ function dshHomePath(): string {
   return process.env.DSH_HOME?.trim() || path.join(app.getPath("userData"), "dsh");
 }
 
+function legacyDshHomePaths(): string[] {
+  const appData = app.getPath("appData");
+  return [
+    path.join(appData, "voltui", "dsh"),
+    path.join(appData, "@voltui", "desktop-electron", "dsh"),
+    path.join(appData, "@anyong", "desktop-electron", "dsh"),
+  ];
+}
+
 function smbConfigPath(): string {
   return path.join(app.getPath("userData"), "smb-mounts.json");
 }
@@ -161,10 +171,16 @@ function configureBrowserPermissions(): void {
 
 async function startDesktop(): Promise<void> {
   const workspace = canonicalWorkspace(process.env.DSH_WORKSPACE || process.env.INIT_CWD);
+  const dshHome = dshHomePath();
+  const credentialMigration = migrateLegacyDshCredentials(dshHome, legacyDshHomePaths());
+  for (const warning of credentialMigration.warnings) console.warn(`[Electron] ${warning}`);
+  if (credentialMigration.migratedFrom) {
+    console.log(`[Electron] 已迁移旧版官方 DSH 凭据: ${credentialMigration.migratedFrom}`);
+  }
   desktopBootstrap = { ...desktopBootstrap, workspace, startupError: "" };
   dshRuntime = new OfficialDshRuntime({
     dshBin: resolveOfficialDshBin(app.isPackaged ? process.resourcesPath : undefined),
-    dshHome: dshHomePath(),
+    dshHome,
     patchFile: profilePatchPath(),
     workspace,
     executable: nodeRuntimePath(),

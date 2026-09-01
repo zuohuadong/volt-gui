@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { isMap, parseDocument, type Document } from "yaml";
@@ -12,6 +12,12 @@ const MAX_DIAGNOSTIC_LINES = 20;
 const STARTUP_RETRY_DELAY_MS = 500;
 const DSH_URL_PATTERN = /^dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?$)/;
 export const WELCOME_NOTICE_VERSION = "2026-08-13.1";
+const DSH_CREDENTIALS_FILENAME = ".credentials.yaml";
+
+export interface LegacyDshCredentialMigrationResult {
+  migratedFrom?: string;
+  warnings: string[];
+}
 
 export interface OfficialDshRuntimeOptions {
   dshBin: string;
@@ -50,6 +56,32 @@ export async function startOfficialDshWithRetry(
 
 export function rethrowUnlessBrokenPipe(error: NodeJS.ErrnoException): void {
   if (error.code !== "EPIPE") throw error;
+}
+
+export function migrateLegacyDshCredentials(
+  targetDshHome: string,
+  legacyDshHomes: readonly string[],
+): LegacyDshCredentialMigrationResult {
+  const targetPath = path.join(targetDshHome, DSH_CREDENTIALS_FILENAME);
+  const warnings: string[] = [];
+  if (existsSync(targetPath)) return { warnings };
+
+  for (const legacyDshHome of legacyDshHomes) {
+    const sourcePath = path.join(legacyDshHome, DSH_CREDENTIALS_FILENAME);
+    if (path.resolve(sourcePath) === path.resolve(targetPath) || !existsSync(sourcePath)) continue;
+    try {
+      if (!statSync(sourcePath).isFile()) continue;
+      mkdirSync(targetDshHome, { recursive: true });
+      copyFileSync(sourcePath, targetPath, constants.COPYFILE_EXCL);
+      return { migratedFrom: sourcePath, warnings };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return { warnings };
+      const message = error instanceof Error ? error.message : String(error);
+      warnings.push(`无法从旧 DSH Home 迁移凭据 ${sourcePath}: ${message}`);
+    }
+  }
+
+  return { warnings };
 }
 
 function waitForChildClose(child: ChildProcessByStdio<null, Readable, Readable>, timeoutMs: number): Promise<boolean> {

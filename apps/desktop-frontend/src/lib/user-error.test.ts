@@ -11,6 +11,28 @@ describe("userFacingError", () => {
       .not.toContain("deepseek-official");
   });
 
+  it("maps 401 authentication failed error to localized friendly message", () => {
+    setLocale("zh-CN");
+    const raw401 = '401: {"code":null,"message":"authentication failed","param":null,"type":"authentication_error"}';
+    const translatedZh = userFacingError(raw401);
+    expect(translatedZh).toContain("认证失败");
+    expect(translatedZh).toContain("管理 > 设置与凭据");
+    expect(translatedZh).not.toContain("authentication_error");
+    expect(translatedZh).not.toContain('"code":null');
+
+    // Object-wrapped or escaped error payload
+    expect(userFacingError({ message: '401: {"code":null,"message":"authentication failed","param":null,"type":"authentication\\_error"}' }))
+      .toContain("认证失败");
+    expect(userFacingError(new Error("401 Unauthorized: invalid_api_key")))
+      .toContain("认证失败");
+
+    setLocale("en-US");
+    const translatedEn = userFacingError(raw401);
+    expect(translatedEn).toContain("authentication failed");
+    expect(translatedEn).toContain("Management > Settings & Credentials");
+    expect(translatedEn).not.toContain("authentication_error");
+  });
+
   it("maps locked preset and unsupported reasoning errors", () => {
     setLocale("zh-CN");
     expect(userFacingError("session \"session-1\" has already started; its agent preset is fixed"))

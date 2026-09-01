@@ -125,17 +125,15 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
   </PromptInputBody>
   <PromptInputFooter class="prompt-input-composer__footer">
     <PromptInputTools class="prompt-input-composer__tools">
-      <PromptInputActionMenu bind:open={actionMenuOpen} aria-label={t("composer.moreTools")}>
-        <PromptInputActionMenuTrigger aria-label={t("composer.moreTools")} title={t("composer.moreToolsTitle")} />
-        <PromptInputActionMenuContent>
-          <PromptInputActionAddAttachments label={t("composer.addAttachments")} accept="image/png,image/jpeg,image/webp,image/gif" multiple disabled={disabled || !sessionId} onclick={() => actionMenuOpen = false} />
-          <PromptInputActionAddScreenshot label={t("composer.addScreenshot")} disabled={disabled || !sessionId} onselect={() => actionMenuOpen = false} />
-        </PromptInputActionMenuContent>
-      </PromptInputActionMenu>
-      {#if sessionId}
-        <ModelPicker groups={modelGroups} selected={selectedModel} disabled={modelBusy} onSelect={onModelSelect} />
-      {/if}
-      {#if sessionId && client}
+     <PromptInputActionMenu bind:open={actionMenuOpen} aria-label={t("composer.moreTools")}>
+       <PromptInputActionMenuTrigger aria-label={t("composer.moreTools")} title={t("composer.moreToolsTitle")} />
+       <PromptInputActionMenuContent>
+         <PromptInputActionAddAttachments label={t("composer.addAttachments")} accept="image/png,image/jpeg,image/webp,image/gif" multiple disabled={disabled || !sessionId} onclick={() => actionMenuOpen = false} />
+         <PromptInputActionAddScreenshot label={t("composer.addScreenshot")} disabled={disabled || !sessionId} onselect={() => actionMenuOpen = false} />
+       </PromptInputActionMenuContent>
+     </PromptInputActionMenu>
+      <ModelPicker groups={modelGroups} selected={selectedModel} disabled={modelBusy || !sessionId} onSelect={onModelSelect} />
+      {#if client}
         <PermissionSelector client={client} sessionId={sessionId} permissions={contextPermissions} onNotice={onPermissionNotice} />
       {/if}
       {#if !activityOpen}

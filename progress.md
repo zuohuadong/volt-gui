@@ -132,6 +132,8 @@
 
 <!-- Agent 工作记录按时间倒序排列 -->
 
+[2026-09-01T13:50:00+0800] [codex] [blocked:ANYONG-AI-ELEMENTS-RELEASE-20260901] 用户授权删除 3 个当前仓库的空、已关闭 workspace 后，CNB main pipeline `cnb-s08-1k1dngom2` 仍在 Prepare 阶段失败，错误仍为 `The number of workspaces has exceeded the limit`；environment/install/verify/build 未执行。连续三次同类 Prepare 阻断已确认不是仓库 `.cnb.yml` 的多个 workspace 声明。剩余 11 个已关闭 workspace 属于其他仓库或包含文件/备份，不能在当前授权下删除；当前仓库无 running workspace。未创建 `v0.31.15` tag，未发布 Release。需 CNB 管理员清理租户/Runner 配额或明确授权清理其他仓库 workspace 后，才能继续发布。
+
 [2026-09-01T13:40:00+0800] [codex] [running:ANYONG-AI-ELEMENTS-RELEASE-20260901] 用户已明确授权删除 CNB 旧 workspace。已删除当前仓库对应的 3 个空、已关闭 workspace：`cnb-o1f-1jqsmdumk`、`cnb-ude-1jqbejtmi`、`cnb-mj8-1jphe5968`；API 均返回 `delete success`。本轮基于 `origin/main@c1eabb17` 恢复发布任务，待推送账本提交并重新触发 main pipeline；目标仍为 `v0.31.15`，不改产品代码或 package 版本。
 
 [2026-09-01T13:30:00+0800] [codex] [blocked:ANYONG-AI-ELEMENTS-RELEASE-20260901] 合并后的 `origin/main` 已核验包含 AI Elements 0.2.0 迁移，发布候选提交为 `e8f8fd9051a8ded138eb4641cabfe650f392546c`，目标版本按当前 Anyong 发布线为 `v0.31.15`。本地 Node 26.8.1 / pnpm 12.1.0 发布前门禁与独立 release contract review 均通过，但 CNB `main` push pipeline `cnb-1bi-1k1dmaupg`（commit `2716cd82d...`）和重试 pipeline `cnb-b58-1k1dmuh7p`（commit `e8f8fd905...`）均在 Prepare 阶段失败：`The number of workspaces has exceeded the limit`，environment/install/verify/build 全部未执行；CNB workspace API 查询 running=0、closed=14，无法由当前仓库安全清理。按发布门禁未推送 `v0.31.15` tag，未创建/发布不完整 Release。另有独立安全复核指出当前 CNB tag pipeline 未验证 Authenticode `NotSigned`、失败上传可能留下正式 latest Release，以及 reviewer 对 patch/minor 版本存在分歧；这些需要平台恢复与人审裁决后才能继续。恢复点：`origin/main=e8f8fd905...`，无 tag 及 Release 写入。

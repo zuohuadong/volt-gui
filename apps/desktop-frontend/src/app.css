@@ -1,38 +1,13 @@
 @import "tailwindcss";
+@import "@svadmin/ui/app.theme.css";
 @import "@svadmin/ai-elements/ai.css";
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
-  --color-border: var(--border);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-}
 
 :root {
   color-scheme: light;
   --radius: 0.5rem;
   --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "WenQuanYi Micro Hei", "Inter", Roboto, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
   --font-mono: "JetBrains Mono", "Geist Mono", "Cascadia Code", "Fira Code", "Source Code Pro", Menlo, Monaco, Consolas, "PingFang SC", "Microsoft YaHei", monospace;
-  --background: #f3f6f5;
+  --background: #f7f8fa;
   --foreground: #111827;
   --card: #ffffff;
   --card-foreground: #111827;
@@ -40,19 +15,19 @@
   --popover-foreground: #111827;
   --primary: #1f5d4b;
   --primary-foreground: #ffffff;
-  --secondary: #eaf0ee;
+  --secondary: #f0f3f2;
   --secondary-foreground: #111827;
   --ring: #1f5d4b;
-  --muted: #eaf0ee;
-  --muted-foreground: #5a6a64;
-  --accent: #eaf0ee;
+  --muted: #f0f3f2;
+  --muted-foreground: #687386;
+  --accent: #e8f2ed;
   --accent-foreground: #111827;
   --destructive: #e11d48;
   --destructive-foreground: #ffffff;
-  --border: #dce4e1;
-  --input: #dce4e1;
+  --border: #dfe5e8;
+  --input: #cfd8dc;
   --workspace-ink: #111827;
-  --workspace-soft: #f7faf9;
+  --workspace-soft: #fafbfc;
   --svadmin-shadow-control: 0 1px 2px rgb(15 23 42 / 0.05), 0 0 0 1px rgb(15 23 42 / 0.025);
   --svadmin-shadow-surface: 0 1px 3px rgba(15, 23, 42, 0.05), 0 1px 2px rgba(15, 23, 42, 0.03);
   --svadmin-shadow-surface-hover: 0 4px 12px rgba(15, 23, 42, 0.07), 0 1px 3px rgba(15, 23, 42, 0.04);
@@ -62,13 +37,15 @@
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
   letter-spacing: 0;
+  font-size: 14px;
+  line-height: 1.5;
 }
 * { box-sizing: border-box; }
 code, pre, kbd, samp { font-family: var(--font-mono); }
 html, body, #app { min-width: 0; height: 100%; min-height: 0; margin: 0; }
 body { overflow: hidden; background: var(--background); color: var(--foreground); }
 button, input, textarea, select { font: inherit; }
-button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid #2c7a61; outline-offset: 1px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; margin: -1px; padding: 0; border: 0; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .loading-screen { display: grid; min-height: 100vh; place-items: center; gap: 10px; color: var(--muted-foreground); font-size: 12px; }
 .app-shell { display: grid; height: 100vh; min-height: 0; overflow: hidden; grid-template-rows: 48px minmax(0, 1fr); }
@@ -144,7 +121,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 
 .conversation-root .transcript-message {
-  padding: 0 0 18px;
+  padding: 0 0 20px;
 }
 
 .conversation-root .transcript-message > :first-child {
@@ -167,6 +144,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .conversation-root .user-content {
   border-radius: 7px;
   background: color-mix(in oklch, var(--primary) 5%, var(--card));
+}
+
+.conversation-root .message-text,
+.conversation-root .svadmin-ai__markdown {
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.conversation-root .message-meta {
+  margin-bottom: 6px;
+  font-size: 12px;
 }
 
 .conversation-root .tool-message {
@@ -221,15 +209,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 
 .prompt-input-composer__tools {
+  display: flex;
+  align-items: center;
   min-width: 0;
   flex: 1 1 360px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .prompt-input-composer__footer {
   min-height: 50px;
   border-top: 1px solid var(--border);
-  background: #fbfdfc;
+  background: var(--card);
 }
 
 .reference-command {
@@ -1384,9 +1375,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .header-model-selector .svadmin-ai-model-selector__trigger {
   min-height: 34px;
-  border-color: #cedbd6;
+  border-color: var(--border);
   border-radius: 9px;
-  background: #fff;
+  background: var(--card);
 }
 
 .composer-attachment-list {
@@ -1478,8 +1469,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 /* 输入与聚焦体验强化 */
 .composer-shell:focus-within {
-  border-color: #2c7a61;
-  box-shadow: 0 0 0 2px rgba(44, 122, 97, 0.15), 0 12px 30px rgba(28, 54, 50, 0.1);
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 15%, transparent), var(--svadmin-shadow-overlay);
 }
 .composer textarea:focus,
 .prompt-input-composer textarea:focus,
@@ -1881,14 +1872,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 
 /* Composer Bottom Toolbar Controls & Popovers */
-.prompt-input-composer__tools {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-
 [data-slot="prompt-input-action-menu"] {
   position: relative;
   display: inline-flex;
@@ -2199,32 +2182,32 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 
 .composer-submit-btn {
-  display: inline-flex !important;
-  width: auto !important;
-  min-width: 68px !important;
-  height: 32px !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: 6px !important;
-  padding: 0 12px !important;
-  border: 0 !important;
-  border-radius: 6px !important;
-  background: var(--primary) !important;
-  color: var(--primary-foreground) !important;
-  font-size: 12px !important;
-  font-weight: 600 !important;
-  cursor: pointer !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12) !important;
-  transition: all 120ms ease !important;
+  display: inline-flex;
+  width: auto;
+  min-width: 68px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--svadmin-shadow-control);
+  transition: background-color 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
 }
 
 .composer-submit-btn:hover:not(:disabled) {
-  filter: brightness(1.08) !important;
+  box-shadow: var(--svadmin-shadow-surface-hover);
 }
 
 .composer-submit-btn:disabled {
-  opacity: 0.45 !important;
-  cursor: not-allowed !important;
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .composer-activity-btn {

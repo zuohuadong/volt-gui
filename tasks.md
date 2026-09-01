@@ -53,7 +53,8 @@
 
 | task_id | provider | repo | source_url | title | priority | risk | status | owner | model | needs_model | review_class | branch | change_request_url |
 |---------|----------|------|------------|-------|----------|------|--------|-------|-------|-------------|--------------|--------|--------------------|
-| ANYONG-AI-ELEMENTS-COMPOSER-DECOMPOSE-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | user-request | 将自研 Composer 拆解迁移到 PromptInput 官方复合组件族 | high | medium | review | codex | gpt-5.6 | - | review-medium | codex/decompose-ai-elements-composer | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/218 |
+| ANYONG-AI-ELEMENTS-COMPOSER-DECOMPOSE-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | user-request | 将自研 Composer 拆解迁移到 PromptInput 官方复合组件族 | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/decompose-ai-elements-composer | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/218 |
+| ANYONG-AI-ELEMENTS-RELEASE-20260901 | cnb | aizhuliren/xgic/anyong-agent | user-request | 发布 ai-elements 0.2.0 迁移后的 Windows x64 新版 | high | high | running | codex | gpt-5.6 | - | review-high | codex/release-run-v0.31.15 | - |
 | ANYONG-AI-ELEMENTS-FULL-COVERAGE-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | https://www.npmjs.com/package/@svadmin/ai-elements | 完整接入 AI Elements 对话交互与结构化输出组件 | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/complete-ai-elements-coverage | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/217 |
 | ANYONG-AI-ELEMENTS-MIGRATION-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | https://www.npmjs.com/package/@svadmin/ai-elements | 迁移桌面对话到已发布的 SVAdmin AI Elements | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/migrate-svadmin-ai-elements | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/216 |
 | ANYONG-CNB-ISSUES-211-215-20260831 | cnb | aizhuliren/xgic/anyong-agent | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/issues | 修复并关闭全部开放 CNB issues #211-#215 | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/fix-cnb-issues-211-215 | - |
@@ -79,6 +80,17 @@
 | ANYONG-REVIEW-PR7-20260714 | cnb | aizhuliren/volt/anyong-agent | https://cnb.cool/aizhuliren/volt/anyong-agent/-/issues/6 | 审查并合并 Linux runner prerequisites ZIP 修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | fix/desktop-build-linux-prerequisites-zip | https://cnb.cool/aizhuliren/volt/anyong-agent/-/pull/7 |
 | ANYONG-PREREQUISITES-RELEASE-20260714 | cnb | aizhuliren/volt/anyong-agent | user-request | 将 Windows prerequisites 解耦为独立版本与 Release | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/volt/anyong-agent/-/releases/tag/prerequisites-v1.0.0 |
 | ANYONG-STREAM-RECOVERY-20260813 | cnb | aizhuliren/volt/anyong-agent | user-screenshot | 修复 Windows 桌面端重复输出保护直接失败 | high | medium | done | codex | gpt-5.6 | - | review-medium | main | - |
+
+### ANYONG-AI-ELEMENTS-RELEASE-20260901 Task Contract
+
+- parent：`ANYONG-AI-ELEMENTS-COMPOSER-DECOMPOSE-20260901`；source：用户要求合并 PR 后发布新版；reason：CNB PR #218 已合并，需通过既有 tag pipeline 生成可审查的 Windows x64 新版产物。
+- 目标：以当前 Anyong 发布线最新 `v0.31.14` 为基线，在最终绿色 `origin/main` 上创建并推送 `v0.31.15`，等待 CNB tag pipeline 完成，并核验 Release、installer、portable ZIP、大小、SHA-256 与未签名状态。
+- 非目标：不修改产品代码或已提交 package 版本；不发布 macOS/Linux/CLI；不签名、不启用 updater 或生产部署；不移动/覆盖既有 tag；不使用 GitHub 手动 unsigned-review workflow 代替 CNB 正式 tag pipeline。
+- 验收标准：发布前 Node 26.8.1 / pnpm 12.1.0 本地门禁与最终 `main` CNB pipeline 通过；远端 tag `v0.31.15` 精确指向候选 SHA；tag pipeline 的 environment/install/verify/set version/package/create release/两个上传阶段全部成功；Release 非 draft/prerelease、latest=true，包含 `anyong-windows-x64-installer-0.31.15.exe` 与 `anyong-windows-x64-portable-0.31.15.zip`；下载后 SHA-256、大小和 ZIP 完整性可复核，installer Authenticode 为 `NotSigned`。
+- orchestration.mode：`panel`，risk=high。主代理唯一执行远端 tag/Release 写入；三名只读 reviewer 分别覆盖 ai-elements 候选、发布契约和发布安全，任一阻断不推 tag；live 结果再次独立复核。
+- 相关 skill：`xigu-ai-ops`、`cnb-ci-cd`、`electron-desktop`、`typescript-development`、`agent-team-automation`、`provider-adapter`；保持官方 DSH 单一运行时与 Windows x64 未签名评审产物边界。
+- 风险与回滚：CNB self-hosted runner 当前曾因 workspace 数量上限在 Prepare 阶段失败；先通过本 Task Contract 的普通 main push 重试，CI 不绿则保持 blocked。tag 推送后不重写 tag；构建失败通过明确 follow-up 修复并发布下一 patch，错误 Release 仅通过 CNB 管理撤回。
+- interruption_recovery：稳定基线 `origin/main@2716cd82d57d294b593d78c2f2dca99c512aaf35`、最新正式 Release `v0.31.14`、目标 `v0.31.15`；任何版本或产物范围变化需用户确认。
 
 ### ANYONG-AI-ELEMENTS-COMPOSER-DECOMPOSE-20260901 Task Contract
 

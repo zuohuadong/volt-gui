@@ -6,7 +6,7 @@
     HardDrive, History, KeyRound, MessageSquare, MessageSquarePlus, Network,
     Pause, Pencil, Play, PanelLeftClose, PanelLeftOpen, Save, Search, Send,
     Settings2, ShieldAlert, SlidersHorizontal, Square, Target, Trash2, UserRoundCog,
-    X, RefreshCw, PlugZap, GitBranch, Blocks, Cable, Boxes, Globe, Languages,
+    X, RefreshCw, PlugZap, GitBranch, Blocks, Cable, Boxes, Globe, Languages, Database,
   } from "@lucide/svelte";
   import { Button } from "$components/ui/button";
   import { Textarea } from "$components/ui/textarea";
@@ -47,6 +47,7 @@
   } from "$lib/model-catalog";
   import { agentPresetLocked, clearsSessionError, sessionHealth, sessionHealthLabel, visibleSessions } from "$lib/session-health";
   import { userFacingError } from "$lib/user-error";
+  import { buildKnowledgePrompt, knowledgeToolName, parseKnowledgeReport, stripKnowledgeReport, type KnowledgeIndexReport, type KnowledgeOperation } from "$lib/knowledge";
   import { buildQuestionAnswers, questionsAnswered } from "$lib/ai-elements-adapter";
   import {
     applyUiCustomization,
@@ -155,6 +156,8 @@
   let surfaceSourceId = $state("");
   let surfaceNotice = $state("");
   let surfaceHistory = $state<Array<SurfaceSpec | undefined>>([]);
+  let knowledgeIndex = $state<KnowledgeIndexReport & { state: "idle" | "building" | "ready" | "partial" | "failed" }>({ state: "idle", status: "failed", files: 0, chunks: 0, failures: [] });
+  let knowledgeOperation = $state<KnowledgeOperation | "">("");
   let unsubscribeRuntimeError: (() => void) | undefined;
 
  const activeSession = $derived(sessions.find((item) => item.sessionId === activeSessionId));
@@ -629,6 +632,9 @@
     const transcript = applyTranscriptEvent({ messages, todos }, payload.event, payload.view as Record<string, unknown> | undefined);
     messages = transcript.messages;
     todos = transcript.todos;
+    if (payload.event.type === "tool/call" && knowledgeToolName(String(payload.event.data.name || "")) && knowledgeOperation) {
+      knowledgeIndex = { ...knowledgeIndex, state: "building" };
+    }
     if (payload.event.type === "tool/result") {
       const toolError = payload.event.data.error;
       const toolErrorCode = toolError && typeof toolError === "object" ? String((toolError as Record<string, unknown>).code || "") : "";
@@ -641,9 +647,24 @@
       const assistantMessage = assistantMessageForEvent(transcript.messages, payload.event);
       captureCustomization(assistantMessage);
       captureSurfaceProposal(assistantMessage);
+      const report = parseKnowledgeReport(assistantMessage?.text || "");
+      if (report) {
+        knowledgeIndex = { ...knowledgeIndex, ...report, state: report.status };
+        knowledgeOperation = "";
+        if (assistantMessage) assistantMessage.text = stripKnowledgeReport(assistantMessage.text);
+      }
+    }
+    if (payload.event.type === "tool/result" && payload.event.data.error && knowledgeOperation) {
+      const errorText = userFacingError(payload.event.data.error);
+      knowledgeIndex = { ...knowledgeIndex, state: "failed", failures: [errorText] };
+      knowledgeOperation = "";
     }
     if (payload.event.type === "assistant/message" || payload.event.type === "turn/end") {
       sending = false;
+      if (payload.event.type === "turn/end" && knowledgeOperation) {
+        knowledgeIndex = { ...knowledgeIndex, state: "partial", failures: [t("knowledge.reportMissing")] };
+        knowledgeOperation = "";
+      }
       if (clearsSessionError(payload.event) && sessionErrors[activeSessionId]) {
         const clearedMessage = sessionErrors[activeSessionId];
         const { [activeSessionId]: _cleared, ...remaining } = sessionErrors;
@@ -1157,7 +1178,38 @@
     void refreshManagement();
   }
   function openKnowledgePrompt(prompt: string): void { input = prompt; view = "conversation"; }
-  function knowledgeStatusLabel(): string { return skills.length > 0 ? t("knowledge.statusLoaded") : t("knowledge.statusWaiting"); }
+  function knowledgeStatusLabel(): string {
+    if (knowledgeIndex.state === "building") return t("knowledge.indexing");
+    if (knowledgeIndex.state === "ready") return t("knowledge.indexReady");
+    if (knowledgeIndex.state === "partial") return t("knowledge.indexPartial");
+    if (knowledgeIndex.state === "failed") return t("knowledge.indexFailed");
+    return skills.length > 0 ? t("knowledge.statusLoaded") : t("knowledge.statusWaiting");
+  }
+  async function ensureKnowledgeSession(): Promise<boolean> {
+    if (activeSessionId) return true;
+    await createSession(workspacePath);
+    return !!activeSessionId;
+  }
+  async function runKnowledgeOperation(operation: KnowledgeOperation, query = ""): Promise<void> {
+    if (!client || !(await ensureKnowledgeSession())) return;
+    const normalizedQuery = query.trim();
+    if (operation === "query" && !normalizedQuery) return;
+    knowledgeOperation = operation;
+    knowledgeIndex = {
+      ...knowledgeIndex,
+      state: "building",
+      ...(operation === "query" ? { query: normalizedQuery, matches: undefined } : {}),
+      ...(operation !== "query" ? { root: workspacePath, failures: [] } : {}),
+    };
+    const prompt = buildKnowledgePrompt(operation, workspacePath, normalizedQuery);
+    try {
+      await submit(prompt);
+      view = "knowledge";
+    } catch (error) {
+      knowledgeOperation = "";
+      knowledgeIndex = { ...knowledgeIndex, state: "failed", failures: [userFacingError(error)] };
+    }
+  }
   function permissionNotice(message: string): void { managementNotice = message; }
 </script>
 
@@ -1563,14 +1615,22 @@
                         <strong>{t("knowledge.statPersistentStatus")}</strong>
                         <small>{t("knowledge.statPersistentDesc")}</small>
                       </div>
+                      <div class="knowledge-health-card">
+                        <span>{t("knowledge.statIndex")}</span>
+                        <strong>{knowledgeIndex.files || 0} {t("knowledge.filesUnit")} · {knowledgeIndex.chunks || 0} {t("knowledge.chunksUnit")}</strong>
+                        <small>{knowledgeStatusLabel()}</small>
+                      </div>
                     </div>
                     <div class="knowledge-toolbar">
                       <Button size="sm" onclick={() => void pickWorkspace()}><FolderOpen size={14} />{t("knowledge.selectWorkspaceBtn")}</Button>
                       <Button variant="outline" size="sm" onclick={() => void createSession()}><MessageSquarePlus size={14} />{t("knowledge.newKnowledgeSessionBtn")}</Button>
+                      <Button variant="outline" size="sm" disabled={!workspacePath || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("build")}><Database size={14} />{t("knowledge.buildIndexBtn")}</Button>
+                      <Button variant="outline" size="sm" disabled={!workspacePath || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("refresh")}><RefreshCw size={14} />{t("knowledge.refreshIndexBtn")}</Button>
                       <Button variant="outline" size="sm" onclick={() => openKnowledgePrompt(t("knowledge.createInventoryPrompt"))}><ClipboardList size={14} />{t("knowledge.scanWorkspaceBtn")}</Button>
-                      <Button variant="outline" size="sm" onclick={() => openKnowledgePrompt(t("knowledge.searchWorkspacePrompt"))}><Search size={14} />{t("knowledge.searchWorkspaceBtn")}</Button>
+                      <Button variant="outline" size="sm" disabled={!workspacePath || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("query", t("knowledge.searchWorkspacePrompt"))}><Search size={14} />{t("knowledge.searchWorkspaceBtn")}</Button>
                       <Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />{t("knowledge.refreshKnowledgeBtn")}</Button>
                     </div>
+                    {#if knowledgeIndex.failures && knowledgeIndex.failures.length > 0}<div class="knowledge-note"><CircleAlert size={14} /><span>{t("knowledge.indexFailures", { count: knowledgeIndex.failures.length, names: knowledgeIndex.failures.join("、") })}</span></div>{/if}
                     {#if skills.length === 0}
                       <DataState state="empty" title={t("knowledge.emptyKnowledgeTitle")} description={t("knowledge.emptyKnowledgeDesc")} />
                     {:else}
@@ -1773,9 +1833,9 @@
           </div>
         {:else if view === "knowledge"}
           <div class="knowledge-page">
-            <header class="knowledge-hero"><div><div class="eyebrow">{t("knowledge.eyebrow")}</div><h1>{t("knowledge.title")}</h1><p>{t("knowledge.heroDesc")}</p></div><div class="header-actions"><Button variant="outline" size="sm" onclick={() => view = "conversation"}><ChevronRight class="rotate-180" size={14} />{t("app.backToConversation")}</Button><Button size="sm" onclick={() => openKnowledgePrompt(t("knowledge.createInventoryPrompt")) }><ClipboardList size={14} />{t("knowledge.scanWorkspace")}</Button></div></header>
+            <header class="knowledge-hero"><div><div class="eyebrow">{t("knowledge.eyebrow")}</div><h1>{t("knowledge.title")}</h1><p>{t("knowledge.heroDesc")}</p></div><div class="header-actions"><Button variant="outline" size="sm" onclick={() => view = "conversation"}><ChevronRight class="rotate-180" size={14} />{t("app.backToConversation")}</Button><Button size="sm" disabled={!workspacePath || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("build")}><Database size={14} />{t("knowledge.buildIndexBtn")}</Button></div></header>
             <div class="knowledge-page-body">
-              <section class="knowledge-search-panel"><div class="knowledge-search-heading"><div><span class="section-label">{t("knowledge.searchTitle")}</span><h2>{t("knowledge.searchHeading")}</h2><p>{t("knowledge.searchSub")}</p></div><span class="knowledge-source-count"><BookOpen size={15} />{t("knowledge.officialSourcesCount", { count: skills.length })}</span></div><div class="knowledge-search-row"><Input aria-label={t("knowledge.questionAria")} bind:value={input} placeholder={t("knowledge.searchPlaceholder")} /><Button size="sm" disabled={!activeSessionId || !input.trim()} onclick={() => void submit()}><Search size={14} />{t("knowledge.searchBtn")}</Button></div><div class="knowledge-shortcuts"><button onclick={() => openKnowledgePrompt(t("knowledge.searchWorkspacePrompt"))}><Search size={14} /><span><strong>{t("knowledge.searchWorkspaceCard")}</strong><small>{t("knowledge.searchWorkspaceSub")}</small></span></button><button onclick={() => openKnowledgePrompt(t("knowledge.createInventoryPrompt"))}><ClipboardList size={14} /><span><strong>{t("knowledge.createInventoryCard")}</strong><small>{t("knowledge.createInventorySub")}</small></span></button><button onclick={() => void createSession()}><MessageSquarePlus size={14} /><span><strong>{t("knowledge.createSessionCard")}</strong><small>{t("knowledge.createSessionSub")}</small></span></button></div></section>
+              <section class="knowledge-search-panel"><div class="knowledge-search-heading"><div><span class="section-label">{t("knowledge.searchTitle")}</span><h2>{t("knowledge.searchHeading")}</h2><p>{t("knowledge.searchSub")}</p></div><span class="knowledge-source-count"><Database size={15} />{knowledgeStatusLabel()}</span></div><div class="knowledge-search-row"><Input aria-label={t("knowledge.questionAria")} bind:value={input} placeholder={t("knowledge.searchPlaceholder")} /><Button size="sm" disabled={!workspacePath || !input.trim() || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("query", input)}><Search size={14} />{t("knowledge.searchBtn")}</Button></div><div class="knowledge-shortcuts"><button disabled={!workspacePath || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("refresh")}><RefreshCw size={14} /><span><strong>{t("knowledge.refreshIndexCard")}</strong><small>{t("knowledge.refreshIndexSub")}</small></span></button><button onclick={() => openKnowledgePrompt(t("knowledge.createInventoryPrompt"))}><ClipboardList size={14} /><span><strong>{t("knowledge.createInventoryCard")}</strong><small>{t("knowledge.createInventorySub")}</small></span></button><button onclick={() => void createSession()}><MessageSquarePlus size={14} /><span><strong>{t("knowledge.createSessionCard")}</strong><small>{t("knowledge.createSessionSub")}</small></span></button></div>{#if knowledgeIndex.failures && knowledgeIndex.failures.length > 0}<div class="knowledge-note"><CircleAlert size={14} /><span>{t("knowledge.indexFailures", { count: knowledgeIndex.failures.length, names: knowledgeIndex.failures.join("、") })}</span></div>{/if}</section>
               <div class="knowledge-columns"><section class="knowledge-source-section"><div class="section-row"><div><span class="section-label">{t("knowledge.skillsSectionTitle")}</span><h2>{t("knowledge.callableCapabilities")}</h2></div><Button variant="ghost" size="sm" onclick={() => void refreshManagement()}><History size={14} />{t("common.refresh")}</Button></div>{#if skills.length === 0}<DataState state="empty" title={t("knowledge.emptySkillsTitle")} description={t("knowledge.emptySkillsDesc")} />{:else}<div class="knowledge-skill-list">{#each skills.filter((skill) => !settingsQuery || `${skill.name} ${skill.description}`.toLowerCase().includes(settingsQuery.toLowerCase())) as skill (skill.name)}<article><div class="skill-heading"><span class="row-icon"><BookOpen size={15} /></span><div><strong>{skill.name}</strong><small>{skill.modelInvocable ? t("knowledge.skillInvocableModel") : t("knowledge.skillInvocableUser")}</small></div></div><p>{skill.description}</p>{#if skill.whenToUse}<em>{skill.whenToUse}</em>{/if}</article>{/each}</div>{/if}</section><aside class="knowledge-context"><div class="section-label">{t("knowledge.currentContext")}</div><div class="context-stat"><span>{t("overview.workspaceLabel")}</span><strong title={workspacePath}>{workspaceName}</strong></div><div class="context-stat"><span>{t("overview.sessionLabel")}</span><strong>{activeSession ? sessionTitle(activeSession) : t("knowledge.unselected")}</strong></div><div class="context-stat"><span>{t("knowledge.statSession")}</span><strong>{activeSession ? t("knowledge.sessionMessagesCount", { count: messages.length }) : t("knowledge.needSelectSession")}</strong></div><div class="knowledge-note"><ShieldAlert size={14} /><span>{t("knowledge.noteDesc")}</span></div></aside></div>
             </div>
           </div>

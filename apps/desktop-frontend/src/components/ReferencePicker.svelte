@@ -11,6 +11,7 @@
     usePromptInputController,
   } from "@svadmin/ai-elements";
   import type { DshClient, DshSkill, FileReferenceCandidate, SessionReferenceCandidate } from "$lib/dsh-client";
+  import { t } from "$lib/i18n";
 
   interface Candidate {
     kind: "file" | "directory" | "session" | "command";
@@ -93,7 +94,7 @@
         candidates = skills
           .filter((skill) => `${skill.name} ${skill.description}`.toLowerCase().includes(token.query.toLowerCase()))
           .slice(0, 8)
-          .map((skill) => ({ kind: "command" as const, label: `/${skill.name}`, detail: skill.description || "官方 Skill", replacement: `/${skill.name} ` }));
+          .map((skill) => ({ kind: "command" as const, label: `/${skill.name}`, detail: skill.description || t("reference.officialSkill"), replacement: `/${skill.name} ` }));
         highlighted = Math.min(highlighted, Math.max(candidates.length - 1, 0));
         return;
       }
@@ -103,8 +104,8 @@
       ]);
       if (serial !== requestSerial) return;
       candidates = [
-        ...files.slice(0, 8).map((item) => ({ kind: item.kind, label: item.path, detail: item.kind === "directory" ? "目录" : "文件", path: fileMention(item, token.quoted) })),
-        ...sessions.slice(0, 5).map((item) => ({ kind: "session" as const, label: item.label, detail: item.cwd || "会话快照", mention: item.mention || `@[${item.label}](${encodeSessionUri(item.sessionId)})` })),
+        ...files.slice(0, 8).map((item) => ({ kind: item.kind, label: item.path, detail: item.kind === "directory" ? t("reference.directory") : t("reference.file"), path: fileMention(item, token.quoted) })),
+        ...sessions.slice(0, 5).map((item) => ({ kind: "session" as const, label: item.label, detail: item.cwd || t("reference.sessionSnapshot"), mention: item.mention || `@[${item.label}](${encodeSessionUri(item.sessionId)})` })),
       ];
       highlighted = Math.min(highlighted, Math.max(candidates.length - 1, 0));
     } finally {
@@ -118,7 +119,12 @@
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) return;
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      const textarea = event.currentTarget as HTMLTextAreaElement;
+      textarea.form?.requestSubmit();
+      return;
+    }
     if (candidates.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -145,15 +151,7 @@
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       const textarea = event.currentTarget as HTMLTextAreaElement;
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const current = controller.textInput.value;
-      const next = `${current.slice(0, start)}\n${current.slice(end)}`;
-      controller.textInput.setInput(next);
-      requestAnimationFrame(() => {
-        inputElement?.focus();
-        inputElement?.setSelectionRange(start + 1, start + 1);
-      });
+      textarea.form?.requestSubmit();
     }
   }
 
@@ -178,13 +176,13 @@
     {rows}
     {disabled}
     {placeholder}
-    aria-label="任务输入"
+    aria-label={t("reference.taskInputAria")}
     oninput={onInput}
     onkeydown={onKeydown}
   />
   {#if busy || candidates.length > 0 || queryToken}
     <PromptInputCommand bind:value={queryToken} class="reference-command">
-      {#if busy}<div class="reference-loading"><Loader size={13} label="正在查找官方引用" />正在查找官方引用…</div>{/if}
+      {#if busy}<div class="reference-loading"><Loader size={13} label={t("reference.searchingLabel")} />{t("reference.searching")}</div>{/if}
       <PromptInputCommandList>
         <PromptInputCommandGroup>
           {#each candidates as candidate, index (candidate.kind + candidate.label)}
@@ -193,7 +191,7 @@
               <span><strong>{candidate.label}</strong><small>{candidate.detail}</small></span>
             </PromptInputCommandItem>
           {/each}
-          {#if !busy && candidates.length === 0 && queryToken}<PromptInputCommandEmpty>没有匹配的官方引用</PromptInputCommandEmpty>{/if}
+          {#if !busy && candidates.length === 0 && queryToken}<PromptInputCommandEmpty>{t("reference.noMatches")}</PromptInputCommandEmpty>{/if}
         </PromptInputCommandGroup>
       </PromptInputCommandList>
     </PromptInputCommand>

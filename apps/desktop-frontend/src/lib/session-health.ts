@@ -1,4 +1,5 @@
 import type { SessionSummary } from "./dsh-client";
+import { t } from "./i18n";
 
 export type SessionHealth = "ok" | "running" | "error";
 
@@ -9,11 +10,24 @@ export function sessionHealth(session: SessionSummary, hasRuntimeError = false):
 }
 
 export function sessionHealthLabel(health: SessionHealth): string {
-  return health === "running" ? "运行中" : health === "error" ? "运行异常" : "可用";
+  if (health === "running") return t("session.statusRunning");
+  if (health === "error") return t("session.statusError");
+  return t("session.statusAvailable");
 }
 
 export function agentPresetLocked(session: SessionSummary | undefined, messageCount: number): boolean {
   return !!session && (session.running || !session.blank || messageCount > 0);
+}
+
+export function visibleSessions(
+  sessions: SessionSummary[],
+  archivedSessionIds: string[],
+  activeSessionId = "",
+): SessionSummary[] {
+  const archived = new Set(archivedSessionIds);
+  return sessions.filter((session) =>
+    !archived.has(session.sessionId) && (!session.blank || session.sessionId === activeSessionId)
+  );
 }
 
 export function clearsSessionError(event: { type: string; data?: Record<string, unknown> }): boolean {

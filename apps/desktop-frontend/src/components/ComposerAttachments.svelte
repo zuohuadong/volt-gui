@@ -7,6 +7,7 @@
     Attachments,
     usePromptInputAttachments,
   } from "@svadmin/ai-elements";
+  import { t } from "$lib/i18n";
 
   interface PromptAttachmentFile {
     id: string;
@@ -23,7 +24,7 @@
     return {
       id: file.id,
       type: "file" as const,
-      filename: file.name || file.filename || "图片",
+      filename: file.name || file.filename || t("composer.image"),
       mediaType: file.mediaType,
       url: file.url,
     };
@@ -37,7 +38,7 @@
       <Attachment data={display} onremove={() => controller.remove(file.id)}>
         <AttachmentPreview />
         <AttachmentInfo />
-        <AttachmentRemove label={`移除 ${display.filename}`} />
+        <AttachmentRemove label={t("composer.removeAttachment", { name: display.filename })} />
       </Attachment>
     {/each}
   </Attachments>

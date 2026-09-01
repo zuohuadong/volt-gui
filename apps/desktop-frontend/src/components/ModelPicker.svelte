@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { ModelSelector } from "@svadmin/ai-elements";
-  import type { ModelGroup } from "$lib/dsh-client";
+import { ModelSelector } from "@svadmin/ai-elements";
+import type { ModelGroup } from "$lib/dsh-client";
+import { t } from "$lib/i18n";
 
-  type Props = {
+type Props = {
     groups: ModelGroup[];
     selected: string;
     disabled?: boolean;
@@ -20,7 +21,7 @@
   const selectedOption = $derived(options.find((option) => option.id === selected));
 
   function modelCapability(model: ModelGroup["models"][number]): string {
-    return model.input?.includes("image") ? "支持图片输入" : "文本输入";
+    return model.input?.includes("image") ? t("models.imageInput") : t("models.textInput");
   }
 </script>
 
@@ -28,12 +29,12 @@
   options={options}
   selectedId={selected}
   disabled={disabled || options.length === 0}
-  label="会话模型"
-  placeholder="默认模型"
-  searchPlaceholder="搜索模型"
-  emptyLabel="没有匹配的模型"
+  label={t("composer.selectModel")}
+  placeholder={t("composer.selectModel")}
+  searchPlaceholder={t("common.search")}
+  emptyLabel={t("common.empty")}
   onchange={(option) => { const [provider, ...modelParts] = option.id.split("/"); onSelect(provider, modelParts.join("/")); }}
-  class="header-model-selector"
+  class="composer-model-selector"
 >
-  <span class="sr-only">{selectedOption?.name || "选择模型"}</span>
+  <span class="sr-only">{selectedOption?.name || t("composer.selectModel")}</span>
 </ModelSelector>

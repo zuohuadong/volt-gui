@@ -33,10 +33,12 @@ describe("XG 网关模型目录", () => {
   });
 
   it("按官方 Provider 元数据解析根路径凭据", () => {
-    const deepseek = { ...namespace, ns: "llm-deepseek", value: { apiKeyEnv: "DEEPSEEK_API_KEY", models: [{ id: "deepseek-v4-pro" }] } };
+    const deepseek = { ...namespace, ns: "llm-deepseek", value: { apiKeyEnv: "DEEPSEEK_API_KEY", models: [{ id: "deepseek-v4-pro", inputModalities: ["text", "image"] }] } };
     const providers = [{ provider: "deepseek-official", displayName: "DeepSeek", settingsNs: "llm-deepseek", settingsPath: [], active: true }];
     expect(resolveProviderSettings([deepseek], providers, "deepseek-official")?.config.apiKeyEnv).toBe("DEEPSEEK_API_KEY");
     expect(providerCredentialRef([deepseek], providers, "deepseek-official")).toBe("DEEPSEEK_API_KEY");
+    const groups = enrichModelGroups([{ id: "deepseek-official", name: "DeepSeek", models: [{ id: "deepseek-v4-pro", name: "DeepSeek-V4-Pro" }] }], [deepseek]);
+    expect(groups[0].models[0].input).toEqual(["text", "image"]);
   });
 
   it("解析 Provider 默认 Base URL、API 类型与友好凭据描述", () => {

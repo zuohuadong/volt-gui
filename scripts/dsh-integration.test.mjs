@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -23,6 +24,72 @@ function runLauncher(args, env = {}) {
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 180_000,
   });
+}
+
+function waitForRuntimeOrigin(child) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      settled = true;
+      reject(new Error('DSH web startup timed out'));
+    }, 180_000);
+    let pending = '';
+    let settled = false;
+    const inspect = (chunk) => {
+      const lines = `${pending}${chunk}`.split(/\r?\n/);
+      pending = lines.pop() ?? '';
+      for (const line of lines) {
+        const match = line.trim().match(/^dsh web:\s+(http:\/\/127\.0\.0\.1:\d+\/?$)/);
+        if (!match || settled) continue;
+        settled = true;
+        clearTimeout(timeout);
+        resolve(new URL(match[1]).origin);
+      }
+    };
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', inspect);
+    child.stderr.on('data', inspect);
+    child.once('error', (error) => { settled = true; clearTimeout(timeout); reject(error); });
+    child.once('exit', (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(new Error(`DSH web exited before startup: code=${code} signal=${signal}`));
+    });
+  });
+}
+
+function startWebRuntime(dshHome) {
+  const child = spawn(process.execPath, [launcherPath, 'web', '--host', '127.0.0.1', '--port', '0', '--no-open'], {
+    cwd: repositoryRoot,
+    env: { ...process.env, DSH_HOME: dshHome },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  const origin = waitForRuntimeOrigin(child);
+  return { child, origin };
+}
+
+async function stopWebRuntime(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise((resolve) => {
+    const timeout = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 10_000);
+    child.once('exit', () => { clearTimeout(timeout); resolve(); });
+    child.kill('SIGTERM');
+  });
+}
+
+async function dshRequest(origin, method, payload) {
+  const response = await fetch(`${origin}/api/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.result?.ok, true, body.result?.error?.message);
+  return body.result.value;
 }
 
 test('launcher uses the exact locally installed official DSH version', () => {
@@ -61,6 +128,29 @@ test('Anyong override composes with the latest official web and headless profile
       assert.doesNotMatch(config, /id: anyong-ui/);
     }
   } finally {
+    await rm(dshHome, { recursive: true, force: true });
+  }
+});
+
+test('official DSH credentials remain configured after a web runtime restart', async () => {
+  const dshHome = await mkdtemp(path.join(tmpdir(), 'voltui-dsh-credentials-'));
+  const ref = 'VOLT_TEST_API_KEY';
+  let runtime;
+  try {
+    runtime = startWebRuntime(dshHome);
+    let origin = await runtime.origin;
+    await dshRequest(origin, 'credentials.set', { ref, value: 'temporary-test-secret' });
+    let described = await dshRequest(origin, 'credentials.describe', { refs: [ref] });
+    assert.equal(described.credentials[ref]?.configured, true);
+    await stopWebRuntime(runtime.child);
+
+    runtime = startWebRuntime(dshHome);
+    origin = await runtime.origin;
+    described = await dshRequest(origin, 'credentials.describe', { refs: [ref] });
+    assert.equal(described.credentials[ref]?.configured, true);
+    await dshRequest(origin, 'credentials.unset', { ref });
+  } finally {
+    if (runtime) await stopWebRuntime(runtime.child);
     await rm(dshHome, { recursive: true, force: true });
   }
 });

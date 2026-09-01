@@ -152,17 +152,17 @@ importers:
         specifier: 1.34.0
         version: 1.34.0(svelte@5.56.10)
       '@svadmin/ai-elements':
-        specifier: 0.2.0
-        version: 0.2.0(@svadmin/core@0.48.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2(supports-color@7.2.0))(supports-color@7.2.0)(svelte@5.56.10)(tailwindcss@4.3.3)
+        specifier: 0.3.0
+        version: 0.3.0(@svadmin/core@0.49.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2(supports-color@7.2.0))(supports-color@7.2.0)(svelte@5.56.10)(tailwindcss@4.3.3)
       '@svadmin/core':
-        specifier: 0.48.0
-        version: 0.48.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)
+        specifier: 0.49.0
+        version: 0.49.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)
       '@svadmin/surface':
-        specifier: 0.8.0
-        version: 0.8.0(@svadmin/core@0.48.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@svadmin/ui@0.67.0(@internationalized/date@3.12.3)(@svadmin/core@0.48.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3))(svelte@5.56.10)
+        specifier: 0.8.1
+        version: 0.8.1(@svadmin/core@0.49.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@svadmin/ui@0.67.1(@internationalized/date@3.12.3)(@svadmin/core@0.49.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3))(svelte@5.56.10)
       '@svadmin/ui':
-        specifier: 0.67.0
-        version: 0.67.0(@internationalized/date@3.12.3)(@svadmin/core@0.48.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3)
+        specifier: 0.67.1
+        version: 0.67.1(@internationalized/date@3.12.3)(@svadmin/core@0.49.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3)
       '@tanstack/svelte-query':
         specifier: 6.1.48
         version: 6.1.48(svelte@5.56.10)
@@ -3318,18 +3318,18 @@ packages:
   '@streamdown-svelte/remend@1.3.0':
     resolution: {integrity: sha512-pW5WlKGtMlVU0U5Z/Ujg9AgZD1MTDUaT/9KoiYazGHOi9D4zCaqw+Yp+mZ7d4nSJ1BRi+9VMyB0GWQeXzKFITg==}
 
-  '@svadmin/ai-elements@0.2.0':
-    resolution: {integrity: sha512-WEEtP8Q3Gr015EdUbDzSgPWUOdGt5kOwbM5EcOGu3bug8Jgbltr3DsoZO4VQOx/PWdk/LCYwaho576lm3bT2wg==}
+  '@svadmin/ai-elements@0.3.0':
+    resolution: {integrity: sha512-MqiTe3S3jTNqZSffA80r48Hco8zj9/nNgaged7kAXz2Z6h4TSc0RHWg1wT7Gb6G7iJ0SIndes6zrOQgKToeVtg==}
     peerDependencies:
-      '@svadmin/core': ^0.48.0
+      '@svadmin/core': ^0.49.0
       '@tanstack/svelte-query': ^6.1.48
       svelte: ^5.56.10
     peerDependenciesMeta:
       svelte:
         optional: true
 
-  '@svadmin/core@0.48.0':
-    resolution: {integrity: sha512-Gx0fTimSlbSF+EZ56q+5QzXu1zuQXc1LWzaCppJbas2/641b/h+rtl2U/BdnFbFiu1fr/XuPo7pn3Lzknis3EA==}
+  '@svadmin/core@0.49.0':
+    resolution: {integrity: sha512-YlnBAs88whyrGsahjIO39U1/bp/SHU0JLMJ5VubzY23rLsVT0unlPXg/ou69IYPE/I5KzWkGQ3jWndk3s/a2bQ==}
     peerDependencies:
       '@tanstack/svelte-query': ^6.1.48
       svelte: ^5.56.10
@@ -3339,17 +3339,17 @@ packages:
       svelte:
         optional: true
 
-  '@svadmin/surface@0.8.0':
-    resolution: {integrity: sha512-yub3IBTKHJiNaTMbigdBA2SOrnhjxfyqUjsfuJcZYeS9VDy/yj0me8qYGmOPP6rcSU9Z+1NH63CveN46oVjQaw==}
+  '@svadmin/surface@0.8.1':
+    resolution: {integrity: sha512-+3eS+Iq3ANUkMT3bx/o7O0p9aSBITZoZCUZ8q7ov1BqMzDYF0dGCIB9U/B3RT1Co8DiOS4PUYbzKzDCouSDGFg==}
     peerDependencies:
-      '@svadmin/core': '>=0.34.2 <0.49.0'
+      '@svadmin/core': '>=0.34.2 <0.50.0'
       '@svadmin/ui': '>=0.40.6 <0.68.0'
       svelte: ^5.56.8
 
-  '@svadmin/ui@0.67.0':
-    resolution: {integrity: sha512-AP/e/pLA7ce3bVVlQF3BPdzP601HJV3e087ZEPC1TotrEEuVfzkv2FXz+FLAY/X4cMbzjkdVdmL6zSEJEze5UA==}
+  '@svadmin/ui@0.67.1':
+    resolution: {integrity: sha512-n1psuF/Un/K2Md7I7ro1eAwrHnlR5Bt+jXUDxc6ENPu6k/I9QZlbqBn7jyM9ZXQf7Pi/QASe77xykgMmSVNZDw==}
     peerDependencies:
-      '@svadmin/core': ^0.48.0
+      '@svadmin/core': ^0.49.0
       '@svadmin/editor': '*'
       '@tanstack/svelte-query': ^6.1.48
       isomorphic-dompurify: ^3.23.0
@@ -10024,12 +10024,12 @@ snapshots:
 
   '@streamdown-svelte/remend@1.3.0': {}
 
-  '@svadmin/ai-elements@0.2.0(@svadmin/core@0.48.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2(supports-color@7.2.0))(supports-color@7.2.0)(svelte@5.56.10)(tailwindcss@4.3.3)':
+  '@svadmin/ai-elements@0.3.0(@svadmin/core@0.49.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2(supports-color@7.2.0))(supports-color@7.2.0)(svelte@5.56.10)(tailwindcss@4.3.3)':
     dependencies:
       '@lucide/svelte': 1.35.0(svelte@5.56.10)
       '@rive-app/webgl2': 2.41.0
       '@sinclair/typebox': 0.34.52
-      '@svadmin/core': 0.48.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)
+      '@svadmin/core': 0.49.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)
       '@tanstack/svelte-query': 6.1.48(svelte@5.56.10)
       '@xyflow/svelte': 1.6.5(svelte@5.56.10)
       clsx: 2.1.1
@@ -10045,19 +10045,21 @@ snapshots:
       - supports-color
       - tailwindcss
 
-  '@svadmin/core@0.48.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)':
+  '@svadmin/core@0.49.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)':
+    dependencies:
+      '@sinclair/typebox': 0.34.52
     optionalDependencies:
       '@tanstack/svelte-query': 6.1.48(svelte@5.56.10)
       svelte: 5.56.10
 
-  '@svadmin/surface@0.8.0(@svadmin/core@0.48.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@svadmin/ui@0.67.0(@internationalized/date@3.12.3)(@svadmin/core@0.48.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3))(svelte@5.56.10)':
+  '@svadmin/surface@0.8.1(@svadmin/core@0.49.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@svadmin/ui@0.67.1(@internationalized/date@3.12.3)(@svadmin/core@0.49.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3))(svelte@5.56.10)':
     dependencies:
       '@sinclair/typebox': 0.34.52
-      '@svadmin/core': 0.48.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)
-      '@svadmin/ui': 0.67.0(@internationalized/date@3.12.3)(@svadmin/core@0.48.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3)
+      '@svadmin/core': 0.49.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)
+      '@svadmin/ui': 0.67.1(@internationalized/date@3.12.3)(@svadmin/core@0.49.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3)
       svelte: 5.56.10
 
-  '@svadmin/ui@0.67.0(@internationalized/date@3.12.3)(@svadmin/core@0.48.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3)':
+  '@svadmin/ui@0.67.1(@internationalized/date@3.12.3)(@svadmin/core@0.49.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10))(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)(tailwindcss@4.3.3)':
     dependencies:
       '@floating-ui/dom': 1.8.0
       '@lucide/svelte': 1.35.0(svelte@5.56.10)
@@ -10070,7 +10072,7 @@ snapshots:
       tailwind-merge: 3.6.0
       tailwind-variants: 3.3.1(tailwind-merge@3.6.0)(tailwindcss@4.3.3)
     optionalDependencies:
-      '@svadmin/core': 0.48.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)
+      '@svadmin/core': 0.49.0(@tanstack/svelte-query@6.1.48(svelte@5.56.10))(svelte@5.56.10)
       '@tanstack/svelte-query': 6.1.48(svelte@5.56.10)
       svelte: 5.56.10
     transitivePeerDependencies:

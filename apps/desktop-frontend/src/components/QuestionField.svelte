@@ -7,9 +7,10 @@
     QuestionOptions,
     QuestionPrompt,
   } from "@svadmin/ai-elements";
-  import { questionOptionLabels } from "$lib/ai-elements-adapter";
+import { questionOptionLabels } from "$lib/ai-elements-adapter";
+import { t } from "$lib/i18n";
 
-  type Props = {
+type Props = {
     item: Record<string, unknown>;
     selected?: string;
     custom?: string;
@@ -30,13 +31,13 @@
   }}
   class="question-block"
 >
-  <QuestionPrompt>{String(item.question || item.header || "请选择")}</QuestionPrompt>
+  <QuestionPrompt>{String(item.question || item.header || t("interactions.selectPrompt"))}</QuestionPrompt>
   {#if item.description}<QuestionDescription>{String(item.description)}</QuestionDescription>{/if}
   {#if options.length}
     <QuestionOptions>
       {#each options as option (option)}<QuestionOption value={option}>{option}</QuestionOption>{/each}
     </QuestionOptions>
   {:else}
-    <QuestionInput aria-label={String(item.question || item.id)} placeholder="输入回答" />
+    <QuestionInput aria-label={String(item.question || item.id)} placeholder={t("interactions.customInputPlaceholder")} />
   {/if}
 </Question>

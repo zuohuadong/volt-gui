@@ -1,21 +1,23 @@
+import { t } from "./i18n";
+
 export function userFacingError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error ?? "");
   const normalized = raw.toLowerCase();
 
   if (normalized.includes("no api key") || normalized.includes("api_key") || normalized.includes("credentials service")) {
-    return "当前模型尚未配置 API Key，请前往“管理 > 设置与凭据”保存对应凭据。";
+    return t("errors.noApiKey");
   }
   if (normalized.includes("does not support reasoning effort") || normalized.includes("reasoning effort")) {
-    return "当前模型不支持所选推理强度，已改用默认设置，请重试。";
+    return t("errors.reasoningEffortUnsupported");
   }
   if (normalized.includes("agent preset is fixed") || normalized.includes("has already started")) {
-    return "当前会话已启动，Agent 预设已锁定，请新建会话后再应用其他预设。";
+    return t("errors.presetFixed");
   }
   if (normalized.includes("needs the browse capability") || normalized.includes("browse capability")) {
-    return "当前桌面会话未授予目录浏览权限，请在权限提示中允许浏览工作区，或使用上方“选择工作区”。";
+    return t("errors.browseCapabilityNeeded");
   }
   if (normalized.includes("not configured") && normalized.includes("api")) {
-    return "当前模型凭据未配置，请前往“管理 > 设置与凭据”完成设置。";
+    return t("errors.credentialNotConfigured");
   }
-  return raw || "操作未完成，请稍后重试。";
+  return raw || t("errors.generalError");
 }

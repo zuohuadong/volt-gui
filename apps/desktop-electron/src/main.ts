@@ -21,6 +21,18 @@ app.setName(electronProfile.executableName);
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(moduleDir, "..");
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+function desktopAppVersion(): string {
+  if (app.isPackaged) return app.getVersion();
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(desktopRoot, "package.json"), "utf8")) as { version?: unknown };
+    if (typeof packageJson.version === "string" && packageJson.version.trim()) return packageJson.version.trim();
+  } catch (error) {
+    console.warn("[Electron] Failed to read the desktop package version", error);
+  }
+  return app.getVersion();
+}
+
 const allowedDshMethods = new Set([
   "session.list", "session.search", "session.create", "session.history", "session.prompt",
   "session.cancel", "session.models", "session.selectModel", "session.rename", "session.fork",
@@ -47,7 +59,7 @@ let smbMountManager: SmbMountManager | null = null;
 let desktopBootstrap = {
   dshReady: false,
   productName: electronProfile.productName,
-  version: app.getVersion(),
+  version: desktopAppVersion(),
   workspace: os.homedir(),
   startupError: "",
 };

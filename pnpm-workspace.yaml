@@ -201,9 +201,9 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh@0.1.1-rc.2'
   - '@types/node@26.4.0'
   - electron@44.0.0
-  - '@svadmin/core@0.41.0 || 0.41.1 || 0.47.1 || 0.48.0'
-  - '@svadmin/ui@0.52.0 || 0.55.1 || 0.65.1 || 0.67.0'
+  - '@svadmin/core@0.41.0 || 0.41.1 || 0.47.1 || 0.48.0 || 0.49.0'
+  - '@svadmin/ui@0.52.0 || 0.55.1 || 0.65.1 || 0.67.0 || 0.67.1'
   - '@tanstack/query-core@5.102.6'
   - '@tanstack/svelte-query@6.1.46'
-  - '@svadmin/surface@0.7.1 || 0.8.0'
-  - '@svadmin/ai-elements@0.1.0 || 0.2.0'
+  - '@svadmin/surface@0.7.1 || 0.8.0 || 0.8.1'
+  - '@svadmin/ai-elements@0.1.0 || 0.2.0 || 0.3.0'

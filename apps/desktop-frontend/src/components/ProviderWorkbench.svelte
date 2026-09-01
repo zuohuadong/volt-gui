@@ -11,6 +11,7 @@
     providerDefaultBaseURL,
     resolveProviderSettings,
   } from "$lib/model-catalog";
+  import { t } from "$lib/i18n";
 
   let {
     client,
@@ -53,7 +54,7 @@
     try {
       await client.setCredential(credentialRef, inlineKeyDraft.trim());
       inlineKeyDraft = "";
-      inlineKeyNotice = "API Key 已安全保存，已写入单向安全存储";
+      inlineKeyNotice = t("settings.credentialSaved");
       await onCredentialSaved?.(credentialRef);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -83,7 +84,7 @@
 </script>
 
 <section class="provider-workbench">
-  {#if providers.length === 0}<DataState state="empty" title="暂无 Provider" description="官方 DSH 尚未返回可配置 Provider。" />{:else}
+  {#if providers.length === 0}<DataState state="empty" title={t("common.empty")} description={t("models.emptyProviders")} />{:else}
     <div class="provider-list">
       {#each providers as provider (provider.provider)}
         <button class:chosen={selected?.provider === provider.provider} onclick={() => { selectedProvider = provider.provider; error = ""; inlineKeyNotice = ""; discovered = []; }}>
@@ -91,7 +92,7 @@
             <strong>{provider.displayName}</strong>
             <small>{provider.provider} · {provider.settingsNs}</small>
           </span>
-          <StatusBadge status={provider.active ? "success" : "neutral"} label={provider.active ? "已启用" : "未启用"} />
+          <StatusBadge status={provider.active ? "success" : "neutral"} label={provider.active ? t("common.enabled") : t("common.disabled")} />
         </button>
       {/each}
     </div>
@@ -99,22 +100,22 @@
       <div class="provider-discovery">
         <div class="provider-discovery-heading">
           <div>
-            <strong>{selected.displayName} 配置与探测</strong>
-            <small>内置参数来自配置，凭据单向写入本地安全存储。</small>
+            <strong>{selected.displayName}</strong>
+            <small>{t("models.description")}</small>
           </div>
-          <Button variant="outline" size="sm" onclick={() => onSelectNamespace?.(selected.settingsNs)}>编辑配置</Button>
+          <Button variant="outline" size="sm" onclick={() => onSelectNamespace?.(selected.settingsNs)}>{t("common.edit")}</Button>
         </div>
 
         <div class="provider-meta-summary">
           <div class="provider-meta-item">
             <span>Base URL:</span>
-            <strong>{defaultBaseURL || "默认 / 官方内置"}</strong>
+            <strong>{defaultBaseURL || t("common.default")}</strong>
           </div>
           {#if credentialRef}
             <div class="provider-meta-item">
-              <span>凭据引用:</span>
+              <span>{t("overview.settingsTitle")}:</span>
               <strong>{credentialRef}</strong>
-              <StatusBadge status={isCredentialConfigured ? "success" : "neutral"} label={isCredentialConfigured ? "已配置" : "未配置"} />
+              <StatusBadge status={isCredentialConfigured ? "success" : "neutral"} label={isCredentialConfigured ? t("common.enabled") : t("common.disabled")} />
             </div>
           {/if}
         </div>
@@ -123,19 +124,19 @@
           <div class="provider-quick-key">
             <div class="provider-quick-key-header">
               <strong>{credentialRefTitle(credentialRef)}</strong>
-              <small>{isCredentialConfigured ? "已配置 · 可直接使用或填入新 Key 覆盖" : "未配置 · 请填入 API Key 并保存以启用"}</small>
+              <small>{isCredentialConfigured ? t("common.enabled") : t("common.disabled")}</small>
             </div>
             <div class="provider-quick-key-form">
               <Input
                 type="password"
-                aria-label="Provider API Key"
-                placeholder={isCredentialConfigured ? "已配置（输入新 Key 可覆盖更新）" : "输入 API Key 并保存"}
+                aria-label={t("models.keyPlaceholder")}
+                placeholder={t("models.keyPlaceholder")}
                 bind:value={inlineKeyDraft}
                 onkeydown={(event) => { if (event.key === "Enter") void saveInlineKey(); }}
               />
               <Button size="sm" disabled={!inlineKeyDraft.trim() || savingKey} onclick={() => void saveInlineKey()}>
                 <KeyRound size={13} />
-                {isCredentialConfigured ? "更新 Key" : "保存 Key"}
+                {t("models.saveKey")}
               </Button>
             </div>
           </div>
@@ -156,14 +157,14 @@
         {/if}
 
         {#if !discoverySupported}
-          <div class="management-feedback" style="margin-top: 10px;">该 Provider 暂不支持模型发现，请直接编辑配置中的模型目录。</div>
+          <div class="management-feedback" style="margin-top: 10px;">{t("models.providerConfiguredViaSettings")}</div>
         {:else}
           <div class="provider-discovery-form">
-            <Input aria-label="Provider Base URL" placeholder={defaultBaseURL ? `Base URL（默认 ${defaultBaseURL}）` : "Base URL（可选）"} bind:value={baseURLDraft} />
-            <Input aria-label="Provider API 类型" placeholder={defaultApi ? `API 类型（默认 ${defaultApi}）` : "API 类型（可选）"} bind:value={apiDraft} />
+            <Input aria-label="Base URL" placeholder={defaultBaseURL ? `Base URL (${defaultBaseURL})` : "Base URL"} bind:value={baseURLDraft} />
+            <Input aria-label="API" placeholder={defaultApi ? `API (${defaultApi})` : "API"} bind:value={apiDraft} />
             <Button size="sm" disabled={busy} onclick={() => void discover()}>
               {#if busy}<RefreshCw class="animate-spin" size={13} />{:else}<Search size={13} />{/if}
-              发现模型
+              {t("common.search")}
             </Button>
           </div>
           {#if discovered.length > 0}
@@ -171,7 +172,7 @@
               {#each discovered as model (model.id)}
                 <div>
                   <strong>{model.name || model.id}</strong>
-                  <small>{model.id}{#if model.contextWindow} · 上下文 {model.contextWindow.toLocaleString()}{/if}{#if model.maxTokens} · 输出 {model.maxTokens.toLocaleString()}{/if}</small>
+                  <small>{model.id}{#if model.contextWindow} · {t("models.contextWindow", { count: model.contextWindow.toLocaleString() })}{/if}{#if model.maxTokens} · {t("models.maxTokens", { count: model.maxTokens.toLocaleString() })}{/if}</small>
                 </div>
               {/each}
             </div>

@@ -30,11 +30,12 @@
     Tool,
   } from "@svadmin/ai-elements";
   import StructuredToolResult from "$components/StructuredToolResult.svelte";
-  import type { ChatMessage } from "@svadmin/core";
-  import { hasStructuredToolOutput, toolErrorTrace, toolPresentation } from "$lib/ai-elements-adapter";
-  import type { TranscriptMessage } from "$lib/transcript";
+import type { ChatMessage } from "@svadmin/core";
+import { hasStructuredToolOutput, toolErrorTrace, toolPresentation } from "$lib/ai-elements-adapter";
+import type { TranscriptMessage } from "$lib/transcript";
+import { t } from "$lib/i18n";
 
-  interface QuickAction {
+interface QuickAction {
     label: string;
     prompt: string;
   }
@@ -96,14 +97,14 @@
 <Conversation messages={aiMessages} isStreaming={sending} class="conversation-root">
   {#if messages.length > 0}
     <div class="conversation-controls">
-      <ConversationDownload messages={aiMessages} filename={`${productName}-conversation.md`} title="下载对话" />
+      <ConversationDownload messages={aiMessages} filename={`${productName}-conversation.md`} title={t("transcript.download")} />
     </div>
   {/if}
   <ConversationParts.Content class="message-scroll">
     {#if messages.length === 0}
-      <ConversationEmptyState title="准备好开始工作" description="官方 DSH 运行时已连接。描述目标，暗涌会在这里呈现计划、工具和结果。" class="empty-state">
+      <ConversationEmptyState title={t("transcript.emptyTitle")} description={t("transcript.emptyDesc")} class="empty-state">
         <span class="empty-mark"><Bot size={22} /></span>
-        <Suggestions ariaLabel="快捷建议" class="quick-actions">
+        <Suggestions ariaLabel={t("transcript.quickActions")} class="quick-actions">
           {#each quickActions as action (action.label)}
             <Suggestion suggestion={action.prompt} onclick={onPromptSelect}><ClipboardList size={14} />{action.label}</Suggestion>
           {/each}
@@ -117,9 +118,9 @@
         >
           <MessageParts.Content class={message.role === "user" ? "user-content" : message.role === "tool" ? "tool-content" : "assistant-content"}>
             <div class="message-meta">
-              <span>{message.role === "user" ? "你" : message.role === "tool" ? (message.tool?.name || "工具") : productName}</span>
+              <span>{message.role === "user" ? t("common.you") : message.role === "tool" ? (message.tool?.name || t("common.tool")) : productName}</span>
               {#if message.seq}<time>#{message.seq}</time>{/if}
-              {#if message.pending}<span class="live-label">等待处理</span>{/if}
+              {#if message.pending}<span class="live-label">{t("transcript.waiting")}</span>{/if}
             </div>
             {#if message.role === "tool" && message.tool}
               {@const presentation = toolPresentation(message.tool)}
@@ -129,20 +130,20 @@
                 name={message.tool.name}
                 input={message.tool.args || undefined}
                 output={structuredOutput ? undefined : message.tool.result || undefined}
-                errorText={message.tool.state === "error" ? message.tool.result || "工具执行失败" : undefined}
+                errorText={message.tool.state === "error" ? message.tool.result || t("transcript.toolFailed") : undefined}
                 state={toolState(message)}
                 open={message.tool.state !== "running"}
               />
               {#if message.tool.state !== "error" && (message.tool.result || message.tool.view)}
                 <StructuredToolResult tool={message.tool} />
               {/if}
-              {#if errorTrace}<StackTrace trace={errorTrace} title="错误堆栈" />{/if}
+              {#if errorTrace}<StackTrace trace={errorTrace} title={t("transcript.errorTrace")} />{/if}
             {:else}
               {#if message.reasoning}
                 <ChainOfThought defaultOpen={!!message.pending} class="message-reasoning">
-                  <ChainOfThoughtHeader>推理过程</ChainOfThoughtHeader>
+                  <ChainOfThoughtHeader>{t("transcript.reasoningProcess")}</ChainOfThoughtHeader>
                   <ChainOfThoughtContent>
-                    <Reasoning text={message.reasoning} streaming={!!message.pending} title="推理过程" />
+                    <Reasoning text={message.reasoning} streaming={!!message.pending} title={t("transcript.reasoningProcess")} />
                   </ChainOfThoughtContent>
                 </ChainOfThought>
               {/if}
@@ -152,8 +153,8 @@
                 <Response content={message.text || "…"} streaming={!!message.pending} />
               {/if}
               {#if message.sources?.length}
-                <div class="citation-line" aria-label="消息引用">
-                  <InlineCitation><InlineCitationText>参考</InlineCitationText></InlineCitation>
+                <div class="citation-line" aria-label={t("transcript.citationLabel")}>
+                  <InlineCitation><InlineCitationText>{t("transcript.citations")}</InlineCitationText></InlineCitation>
                   {#each message.sources as source, index (source.id)}
                     <InlineCitation>
                       <InlineCitationCard>
@@ -167,7 +168,7 @@
                     </InlineCitation>
                   {/each}
                 </div>
-                <Sources sources={message.sources} title="来源" />
+                <Sources sources={message.sources} title={t("transcript.sources")} />
               {/if}
               {#if message.usage}
                 {@const inputTokens = usageNumber(message.usage, "inputTokens", "input_tokens")}
@@ -181,17 +182,17 @@
                   {outputTokens}
                   {cachedTokens}
                   modelId={selectedModel}
-                  label="上下文用量"
+                  label={t("transcript.contextUsage")}
                   class="message-context"
                 />
-                <div class="usage-line">本轮 <TokensWithCost tokens={totalTokens} /> · 输入 <TokensWithCost tokens={inputTokens} /> · 输出 <TokensWithCost tokens={outputTokens} /></div>
+                <div class="usage-line">{t("transcript.turnUsage")} <TokensWithCost tokens={totalTokens} /> · {t("transcript.inputUsage")} <TokensWithCost tokens={inputTokens} /> · {t("transcript.outputUsage")} <TokensWithCost tokens={outputTokens} /></div>
               {/if}
             {/if}
           </MessageParts.Content>
         </Message>
       {/each}
       {#if sending}
-        <div class="typing" role="status" aria-atomic="true"><Loader size={14} label="DSH 正在执行任务" /><Shimmer as="span" text="DSH 正在执行任务，活动记录会持续更新" /></div>
+        <div class="typing" role="status" aria-atomic="true"><Loader size={14} label={t("transcript.executingTask")} /><Shimmer as="span" text={t("transcript.executingTask")} /></div>
       {/if}
       <div class="conversation-latest-sentinel" aria-hidden="true" {@attach observeLatest}></div>
     {/if}

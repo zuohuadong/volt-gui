@@ -1,0 +1,511 @@
+﻿/* 插件与 MCP 分离视图样式 */
+.plugin-view-header,
+.mcp-view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.plugin-stats-bar,
+.mcp-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.plugin-search-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: min(320px, 100%);
+  position: relative;
+  color: var(--muted-foreground);
+}
+
+.plugin-search-box input {
+  height: 34px;
+  padding-right: 28px;
+  border-color: #cedbd6;
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 12px;
+}
+
+.plugin-clear-btn {
+  position: absolute;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.plugin-category-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  margin-bottom: 14px;
+}
+
+.plugin-cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.plugin-cat-chip:hover {
+  border-color: #9fc4b5;
+  color: var(--foreground);
+}
+
+.plugin-cat-chip.active {
+  border-color: #1f5d4b;
+  background: #e8f2ed;
+  color: #1f5d4b;
+  font-weight: 600;
+}
+
+.cat-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.06);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.plugin-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.plugin-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.plugin-card:hover {
+  border-color: #9fc4b5;
+  box-shadow: 0 4px 14px rgba(28, 54, 50, 0.05);
+}
+
+.plugin-card--disabled {
+  opacity: 0.7;
+}
+
+.plugin-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.plugin-card-header-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.plugin-card-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: #e8f2ed;
+  color: #1f5d4b;
+}
+
+.plugin-card-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.plugin-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.plugin-card-title-row strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.plugin-category-badge {
+  display: inline-flex;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #eef4f1;
+  color: #2c7a61;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.plugin-id-tag {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  font-family: "Cascadia Code", Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.plugin-card-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.plugin-card-description {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--foreground);
+}
+
+.plugin-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+  font-size: 10px;
+}
+
+.plugin-vendor-tag {
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+
+.plugin-tag-list {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.plugin-keyword-tag {
+  display: inline-flex;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 9px;
+}
+
+.plugin-empty-search {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  padding: 40px 20px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+.plugin-empty-search p {
+  margin: 0;
+  font-size: 12px;
+}
+
+/* MCP 专属结构样式 */
+.mcp-status-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.mcp-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.mcp-status-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mcp-status-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: #e8f2ed;
+  color: #1f5d4b;
+}
+
+.mcp-status-card-header strong {
+  display: block;
+  font-size: 14px;
+}
+
+.mcp-status-card-header small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.mcp-status-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.mcp-status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.mcp-tech-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.mcp-tech-meta code {
+  font-size: 10px;
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
+.mcp-phase-badge {
+  display: inline-flex;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #e8f2ed;
+  color: #1f5d4b;
+  font-size: 10px;
+}
+
+.mcp-protocols-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.mcp-section-mini-title {
+  font-size: 12px;
+  color: var(--foreground);
+}
+
+.mcp-transports-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mcp-transport-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--background);
+}
+
+.mcp-transport-item strong {
+  display: block;
+  font-size: 11px;
+}
+
+.mcp-transport-item small {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.mcp-capabilities-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.mcp-cap-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.mcp-cap-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #e8f2ed;
+  color: #1f5d4b;
+  margin-bottom: 4px;
+}
+
+.mcp-cap-box strong {
+  font-size: 12px;
+}
+
+.mcp-cap-box p {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.mcp-entries-section {
+  margin-bottom: 14px;
+}
+
+.mcp-section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.mcp-section-title-row strong {
+  font-size: 13px;
+}
+
+.mcp-section-title-row small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.mcp-empty-state {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 28px 16px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+.mcp-empty-state strong {
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+.mcp-empty-state p {
+  margin: 0;
+  font-size: 11px;
+  max-width: 480px;
+  line-height: 1.6;
+}
+
+.mcp-config-guide-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.mcp-config-guide-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--muted);
+}
+
+.mcp-config-guide-head strong {
+  font-size: 12px;
+}
+
+.mcp-config-guide-head small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.mcp-yaml-code {
+  margin: 0;
+  padding: 12px 14px;
+  background: #f8fbfa;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--foreground);
+  overflow-x: auto;
+}
+
+@media (max-width: 760px) {
+  .plugin-card-grid,
+  .mcp-status-overview-grid,
+  .mcp-capabilities-grid {
+    grid-template-columns: 1fr;
+  }
+}
+

@@ -14,14 +14,15 @@
   } from "@svadmin/ai-elements";
   import type { PromptInputSubmitDetail } from "@svadmin/ai-elements";
   import type { PromptContentPart, DshClient, DshSkill, ModelGroup, PermissionSelect } from "$lib/dsh-client";
-  import { History } from "@lucide/svelte";
+  import { History, Send, Square } from "@lucide/svelte";
   import { Button } from "$components/ui/button";
   import ComposerAttachments from "$components/ComposerAttachments.svelte";
   import ModelPicker from "$components/ModelPicker.svelte";
   import PermissionSelector from "$components/PermissionSelector.svelte";
-  import ReferencePicker from "$components/ReferencePicker.svelte";
+import ReferencePicker from "$components/ReferencePicker.svelte";
+import { t } from "$lib/i18n";
 
-  type ImagePart = Extract<PromptContentPart, { type: "image" }>;
+type ImagePart = Extract<PromptContentPart, { type: "image" }>;
 
   interface Props {
     readonly client?: DshClient;
@@ -70,7 +71,7 @@
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result).split(",", 2)[1] || "");
-      reader.onerror = () => reject(reader.error || new Error("图片读取失败"));
+      reader.onerror = () => reject(reader.error || new Error(t("composer.imageReadError")));
       reader.readAsDataURL(file);
     });
   }
@@ -104,16 +105,13 @@
   disabled={disabled || !sessionId}
   loading={loading}
   status={loading ? "streaming" : "ready"}
-  ariaLabel="任务输入"
+  ariaLabel={t("composer.inputAriaLabel")}
   onsubmit={handleSubmit}
   onstop={onStop}
   class="prompt-input-composer"
 >
   <PromptInputHeader class="prompt-input-composer__header">
     <ComposerAttachments />
-    {#if sessionId}
-      <ModelPicker groups={modelGroups} selected={selectedModel} disabled={modelBusy} onSelect={onModelSelect} />
-    {/if}
   </PromptInputHeader>
   <PromptInputBody class="prompt-input-composer__body">
     <ReferencePicker
@@ -122,25 +120,41 @@
       {sessionId}
       {rows}
       {disabled}
-      placeholder={sessionId ? "描述任务，或输入 @ 查找官方文件/会话引用…" : "先新建一个会话…"}
+      placeholder={sessionId ? t("composer.placeholder") : t("composer.newSessionFirst")}
     />
   </PromptInputBody>
   <PromptInputFooter class="prompt-input-composer__footer">
     <PromptInputTools class="prompt-input-composer__tools">
-      <PromptInputActionMenu bind:open={actionMenuOpen} aria-label="输入工具">
-        <PromptInputActionMenuTrigger aria-label="更多输入工具" title="更多输入工具" />
+      <PromptInputActionMenu bind:open={actionMenuOpen} aria-label={t("composer.moreTools")}>
+        <PromptInputActionMenuTrigger aria-label={t("composer.moreTools")} title={t("composer.moreToolsTitle")} />
         <PromptInputActionMenuContent>
-          <PromptInputActionAddAttachments label="添加图片" accept="image/png,image/jpeg,image/webp,image/gif" multiple disabled={disabled || !sessionId} onclick={() => actionMenuOpen = false} />
-          <PromptInputActionAddScreenshot label="截取屏幕" disabled={disabled || !sessionId} onselect={() => actionMenuOpen = false} />
+          <PromptInputActionAddAttachments label={t("composer.addAttachments")} accept="image/png,image/jpeg,image/webp,image/gif" multiple disabled={disabled || !sessionId} onclick={() => actionMenuOpen = false} />
+          <PromptInputActionAddScreenshot label={t("composer.addScreenshot")} disabled={disabled || !sessionId} onselect={() => actionMenuOpen = false} />
         </PromptInputActionMenuContent>
       </PromptInputActionMenu>
+      {#if sessionId}
+        <ModelPicker groups={modelGroups} selected={selectedModel} disabled={modelBusy} onSelect={onModelSelect} />
+      {/if}
       {#if sessionId && client}
         <PermissionSelector client={client} sessionId={sessionId} permissions={contextPermissions} onNotice={onPermissionNotice} />
       {/if}
       {#if !activityOpen}
-        <Button variant="ghost" size="sm" onclick={onActivityOpen}><History size={14} />活动</Button>
+        <Button variant="ghost" size="sm" class="composer-activity-btn" onclick={onActivityOpen} title={t("composer.expandActivity")}>
+          <History size={14} />
+          <span>{t("composer.activity")}</span>
+        </Button>
       {/if}
     </PromptInputTools>
-    <PromptInputSubmit status={loading ? "streaming" : "ready"} onstop={onStop} disabled={disabled || !sessionId} />
+    <div class="prompt-input-composer__submit-wrap">
+      <PromptInputSubmit status={loading ? "streaming" : "ready"} onstop={onStop} disabled={disabled || !sessionId} class="composer-submit-btn">
+        {#if loading}
+          <Square size={13} fill="currentColor" aria-hidden="true" />
+          <span>{t("composer.stop")}</span>
+        {:else}
+          <Send size={14} aria-hidden="true" />
+          <span>{t("composer.send")}</span>
+        {/if}
+      </PromptInputSubmit>
+    </div>
   </PromptInputFooter>
 </PromptInput>

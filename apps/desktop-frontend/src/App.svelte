@@ -6,7 +6,7 @@
     HardDrive, History, KeyRound, MessageSquare, MessageSquarePlus, Network,
     Pause, Pencil, Play, PanelLeftClose, PanelLeftOpen, Save, Search, Send,
     Settings2, ShieldAlert, SlidersHorizontal, Square, Target, Trash2, UserRoundCog,
-    X, RefreshCw, PlugZap, GitBranch,
+    X, RefreshCw, PlugZap, GitBranch, Blocks, Cable, Boxes, Globe, Languages,
   } from "@lucide/svelte";
   import { Button } from "$components/ui/button";
   import { Textarea } from "$components/ui/textarea";
@@ -18,6 +18,10 @@
   import SmbMounts from "$components/SmbMounts.svelte";
   import ProviderWorkbench from "$components/ProviderWorkbench.svelte";
   import WorkspaceBrowser from "$components/WorkspaceBrowser.svelte";
+  import PluginInventoryView from "$components/PluginInventoryView.svelte";
+  import McpInventoryView from "$components/McpInventoryView.svelte";
+  import { separatePluginsAndMcp } from "$lib/plugin-i18n";
+  import { t, getLocale, setLocale, toggleLocale, AVAILABLE_LOCALES, i18n } from "$lib/i18n";
   import { Input } from "$components/ui/input";
   import { Separator } from "$components/ui/separator";
   import { DataState, SettingsGroup, StatusBadge } from "@svadmin/ui";
@@ -40,7 +44,7 @@
     resolveProviderSettings,
     supportedReasoningEffort,
   } from "$lib/model-catalog";
-  import { agentPresetLocked, clearsSessionError, sessionHealth, sessionHealthLabel } from "$lib/session-health";
+  import { agentPresetLocked, clearsSessionError, sessionHealth, sessionHealthLabel, visibleSessions } from "$lib/session-health";
   import { userFacingError } from "$lib/user-error";
   import { buildQuestionAnswers, questionsAnswered } from "$lib/ai-elements-adapter";
   import {
@@ -60,10 +64,10 @@
   } from "$lib/surface-agent";
   import type { SurfaceSpec } from "@svadmin/surface";
   type View = "conversation" | "knowledge" | "settings";
-  type ManagementTab = "overview" | "sessions" | "goals" | "subagents" | "agents" | "models" | "workspaces" | "mounts" | "plugins" | "knowledge" | "settings" | "runtime";
+  type ManagementTab = "overview" | "sessions" | "goals" | "subagents" | "agents" | "models" | "workspaces" | "mounts" | "plugins" | "mcp" | "knowledge" | "settings" | "runtime";
 
   let client = $state<DshClient>();
-  let productName = $state("西谷智灯暗涌平台");
+  let productName = $state(t("app.name"));
   let appVersion = $state("0.31.1");
   let workspacePath = $state("");
   let workspaces = $state<Workspace[]>([]);
@@ -122,6 +126,10 @@
   let catalogFailures = $state<Array<{ id: string; name: string; message: string }>>([]);
   let hostInfo = $state<{ version: string; cwd: string; provider?: string; model?: string; attachedSessions: number; home: string; canOpenPath: boolean }>();
   let pluginInventory = $state<PluginInventoryEntry[]>([]);
+  const currentLocale = $derived(i18n.locale);
+  const pluginPartition = $derived(separatePluginsAndMcp(pluginInventory, currentLocale));
+  const purePlugins = $derived(pluginPartition.plugins);
+  const mcpInventoryEntries = $derived(pluginPartition.mcpEntries);
   let credentialRefs = $state<string[]>([]);
   let credentials = $state<Record<string, CredentialView>>({});
   let credentialRefDraft = $state("");
@@ -313,7 +321,7 @@
     generatedSurface = surfaceDraft.spec;
     persistGeneratedSurface(generatedSurface);
     surfaceDraft = undefined;
-    surfaceNotice = "操作界面已渲染；数据由官方 DSH 会话 API 提供。";
+    surfaceNotice = "操作界面已渲染；数据已同步。";
   }
 
   function removeGeneratedSurface(): void {
@@ -340,7 +348,7 @@
       appVersion = info.version;
       workspacePath = info.workspace;
       unsubscribeRuntimeError = shell.onRuntimeError((message) => { runtimeError = message; sending = false; });
-      if (info.startupError || !info.dshReady) { runtimeError = info.startupError || "DSH runtime 未提供连接地址"; return; }
+      if (info.startupError || !info.dshReady) { runtimeError = info.startupError || "运行时未提供连接地址"; return; }
       client = new DshClient(shell);
       client.subscribe(handleFrame, (error) => { runtimeError = userFacingError(error); });
       await refresh();
@@ -354,7 +362,7 @@
     const [workspaceResult, sessionResult] = await Promise.all([client.listWorkspaces(), client.listSessions()]);
     workspaces = workspaceResult.items;
     archivedSessionIds = workspaceResult.archivedSessionIds;
-    sessions = sessionResult.items.filter((item) => !item.blank && !archivedSessionIds.includes(item.sessionId));
+    sessions = visibleSessions(sessionResult.items, archivedSessionIds, activeSessionId);
     if (activeSessionId && !sessions.some((item) => item.sessionId === activeSessionId)) activeSessionId = sessions[0]?.sessionId || "";
     if (!activeSessionId && sessions[0]) await selectSession(sessions[0].sessionId);
   }
@@ -400,6 +408,7 @@
   async function createSession(cwd = workspacePath): Promise<void> {
     if (!client) return;
     const created = await client.createSession(cwd);
+    activeSessionId = created.sessionId;
     await refresh();
     await selectSession(created.sessionId);
   }
@@ -548,7 +557,7 @@
     if (payload.type === "session/projection") { void refresh(); return; }
     if (payload.type === "host/session-added" || payload.type === "host/session-status" || payload.type === "host/session-removed" || payload.type === "host/workspace-changed" || payload.type === "host/workspace-removed") { void refresh(); return; }
     if (payload.type === "host/agent-error") {
-      const message = userFacingError(payload.message || "DSH agent 运行失败");
+      const message = userFacingError(payload.message || "Agent 运行失败");
       const sessionId = payload.sessionId || activeSessionId;
       if (sessionId) sessionErrors = { ...sessionErrors, [sessionId]: message };
       if (sessionId !== activeSessionId) return;
@@ -655,14 +664,18 @@
     await createSession(selected);
   }
 
-  async function performManagementAction(key: string, action: () => Promise<void>): Promise<void> {
-    if (managementBusy) return;
+  async function performManagementAction(key: string, action: () => Promise<void>): Promise<boolean> {
+    if (managementBusy) return false;
     managementBusy = key;
     managementError = "";
     managementNotice = "";
-    try { await action(); }
-    catch (error) { managementError = userFacingError(error); }
-    finally { managementBusy = ""; }
+    try {
+      await action();
+      return true;
+    } catch (error) {
+      managementError = userFacingError(error);
+      return false;
+    } finally { managementBusy = ""; }
   }
 
   function beginSessionRename(session: SessionSummary): void {
@@ -950,7 +963,7 @@
     if (!client) return;
     await performManagementAction("models-discover:xg-gomodel", async () => {
       const providerSettings = await xgProviderSettings();
-      if (!providerSettings) throw new Error("官方 DSH 未返回 xg-gomodel 配置");
+      if (!providerSettings) throw new Error("未返回 xg-gomodel 配置");
       const { namespace, config } = providerSettings;
       await requireConfiguredCredential(config);
       const baseURL = typeof config.baseURL === "string" ? config.baseURL : "";
@@ -974,14 +987,29 @@
     const ref = credentialRefDraft.trim();
     const value = credentialValueDraft;
     if (!client || !ref || !value || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(ref)) return;
-    await performManagementAction("credential-set:" + ref, async () => {
+    const saved = await performManagementAction("credential-set:" + ref, async () => {
       await client!.setCredential(ref, value);
       credentialValueDraft = "";
       credentials = { ...credentials, ...(await client!.describeCredentials([ref])).credentials };
       if (!credentialRefs.includes(ref)) credentialRefs = [...credentialRefs, ref].sort();
       managementNotice = "凭据已保存，实际值不会回显";
     });
-    if (ref === "XG_GOMODEL_API_KEY" && credentials[ref]?.configured) await refreshXgGatewayModels();
+    if (!saved || !credentials[ref]?.configured) return;
+    clearCredentialRequirementError();
+    if (ref === "XG_GOMODEL_API_KEY") {
+      await refreshXgGatewayModels();
+      if (managementError) managementNotice = "凭据已保存，但模型目录刷新失败；可稍后重试";
+      else managementNotice = "凭据已保存，实际值不会回显";
+    }
+  }
+
+  function clearCredentialRequirementError(): void {
+    if (!runtimeError.includes("API Key") && !runtimeError.startsWith("当前模型需要 ")) return;
+    const previousError = runtimeError;
+    runtimeError = "";
+    if (!activeSessionId || sessionErrors[activeSessionId] !== previousError) return;
+    const { [activeSessionId]: _cleared, ...remaining } = sessionErrors;
+    sessionErrors = remaining;
   }
 
   async function unsetCredential(ref: string): Promise<void> {
@@ -1006,27 +1034,19 @@
     await client.respond({ type: "client-response", rpcId: pendingQuestion.rpcId, result: { ok: true, value: { sessionId: pendingQuestion.sessionId, answer: { answers } } } });
   }
 
-  function formatTime(value: number): string { return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(value); }
+  function formatTime(value: number): string { return new Intl.DateTimeFormat(i18n.locale, { hour: "2-digit", minute: "2-digit" }).format(value); }
   function managementTitle(tab: ManagementTab): string {
-    const titles: Record<ManagementTab, string> = {
-      overview: "系统总览",
-      sessions: "会话管理",
-      goals: "目标控制",
-      subagents: "子 Agent",
-      agents: "Agent 预设",
-      models: "模型与推理",
-      workspaces: "工作区与资源",
-      mounts: "SMB 共享",
-      plugins: "插件与 MCP",
-      knowledge: "知识库与资料",
-      settings: "设置与凭据",
-      runtime: "运行诊断",
-    };
-    return titles[tab];
+    return t(`nav.${tab}`);
   }
   function agentPresetLabel(preset: AgentPreset): string { return preset.name?.trim() || preset.id; }
   function goalPhaseLabel(phase: GoalProjection["goal"]["phase"]): string {
-    return { active: "进行中", paused: "已暂停", blocked: "已阻塞", complete: "已完成" }[phase];
+    switch (phase) {
+      case "active": return t("goals.phaseExecuting");
+      case "paused": return t("goals.phasePaused");
+      case "blocked": return t("goals.phaseBlocked");
+      case "complete": return t("goals.phaseCompleted");
+      default: return phase;
+    }
   }
   function subagentLabel(entry: SubagentEntry): string {
     if (entry.kind === "diagnostic") return entry.id;
@@ -1034,11 +1054,11 @@
   }
   function subagentStatusLabel(entry: SubagentEntry): string {
     if (entry.kind === "diagnostic") return "诊断：" + entry.reason;
-    return (entry.mode === "continuable" ? "可继续" : "一次性") + " · " + (entry.activity === "running" ? "运行中" : "未运行");
+    return (entry.mode === "continuable" ? "可继续" : "一次性") + " · " + (entry.activity === "running" ? t("common.running") : t("common.pending"));
   }
   function credentialSummary(ref: string): string {
     const credential = credentials[ref];
-    return credential?.configured ? "已配置 · " + (credential.source || "可写层") : "未配置";
+    return credential?.configured ? `${t("common.enabled")} · ` + (credential.source || "可写层") : t("common.disabled");
   }
   function openManagement(tab: ManagementTab): void {
     managementTab = tab;
@@ -1061,39 +1081,45 @@
 <svelte:head><title>{productName}</title></svelte:head>
 
 {#if loading}
-  <main class="loading-screen"><Loader size={24} label="正在连接官方 DSH" /><span>正在连接官方 DSH…</span></main>
+  <main class="loading-screen"><Loader size={24} label={t("app.connecting")} /><span>{t("app.connecting")}</span></main>
 {:else}
   <main class="app-shell" class:compact={customization.density === "compact"}>
     <header class="topbar">
-      <div class="brand"><span class="brand-mark"><Bot size={16} /></span><strong>{productName}</strong><span class="version-label">v{appVersion}</span><span class:offline={!!runtimeError} class="status-dot"></span><span class="status-copy">{runtimeError ? "运行异常" : "官方 DSH"}</span></div>
-      <div class="topbar-center">{#if view === "settings"}<span class="topbar-workspace"><Settings2 size={13} />管理工作台</span><span class="topbar-separator">/</span><span>{managementTitle(managementTab)}</span>{:else}<span class="topbar-workspace"><FolderOpen size={13} />{workspaceName}</span>{#if activeSession}<span class="topbar-separator">/</span><span>{sessionTitle(activeSession)}</span>{/if}{/if}</div>
+      <div class="brand"><span class="brand-mark"><Bot size={16} /></span><strong>{productName}</strong><span class="version-label">v{appVersion}</span><span class:offline={!!runtimeError} class="status-dot"></span><span class="status-copy">{runtimeError ? t("overview.runtimeError") : t("overview.runtimeNormal")}</span></div>
+      <div class="topbar-center">{#if view === "settings"}<span class="topbar-workspace"><Settings2 size={13} />{t("app.workbench")}</span><span class="topbar-separator">/</span><span>{managementTitle(managementTab)}</span>{:else}<span class="topbar-workspace"><FolderOpen size={13} />{workspaceName}</span>{#if activeSession}<span class="topbar-separator">/</span><span>{sessionTitle(activeSession)}</span>{/if}{/if}</div>
+      <div class="topbar-actions" style="margin-left: auto; display: flex; align-items: center; gap: 6px;">
+        <Button variant="ghost" size="sm" onclick={() => toggleLocale()} title={t("app.switchLanguage")} style="font-size: 11px; gap: 4px; height: 26px; padding: 0 8px;">
+          <Languages size={13} />
+          <span>{i18n.locale === "zh-CN" ? "EN" : "中文"}</span>
+        </Button>
+      </div>
     </header>
     <div class:management-active={view === "settings"} class="workspace-layout">
       <aside class:collapsed={sidebarCollapsed} class="sidebar">
-        <div class="sidebar-toolbar"><Button variant="ghost" size="icon-sm" aria-label="折叠侧栏" onclick={() => setSidebarCollapsed(!sidebarCollapsed)}>{#if sidebarCollapsed}<PanelLeftOpen size={16} />{:else}<PanelLeftClose size={16} />{/if}</Button>{#if !sidebarCollapsed}<Button variant="ghost" size="icon-sm" aria-label="新建会话" onclick={() => void createSession()}><MessageSquarePlus size={16} /></Button>{/if}</div>
+        <div class="sidebar-toolbar"><Button variant="ghost" size="icon-sm" aria-label={sidebarCollapsed ? t("app.expandSidebar") : t("app.collapseSidebar")} onclick={() => setSidebarCollapsed(!sidebarCollapsed)}>{#if sidebarCollapsed}<PanelLeftOpen size={16} />{:else}<PanelLeftClose size={16} />{/if}</Button>{#if !sidebarCollapsed}<Button variant="ghost" size="icon-sm" aria-label={t("session.newSession")} onclick={() => void createSession()}><MessageSquarePlus size={16} /></Button>{/if}</div>
         {#if !sidebarCollapsed}
-          <div class="workspace-picker"><div class="section-label">工作区</div><button class="workspace-row" onclick={() => void pickWorkspace()}><FolderOpen size={15} /><span title={workspacePath}>{workspaceName}</span><ChevronRight size={14} /></button></div>
-          <div class="sidebar-search"><Search size={14} /><input aria-label="搜索会话" placeholder="搜索会话" bind:value={sessionQuery} /></div>
+          <div class="workspace-picker"><div class="section-label">{t("nav.workspaces")}</div><button class="workspace-row" onclick={() => void pickWorkspace()}><FolderOpen size={15} /><span title={workspacePath}>{workspaceName}</span><ChevronRight size={14} /></button></div>
+          <div class="sidebar-search"><Search size={14} /><input aria-label={t("session.searchSessions")} placeholder={t("session.searchSessions")} bind:value={sessionQuery} /></div>
           <Separator />
-          <div class="session-list"><div class="section-label section-row"><span>会话</span><span class="count-badge">{filteredSessions.length}</span></div>{#if filteredSessions.length === 0}<div class="sidebar-empty"><MessageSquarePlus size={16} /><span>还没有会话</span><small>点击上方按钮新建会话</small></div>{:else}{#each filteredSessions as session (session.sessionId)}{@const health = sessionHealth(session, !!sessionErrors[session.sessionId])}<button class:active={session.sessionId === activeSessionId} class="session-row" onclick={() => void selectSession(session.sessionId)}><span class="session-state" class:running={health === "running"} class:error={health === "error"}></span><span class="session-copy"><strong>{sessionTitle(session)}</strong><small>{session.cwd || workspaceName} · {sessionHealthLabel(health)}</small></span><time>{formatTime(session.updatedAt)}</time></button>{/each}{/if}</div>
-          <div class="sidebar-footer"><Button variant="ghost" class={`footer-button${view === "knowledge" ? " active" : ""}`} onclick={() => openKnowledge()}><BookOpen size={15} />知识库</Button><Button variant="ghost" class="footer-button" onclick={() => openManagement("overview")}><Settings2 size={15} />管理</Button><Button variant="ghost" class="footer-button" onclick={() => setActivityOpen(!activityOpen)}><History size={15} />活动记录<span class="footer-spacer"></span><ChevronDown class={!activityOpen ? "rotated" : ""} size={14} /></Button></div>
+          <div class="session-list"><div class="section-label section-row"><span>{t("nav.sessions")}</span><span class="count-badge">{filteredSessions.length}</span></div>{#if filteredSessions.length === 0}<div class="sidebar-empty"><MessageSquarePlus size={16} /><span>{t("session.emptyActive")}</span><small>{t("session.emptyActiveDesc")}</small></div>{:else}{#each filteredSessions as session (session.sessionId)}{@const health = sessionHealth(session, !!sessionErrors[session.sessionId])}<button class:active={session.sessionId === activeSessionId} class="session-row" onclick={() => void selectSession(session.sessionId)}><span class="session-state" class:running={health === "running"} class:error={health === "error"}></span><span class="session-copy"><strong>{sessionTitle(session)}</strong><small>{session.cwd || workspaceName} · {sessionHealthLabel(health)}</small></span><time>{formatTime(session.updatedAt)}</time></button>{/each}{/if}</div>
+          <div class="sidebar-footer"><Button variant="ghost" class={`footer-button${view === "knowledge" ? " active" : ""}`} onclick={() => openKnowledge()}><BookOpen size={15} />{t("nav.knowledge")}</Button><Button variant="ghost" class="footer-button" onclick={() => openManagement("overview")}><Settings2 size={15} />{t("nav.overview")}</Button><Button variant="ghost" class="footer-button" onclick={() => setActivityOpen(!activityOpen)}><History size={15} />{t("activity.title")}<span class="footer-spacer"></span><ChevronDown class={!activityOpen ? "rotated" : ""} size={14} /></Button></div>
         {/if}
       </aside>
       <section class="content-area">
         {#if view === "settings"}
           <div class="management-page">
-            <header class="management-header"><div><div class="eyebrow">暗涌管理</div><h1>管理工作台</h1><p>按领域管理模型、工作区、知识来源和运行状态。</p></div><Button variant="outline" size="sm" onclick={() => view = "conversation"}><ChevronRight class="rotate-180" size={14} />返回会话</Button></header>
+            <header class="management-header"><div><div class="eyebrow">{t("app.eyebrow")}</div><h1>{t("app.workbench")}</h1><p>{t("app.workbenchDesc")}</p></div><Button variant="outline" size="sm" onclick={() => view = "conversation"}><ChevronRight class="rotate-180" size={14} />{t("app.backToConversation")}</Button></header>
             <div class="management-body">
-              <nav class="management-nav" aria-label="管理分区"><button class:active={managementTab === "overview"} onclick={() => managementTab = "overview"}><ClipboardList size={15} /><span>总览</span></button><button class:active={managementTab === "sessions"} onclick={() => managementTab = "sessions"}><MessageSquare size={15} /><span>会话</span></button><button class:active={managementTab === "goals"} onclick={() => managementTab = "goals"}><Target size={15} /><span>目标</span></button><button class:active={managementTab === "subagents"} onclick={() => managementTab = "subagents"}><Network size={15} /><span>子 Agent</span></button><button class:active={managementTab === "agents"} onclick={() => managementTab = "agents"}><UserRoundCog size={15} /><span>Agent 预设</span></button><button class:active={managementTab === "models"} onclick={() => managementTab = "models"}><Bot size={15} /><span>模型与推理</span></button><button class:active={managementTab === "workspaces"} onclick={() => managementTab = "workspaces"}><FolderOpen size={15} /><span>工作区</span></button><button class:active={managementTab === "mounts"} onclick={() => managementTab = "mounts"}><HardDrive size={15} /><span>SMB 共享</span></button><button class:active={managementTab === "plugins"} onclick={() => managementTab = "plugins"}><PlugZap size={15} /><span>插件与 MCP</span></button><button class:active={managementTab === "knowledge"} onclick={() => managementTab = "knowledge"}><BookOpen size={15} /><span>知识库</span></button><button class:active={managementTab === "settings"} onclick={() => managementTab = "settings"}><Settings2 size={15} /><span>设置与凭据</span></button><button class:active={managementTab === "runtime"} onclick={() => managementTab = "runtime"}><ShieldAlert size={15} /><span>运行诊断</span></button></nav>
+              <nav class="management-nav" aria-label="管理分区"><button class:active={managementTab === "overview"} onclick={() => managementTab = "overview"}><ClipboardList size={15} /><span>{t("nav.overview")}</span></button><button class:active={managementTab === "sessions"} onclick={() => managementTab = "sessions"}><MessageSquare size={15} /><span>{t("nav.sessions")}</span></button><button class:active={managementTab === "goals"} onclick={() => managementTab = "goals"}><Target size={15} /><span>{t("nav.goals")}</span></button><button class:active={managementTab === "subagents"} onclick={() => managementTab = "subagents"}><Network size={15} /><span>{t("nav.subagents")}</span></button><button class:active={managementTab === "agents"} onclick={() => managementTab = "agents"}><UserRoundCog size={15} /><span>{t("nav.agents")}</span></button><button class:active={managementTab === "models"} onclick={() => managementTab = "models"}><Bot size={15} /><span>{t("nav.models")}</span></button><button class:active={managementTab === "workspaces"} onclick={() => managementTab = "workspaces"}><FolderOpen size={15} /><span>{t("nav.workspaces")}</span></button><button class:active={managementTab === "mounts"} onclick={() => managementTab = "mounts"}><HardDrive size={15} /><span>{t("nav.mounts")}</span></button><button class:active={managementTab === "plugins"} onclick={() => managementTab = "plugins"}><Blocks size={15} /><span>{t("nav.plugins")}</span></button><button class:active={managementTab === "mcp"} onclick={() => managementTab = "mcp"}><Cable size={15} /><span>{t("nav.mcp")}</span></button><button class:active={managementTab === "knowledge"} onclick={() => managementTab = "knowledge"}><BookOpen size={15} /><span>{t("nav.knowledge")}</span></button><button class:active={managementTab === "settings"} onclick={() => managementTab = "settings"}><Settings2 size={15} /><span>{t("nav.settings")}</span></button><button class:active={managementTab === "runtime"} onclick={() => managementTab = "runtime"}><ShieldAlert size={15} /><span>{t("nav.runtime")}</span></button></nav>
               <section class="management-content">
-                <div class="management-toolbar"><div class="section-label">{managementTitle(managementTab)}</div><div class="settings-filter"><Search size={14} /><Input aria-label="筛选管理内容" placeholder="筛选管理内容" bind:value={settingsQuery} /></div></div>
+                <div class="management-toolbar"><div class="section-label">{managementTitle(managementTab)}</div><div class="settings-filter"><Search size={14} /><Input aria-label={t("overview.filterManagement")} placeholder={t("overview.filterManagement")} bind:value={settingsQuery} /></div></div>
                 {#if managementError}<div class="management-feedback error"><CircleAlert size={14} /><span>{managementError}</span><button aria-label="关闭管理错误" onclick={() => managementError = ""}><X size={13} /></button></div>{/if}
                 {#if managementNotice}<div class="management-feedback success"><CircleCheck size={14} /><span>{managementNotice}</span><button aria-label="关闭管理提示" onclick={() => managementNotice = ""}><X size={13} /></button></div>{/if}
                 {#if managementTab === "overview"}
-                  <div class="management-summary-grid"><button onclick={() => managementTab = "sessions"}><span class="summary-icon"><MessageSquare size={16} /></span><strong>会话管理</strong><small>{sessions.length} 个活跃会话，{archivedSessionIds.length} 个已归档</small></button><button onclick={() => managementTab = "goals"}><span class="summary-icon"><Target size={16} /></span><strong>目标</strong><small>{currentGoal ? goalPhaseLabel(currentGoal.goal.phase) : "当前会话暂无目标"}</small></button><button onclick={() => managementTab = "subagents"}><span class="summary-icon"><Network size={16} /></span><strong>子 Agent</strong><small>{subagents.filter((item) => item.kind === "child").length} 个直接子 Agent</small></button><button onclick={() => managementTab = "agents"}><span class="summary-icon"><UserRoundCog size={16} /></span><strong>Agent 预设</strong><small>{agentPresets.length} 个可用预设</small></button><button onclick={() => managementTab = "models"}><span class="summary-icon"><Bot size={16} /></span><strong>模型与推理</strong><small>{selectedModel || "尚未选择模型"}</small></button><button onclick={() => managementTab = "workspaces"}><span class="summary-icon"><FolderOpen size={16} /></span><strong>工作区</strong><small>{workspaces.length} 个已注册工作区</small></button><button onclick={() => managementTab = "knowledge"}><span class="summary-icon"><BookOpen size={16} /></span><strong>知识库</strong><small>{knowledgeStatusLabel()}</small></button><button onclick={() => managementTab = "settings"}><span class="summary-icon"><Settings2 size={16} /></span><strong>设置与凭据</strong><small>{settingsNamespaces.length} 个命名空间，{credentialRefs.length} 个凭据引用</small></button><button onclick={() => managementTab = "runtime"}><span class="summary-icon"><ShieldAlert size={16} /></span><strong>运行状态</strong><small>{runtimeError ? "连接异常" : "官方 DSH 正常"}</small></button></div>
-                  <SettingsGroup title="当前会话" description="会话状态、模型和工作区来自官方 DSH 实时状态。"><div class="diagnostic-row"><span>会话</span><strong>{activeSession ? sessionTitle(activeSession) : "未选择"}</strong></div><div class="diagnostic-row"><span>工作区</span><strong>{workspacePath || "未选择"}</strong></div><div class="diagnostic-row"><span>模型</span><strong>{selectedModel || "默认模型"}</strong></div></SettingsGroup>
+                  <div class="management-summary-grid"><button onclick={() => managementTab = "sessions"}><span class="summary-icon"><MessageSquare size={16} /></span><strong>{t("overview.sessionsTitle")}</strong><small>{t("overview.sessionsDesc", { active: sessions.length, archived: archivedSessionIds.length })}</small></button><button onclick={() => managementTab = "goals"}><span class="summary-icon"><Target size={16} /></span><strong>{t("overview.goalsTitle")}</strong><small>{currentGoal ? goalPhaseLabel(currentGoal.goal.phase) : t("overview.noGoal")}</small></button><button onclick={() => managementTab = "subagents"}><span class="summary-icon"><Network size={16} /></span><strong>{t("overview.subagentsTitle")}</strong><small>{t("overview.subagentsDesc", { count: subagents.filter((item) => item.kind === "child").length })}</small></button><button onclick={() => managementTab = "agents"}><span class="summary-icon"><UserRoundCog size={16} /></span><strong>{t("overview.agentsTitle")}</strong><small>{t("overview.agentsDesc", { count: agentPresets.length })}</small></button><button onclick={() => managementTab = "models"}><span class="summary-icon"><Bot size={16} /></span><strong>{t("overview.modelsTitle")}</strong><small>{selectedModel || t("overview.noModelSelected")}</small></button><button onclick={() => managementTab = "workspaces"}><span class="summary-icon"><FolderOpen size={16} /></span><strong>{t("overview.workspacesTitle")}</strong><small>{t("overview.workspacesDesc", { count: workspaces.length })}</small></button><button onclick={() => managementTab = "plugins"}><span class="summary-icon"><Blocks size={16} /></span><strong>{t("overview.pluginsTitle")}</strong><small>{t("overview.pluginsDesc", { total: purePlugins.length, enabled: purePlugins.filter((item) => item.enabled).length })}</small></button><button onclick={() => managementTab = "mcp"}><span class="summary-icon"><Cable size={16} /></span><strong>{t("overview.mcpTitle")}</strong><small>{mcpInventoryEntries.length > 0 ? t("overview.mcpDesc", { count: mcpInventoryEntries.length }) : t("overview.mcpReady")}</small></button><button onclick={() => managementTab = "knowledge"}><span class="summary-icon"><BookOpen size={16} /></span><strong>{t("overview.knowledgeTitle")}</strong><small>{knowledgeStatusLabel()}</small></button><button onclick={() => managementTab = "settings"}><span class="summary-icon"><Settings2 size={16} /></span><strong>{t("overview.settingsTitle")}</strong><small>{t("overview.settingsDesc", { namespaces: settingsNamespaces.length, credentials: credentialRefs.length })}</small></button><button onclick={() => managementTab = "runtime"}><span class="summary-icon"><ShieldAlert size={16} /></span><strong>{t("overview.runtimeTitle")}</strong><small>{runtimeError ? t("overview.runtimeError") : t("overview.runtimeNormal")}</small></button></div>
+                  <SettingsGroup title={t("overview.currentSession")} description={t("overview.currentSessionDesc")}><div class="diagnostic-row"><span>{t("overview.sessionLabel")}</span><strong>{activeSession ? sessionTitle(activeSession) : t("overview.unselected")}</strong></div><div class="diagnostic-row"><span>{t("overview.workspaceLabel")}</span><strong>{workspacePath || t("overview.unselected")}</strong></div><div class="diagnostic-row"><span>{t("overview.modelLabel")}</span><strong>{selectedModel || t("overview.defaultModel")}</strong></div></SettingsGroup>
                 {:else if managementTab === "sessions"}
-                  <SettingsGroup title="会话管理" description="重命名、复制和归档都直接写入官方 DSH。">
+                  <SettingsGroup title={t("session.sessionManagement")} description={t("session.sessionManagementDesc")}>
                     <div class="management-actions">
                       <Button size="sm" onclick={() => void createSession()}><MessageSquarePlus size={14} />新建会话</Button>
                       <Button variant="outline" size="sm" onclick={() => void refresh()}><History size={14} />刷新</Button>
@@ -1136,7 +1162,7 @@
                       </div>
                     {/if}
                   </SettingsGroup>
-                  <SettingsGroup title="检查点与分支" description="官方 checkpoint policy 自动保证持久化；回到历史位置使用 DSH 的非破坏性 fork-at-seq。">
+                  <SettingsGroup title="检查点与分支" description="自动保证会话持久化；支持回到历史位置进行安全分支。">
                     <div class="management-actions">
                       <StatusBadge status={pluginInventory.some((item) => item.moduleName.includes("session-checkpoint-policy") && item.fiberPhase === "active") ? "success" : "neutral"} label={pluginInventory.some((item) => item.moduleName.includes("session-checkpoint-policy") && item.fiberPhase === "active") ? "自动检查点已启用" : "未检测到活动检查点策略"} />
                     </div>
@@ -1168,7 +1194,7 @@
                       {#if agentAuthorable && agentHasDocument}<span class="management-capability">支持用户配置</span>{/if}
                     </div>
                     {#if filteredAgentPresets.length === 0}
-                      <DataState state="empty" title="暂无 Agent 预设" description="官方 DSH 尚未返回可用预设。" />
+                      <DataState state="empty" title={t("agents.empty")} description={t("agents.emptyDesc")} />
                     {:else}
                       <div class="management-list">
                         {#each filteredAgentPresets as preset (preset.id)}
@@ -1204,7 +1230,7 @@
                     {/if}
                   </SettingsGroup>
                   {#if agentAuthorable}
-                    <SettingsGroup title="用户预设维护" description="复制和删除只调用官方 Agent preset API；系统预设和默认预设不可删除。">
+                    <SettingsGroup title="用户预设维护" description="管理自定义 Agent 预设；系统预设和默认预设不可删除。">
                       <div class="agent-preset-maintenance-card">
                         <div class="agent-preset-maintenance-form">
                           <select class="agent-preset-select" aria-label="选择用户 Agent 预设" bind:value={copyingAgentPreset}>
@@ -1237,7 +1263,7 @@
                     </SettingsGroup>
                   {/if}
                 {:else if managementTab === "goals"}
-                  <SettingsGroup title="目标控制" description="目标状态来自当前会话 projection，写操作使用官方 DSH 的 revision。">
+                  <SettingsGroup title={t("goals.title")} description={t("goals.description")}>
                     <div class="management-actions">
                       <Button size="sm" onclick={() => { if (currentGoal) beginGoalEdit(); else { editingGoal = true; goalObjectiveDraft = ""; goalRoundsDraft = "256"; } }}>
                         <Target size={14} />
@@ -1287,13 +1313,13 @@
                         </div>
                       {/if}
                     {:else}
-                      <DataState state="empty" title="当前会话暂无目标" description="创建一个目标后，官方 DSH 会持续记录状态与轮次。" />
+                      <DataState state="empty" title={t("goals.noGoal")} description={t("goals.noGoalDesc")} />
                     {/if}
                   </SettingsGroup>
                 {:else if managementTab === "subagents"}
                   <SettingsGroup title="子 Agent" description="查看直接子 Agent 的历史，并向可继续的子 Agent 发送后续指令。"><div class="management-actions"><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />刷新子 Agent</Button><span class="management-capability">{subagentParentAvailable ? "父会话可用" : "父会话不可用"}</span></div>{#if subagents.length === 0}<DataState state="empty" title="暂无子 Agent" description="当前会话尚未产生直接子 Agent。" />{:else}<div class="management-list">{#each subagents as entry (entry.id)}<div class:chosen={entry.id === selectedSubagentId} class="management-list-row subagent-management-row"><span class="row-icon"><Network size={15} /></span><div><strong>{subagentLabel(entry)}</strong><small>{subagentStatusLabel(entry)}</small></div>{#if entry.kind === "child"}<div class="row-actions"><Button variant="ghost" size="sm" onclick={() => void selectSubagent(entry)}>查看历史</Button>{#if entry.mode === "continuable" && entry.activity === "running"}<Button variant="ghost" size="icon-sm" aria-label="停止子 Agent" title="停止子 Agent" disabled={!!managementBusy} onclick={() => { selectedSubagentId = entry.id; void interruptSelectedSubagent(); }}><Square size={14} /></Button>{/if}</div>{/if}</div>{/each}</div>{/if}{#if selectedSubagent && selectedSubagent.kind === "child"}<div class="subagent-history"><div class="agent-preview-heading"><strong>{subagentLabel(selectedSubagent)} 的历史</strong><span class="management-capability">{selectedSubagent.mode === "continuable" ? "可继续" : "一次性"}</span></div>{#if subagentMessages.length === 0}<DataState state="empty" title="暂无历史消息" description="子 Agent 尚未产生可展示的消息。" />{:else}{#each subagentMessages as message (message.id)}<article class="subagent-message"><div class="message-meta"><strong>{message.role === "assistant" ? "Agent" : message.role === "user" ? "用户" : "工具"}</strong></div><div class="message-text">{message.text}</div></article>{/each}{/if}{#if selectedSubagent.mode === "continuable"}<div class="subagent-composer"><Input aria-label="继续指令" bind:value={subagentPromptDraft} placeholder="向子 Agent 发送后续指令" onkeydown={(event) => { if (event.key === "Enter") void promptSelectedSubagent(); }} /><Button size="sm" disabled={!subagentPromptDraft.trim() || !!managementBusy} onclick={() => void promptSelectedSubagent()}><Send size={13} />发送</Button></div>{/if}</div>{/if}</SettingsGroup>
                 {:else if managementTab === "models"}
-                  <SettingsGroup title="模型目录" description="会话模型和全局 Provider 目录均由官方 DSH 提供。">
+                  <SettingsGroup title={t("models.title")} description={t("models.description")}>
                     <div class="management-actions models-toolbar">
                       <div class="models-toolbar-buttons">
                         <Button size="sm" disabled={!!managementBusy || !xgGatewayCredentialReady} title={xgGatewayCredentialReady ? "从模型服务刷新" : "请先在设置与凭据中保存模型服务 API Key"} onclick={() => void refreshXgGatewayModels()}>
@@ -1370,7 +1396,7 @@
                     {/if}
                   </SettingsGroup>
                 {:else if managementTab === "workspaces"}
-                  <SettingsGroup title="工作区注册" description="工作区和会话由官方 DSH 维护，暗涌只提供选择与呈现。">
+                  <SettingsGroup title={t("workspaces.title")} description={t("workspaces.description")}>
                     <div class="management-actions">
                       <Button size="sm" onclick={() => void pickWorkspace()}><FolderOpen size={14} />选择工作区</Button>
                       <Button variant="outline" size="sm" onclick={() => void refresh()}><History size={14} />刷新</Button>
@@ -1380,7 +1406,7 @@
                         <FolderOpen size={20} />
                         <div>
                           <strong>暂未选择工作区</strong>
-                          <small>点击上方“选择工作区”或使用下方目录浏览，官方 DSH 会建立持久工作区记录。</small>
+                          <small>点击上方“选择工作区”或使用下方目录浏览，建立工作区记录。</small>
                         </div>
                       </div>
                     {:else}
@@ -1424,35 +1450,15 @@
                       <WorkspaceBrowser client={client} onRegistered={() => { void refresh(); void refreshManagement(); }} />
                     {/if}
                   </SettingsGroup>
-                  <SettingsGroup title="官方顺序" description="使用 DSH 的持久排序 API 调整工作区和会话顺序。"><div class="management-list">{#each filteredWorkspaces as workspace, index (workspace.workspaceId)}<div class="management-list-row"><span class="row-icon"><FolderOpen size={15} /></span><div><strong>{workspace.title}</strong><small>{workspace.sessionIds.length} 个会话</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="工作区上移" title="工作区上移" disabled={index === 0 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, -1)}><ChevronDown class="rotate-180" size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="工作区下移" title="工作区下移" disabled={index === filteredWorkspaces.length - 1 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, 1)}><ChevronDown size={14} /></Button></div></div>{#each workspace.sessionIds as sessionId, sessionIndex (sessionId)}<div class="management-list-row nested-order-row"><span class="row-icon"><MessageSquare size={13} /></span><div><strong>{sessionTitle(sessions.find((item) => item.sessionId === sessionId) || { sessionId, updatedAt: 0, running: false, blank: false })}</strong><small>{sessionId}</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="会话上移" title="会话上移" disabled={sessionIndex === 0 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, -1)}><ChevronDown class="rotate-180" size={13} /></Button><Button variant="ghost" size="icon-sm" aria-label="会话下移" title="会话下移" disabled={sessionIndex === workspace.sessionIds.length - 1 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, 1)}><ChevronDown size={13} /></Button></div></div>{/each}{/each}</div></SettingsGroup>
+                  <SettingsGroup title="排序管理" description="调整工作区和会话在列表中的显示顺序。"><div class="management-list">{#each filteredWorkspaces as workspace, index (workspace.workspaceId)}<div class="management-list-row"><span class="row-icon"><FolderOpen size={15} /></span><div><strong>{workspace.title}</strong><small>{workspace.sessionIds.length} 个会话</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="工作区上移" title="工作区上移" disabled={index === 0 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, -1)}><ChevronDown class="rotate-180" size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="工作区下移" title="工作区下移" disabled={index === filteredWorkspaces.length - 1 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, 1)}><ChevronDown size={14} /></Button></div></div>{#each workspace.sessionIds as sessionId, sessionIndex (sessionId)}<div class="management-list-row nested-order-row"><span class="row-icon"><MessageSquare size={13} /></span><div><strong>{sessionTitle(sessions.find((item) => item.sessionId === sessionId) || { sessionId, updatedAt: 0, running: false, blank: false })}</strong><small>{sessionId}</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="会话上移" title="会话上移" disabled={sessionIndex === 0 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, -1)}><ChevronDown class="rotate-180" size={13} /></Button><Button variant="ghost" size="icon-sm" aria-label="会话下移" title="会话下移" disabled={sessionIndex === workspace.sessionIds.length - 1 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, 1)}><ChevronDown size={13} /></Button></div></div>{/each}{/each}</div></SettingsGroup>
                 {:else if managementTab === "mounts"}
                   <SmbMounts />
                 {:else if managementTab === "plugins"}
-                  <SettingsGroup title="插件与 MCP" description="只读显示官方 DSH Loader 的实时插件清单，不伪造连接或启用状态。">
-                    <div class="management-actions">
-                      <Button variant="outline" size="sm" onclick={() => void refreshManagement()}><RefreshCw size={13} />刷新清单</Button>
-                      <span class="management-capability">{pluginInventory.length} 个条目</span>
-                      <span class="management-capability">{pluginInventory.filter((item) => item.enabled).length} 个已启用</span>
-                    </div>
-                    {#if pluginInventory.length === 0}
-                      <DataState state="empty" title="暂无插件清单" description="官方 DSH 尚未返回 Host Loader 条目。" />
-                    {:else}
-                      {@const sortedPlugins = [...pluginInventory.filter((item) => !settingsQuery || `${item.moduleName} ${item.entryId}`.toLowerCase().includes(settingsQuery.toLowerCase()))].sort((a, b) => Number(b.enabled) - Number(a.enabled))}
-                      <div class="management-list">
-                        {#each sortedPlugins as plugin (plugin.entryId)}
-                          <div class="management-list-row plugin-row" class:plugin-row--disabled={!plugin.enabled}>
-                            <span class="row-icon"><PlugZap size={15} /></span>
-                            <div><strong>{plugin.moduleName}</strong><small>{plugin.entryId}</small></div>
-                            <span class={`status-badge-capsule ${plugin.enabled ? "status-badge-capsule--success" : "status-badge-capsule--neutral"}`}>{plugin.enabled ? "已启用" : "未启用"}</span>
-                            <span class={`plugin-phase plugin-phase--${plugin.fiberPhase || "none"}`}>{plugin.fiberPhase === "active" ? "Fiber 运行中" : plugin.fiberPhase === "failed" ? "Fiber 异常" : (plugin.fiberPhase || "无运行 Fiber")}</span>
-                          </div>
-                        {/each}
-                      </div>
-                    {/if}
-                    <div class="knowledge-note"><ShieldAlert size={14} /><span>插件启停、安装和 MCP 配置必须通过官方 DSH Profile/设置完成，本界面不维护第二套状态。</span></div>
-                  </SettingsGroup>
+                  <PluginInventoryView entries={pluginInventory} onRefresh={() => void refreshManagement()} />
+                {:else if managementTab === "mcp"}
+                  <McpInventoryView entries={pluginInventory} onRefresh={() => void refreshManagement()} onNavigateToSettings={() => openManagement("settings")} />
                 {:else if managementTab === "knowledge"}
-                  <SettingsGroup title="知识库与资料" description="知识入口接入官方 DSH Skill、工作区文件和会话附件。">
+                  <SettingsGroup title={t("knowledge.title")} description={t("knowledge.description")}>
                     <div class="knowledge-health-grid">
                       <div class="knowledge-health-card">
                         <span>官方 Skill</span>
@@ -1462,7 +1468,7 @@
                       <div class="knowledge-health-card">
                         <span>工作区文件</span>
                         <strong>{workspacePath ? "已就绪" : "未选择"}</strong>
-                        <small>{workspacePath ? "DSH 可读取工作区" : "需选择工作区"}</small>
+                        <small>{workspacePath ? "工作区已就绪" : "需选择工作区"}</small>
                       </div>
                       <div class="knowledge-health-card">
                         <span>会话资料</span>
@@ -1483,7 +1489,7 @@
                       <Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />刷新知识源</Button>
                     </div>
                     {#if skills.length === 0}
-                      <DataState state="empty" title="暂无官方知识源" description="选择会话与工作区后，可让 DSH 读取项目资料；持久索引需要官方知识插件。" />
+                      <DataState state="empty" title="暂无可用知识源" description="选择会话与工作区后可读取项目资料与技能规范。" />
                     {:else}
                       <div class="knowledge-skill-list">
                         {#each skills.filter((skill) => !settingsQuery || `${skill.name} ${skill.description}`.toLowerCase().includes(settingsQuery.toLowerCase())) as skill (skill.name)}
@@ -1495,10 +1501,24 @@
                         {/each}
                       </div>
                     {/if}
-                    <div class="knowledge-note"><ShieldAlert size={14} /><span>旧版 SQLite、FTS5 和向量知识库属于已删除的私有 Wails 后端。当前页面只显示官方 DSH 的真实能力，不伪造本地索引状态。</span></div>
+                    <div class="knowledge-note"><ShieldAlert size={14} /><span>知识库直连工作区文件与技能规范，提供即时精准的上下文检索。</span></div>
                   </SettingsGroup>
                 {:else if managementTab === "settings"}
-                  <SettingsGroup title="模型 Provider" description="Provider 目录、模型发现与配置地址来自官方 DSH。">
+                  <SettingsGroup title={t("app.language")} description={t("app.switchLanguage")}>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                      {#each AVAILABLE_LOCALES as opt (opt.code)}
+                        <Button
+                          variant={i18n.locale === opt.code ? "default" : "outline"}
+                          size="sm"
+                          onclick={() => setLocale(opt.code)}
+                        >
+                          <Globe size={14} />
+                          <span>{opt.label}</span>
+                        </Button>
+                      {/each}
+                    </div>
+                  </SettingsGroup>
+                  <SettingsGroup title="模型 Provider" description="配置和管理 AI 模型服务商与推理连接。">
                     {#if client}
                       <ProviderWorkbench
                         {client}
@@ -1514,7 +1534,7 @@
                       />
                     {/if}
                   </SettingsGroup>
-                  <SettingsGroup title="凭据" description="官方接口不会返回凭据值，只显示配置状态并接受单向写入。">
+                  <SettingsGroup title="凭据安全" description="凭据通过安全层隔离存储，前端仅显示配置状态并支持安全写入。">
                     <div class="credential-chips">
                       <span class="credential-chips-label">快捷预设：</span>
                       <button type="button" class="credential-chip" class:chosen={credentialRefDraft === "XG_GOMODEL_API_KEY"} onclick={() => pickCredentialQuickChip("XG_GOMODEL_API_KEY")}>
@@ -1584,7 +1604,7 @@
                       <span class="management-capability">{settingsWritable ? "可写" : "只读"}</span>
                     </div>
                     {#if settingsNamespaces.length === 0}
-                      <DataState state="empty" title="暂无设置命名空间" description="官方 DSH 尚未注册设置项。" />
+                      <DataState state="empty" title="暂无设置命名空间" description="尚未注册额外设置命名空间。" />
                     {:else}
                       <div class="settings-editor-grid">
                         <nav class="settings-namespace-list" aria-label="设置命名空间">
@@ -1631,7 +1651,7 @@
                     {/if}
                   </SettingsGroup>
                 {:else}
-                  <SettingsGroup title="运行状态与诊断" description="桌面 shell、官方 DSH 事件流和设置命名空间。">
+                  <SettingsGroup title={t("runtime.title")} description={t("runtime.description")}>
                     <div class={`status-alert-banner ${runtimeError ? "status-alert-banner--error" : "status-alert-banner--success"}`}>
                       {#if runtimeError}
                         <ShieldAlert size={16} />
@@ -1642,8 +1662,8 @@
                       {:else}
                         <CircleCheck size={16} />
                         <div>
-                          <strong>官方 DSH 运行正常</strong>
-                          <span>事件流已建立，会话、工具与状态均由官方 DSH 实时托管。</span>
+                          <strong>{t("overview.runtimeNormal")}</strong>
+                          <span>事件流已建立，会话、工具与状态均实时托管。</span>
                         </div>
                       {/if}
                     </div>
@@ -1670,10 +1690,10 @@
           </div>
         {:else if view === "knowledge"}
           <div class="knowledge-page">
-            <header class="knowledge-hero"><div><div class="eyebrow">暗涌知识工作区</div><h1>知识库</h1><p>从官方 DSH Skill、当前工作区和会话资料中查找可引用的上下文。</p></div><div class="header-actions"><Button variant="outline" size="sm" onclick={() => view = "conversation"}><ChevronRight class="rotate-180" size={14} />返回会话</Button><Button size="sm" onclick={() => openKnowledgePrompt("扫描当前工作区的文档与资料，按目录、类型和用途整理一份知识清单。") }><ClipboardList size={14} />扫描工作区</Button></div></header>
+            <header class="knowledge-hero"><div><div class="eyebrow">暗涌知识工作区</div><h1>{t("knowledge.title")}</h1><p>从技能规范、当前工作区和会话资料中查找可引用的上下文。</p></div><div class="header-actions"><Button variant="outline" size="sm" onclick={() => view = "conversation"}><ChevronRight class="rotate-180" size={14} />返回会话</Button><Button size="sm" onclick={() => openKnowledgePrompt("扫描当前工作区的文档与资料，按目录、类型和用途整理一份知识清单。") }><ClipboardList size={14} />扫描工作区</Button></div></header>
             <div class="knowledge-page-body">
-              <section class="knowledge-search-panel"><div class="knowledge-search-heading"><div><span class="section-label">资料检索</span><h2>问问你的工作区</h2><p>检索结果由官方 DSH 在当前会话中生成，不建立并行索引。</p></div><span class="knowledge-source-count"><BookOpen size={15} />{skills.length} 个官方知识源</span></div><div class="knowledge-search-row"><Input aria-label="知识库问题" bind:value={input} placeholder="例如：这个项目的启动流程和关键配置在哪里？" /><Button size="sm" disabled={!activeSessionId || !input.trim()} onclick={() => void submit()}><Search size={14} />检索</Button></div><div class="knowledge-shortcuts"><button onclick={() => openKnowledgePrompt("检索当前工作区资料，找出与我的问题最相关的文件、段落和依据，并给出引用路径。")}><Search size={14} /><span><strong>检索工作区</strong><small>按文件、段落和依据回答</small></span></button><button onclick={() => openKnowledgePrompt("扫描当前工作区的文档与资料，按目录、类型和用途整理一份知识清单。")}><ClipboardList size={14} /><span><strong>建立资料清单</strong><small>先梳理目录与文档用途</small></span></button><button onclick={() => void createSession()}><MessageSquarePlus size={14} /><span><strong>新建资料会话</strong><small>保留一条独立的研究上下文</small></span></button></div></section>
-              <div class="knowledge-columns"><section class="knowledge-source-section"><div class="section-row"><div><span class="section-label">官方知识源</span><h2>可调用能力</h2></div><Button variant="ghost" size="sm" onclick={() => void refreshManagement()}><History size={14} />刷新</Button></div>{#if skills.length === 0}<DataState state="empty" title="暂无官方知识源" description="选择工作区和会话后，官方 DSH Skill 会在这里出现。" />{:else}<div class="knowledge-skill-list">{#each skills.filter((skill) => !settingsQuery || `${skill.name} ${skill.description}`.toLowerCase().includes(settingsQuery.toLowerCase())) as skill (skill.name)}<article><div class="skill-heading"><span class="row-icon"><BookOpen size={15} /></span><div><strong>{skill.name}</strong><small>{skill.modelInvocable ? "模型可调用" : "仅用户可调用"}</small></div></div><p>{skill.description}</p>{#if skill.whenToUse}<em>{skill.whenToUse}</em>{/if}</article>{/each}</div>{/if}</section><aside class="knowledge-context"><div class="section-label">当前上下文</div><div class="context-stat"><span>工作区</span><strong title={workspacePath}>{workspaceName}</strong></div><div class="context-stat"><span>会话</span><strong>{activeSession ? sessionTitle(activeSession) : "未选择"}</strong></div><div class="context-stat"><span>会话资料</span><strong>{activeSession ? `${messages.length} 条消息` : "需先选择会话"}</strong></div><div class="knowledge-note"><ShieldAlert size={14} /><span>知识库展示的是官方 DSH 的真实能力；旧版私有 SQLite、FTS5 和向量索引不会在本地伪造。</span></div></aside></div>
+              <section class="knowledge-search-panel"><div class="knowledge-search-heading"><div><span class="section-label">资料检索</span><h2>问问你的工作区</h2><p>检索结果直接基于当前工作区与会话实时生成。</p></div><span class="knowledge-source-count"><BookOpen size={15} />{skills.length} 个可用技能</span></div><div class="knowledge-search-row"><Input aria-label="知识库问题" bind:value={input} placeholder="例如：这个项目的启动流程和关键配置在哪里？" /><Button size="sm" disabled={!activeSessionId || !input.trim()} onclick={() => void submit()}><Search size={14} />检索</Button></div><div class="knowledge-shortcuts"><button onclick={() => openKnowledgePrompt("检索当前工作区资料，找出与我的问题最相关的文件、段落和依据，并给出引用路径。")}><Search size={14} /><span><strong>检索工作区</strong><small>按文件、段落和依据回答</small></span></button><button onclick={() => openKnowledgePrompt("扫描当前工作区的文档与资料，按目录、类型和用途整理一份知识清单。")}><ClipboardList size={14} /><span><strong>建立资料清单</strong><small>先梳理目录与文档用途</small></span></button><button onclick={() => void createSession()}><MessageSquarePlus size={14} /><span><strong>新建资料会话</strong><small>保留一条独立的研究上下文</small></span></button></div></section>
+              <div class="knowledge-columns"><section class="knowledge-source-section"><div class="section-row"><div><span class="section-label">技能与能力</span><h2>可调用能力</h2></div><Button variant="ghost" size="sm" onclick={() => void refreshManagement()}><History size={14} />刷新</Button></div>{#if skills.length === 0}<DataState state="empty" title="暂无可用技能" description="选择工作区和会话后，可用技能会在这里展示。" />{:else}<div class="knowledge-skill-list">{#each skills.filter((skill) => !settingsQuery || `${skill.name} ${skill.description}`.toLowerCase().includes(settingsQuery.toLowerCase())) as skill (skill.name)}<article><div class="skill-heading"><span class="row-icon"><BookOpen size={15} /></span><div><strong>{skill.name}</strong><small>{skill.modelInvocable ? "模型可调用" : "仅用户可调用"}</small></div></div><p>{skill.description}</p>{#if skill.whenToUse}<em>{skill.whenToUse}</em>{/if}</article>{/each}</div>{/if}</section><aside class="knowledge-context"><div class="section-label">当前上下文</div><div class="context-stat"><span>工作区</span><strong title={workspacePath}>{workspaceName}</strong></div><div class="context-stat"><span>会话</span><strong>{activeSession ? sessionTitle(activeSession) : "未选择"}</strong></div><div class="context-stat"><span>会话资料</span><strong>{activeSession ? `${messages.length} 条消息` : "需先选择会话"}</strong></div><div class="knowledge-note"><ShieldAlert size={14} /><span>知识库直连工作区文件与技能规范，提供即时精准的上下文检索。</span></div></aside></div>
             </div>
           </div>
         {:else}
@@ -1681,8 +1701,8 @@
             <header class="conversation-header"><div class="conversation-title"><div class="eyebrow">{activeSession ? "会话工作台" : "暗涌"}</div><h1>{customization.title || (activeSession ? sessionTitle(activeSession) : "开始一个新会话")}</h1><p>{customization.subtitle || workspacePath || "选择一个工作区开始"}</p></div><div class="header-actions"><Button variant="outline" size="sm" aria-pressed={customizationOpen} onclick={() => customizationOpen = !customizationOpen}><SlidersHorizontal size={14} />界面</Button><Button variant="outline" size="sm" onclick={() => openManagement("overview")}><Settings2 size={14} />管理</Button></div></header>
             {#if runtimeError}<div class="error-banner"><CircleAlert size={15} /><span>{runtimeError}</span>{#if runtimeError.includes("设置与凭据") || !selectedProviderCredentialReady}<Button variant="ghost" size="sm" onclick={() => openManagement("settings")}><KeyRound size={13} />去配置</Button>{/if}<button aria-label="关闭错误" onclick={() => { runtimeError = ""; }}><X size={14} /></button></div>{/if}
             {#if customizationOpen}<section class="customization-panel" aria-label="界面定制"><div class="customization-panel__header"><div><div class="section-label">对话式界面定制</div><strong>用自然语言改变工作台</strong><p>例如：收起活动面板、使用紧凑密度、把输入框改成四行。</p></div><Button variant="ghost" size="icon-sm" aria-label="关闭界面定制" onclick={() => customizationOpen = false}><X size={14} /></Button></div>{#if customizationNotice}<div class="customization-feedback"><CircleCheck size={14} /><span>{customizationNotice}</span></div>{/if}{#if customizationDraft}<div class="customization-preview"><div><strong>待应用方案</strong><span>来自当前会话的结构化 patch</span></div><code>{JSON.stringify(customizationDraft)}</code><div class="customization-actions"><Button variant="outline" size="sm" onclick={() => customizationDraft = undefined}>忽略</Button><Button size="sm" onclick={() => applyCustomizationPatch(customizationDraft!)}><Check size={13} />应用方案</Button></div></div>{/if}<div class="customization-summary"><span class="mode-chip">{customization.density === "compact" ? "紧凑密度" : "舒适密度"}</span><span>{customization.sidebar === "collapsed" ? "侧栏已收起" : "侧栏已展开"}</span><span>{customization.activity === "visible" ? "活动面板可见" : "活动面板隐藏"}</span><span>{customization.composerRows} 行输入框</span></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={customizationHistory.length === 0} onclick={undoCustomization}>撤销上次</Button><Button variant="ghost" size="sm" onclick={() => { customization = DEFAULT_UI_CUSTOMIZATION; customizationHistory = []; persistUiCustomization(customization); applyRuntimeCustomization(customization); customizationNotice = "已恢复默认界面。"; }}>恢复默认</Button></div></section>{/if}
-            {#if surfaceDraft}<section class="surface-proposal" aria-label="待确认操作界面"><div><div class="section-label">AI 操作界面提案</div><strong>{surfaceDraft.spec.title}</strong><p>{surfaceDraft.summary || `包含 ${surfaceDraft.spec.widgets.length} 个只读组件，确认后才会查询 DSH 数据。`}</p></div><div class="surface-proposal__meta"><span>{surfaceDraft.spec.widgets.length} 个组件</span><span>{surfaceDraft.spec.dataSources.length} 个数据源</span></div><div class="customization-actions"><Button variant="ghost" size="sm" onclick={() => { surfaceDraft = undefined; surfaceNotice = "已忽略操作界面提案。"; }}>忽略</Button><Button size="sm" onclick={applySurfaceProposal}><Check size={13} />确认渲染</Button></div></section>{/if}
-            {#if generatedSurface && client}<section class="generated-surface" aria-label="AI 生成操作界面"><header><div><div class="section-label">AI 生成操作界面</div><strong>{generatedSurface.title}</strong><p>{surfaceNotice || "只读视图，数据来自官方 DSH API。"}</p></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={surfaceHistory.length === 0} onclick={undoGeneratedSurface}>撤销</Button><Button variant="ghost" size="sm" onclick={removeGeneratedSurface}><Trash2 size={13} />移除</Button></div></header><GeneratedSurface spec={generatedSurface} {client} {activeSessionId} onError={(message) => { surfaceNotice = message; }} /></section>{/if}
+            {#if surfaceDraft}<section class="surface-proposal" aria-label="待确认操作界面"><div><div class="section-label">AI 操作界面提案</div><strong>{surfaceDraft.spec.title}</strong><p>{surfaceDraft.summary || `包含 ${surfaceDraft.spec.widgets.length} 个只读组件，确认后才会查询数据。`}</p></div><div class="surface-proposal__meta"><span>{surfaceDraft.spec.widgets.length} 个组件</span><span>{surfaceDraft.spec.dataSources.length} 个数据源</span></div><div class="customization-actions"><Button variant="ghost" size="sm" onclick={() => { surfaceDraft = undefined; surfaceNotice = "已忽略操作界面提案。"; }}>忽略</Button><Button size="sm" onclick={applySurfaceProposal}><Check size={13} />确认渲染</Button></div></section>{/if}
+            {#if generatedSurface && client}<section class="generated-surface" aria-label="AI 生成操作界面"><header><div><div class="section-label">AI 生成操作界面</div><strong>{generatedSurface.title}</strong><p>{surfaceNotice || "只读视图，数据实时同步。"}</p></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={surfaceHistory.length === 0} onclick={undoGeneratedSurface}>撤销</Button><Button variant="ghost" size="sm" onclick={removeGeneratedSurface}><Trash2 size={13} />移除</Button></div></header><GeneratedSurface spec={generatedSurface} {client} {activeSessionId} onError={(message) => { surfaceNotice = message; }} /></section>{/if}
             <div class="main-grid">
               <ConversationTranscript
                 messages={messages}

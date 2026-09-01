@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentPresetLocked, clearsSessionError, sessionHealth, sessionHealthLabel } from "./session-health";
+import { agentPresetLocked, clearsSessionError, sessionHealth, sessionHealthLabel, visibleSessions } from "./session-health";
 
 const base = { sessionId: "s1", updatedAt: 0, running: false, blank: false };
 
@@ -21,5 +21,17 @@ describe("sessionHealth", () => {
   it("keeps failure state for error turn endings", () => {
     expect(clearsSessionError({ type: "turn/end", data: { reason: { kind: "error" } } })).toBe(false);
     expect(clearsSessionError({ type: "turn/end", data: { reason: { kind: "complete" } } })).toBe(true);
+  });
+
+  it("keeps the active blank session visible while hiding stale drafts and archived sessions", () => {
+    const sessions = [
+      { ...base, sessionId: "active-blank", blank: true },
+      { ...base, sessionId: "stale-blank", blank: true },
+      { ...base, sessionId: "started" },
+      { ...base, sessionId: "archived" },
+    ];
+
+    expect(visibleSessions(sessions, ["archived"], "active-blank").map((session) => session.sessionId))
+      .toEqual(["active-blank", "started"]);
   });
 });

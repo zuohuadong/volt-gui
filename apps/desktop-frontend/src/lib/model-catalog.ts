@@ -96,7 +96,12 @@ function valueAtPath(value: unknown, path: string[]): unknown {
 
 export function enrichModelGroups(groups: ModelGroup[], namespaces: SettingsNamespace[]): ModelGroup[] {
   return groups.map((group) => {
-    const configured = findProviderSettings(namespaces, group.id)?.config.models;
+    const providerConfig = findProviderSettings(namespaces, group.id)?.config;
+    const rootNamespace = namespaces.find((namespace) =>
+      namespace.ns === group.id || namespace.ns === `llm-${group.id.replace(/-official$/, "")}`
+    );
+    const configured = providerConfig?.models
+      ?? (rootNamespace?.value as Record<string, unknown> | undefined)?.models;
     if (!Array.isArray(configured)) return group;
     const metadata = new Map<string, Record<string, unknown>>();
     for (const raw of configured) {
@@ -107,13 +112,16 @@ export function enrichModelGroups(groups: ModelGroup[], namespaces: SettingsName
     return {
       ...group,
       models: group.models.map((model) => {
-        const configuredModel = metadata.get(model.id);
-        if (!configuredModel) return model;
-        return {
-          ...model,
-          input: Array.isArray(configuredModel.input)
-            ? configuredModel.input.filter((item): item is string => typeof item === "string")
-            : model.input,
+      const configuredModel = metadata.get(model.id);
+      if (!configuredModel) return model;
+      const configuredInput = Array.isArray(configuredModel.input)
+        ? configuredModel.input
+        : configuredModel.inputModalities;
+      return {
+        ...model,
+        input: Array.isArray(configuredInput)
+          ? configuredInput.filter((item): item is string => typeof item === "string")
+          : model.input,
           contextWindow: typeof configuredModel.contextWindow === "number" ? configuredModel.contextWindow : model.contextWindow,
           maxTokens: typeof configuredModel.maxTokens === "number" ? configuredModel.maxTokens : model.maxTokens,
         };

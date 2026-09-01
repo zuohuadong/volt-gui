@@ -136,12 +136,66 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-radius: 7px;
 }
 
-.prompt-input-shell {
+.prompt-input-composer {
   gap: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: 0;
   padding: 0;
   background: transparent;
+}
+
+.prompt-input-composer > ul[aria-label="Attachments"] {
+  display: none;
+}
+
+.prompt-input-composer__header,
+.prompt-input-composer__footer {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.prompt-input-composer__header {
+  justify-content: space-between;
+}
+
+.prompt-input-composer__body {
+  position: relative;
+  min-width: 0;
+}
+
+.prompt-input-composer__body .reference-picker textarea {
+  min-height: 86px;
+  border: 0;
+  border-radius: 0;
+  padding: 14px 16px;
+}
+
+.prompt-input-composer__tools {
+  min-width: 0;
+  flex: 1 1 360px;
+  flex-wrap: wrap;
+}
+
+.prompt-input-composer__footer {
+  min-height: 50px;
+  border-top: 1px solid var(--border);
+  background: #fbfdfc;
+}
+
+.reference-command {
+  position: absolute;
+  right: 10px;
+  bottom: calc(100% + 5px);
+  z-index: 20;
+  width: min(460px, calc(100vw - 32px));
+}
+
+.reference-command [data-slot="prompt-input-command-item"] {
+  gap: 8px;
+}
+
+.reference-command [data-slot="prompt-input-command-item"].active {
+  background: var(--muted);
 }
 
 @media (max-width: 980px) {
@@ -169,27 +223,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 @media (max-width: 980px) { .smb-add-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }.smb-add-form > :nth-child(2) { grid-column: 1 / -1; }.smb-add-form button { justify-self: start; } }
 @media (max-width: 760px) { .smb-mounts__header, .smb-row { align-items: flex-start; }.smb-mounts__header { flex-direction: column; }.smb-add-form { grid-template-columns: 1fr; }.smb-add-form > :nth-child(2) { grid-column: auto; }.smb-row { flex-wrap: wrap; }.smb-copy { min-width: calc(100% - 38px); }.smb-status { margin-left: 38px; }.smb-actions { margin-left: auto; } }
 
-.attachment-control { display: flex; align-items: center; gap: 5px; min-width: 0; }
-.attachment-input { display: none; }
-.attachment-list { display: flex; align-items: center; gap: 4px; max-width: min(360px, 45vw); overflow: auto; }
-.attachment-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 5px 2px 3px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); color: var(--muted-foreground); font-size: 10px; white-space: nowrap; }
-.attachment-chip img { width: 20px; height: 20px; border-radius: 3px; object-fit: cover; }
-.attachment-chip button { display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
-.attachment-error { color: oklch(0.48 0.16 25); font-size: 10px; white-space: nowrap; }
 .reference-picker { position: relative; }
 .reference-picker textarea { width: 100%; min-height: 80px; resize: vertical; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); padding: 10px 12px; outline: 0; }
 .reference-picker textarea:focus { border-color: color-mix(in oklch, var(--primary) 60%, var(--border)); box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 12%, transparent); }
 .reference-picker textarea:disabled { opacity: .55; }
-.reference-suggestions { position: absolute; z-index: 5; right: 8px; bottom: calc(100% + 6px); width: min(460px, calc(100vw - 32px)); overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 10px 30px color-mix(in oklch, var(--foreground) 16%, transparent); }
-.reference-suggestions button { display: flex; width: 100%; gap: 8px; align-items: center; padding: 9px 10px; border: 0; background: transparent; color: var(--foreground); text-align: left; cursor: pointer; }
-.reference-suggestions button:hover, .reference-suggestions button.active { background: var(--muted); }
-.reference-suggestions strong, .reference-suggestions small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.reference-suggestions strong { max-width: 390px; font-size: 12px; }
-.reference-suggestions small, .reference-loading, .reference-empty { color: var(--muted-foreground); font-size: 11px; }
+.reference-loading { color: var(--muted-foreground); font-size: 11px; }
 .reference-icon { display: grid; width: 20px; place-items: center; color: var(--primary); }
-.reference-loading, .reference-empty { display: flex; gap: 6px; align-items: center; padding: 9px 10px; }
+.reference-loading { display: flex; gap: 6px; align-items: center; padding: 9px 10px; }
 .permission-selector { display: inline-flex; align-items: center; gap: 4px; color: var(--muted-foreground); font-size: 10px; }
-.permission-selector select { height: 26px; max-width: 125px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); color: var(--foreground); font-size: 10px; }
 .permission-warning { color: oklch(0.48 0.16 25); font-size: 10px; }
 .workspace-browser-divider, .catalog-divider { margin: 16px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 11px; }
 .workspace-browser-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
@@ -1256,13 +1297,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   background: #fff;
 }
 
-.composer-attachments {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 4px;
-}
-
 .composer-attachment-list {
   display: flex;
   max-width: min(360px, 42vw);
@@ -1309,6 +1343,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .conversation-scroll-button {
   align-self: center;
   margin-bottom: 8px;
+}
+
+.conversation-controls {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px 0;
 }
 
 .conversation-root > .svadmin-ai__button:not(.conversation-scroll-button) {

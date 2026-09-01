@@ -112,6 +112,15 @@ export function toolPresentation(tool: ToolInfo): ToolPresentation {
   return { artifact, code, terminal, tests, files };
 }
 
+export function toolErrorTrace(tool: ToolInfo): string | undefined {
+  if (tool.state !== "error") return undefined;
+  const parsed = asRecord(parseJson(tool.result));
+  const explicit = text(parsed?.stack || parsed?.trace || asRecord(parsed?.error)?.stack);
+  if (explicit) return explicit;
+  const result = tool.result?.trim() || "";
+  return /(?:^|\n)\s*(?:at\s+.*?|.*?)\(?[^\n()]+:\d+:\d+\)?\s*(?:\n|$)/u.test(result) ? result : undefined;
+}
+
 function parseArtifact(value?: Record<string, unknown>): ToolPresentation["artifact"] {
   if (!value) return undefined;
   const content = text(value.content || value.text || value.output);

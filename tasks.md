@@ -53,6 +53,7 @@
 
 | task_id | provider | repo | source_url | title | priority | risk | status | owner | model | needs_model | review_class | branch | change_request_url |
 |---------|----------|------|------------|-------|----------|------|--------|-------|-------|-------------|--------------|--------|--------------------|
+| ANYONG-AI-ELEMENTS-COMPOSER-DECOMPOSE-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | user-request | 将自研 Composer 拆解迁移到 PromptInput 官方复合组件族 | high | medium | review | codex | gpt-5.6 | - | review-medium | codex/decompose-ai-elements-composer | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/218 |
 | ANYONG-AI-ELEMENTS-FULL-COVERAGE-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | https://www.npmjs.com/package/@svadmin/ai-elements | 完整接入 AI Elements 对话交互与结构化输出组件 | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/complete-ai-elements-coverage | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/217 |
 | ANYONG-AI-ELEMENTS-MIGRATION-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | https://www.npmjs.com/package/@svadmin/ai-elements | 迁移桌面对话到已发布的 SVAdmin AI Elements | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/migrate-svadmin-ai-elements | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/216 |
 | ANYONG-CNB-ISSUES-211-215-20260831 | cnb | aizhuliren/xgic/anyong-agent | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/issues | 修复并关闭全部开放 CNB issues #211-#215 | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/fix-cnb-issues-211-215 | - |
@@ -78,6 +79,21 @@
 | ANYONG-REVIEW-PR7-20260714 | cnb | aizhuliren/volt/anyong-agent | https://cnb.cool/aizhuliren/volt/anyong-agent/-/issues/6 | 审查并合并 Linux runner prerequisites ZIP 修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | fix/desktop-build-linux-prerequisites-zip | https://cnb.cool/aizhuliren/volt/anyong-agent/-/pull/7 |
 | ANYONG-PREREQUISITES-RELEASE-20260714 | cnb | aizhuliren/volt/anyong-agent | user-request | 将 Windows prerequisites 解耦为独立版本与 Release | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/volt/anyong-agent/-/releases/tag/prerequisites-v1.0.0 |
 | ANYONG-STREAM-RECOVERY-20260813 | cnb | aizhuliren/volt/anyong-agent | user-screenshot | 修复 Windows 桌面端重复输出保护直接失败 | high | medium | done | codex | gpt-5.6 | - | review-medium | main | - |
+
+### ANYONG-AI-ELEMENTS-COMPOSER-DECOMPOSE-20260901 Task Contract
+
+- parent：`ANYONG-AI-ELEMENTS-FULL-COVERAGE-20260901`；source：用户给出 SVAdmin 官方组件对应清单并要求拆解实施；reason：当前 `App.svelte` 仅用 `PromptInput` 包裹旧 `ReferencePicker`、附件、权限与发送工具栏，尚未采用官方内部复合结构。
+- 目标：使用 `PromptInputHeader`、`PromptInputBody`、`PromptInputTextarea`、`PromptInputCommand...`、`PromptInputFooter`、`PromptInputTools`、`PromptInputActionAddAttachments`、`PromptInputSelect...` 和 `PromptInputSubmit` 组成真实 Composer；模型、文件/会话引用、图片附件、权限、发送和停止仍调用现有官方 DSH API。
+- 非目标：不引入未安装的 `@svadmin/lite`；不建立新的权限/附件/引用/会话后端；不修改 DSH、Electron 主进程或持久化；不伪造文件、会话、权限、模型或 Surface 数据；本轮不自动提交、推送或创建 PR。
+- 验收标准：Composer 内部不再使用自研 textarea、隐藏 file input、原生 permission select 或自研发送/停止按钮；`@` 文件/会话候选仍来自 DSH；图片仍转换为 DSH image prompt；模型仍调用 `selectModel`，权限仍调用官方 `/permission`，提交/停止行为和禁用条件保持；既有 Confirmation/Question、ConversationEmptyState、消息/Token/思考、活动计划和 `SurfaceRenderer` 接入不回退。
+- orchestration.mode：`managed`，risk=medium。主代理唯一 writer；完成后复用既有只读 verifier 检查官方组件真实性、Svelte API 和 DSH 边界。
+- 相关 skill：`svelte-development`、`typescript`、`svelte-code-writer`、`svelte-core-bestpractices`、`volt-gui-design-language`、`agent-team-automation`；遵循 Svelte 5 runes、官方组件导出和 DSH 单一运行时边界。
+- 影响范围：`apps/desktop-frontend/src/App.svelte`、Composer/引用/权限/附件相关组件、`src/app.css`、聚焦纯函数测试和任务记录；允许删除被完整替代且无引用的自研组件。
+- 验证计划：官方组件导出静态审计；Svelte autofixer；前端 Vitest、`svelte-check`、Vite production build；根测试、DSH integration、Electron/migration boundary；`git diff --check`；必要时桌面宽/窄屏渲染 smoke。
+- 风险与回滚：官方附件状态与 DSH base64 图片模型不同，需在提交边界显式转换；Command 组件只负责交互外壳，候选检索仍需竞态保护；权限和模型选择失败继续走现有 notice/error。回滚使用普通 revert/follow-up，不改写历史。
+- interruption_recovery：稳定恢复点为 `main@517990a9a`、分支 `codex/decompose-ai-elements-composer`、本合同及后续验证输出；范围变化必须追加 follow-up 或用户确认。
+- continuation：用户于 2026-09-01 明确要求升级到 `@svadmin/ai-elements@0.2.0`、使用新版特性和组件，并延续此前提交及合并 PR 的指令；因此本轮获准精确升级配套 `@svadmin/core@0.48.0`、`@svadmin/ui@0.67.0`、`@svadmin/surface@0.8.0`，提交、推送、创建 ready PR，并在远端 CI 与独立审查通过后合并。
+- completion_evidence：Node 26.8.1 / pnpm 12.1.0 下前端 Vitest 40/40、`svelte-check`、Vite production build、根 `pnpm test`、DSH integration、Electron desktop build、runtime/migration boundary 与 `git diff --check` 均通过；0.2.0 新增接入 `ConversationDownload`、`Suggestions`、`Loader`、`Shimmer`、`StackTrace`，并完成结构化 `ChatMessage.parts/status/createdAt` 契约迁移；独立 verifier 对提交 `eba6ffea3` 的 Standards / Spec Fidelity 双轴复核 PASS；CNB PR：https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/218。
 
 ### ANYONG-AI-ELEMENTS-FULL-COVERAGE-20260901 Task Contract
 

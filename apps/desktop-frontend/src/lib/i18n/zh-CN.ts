@@ -725,6 +725,12 @@ export const zhCN: TranslationDict = {
   structured: {
     testResults: "测试结果",
     fileResults: "文件结果",
+    webSearch: "网页搜索",
+    webFetch: "网页抓取",
+    computerUse: "电脑操作",
+    webTruncated: "结果已截断",
+    openImage: "打开图片",
+    toolImage: "工具返回的图片",
   },
   reference: {
     officialSkill: "官方 Skill",

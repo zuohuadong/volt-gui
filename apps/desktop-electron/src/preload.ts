@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("voltDesktop", {
   minimize: () => ipcRenderer.invoke("desktop:minimize"),
   maximize: () => ipcRenderer.invoke("desktop:maximize"),
   close: () => ipcRenderer.invoke("desktop:close"),
+  openExternal: (url: string) => ipcRenderer.invoke("desktop:open-external", url),
   pickWorkspace: () => ipcRenderer.invoke("desktop:pick-workspace"),
   exportSession: (sessionId: string) => ipcRenderer.invoke("desktop:export-session", sessionId),
   smbList: () => ipcRenderer.invoke("desktop:smb-list"),

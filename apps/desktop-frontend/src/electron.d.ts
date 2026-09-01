@@ -11,6 +11,7 @@ export interface DesktopShellApi {
   minimize(): Promise<void>;
   maximize(): Promise<boolean>;
   close(): Promise<void>;
+  openExternal(url: string): Promise<{ opened: true }>;
   pickWorkspace(): Promise<string | null>;
   exportSession(sessionId: string): Promise<{ saved: false } | { saved: true; path: string }>;
   smbList(): Promise<SmbMountView[]>;

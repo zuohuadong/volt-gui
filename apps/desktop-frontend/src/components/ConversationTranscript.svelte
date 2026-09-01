@@ -129,7 +129,7 @@ interface QuickAction {
               <Tool
                 name={message.tool.name}
                 input={message.tool.args || undefined}
-                output={structuredOutput ? undefined : message.tool.result || undefined}
+                output={structuredOutput && presentation.web?.kind !== "fetch" ? undefined : message.tool.result || undefined}
                 errorText={message.tool.state === "error" ? message.tool.result || t("transcript.toolFailed") : undefined}
                 state={toolState(message)}
                 open={message.tool.state !== "running"}

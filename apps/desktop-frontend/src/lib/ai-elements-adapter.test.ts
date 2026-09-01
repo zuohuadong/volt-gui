@@ -37,6 +37,34 @@ describe("AI Elements adapters", () => {
     } }).artifact).toMatchObject({ title: "报告", kind: "text", content: "report body" });
   });
 
+  it("renders official DSH web result cards and source links", () => {
+    const presentation = toolPresentation({
+      callId: "web-1",
+      name: "web_search",
+      state: "success",
+      view: { for: "result", view: {
+        card: "web",
+        kind: "search",
+        title: "Node.js 26",
+        answer: "Current release line",
+        sources: [{ id: "node", title: "Node.js", url: "https://nodejs.org/", snippet: "Docs" }],
+      } },
+    });
+    expect(presentation.web).toMatchObject({ kind: "search", title: "Node.js 26", answer: "Current release line" });
+    expect(presentation.web?.sources).toEqual([{ id: "node", title: "Node.js", url: "https://nodejs.org/", description: undefined, quote: "Docs" }]);
+  });
+
+  it("normalizes computer-use screenshots into safe image sources", () => {
+    const presentation = toolPresentation({
+      callId: "computer-1",
+      name: "computer",
+      state: "success",
+      view: { card: "computer", kind: "computer", screenshot: { type: "image", mediaType: "image/png", data: "AA==", alt: "页面截图" } },
+    });
+    expect(presentation.web?.kind).toBe("computer");
+    expect(presentation.images[0]).toMatchObject({ src: "data:image/png;base64,AA==", alt: "页面截图" });
+  });
+
   it("uses StackTrace only for real structured or stack-shaped DSH errors", () => {
     expect(toolErrorTrace({ callId: "4", name: "exec", state: "error", result: "Error: boom\n    at run (D:/workspace/app.ts:12:4)" })).toContain("app.ts:12:4");
     expect(toolErrorTrace({ callId: "5", name: "exec", state: "error", result: JSON.stringify({ error: { stack: "Error: bad\n at main (index.ts:1:2)" } }) })).toContain("index.ts:1:2");

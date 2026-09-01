@@ -725,6 +725,12 @@ export const enUS: TranslationDict = {
   structured: {
     testResults: "Test Results",
     fileResults: "File Results",
+    webSearch: "Web Search",
+    webFetch: "Web Fetch",
+    computerUse: "Computer Use",
+    webTruncated: "Result truncated",
+    openImage: "Open image",
+    toolImage: "Tool image",
   },
   reference: {
     officialSkill: "Official Skill",

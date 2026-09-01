@@ -235,6 +235,18 @@ ipcMain.handle("desktop:maximize", () => {
   return mainWindow.isMaximized();
 });
 ipcMain.handle("desktop:close", () => mainWindow?.close());
+ipcMain.handle("desktop:open-external", async (_event, value: unknown) => {
+  if (typeof value !== "string") throw new Error("外部链接格式无效");
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("外部链接格式无效");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("仅允许打开 HTTP(S) 链接");
+  await shell.openExternal(url.toString());
+  return { opened: true as const };
+});
 ipcMain.handle("desktop:pick-workspace", async () => {
   if (!mainWindow) return null;
   const result = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"] });

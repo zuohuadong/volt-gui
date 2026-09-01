@@ -587,9 +587,27 @@
 
   function handleFrame(frame: DshFrame): void {
     const payload = frame.payload;
-    if (payload.type === "approval/requested") { pendingApproval = { rpcId: frame.rpcId, ...payload } as unknown as PendingApproval; sending = false; return; }
-    if (payload.type === "question/requested") { pendingQuestion = { rpcId: frame.rpcId, ...payload } as unknown as PendingQuestion; questionAnswers = {}; sending = false; return; }
-    if (payload.type === "approval/resolved" || payload.type === "question/resolved") { pendingApproval = undefined; pendingQuestion = undefined; questionAnswers = {}; return; }
+    if (payload.type === "approval/requested") {
+      if (payload.sessionId !== activeSessionId) return;
+      pendingApproval = { rpcId: frame.rpcId, ...payload } as unknown as PendingApproval;
+      sending = false;
+      return;
+    }
+    if (payload.type === "question/requested") {
+      if (payload.sessionId !== activeSessionId) return;
+      pendingQuestion = { rpcId: frame.rpcId, ...payload } as unknown as PendingQuestion;
+      questionAnswers = {};
+      sending = false;
+      return;
+    }
+    if (payload.type === "approval/resolved" || payload.type === "question/resolved") {
+      if (payload.sessionId === activeSessionId && (pendingApproval?.rpcId === frame.rpcId || pendingQuestion?.rpcId === frame.rpcId)) {
+        pendingApproval = undefined;
+        pendingQuestion = undefined;
+        questionAnswers = {};
+      }
+      return;
+    }
     if (payload.type === "session/queue") return;
     if (payload.type === "session/jobs") return;
     if (payload.type === "session/projection") { void refresh(); return; }
@@ -611,6 +629,14 @@
     const transcript = applyTranscriptEvent({ messages, todos }, payload.event, payload.view as Record<string, unknown> | undefined);
     messages = transcript.messages;
     todos = transcript.todos;
+    if (payload.event.type === "tool/result") {
+      const toolError = payload.event.data.error;
+      const toolErrorCode = toolError && typeof toolError === "object" ? String((toolError as Record<string, unknown>).code || "") : "";
+      const toolErrorMessage = toolError && typeof toolError === "object" ? String((toolError as Record<string, unknown>).message || "") : "";
+      if (toolErrorCode.startsWith("WEB_PROVIDER_") || toolErrorMessage.toLowerCase().includes("api key")) {
+        runtimeError = userFacingError(toolErrorMessage || transcript.messages.at(-1)?.tool?.result || toolErrorCode);
+      }
+    }
     if (payload.event.type === "assistant/message") {
       const assistantMessage = assistantMessageForEvent(transcript.messages, payload.event);
       captureCustomization(assistantMessage);
@@ -1064,14 +1090,31 @@
 
   async function respondApproval(outcome: "allowed-once" | "rejected"): Promise<void> {
     if (!client || !pendingApproval) return;
-    await client.respond({ type: "client-response", rpcId: pendingApproval.rpcId, result: { ok: true, value: { sessionId: pendingApproval.sessionId, approvalId: pendingApproval.approvalId, outcome } } });
+    const request = pendingApproval;
+    try {
+      await client.respond({ type: "client-response", rpcId: request.rpcId, result: { ok: true, value: { sessionId: request.sessionId, approvalId: request.approvalId, outcome } } });
+      if (pendingApproval?.rpcId === request.rpcId) pendingApproval = undefined;
+      sending = outcome === "allowed-once";
+    } catch (error) {
+      runtimeError = userFacingError(error);
+    }
   }
 
   async function respondQuestion(): Promise<void> {
     if (!client || !pendingQuestion) return;
     if (!questionsAnswered(pendingQuestion.questions, questionAnswers)) return;
     const answers = buildQuestionAnswers(pendingQuestion.questions, questionAnswers);
-    await client.respond({ type: "client-response", rpcId: pendingQuestion.rpcId, result: { ok: true, value: { sessionId: pendingQuestion.sessionId, answer: { answers } } } });
+    const request = pendingQuestion;
+    try {
+      await client.respond({ type: "client-response", rpcId: request.rpcId, result: { ok: true, value: { sessionId: request.sessionId, answer: { answers } } } });
+      if (pendingQuestion?.rpcId === request.rpcId) {
+        pendingQuestion = undefined;
+        questionAnswers = {};
+      }
+      sending = true;
+    } catch (error) {
+      runtimeError = userFacingError(error);
+    }
   }
 
   function formatTime(value: number): string { return new Intl.DateTimeFormat(i18n.locale, { hour: "2-digit", minute: "2-digit" }).format(value); }

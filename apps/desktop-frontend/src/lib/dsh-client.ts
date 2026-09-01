@@ -127,7 +127,7 @@ export class DshClient {
   }
 
   async request<T>(method: string, payload: unknown): Promise<T> {
-    return unwrap<T>(await this.transport.dshRequest(method, payload) as { result?: RpcResult<T> });
+    return unwrap<T>(await this.transport.dshRequest(method, snapshotRpcValue(payload)) as { result?: RpcResult<T> });
   }
 
   listSessions(): Promise<{ items: SessionSummary[] }> { return this.request("session.list", {}); }
@@ -256,4 +256,23 @@ function snapshotPromptContent(content: PromptContentPart[]): PromptContentPart[
   return content.map((part) => part.type === "text"
     ? { type: "text", text: part.text }
     : { type: "image", mediaType: part.mediaType, data: part.data, ...(part.name ? { name: part.name } : {}) });
+}
+
+// Svelte 5 state values are proxies; Electron IPC only accepts structured-cloneable
+// plain data. Snapshot every RPC payload at this boundary so reactive arrays and
+// objects cannot fail silently before reaching the official DSH runtime.
+function snapshotRpcValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) throw new Error("DSH 请求参数不能包含循环引用");
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) return value.map((item) => snapshotRpcValue(item, seen));
+    const result: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      result[key] = snapshotRpcValue(child, seen);
+    }
+    return result;
+  } finally {
+    seen.delete(value);
+  }
 }

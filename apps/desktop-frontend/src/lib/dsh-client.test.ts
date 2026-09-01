@@ -87,6 +87,16 @@ describe("DshClient management RPC", () => {
     expect(Object.getPrototypeOf(payload.content)).toBe(Array.prototype);
   });
 
+  it("snapshots reactive credential references before Electron IPC", async () => {
+    const { calls, client } = createClient();
+    const reactiveRefs = new Proxy(["XG_GOMODEL_API_KEY"], {});
+    await client.describeCredentials(reactiveRefs);
+    const payload = calls[0].payload as { refs: string[] };
+    expect(payload).toEqual({ refs: ["XG_GOMODEL_API_KEY"] });
+    expect(Object.getPrototypeOf(payload)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(payload.refs)).toBe(Array.prototype);
+  });
+
   it("maps goals, subagents, settings, credentials and providers", async () => {
     const { calls, client } = createClient();
     const ref = { id: "goal-1", revision: 2 };

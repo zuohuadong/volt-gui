@@ -56,7 +56,8 @@
 | ANYONG-AI-ELEMENTS-COMPOSER-DECOMPOSE-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | user-request | 将自研 Composer 拆解迁移到 PromptInput 官方复合组件族 | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/decompose-ai-elements-composer | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/218 |
 | ANYONG-AI-ELEMENTS-RELEASE-20260901 | cnb | aizhuliren/xgic/anyong-agent | user-request | 发布 ai-elements 0.2.0 迁移后的 Windows x64 新版 | high | high | blocked | codex | gpt-5.6 | - | review-high | codex/release-run-v0.31.15 | - |
 | ANYONG-CNB-ATOMIC-RELEASE-20260901 | cnb | aizhuliren/xgic/anyong-agent | user-request | 修复 CNB Release 原子性并恢复 v0.31.15 发布 | high | high | blocked | codex | gpt-5.6 | - | review-high | main | - |
-| ANYONG-CNB-ZIP-ASSEMBLY-FOLLOWUP-20260901 | cnb | aizhuliren/xgic/anyong-agent | cnb-um8-1k1dtriqj | 修复 CNB PowerShell ZIP 检查并发布 v0.31.16 | high | high | running | codex | gpt-5.6 | - | review-high | main | - |
+| ANYONG-CNB-ZIP-ASSEMBLY-FOLLOWUP-20260901 | cnb | aizhuliren/xgic/anyong-agent | cnb-um8-1k1dtriqj | 修复 CNB PowerShell ZIP 检查并发布 v0.31.16 | high | high | blocked | codex | gpt-5.6 | - | review-high | main | - |
+| ANYONG-CNB-DRAFT-STATE-FOLLOWUP-20260901 | cnb | aizhuliren/xgic/anyong-agent | cnb-sig-1k1duoes8 | 兼容 CNB 草稿状态与 204 清理并发布 v0.31.17 | high | high | running | codex | gpt-5.6 | - | review-high | main | - |
 | ANYONG-AI-ELEMENTS-FULL-COVERAGE-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | https://www.npmjs.com/package/@svadmin/ai-elements | 完整接入 AI Elements 对话交互与结构化输出组件 | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/complete-ai-elements-coverage | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/217 |
 | ANYONG-AI-ELEMENTS-MIGRATION-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | https://www.npmjs.com/package/@svadmin/ai-elements | 迁移桌面对话到已发布的 SVAdmin AI Elements | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/migrate-svadmin-ai-elements | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/216 |
 | ANYONG-CNB-ISSUES-211-215-20260831 | cnb | aizhuliren/xgic/anyong-agent | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/issues | 修复并关闭全部开放 CNB issues #211-#215 | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/fix-cnb-issues-211-215 | - |
@@ -112,6 +113,15 @@
 - 验收标准：workflow 回归测试锁定程序集加载；本地发布/workflow 与 diff 门禁通过；修复提交的 main pipeline 全绿；远端 `v0.31.16` 创建前不存在；tag pipeline 全阶段成功；Release 与真实资产通过状态、size、SHA-256、ZIP 全量读取、`Anyong.exe`、installer `NotSigned` 验收。
 - orchestration.mode：`panel`，risk=high。主代理唯一 writer 和远端执行者；复用原子实现、契约和安全 reviewer 对 follow-up diff 与 live 结果复核。
 - 风险与回滚：失败 tag 永不重写；若 `v0.31.16` 仍失败则保持现场并创建新的明确 follow-up，不以手工 Release 绕过流水线；代码回滚使用普通 revert。
+
+### ANYONG-CNB-DRAFT-STATE-FOLLOWUP-20260901 Task Contract
+
+- parent：`ANYONG-CNB-ZIP-ASSEMBLY-FOLLOWUP-20260901`；source：CNB tag pipeline `cnb-sig-1k1duoes8`；reason：CNB 草稿回读为 `draft=true,is_latest=true`，且删除草稿成功返回 HTTP 204，脚本原有判断与状态码不兼容导致 publish 失败。
+- 目标：草稿校验仅要求 `draft=true` 且非 prerelease，删除接口接受 200/204；保持 `v0.31.15`、`v0.31.16` 不变，在修复后的绿色 main 候选上发布 `v0.31.17`。
+- 非目标：不移动、删除或覆盖既有失败 tag；不绕过两资产上传/verify、API hash/size、ZIP/NotSigned 或 draft 原子发布门禁。
+- 验收标准：回归测试覆盖草稿 `is_latest=true` 和 DELETE 204；修复提交 main pipeline 全绿；远端 `v0.31.17` 不存在后创建；tag pipeline 与 live Release/真实下载验收全部通过。
+- orchestration.mode：`panel`，risk=high。主代理唯一 writer/远端执行者；三名 reviewer 复核 follow-up diff 与 live 结果。
+- 风险与回滚：失败 tag 保持不变；若 `v0.31.17` 失败则不重写，保留 CNB 草稿/Release 现场并继续新 follow-up。
 
 ### ANYONG-AI-ELEMENTS-COMPOSER-DECOMPOSE-20260901 Task Contract
 

@@ -1,5 +1,7 @@
 # Agent Progress Log
 
+[2026-09-01T16:30:00+0800] [codex] [running:ANYONG-CNB-DRAFT-STATE-FOLLOWUP-20260901] `v0.31.16` package 已成功，publish 阶段上传安装包/便携 ZIP 后因 CNB 草稿回读短暂 `is_latest=true` 被脚本误判，随后清理请求以 HTTP 204 成功但脚本只接受 200，最终报 cleanup failed；未正式发布。`v0.31.16` 保持不可变并记录失败，后续修复接受 DELETE 204 且草稿判断仅依赖 `draft=true`，实际版本递增为 `v0.31.17`。
+
 [2026-09-01T15:35:00+0800] [codex] [running:ANYONG-CNB-ZIP-ASSEMBLY-FOLLOWUP-20260901] `v0.31.15` tag pipeline `cnb-um8-1k1dtriqj` 的 verify/environment/install/set version 成功，package 在生成 installer/portable 后因 PowerShell 未加载 `System.IO.Compression.ZipFile` 失败并跳过 publish；Release 未创建，tag 保持精确指向候选提交。已创建 high-risk follow-up，仅修复 `.cnb.yml` 显式 `Add-Type -AssemblyName System.IO.Compression.FileSystem`，修复后的实际发布版本递增为 `v0.31.16`，不移动或覆盖失败 tag。
 
 [2026-09-01T15:24:34+0800] [codex] [running:ANYONG-CNB-ATOMIC-RELEASE-20260901] 原子发布候选完成并通过 high-risk panel：atomic implementation PASS、contract PASS、release security PASS。发布脚本已覆盖 HTTP 201、正式 Release 幂等、陈旧 draft 重建、PATCH 响应丢失恢复、状态不明保留和同 ID draft 条件清理；main/tag 均运行发布测试。Node 26 下发布/workflow 19/19、核心测试、DSH integration、migration、Electron boundary、skills sync、production audit、build 与 diff check 全部通过；下一门禁为推送候选并等待精确 main SHA 的 CNB pipeline 全绿。

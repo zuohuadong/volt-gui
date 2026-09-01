@@ -43,7 +43,7 @@ test("publishes a draft only after both verified assets are present", async () =
         tag_name: "v0.31.15",
         draft: true,
         prerelease: false,
-        is_latest: false,
+        is_latest: true,
         assets: [
           { name: "anyong-windows-x64-installer-0.31.15.exe", size: 9, hash_algo: "sha256", hash_value: installerHash },
           { name: "anyong-windows-x64-portable-0.31.15.zip", size: 8, hash_algo: "sha256", hash_value: portableHash },
@@ -106,7 +106,7 @@ test("deletes a newly created draft when publishing fails", async () => {
     { status: 201, ok: true, json: async () => ({ id: "release-id", draft: true }) },
     { status: 500, ok: false },
     { status: 200, ok: true, json: async () => ({ id: "release-id", draft: true }) },
-    { status: 200, ok: true },
+    { status: 204, ok: true },
   ];
   try {
     await assert.rejects(

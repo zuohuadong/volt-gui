@@ -125,9 +125,6 @@
 <div
   bind:this={containerRef}
   class="model-picker-dropdown"
-  onkeydown={handleKeyDown}
-  role="region"
-  aria-label={t("composer.selectModel")}
 >
   <button
     type="button"
@@ -135,6 +132,7 @@
     class:active={open}
     {disabled}
     aria-haspopup="listbox"
+    onkeydown={handleKeyDown}
     aria-expanded={open}
     title={selectedDisplayName}
     onclick={() => {
@@ -156,6 +154,7 @@
       role="listbox"
       tabindex="-1"
       aria-label={t("composer.selectModel")}
+      onkeydown={handleKeyDown}
     >
       <div class="model-picker-header">
         <div class="model-picker-search">

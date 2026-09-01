@@ -130,9 +130,6 @@
 <div
   bind:this={containerRef}
   class="permission-selector-dropdown"
-  onkeydown={handleKeyDown}
-  role="region"
-  aria-label={t("composer.permission")}
 >
   <button
     type="button"
@@ -140,6 +137,7 @@
     class:active={open}
     disabled={busy || !sessionId}
     aria-haspopup="menu"
+    onkeydown={handleKeyDown}
     aria-expanded={open}
     title={currentOption.label}
     onclick={() => {
@@ -161,6 +159,7 @@
       role="menu"
       tabindex="-1"
       aria-label={t("composer.permission")}
+      onkeydown={handleKeyDown}
     >
       <div class="permission-popover-header">
         <span>{t("composer.permission")}</span>

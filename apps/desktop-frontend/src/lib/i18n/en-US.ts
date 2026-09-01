@@ -536,7 +536,7 @@ export const enUS: TranslationDict = {
     empty: "No SMB Mounts Configured",
     emptyDesc: "Add Windows SMB / Samba shares to share project assets across machines.",
     mountedNotice: "{name} mounted to {path}",
-    removeConfirm: "Remove SMB config \"{name}\"? Mounted drives will remain mapped.",
+    removeConfirm: "Remove SMB config \"{name}\"? The mapped drive will be unmounted first.",
     statusMounted: "Mounted",
     statusUnmounted: "Unmounted",
     statusOffline: "Offline",

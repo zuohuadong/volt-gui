@@ -536,7 +536,7 @@ export const zhCN: TranslationDict = {
     empty: "暂无 SMB 挂载记录",
     emptyDesc: "可添加 Windows SMB / Samba 共享以便跨机器共享项目资产。",
     mountedNotice: "{name} 已挂载到 {path}",
-    removeConfirm: "移除 SMB 配置“{name}”？已挂载的盘符不会自动卸载。",
+    removeConfirm: "移除 SMB 配置“{name}”？如果当前已挂载，会先卸载对应盘符。",
     statusMounted: "已挂载",
     statusUnmounted: "未挂载",
     statusOffline: "网络不可用",

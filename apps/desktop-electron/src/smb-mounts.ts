@@ -72,7 +72,10 @@ function validateLocalPath(value: string): string {
 
 function validateRemotePath(value: string): string {
   const remotePath = value.trim().replaceAll("/", "\\").replace(/\\+$/u, "");
-  if (!/^\\\\[^\\\0\r\n]+\\[^\\\0\r\n]+(?:\\[^\\\0\r\n]+)*$/u.test(remotePath)) {
+  const segments = remotePath.slice(2).split("\\");
+  if (!remotePath.startsWith("\\\\")
+    || segments.length < 2
+    || segments.some((segment) => !segment || segment === "." || segment === ".." || /[<>:"|?*\u0000-\u001F]/u.test(segment))) {
     throw new SmbMountError("error", "远程路径必须是 SMB UNC 路径，例如 \\\\nas\\engineering");
   }
   return remotePath;
@@ -88,6 +91,12 @@ function classifyError(value: string): Exclude<SmbMountStatus, "mounted" | "unmo
   if (/(credential|password|logon failure|1326|1219|access is denied|凭据|密码)/u.test(normalized)) return "requires_credentials";
   if (/(network|unreachable|timeout|offline|53|67|资源名称)/u.test(normalized)) return "offline";
   return "error";
+}
+
+function toMountError(error: unknown): SmbMountError {
+  if (error instanceof SmbMountError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  return new SmbMountError(classifyError(message), sanitizeError(message));
 }
 
 function defaultRunner(file: string, args: readonly string[]): Promise<CommandResult> {
@@ -114,7 +123,13 @@ export class SmbMountManager {
   async list(): Promise<SmbMountView[]> {
     await this.ensureLoaded();
     if (this.platform !== "win32") return this.definitions.map((definition) => ({ ...definition, status: "unsupported" }));
-    const mappings = await this.readMappings();
+    let mappings: Array<{ localPath: string; remotePath: string }>;
+    try {
+      mappings = await this.readMappings();
+    } catch (error) {
+      const classified = toMountError(error);
+      return this.definitions.map((definition) => ({ ...definition, status: classified.status, lastError: classified.message }));
+    }
     return this.definitions.map((definition) => {
       const mapping = mappings.find((item) => item.localPath.toUpperCase() === definition.localPath);
       return mapping?.remotePath.toLowerCase() === definition.remotePath.toLowerCase()
@@ -135,17 +150,25 @@ export class SmbMountManager {
   async mount(request: SmbMountRequest): Promise<SmbMountView> {
     await this.ensureLoaded();
     const definition = this.normalizeRequest(request);
-    this.definitions = [...this.definitions.filter((item) => item.id !== definition.id && item.localPath !== definition.localPath), definition];
-    await this.save();
-    if (this.platform !== "win32") return { ...definition, status: "unsupported" };
+    if (this.platform !== "win32") {
+      this.definitions = [...this.definitions.filter((item) => item.id !== definition.id && item.localPath !== definition.localPath), definition];
+      await this.save();
+      return { ...definition, status: "unsupported" };
+    }
     try {
       const existing = (await this.readMappings()).find((item) => item.localPath === definition.localPath);
-      if (existing?.remotePath.toLowerCase() === definition.remotePath.toLowerCase()) return { ...definition, status: "mounted" };
-      if (existing) return { ...definition, status: "error", lastError: `${definition.localPath} 已映射到其他网络路径` };
+      if (existing && existing.remotePath.toLowerCase() !== definition.remotePath.toLowerCase()) {
+        return { ...definition, status: "error", lastError: `${definition.localPath} 已映射到其他网络路径` };
+      }
+      this.definitions = [...this.definitions.filter((item) => item.id !== definition.id && item.localPath !== definition.localPath), definition];
+      await this.save();
+      if (existing) return { ...definition, status: "mounted" };
       await this.runPowerShell(`New-SmbMapping -LocalPath ${psLiteral(definition.localPath)} -RemotePath ${psLiteral(definition.remotePath)} -Persistent $${definition.autoMount ? "true" : "false"} -ErrorAction Stop | Out-Null`);
       return { ...definition, status: "mounted" };
     } catch (error) {
-      const classified = error instanceof SmbMountError ? error : new SmbMountError(classifyError(String(error)), sanitizeError(String(error)));
+      const classified = toMountError(error);
+      this.definitions = [...this.definitions.filter((item) => item.id !== definition.id && item.localPath !== definition.localPath), definition];
+      await this.save().catch(() => undefined);
       return { ...definition, status: classified.status, lastError: classified.message };
     }
   }
@@ -172,6 +195,21 @@ export class SmbMountManager {
   async remove(id: string): Promise<{ deleted: true }> {
     await this.ensureLoaded();
     const normalizedId = validateId(id);
+    const definition = this.definitions.find((item) => item.id === normalizedId);
+    if (!definition) throw new SmbMountError("error", "SMB 配置不存在");
+    if (this.platform === "win32") {
+      try {
+        const existing = (await this.readMappings()).find((item) => item.localPath === definition.localPath);
+        if (existing && existing.remotePath.toLowerCase() !== definition.remotePath.toLowerCase()) {
+          throw new SmbMountError("error", `${definition.localPath} 已映射到其他网络路径，拒绝移除配置`);
+        }
+        if (existing) {
+          await this.runPowerShell(`Remove-SmbMapping -LocalPath ${psLiteral(definition.localPath)} -Force -UpdateProfile -ErrorAction Stop`);
+        }
+      } catch (error) {
+        throw toMountError(error);
+      }
+    }
     this.definitions = this.definitions.filter((item) => item.id !== normalizedId);
     await this.save();
     return { deleted: true };
@@ -200,7 +238,7 @@ export class SmbMountManager {
     try {
       const parsed = JSON.parse(await readFile(this.configPath, "utf8")) as Partial<StoredConfig>;
       if (parsed.version !== 1 || !Array.isArray(parsed.mounts)) return;
-      this.definitions = parsed.mounts.flatMap((item) => {
+      const loaded = parsed.mounts.flatMap((item) => {
         try {
           const normalized = this.normalizeRequest(item);
           return [normalized];
@@ -208,6 +246,14 @@ export class SmbMountManager {
           return [];
         }
       });
+      const deduped: SmbMountDefinition[] = [];
+      for (const definition of loaded) {
+        for (let index = deduped.length - 1; index >= 0; index -= 1) {
+          if (deduped[index].id === definition.id || deduped[index].localPath === definition.localPath) deduped.splice(index, 1);
+        }
+        deduped.push(definition);
+      }
+      this.definitions = deduped;
     } catch {
       this.definitions = [];
     }
@@ -225,8 +271,7 @@ export class SmbMountManager {
       const result = await this.run(powershellFile(this.platform), ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command]);
       if (result.stderr.trim()) throw new Error(sanitizeError(result.stderr));
     } catch (error) {
-      if (error instanceof SmbMountError) throw error;
-      throw new SmbMountError(classifyError(error instanceof Error ? error.message : String(error)), sanitizeError(error instanceof Error ? error.message : String(error)));
+      throw toMountError(error);
     }
   }
 
@@ -243,8 +288,8 @@ export class SmbMountManager {
           ? [{ localPath: value.LocalPath.toUpperCase(), remotePath: value.RemotePath }]
           : [];
       });
-    } catch {
-      return [];
+    } catch (error) {
+      throw toMountError(error);
     }
   }
 

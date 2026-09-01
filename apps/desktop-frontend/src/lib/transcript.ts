@@ -1,4 +1,5 @@
 import type { HistoryEntry } from "./dsh-client";
+import { extractSources, type TranscriptSource } from "./ai-elements-adapter";
 
 export type MessageRole = "user" | "assistant" | "tool" | "system";
 export type ToolState = "running" | "success" | "error";
@@ -19,6 +20,7 @@ export type TranscriptMessage = {
   tool?: ToolInfo;
   seq?: number;
   usage?: Record<string, unknown>;
+  sources?: TranscriptSource[];
 };
 export type TodoItem = { content: string; status: "pending" | "in_progress" | "completed" };
 export type TranscriptState = { messages: TranscriptMessage[]; todos: TodoItem[] };
@@ -56,7 +58,8 @@ export function applyTranscriptEvent(state: TranscriptState, event: SessionEvent
     const key = `stream-${String(data.turn ?? "0")}-${String(data.step ?? "0")}`;
     const usage = asRecord(data.usage);
     const text = visibleText(message ?? data.content);
-    const next = { id: `assistant-${event.seq}`, role: "assistant" as const, text, reasoning: reasoningText(message ?? data.reasoning), pending: false, seq: event.seq, usage };
+    const sources = extractSources(message ?? data.content);
+    const next = { id: `assistant-${event.seq}`, role: "assistant" as const, text, reasoning: reasoningText(message ?? data.reasoning), pending: false, seq: event.seq, usage, sources };
     const index = messages.findIndex((item) => item.id === key);
     if (!text && !next.reasoning) {
       if (index >= 0) messages.splice(index, 1);
@@ -65,7 +68,7 @@ export function applyTranscriptEvent(state: TranscriptState, event: SessionEvent
     if (index >= 0) messages[index] = next; else messages.push(next);
   } else if (event.type === "tool/call") {
     const callId = String(data.callId ?? `call-${event.seq}`);
-    messages.push({ id: `tool-${callId}`, role: "tool", text: String(data.name || "工具调用"), seq: event.seq, tool: { callId, name: String(data.name || "工具"), args: String(data.arguments || ""), state: "running", view } });
+    messages.push({ id: `tool-${callId}`, role: "tool", text: String(data.name || "工具调用"), seq: event.seq, sources: extractSources(view), tool: { callId, name: String(data.name || "工具"), args: String(data.arguments || ""), state: "running", view } });
   } else if (event.type === "tool/result") {
     const message = asRecord(data.message);
     const block = Array.isArray(message?.content) ? message.content.map(asRecord).find((item) => item?.type === "tool-result") : undefined;
@@ -75,8 +78,10 @@ export function applyTranscriptEvent(state: TranscriptState, event: SessionEvent
     if (existing?.tool) {
       existing.tool.result = result;
       existing.tool.state = data.error || block?.isError ? "error" : "success";
+      existing.tool.view = view || existing.tool.view;
+      existing.sources = extractSources([block, data.message, data.content, data.result, data.meta, view]);
     } else {
-      messages.push({ id: `tool-result-${event.seq}`, role: "tool", text: "工具结果", seq: event.seq, tool: { callId, name: "工具结果", result, state: data.error || block?.isError ? "error" : "success", view } });
+      messages.push({ id: `tool-result-${event.seq}`, role: "tool", text: "工具结果", seq: event.seq, sources: extractSources([block, data.message, data.content, data.result, data.meta, view]), tool: { callId, name: "工具结果", result, state: data.error || block?.isError ? "error" : "success", view } });
     }
   } else if (event.type === "todo/write") {
     const items = Array.isArray(data.items) ? data.items : Array.isArray(data.todos) ? data.todos : [];
@@ -105,6 +110,7 @@ export function visibleText(value: unknown): string {
   const record = asRecord(value);
   if (!record) return value == null ? "" : String(value);
   if (record.type === "reasoning") return "";
+  if (typeof record.type === "string" && (record.type.includes("source") || record.type.includes("citation"))) return "";
   if (typeof record.text === "string") return visibleText(record.text);
   if (typeof record.content === "string") return visibleText(record.content);
   if (Array.isArray(record.content)) return visibleText(record.content);

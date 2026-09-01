@@ -1,42 +1,81 @@
 <script lang="ts">
-  import { ImagePlus, X } from "@lucide/svelte";
+  import { Paperclip } from "@lucide/svelte";
+  import {
+    Attachment,
+    AttachmentInfo,
+    AttachmentPreview,
+    AttachmentRemove,
+    Attachments,
+  } from "@svadmin/ai-elements";
   import { Button } from "$components/ui/button";
   import type { PromptContentPart } from "$lib/dsh-client";
 
-  type Attachment = Extract<PromptContentPart, { type: "image" }>;
-  let { attachments = $bindable<Attachment[]>([]) }: { attachments?: Attachment[] } = $props();
-  let inputRef = $state<HTMLInputElement | null>(null);
-  let error = $state("");
+  type ImageAttachment = Extract<PromptContentPart, { type: "image" }>;
+  type Props = { attachments?: ImageAttachment[] };
+  let { attachments = $bindable<ImageAttachment[]>([]) }: Props = $props();
+  let fileInput = $state<HTMLInputElement>();
   const maxBytes = 10 * 1024 * 1024;
+  const acceptedTypes = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
-  function mediaType(file: File): Attachment["mediaType"] | undefined {
-    return file.type === "image/png" || file.type === "image/jpeg" || file.type === "image/webp" || file.type === "image/gif" ? file.type : undefined;
+  function displayAttachment(attachment: ImageAttachment) {
+    return {
+      id: `dsh-image-${attachment.name || "image"}-${attachment.data.slice(0, 16)}`,
+      type: "file" as const,
+      filename: attachment.name || "图片",
+      mediaType: attachment.mediaType,
+      url: `data:${attachment.mediaType};base64,${attachment.data}`,
+    };
   }
-  async function addFiles(files: FileList | File[]): Promise<void> {
-    error = "";
-    for (const file of Array.from(files)) {
-      const type = mediaType(file);
-      if (!type) { error = "仅支持 PNG、JPEG、WebP 或 GIF 图片"; continue; }
-      if (file.size > maxBytes) { error = "图片不能超过 10 MB"; continue; }
-      const data = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result).split(",", 2)[1] || "");
-        reader.onerror = () => reject(reader.error || new Error("图片读取失败"));
-        reader.readAsDataURL(file);
-      });
-      if (data) attachments = [...attachments, { type: "image", mediaType: type, data, name: file.name }];
-    }
-    if (inputRef) inputRef.value = "";
+
+  async function addSelectedFiles(event: Event): Promise<void> {
+    const input = event.currentTarget as HTMLInputElement;
+    const next = await Promise.all(Array.from(input.files ?? []).map(toImageAttachment));
+    attachments = [...attachments, ...next.filter((attachment): attachment is ImageAttachment => Boolean(attachment))];
+    input.value = "";
   }
-  function onDrop(event: DragEvent): void {
-    event.preventDefault();
-    if (event.dataTransfer?.files.length) void addFiles(event.dataTransfer.files);
+
+  async function toImageAttachment(file: File): Promise<ImageAttachment | undefined> {
+    if (!acceptedTypes.has(file.type) || file.size > maxBytes) return undefined;
+    const data = await readFile(file);
+    return data ? { type: "image", mediaType: file.type as ImageAttachment["mediaType"], data, name: file.name } : undefined;
+  }
+
+  function removeAttachment(index: number): void {
+    attachments = attachments.filter((_, itemIndex) => itemIndex !== index);
+  }
+
+  function readFile(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",", 2)[1] || "");
+      reader.onerror = () => reject(reader.error || new Error("图片读取失败"));
+      reader.readAsDataURL(file);
+    });
   }
 </script>
 
-<div class="attachment-control" role="group" aria-label="图片附件" ondragover={(event) => event.preventDefault()} ondrop={onDrop}>
-  <input bind:this={inputRef} class="attachment-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple onchange={(event) => { const files = (event.currentTarget as HTMLInputElement).files; if (files) void addFiles(files); }} />
-  <Button variant="ghost" size="icon-sm" aria-label="添加图片" title="添加图片" onclick={() => inputRef?.click()}><ImagePlus size={14} /></Button>
-  {#if attachments.length > 0}<div class="attachment-list" aria-label="已添加图片">{#each attachments as attachment, index (index)}<span class="attachment-chip"><img alt={attachment.name || "图片附件"} src={`data:${attachment.mediaType};base64,${attachment.data}`} /><span>{attachment.name || "图片"}</span><button aria-label={`移除 ${attachment.name || "图片"}`} onclick={() => attachments = attachments.filter((_, itemIndex) => itemIndex !== index)}><X size={12} /></button></span>{/each}</div>{/if}
-  {#if error}<span class="attachment-error">{error}</span>{/if}
+<div class="composer-attachments">
+  <input
+    bind:this={fileInput}
+    class="sr-only"
+    type="file"
+    accept="image/png,image/jpeg,image/webp,image/gif"
+    multiple
+    onchange={(event) => void addSelectedFiles(event)}
+  />
+  {#if attachments.length}
+    <Attachments variant="inline" class="composer-attachment-list">
+      {#each attachments as attachment, index (`${displayAttachment(attachment).id}-${index}`)}
+        {@const display = displayAttachment(attachment)}
+        <Attachment data={display} onremove={() => removeAttachment(index)}>
+          <AttachmentPreview />
+          <AttachmentInfo />
+          <AttachmentRemove label={`移除 ${display.filename}`} />
+        </Attachment>
+      {/each}
+    </Attachments>
+  {/if}
+  <Button variant="ghost" size="icon-sm" aria-label="添加图片" title="添加图片" onclick={() => fileInput?.click()}>
+    <Paperclip size={14} />
+  </Button>
 </div>

@@ -53,6 +53,7 @@
 
 | task_id | provider | repo | source_url | title | priority | risk | status | owner | model | needs_model | review_class | branch | change_request_url |
 |---------|----------|------|------------|-------|----------|------|--------|-------|-------|-------------|--------------|--------|--------------------|
+| ANYONG-AI-ELEMENTS-FULL-COVERAGE-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | https://www.npmjs.com/package/@svadmin/ai-elements | 完整接入 AI Elements 对话交互与结构化输出组件 | high | medium | review | codex | gpt-5.6 | - | review-medium | codex/complete-ai-elements-coverage | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/217 |
 | ANYONG-AI-ELEMENTS-MIGRATION-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | https://www.npmjs.com/package/@svadmin/ai-elements | 迁移桌面对话到已发布的 SVAdmin AI Elements | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/migrate-svadmin-ai-elements | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/216 |
 | ANYONG-CNB-ISSUES-211-215-20260831 | cnb | aizhuliren/xgic/anyong-agent | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/issues | 修复并关闭全部开放 CNB issues #211-#215 | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/fix-cnb-issues-211-215 | - |
 | VOLTGUI-PR103-ELECTRON-FOLLOWUP-20260824 | github | zuohuadong/volt-gui | https://github.com/zuohuadong/volt-gui/pull/103 | 完成 Electron + DSH 上游迁移并永久退役 Wails | high | high | review | codex | gpt-5.6 | - | review-high | codex/electron-dsh-upstream-migration | https://github.com/zuohuadong/volt-gui/pull/103 |
@@ -77,6 +78,21 @@
 | ANYONG-REVIEW-PR7-20260714 | cnb | aizhuliren/volt/anyong-agent | https://cnb.cool/aizhuliren/volt/anyong-agent/-/issues/6 | 审查并合并 Linux runner prerequisites ZIP 修复 | high | medium | done | codex | gpt-5.3-codex | - | review-medium | fix/desktop-build-linux-prerequisites-zip | https://cnb.cool/aizhuliren/volt/anyong-agent/-/pull/7 |
 | ANYONG-PREREQUISITES-RELEASE-20260714 | cnb | aizhuliren/volt/anyong-agent | user-request | 将 Windows prerequisites 解耦为独立版本与 Release | high | high | done | codex | gpt-5.3-codex | gpt-5.5 | review-high | main | https://cnb.cool/aizhuliren/volt/anyong-agent/-/releases/tag/prerequisites-v1.0.0 |
 | ANYONG-STREAM-RECOVERY-20260813 | cnb | aizhuliren/volt/anyong-agent | user-screenshot | 修复 Windows 桌面端重复输出保护直接失败 | high | medium | done | codex | gpt-5.6 | - | review-medium | main | - |
+
+### ANYONG-AI-ELEMENTS-FULL-COVERAGE-20260901 Task Contract
+
+- parent：`ANYONG-AI-ELEMENTS-MIGRATION-20260901`；source：用户在第一阶段 PR #216 合并后要求接入此前列出的全部剩余 AI Elements 组件；reason：第一阶段只迁移了核心 transcript 与 PromptInput 外壳，尚未覆盖附件、审批/提问、模型、计划轨迹、上下文、来源引用、结构化工具输出和对话空状态/滚动。
+- 目标：把 `Attachments`、`Question`、`Confirmation`、`ModelSelector`、`Task`、`Plan`、`ChainOfThought`、`Context`、`TokensWithCost`、`Sources`、`InlineCitation`、`Artifact`、`CodeBlock`、`Terminal`、`TestResults`、`FileTree`、`ConversationEmptyState` 和 `ConversationScrollButton` 接入桌面真实对话工作流；组件仅消费官方 DSH transcript、模型、审批、提问、工具 view/result 和附件数据。
+- 非目标：不接入 `ChatDialog` 的本地历史；不新增会话、模型、审批、权限、凭据、附件或持久化后端；不伪造来源、引用、文件树、测试结果或 artifact；不升级官方 DSH 或无关依赖。
+- 验收标准：指定组件族均在真实可达 UI 路径中使用；附件仍按 DSH image prompt 合约发送；审批和提问仍通过官方 `respond`；模型仍通过官方 `selectModel`；计划和活动仍来自 transcript/todo；上下文用真实 usage/model limits；来源引用和结构化输出只在解析到对应数据时显示；桌面与窄屏无重叠；现有发送、停止、权限、`@` 引用和生成 Surface 行为保持。
+- orchestration.mode：`managed`，risk=medium。主代理为唯一 writer；实现完成后由一名只读 verifier 检查组件真实性、DSH 薄壳边界、Svelte 5 类型与可达 UI。
+- 相关 skill：`svadmin-admin-ui`、`typescript`、`svelte-code-writer`、`svelte-core-bestpractices`、`volt-gui-design-language`、`agent-team-automation`；遵循 Svelte 5 runes、当前工作台设计语言和官方 DSH 单一运行时边界。
+- 影响范围：`apps/desktop-frontend/src/App.svelte`、`src/app.css`、`src/components/ConversationTranscript.svelte`、附件/交互/活动相关组件、`src/lib/transcript.ts` 及聚焦测试；必要时新增纯呈现适配组件，不修改 Electron 主进程或 DSH runtime。
+- 验证计划：前端 Vitest、`svelte-check`、Svelte autofixer、Vite production build；Node 26 根测试、DSH integration、Electron runtime boundary、migration boundary、`git diff --check`；桌面和窄屏真实或可复现渲染 smoke；独立 verifier PASS。
+- 风险与回滚：大量复合组件可能引入状态绑定、焦点、滚动和窄屏布局回归；用小型适配器、现有 DSH handler 和聚焦测试控制风险。若组件契约无法表达真实数据则保留明确的无数据状态，不用占位假数据；回滚使用普通 revert/follow-up，不改写历史。
+- interruption_recovery：稳定证据为本合同、分支 `codex/complete-ai-elements-coverage`、候选 diff 和测试输出；若 verifier 发现阻断项，保持 `running` 并在原分支修复，不创建脱离 parent 的新任务。
+- continuation：用户在完整接入实现和验证摘要后于 2026-09-01 明确要求“继续”；结合此前“提交 PR”“合并 PR”的明确指令，本轮获准提交、推送、创建并在门禁通过后合并 CNB PR。
+- completion_evidence：Node 26.8.1 / pnpm 12.1.0 下前端 Vitest 39/39、`svelte-check` 0 errors/0 warnings、Vite production build、`git diff --check` 均通过；此前根 `pnpm test`、DSH integration、Electron desktop build、runtime/migration boundary 已通过；独立 verifier 对最终 running Terminal 增量复核 PASS。
 
 ### ANYONG-AI-ELEMENTS-MIGRATION-20260901 Task Contract
 

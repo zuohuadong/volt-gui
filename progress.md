@@ -132,6 +132,8 @@
 
 <!-- Agent 工作记录按时间倒序排列 -->
 
+[2026-09-01T14:30:00+0800] [codex] [blocked:ANYONG-AI-ELEMENTS-RELEASE-20260901] 清理 6 条其他仓库的 `WORKSPACE_NOT_FOUND` 残留记录后，租户只剩 3 个关闭 workspace；推送恢复提交 `17d4ee795716447e9df379ae0639cd1ab36fbee9` 后，CNB pipeline `cnb-5so-1k1do873a` 仍在 Prepare 阶段以 workspace 数量超限失败。剩余 3 条的 detail API 同样返回 `WORKSPACE_NOT_FOUND`，但列表仍记录历史文件/backup_status=1：`cnb-mkd-1jvd19tjs`（Volt-Desktop/）、`cnb-fno-1jorajv1d`（bun.lock/package.json）、`cnb-mdo-1jm4r579e`（12 个 xgic-api 文件）。删除可能同时清理历史备份，需新的明确人工授权；未创建 `v0.31.15` tag 或 Release。
+
 [2026-09-01T14:20:00+0800] [codex] [running:ANYONG-AI-ELEMENTS-RELEASE-20260901] 继续检查其他仓库 workspace：6 条 `file_count/stash_count/backup_status` 均为 null 的关闭记录，其仓库 detail API 全部返回 `WORKSPACE_NOT_FOUND`，确认属于不可访问的残留记录；已删除 `cnb-k2q-1jllpcagi`、`cnb-hmg-1jmt745gg`、`cnb-kgo-1jor76ega`、`cnb-54o-1jorajijm`、`cnb-d2g-1jqt18uah`、`cnb-3cs-1jvbl8u46`，API 均返回 `delete success`。租户 workspace 从 9 降至 3，剩余 3 个均明确含文件/备份，保持不动。基于 `origin/main@2eafd85ea` 再次恢复 `v0.31.15` 发布任务。
 
 [2026-09-01T14:10:00+0800] [codex] [blocked:ANYONG-AI-ELEMENTS-RELEASE-20260901] 用户授权删除第二批两个空、已关闭 workspace：`cnb-94o-1jqtdn5sn` 与 `cnb-d6k-1jm5115l9`；API 均返回 `delete success`，租户 workspace 从 11 降至 9。随后推送恢复提交 `a84b90ca55862f9d665ac67b0e4de54acf5509d4`，CNB pipeline `cnb-6eo-1k1dnqsnc` 仍在 Prepare 阶段失败，错误仍为 `The number of workspaces has exceeded the limit`，environment/install/verify/build 全部跳过。剩余 9 个关闭 workspace 中有其他仓库且部分包含文件/备份，不能在当前授权下继续删除；未创建 `v0.31.15` tag，未发布 Release。需要 CNB 管理员修复租户/Runner 配额或明确授权清理有数据 workspace 后才能继续。

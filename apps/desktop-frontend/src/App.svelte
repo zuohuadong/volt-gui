@@ -2,16 +2,19 @@
   import { onMount } from "svelte";
   import {
     Archive, BookOpen, Bot, Check, ChevronDown, ChevronRight, CircleAlert,
-    CircleCheck, ClipboardList, Code2, Copy, ExternalLink, FileText, FolderOpen,
+    CircleCheck, ClipboardList, Copy, ExternalLink, FileText, FolderOpen,
     HardDrive, History, KeyRound, LoaderCircle, MessageSquare, MessageSquarePlus, Network,
     Pause, Pencil, Play, PanelLeftClose, PanelLeftOpen, Save, Search, Send,
-    Settings2, ShieldAlert, SlidersHorizontal, Square, Target, Terminal, Trash2, UserRoundCog,
+    Settings2, ShieldAlert, SlidersHorizontal, Square, Target, Trash2, UserRoundCog,
     X, RefreshCw, PlugZap, GitBranch,
   } from "@lucide/svelte";
   import { Button } from "$components/ui/button";
   import { Textarea } from "$components/ui/textarea";
   import GeneratedSurface from "$components/GeneratedSurface.svelte";
   import ConversationTranscript from "$components/ConversationTranscript.svelte";
+  import ActivityPanel from "$components/ActivityPanel.svelte";
+  import ModelPicker from "$components/ModelPicker.svelte";
+  import PendingInteractions from "$components/PendingInteractions.svelte";
   import { PromptInput } from "@svadmin/ai-elements";
   import SmbMounts from "$components/SmbMounts.svelte";
   import ImageAttachments from "$components/ImageAttachments.svelte";
@@ -33,6 +36,7 @@
   import { enrichModelGroups, mergeDiscoveredModels, modelCapabilityLabel, providerCredentialRef, resolveProviderSettings, supportedReasoningEffort } from "$lib/model-catalog";
   import { agentPresetLocked, clearsSessionError, sessionHealth, sessionHealthLabel } from "$lib/session-health";
   import { userFacingError } from "$lib/user-error";
+  import { buildQuestionAnswers, questionsAnswered } from "$lib/ai-elements-adapter";
   import {
     applyUiCustomization,
     buildUiCustomizationPrompt,
@@ -170,8 +174,6 @@
     return workspaces.filter((item) => `${item.title} ${item.path}`.toLowerCase().includes(query));
   });
   const runningTools = $derived(messages.filter((item) => item.tool?.state === "running"));
-  const activityItems = $derived(messages.filter((item) => item.tool).slice(-12).reverse());
-  const completedTools = $derived(messages.filter((item) => item.tool && item.tool.state === "success").length);
   const xgGatewayCredentialReady = $derived.by(() => {
     const config = resolveProviderSettings(settingsNamespaces, providers, "xg-gomodel")?.config;
     if (!config) return false;
@@ -521,8 +523,8 @@
   function handleFrame(frame: DshFrame): void {
     const payload = frame.payload;
     if (payload.type === "approval/requested") { pendingApproval = { rpcId: frame.rpcId, ...payload } as unknown as PendingApproval; sending = false; return; }
-    if (payload.type === "question/requested") { pendingQuestion = { rpcId: frame.rpcId, ...payload } as unknown as PendingQuestion; sending = false; return; }
-    if (payload.type === "approval/resolved" || payload.type === "question/resolved") { pendingApproval = undefined; pendingQuestion = undefined; return; }
+    if (payload.type === "question/requested") { pendingQuestion = { rpcId: frame.rpcId, ...payload } as unknown as PendingQuestion; questionAnswers = {}; sending = false; return; }
+    if (payload.type === "approval/resolved" || payload.type === "question/resolved") { pendingApproval = undefined; pendingQuestion = undefined; questionAnswers = {}; return; }
     if (payload.type === "session/queue") return;
     if (payload.type === "session/jobs") return;
     if (payload.type === "session/projection") { void refresh(); return; }
@@ -616,12 +618,6 @@
     finally { modelBusy = false; }
   }
 
-  function chooseModelValue(value: string): void {
-    const selection = modelGroups
-      .flatMap((group) => group.models.map((model) => ({ provider: group.id, model: model.id, value: `${group.id}/${model.id}` })))
-      .find((item) => item.value === value);
-    if (selection) void chooseModel(selection.provider, selection.model);
-  }
 
   async function pickWorkspace(): Promise<void> {
     const selected = await window.voltDesktop?.pickWorkspace();
@@ -976,7 +972,8 @@
 
   async function respondQuestion(): Promise<void> {
     if (!client || !pendingQuestion) return;
-    const answers = pendingQuestion.questions.map((item) => ({ id: String(item.id), selected: questionAnswers[String(item.id)] ? [questionAnswers[String(item.id)]] : [], custom: questionAnswers[`${String(item.id)}:custom`] || undefined }));
+    if (!questionsAnswered(pendingQuestion.questions, questionAnswers)) return;
+    const answers = buildQuestionAnswers(pendingQuestion.questions, questionAnswers);
     await client.respond({ type: "client-response", rpcId: pendingQuestion.rpcId, result: { ok: true, value: { sessionId: pendingQuestion.sessionId, answer: { answers } } } });
   }
 
@@ -1125,7 +1122,7 @@
           </div>
         {:else}
           <div class="conversation-shell">
-            <header class="conversation-header"><div class="conversation-title"><div class="eyebrow">{activeSession ? "会话工作台" : "暗涌"}</div><h1>{customization.title || (activeSession ? sessionTitle(activeSession) : "开始一个新会话")}</h1><p>{customization.subtitle || workspacePath || "选择一个工作区开始"}</p></div><div class="header-actions">{#if activeSessionId}<label class="header-model"><Bot size={13} /><span class="sr-only">会话模型</span><select aria-label="选择会话模型" value={selectedModel} disabled={modelBusy || modelGroups.length === 0} onchange={(event) => chooseModelValue(event.currentTarget.value)}>{#if modelGroups.length === 0}<option value={selectedModel}>{selectedModel || "默认模型"}</option>{:else}{#each modelGroups as group (group.id)}<optgroup label={group.name}>{#each group.models as model (model.id)}<option value={`${group.id}/${model.id}`}>{model.name}</option>{/each}</optgroup>{/each}{/if}</select></label>{/if}<Button variant="outline" size="sm" aria-pressed={customizationOpen} onclick={() => customizationOpen = !customizationOpen}><SlidersHorizontal size={14} />界面</Button><Button variant="outline" size="sm" onclick={() => openManagement("overview")}><Settings2 size={14} />管理</Button></div></header>
+            <header class="conversation-header"><div class="conversation-title"><div class="eyebrow">{activeSession ? "会话工作台" : "暗涌"}</div><h1>{customization.title || (activeSession ? sessionTitle(activeSession) : "开始一个新会话")}</h1><p>{customization.subtitle || workspacePath || "选择一个工作区开始"}</p></div><div class="header-actions">{#if activeSessionId}<ModelPicker groups={modelGroups} selected={selectedModel} disabled={modelBusy} onSelect={(provider, model) => void chooseModel(provider, model)} />{/if}<Button variant="outline" size="sm" aria-pressed={customizationOpen} onclick={() => customizationOpen = !customizationOpen}><SlidersHorizontal size={14} />界面</Button><Button variant="outline" size="sm" onclick={() => openManagement("overview")}><Settings2 size={14} />管理</Button></div></header>
             {#if runtimeError}<div class="error-banner"><CircleAlert size={15} /><span>{runtimeError}</span>{#if runtimeError.includes("设置与凭据") || !selectedProviderCredentialReady}<Button variant="ghost" size="sm" onclick={() => openManagement("settings")}><KeyRound size={13} />去配置</Button>{/if}<button aria-label="关闭错误" onclick={() => { runtimeError = ""; }}><X size={14} /></button></div>{/if}
             {#if customizationOpen}<section class="customization-panel" aria-label="界面定制"><div class="customization-panel__header"><div><div class="section-label">对话式界面定制</div><strong>用自然语言改变工作台</strong><p>例如：收起活动面板、使用紧凑密度、把输入框改成四行。</p></div><Button variant="ghost" size="icon-sm" aria-label="关闭界面定制" onclick={() => customizationOpen = false}><X size={14} /></Button></div>{#if customizationNotice}<div class="customization-feedback"><CircleCheck size={14} /><span>{customizationNotice}</span></div>{/if}{#if customizationDraft}<div class="customization-preview"><div><strong>待应用方案</strong><span>来自当前会话的结构化 patch</span></div><code>{JSON.stringify(customizationDraft)}</code><div class="customization-actions"><Button variant="outline" size="sm" onclick={() => customizationDraft = undefined}>忽略</Button><Button size="sm" onclick={() => applyCustomizationPatch(customizationDraft!)}><Check size={13} />应用方案</Button></div></div>{/if}<div class="customization-summary"><span class="mode-chip">{customization.density === "compact" ? "紧凑密度" : "舒适密度"}</span><span>{customization.sidebar === "collapsed" ? "侧栏已收起" : "侧栏已展开"}</span><span>{customization.activity === "visible" ? "活动面板可见" : "活动面板隐藏"}</span><span>{customization.composerRows} 行输入框</span></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={customizationHistory.length === 0} onclick={undoCustomization}>撤销上次</Button><Button variant="ghost" size="sm" onclick={() => { customization = DEFAULT_UI_CUSTOMIZATION; customizationHistory = []; persistUiCustomization(customization); applyRuntimeCustomization(customization); customizationNotice = "已恢复默认界面。"; }}>恢复默认</Button></div></section>{/if}
             {#if surfaceDraft}<section class="surface-proposal" aria-label="待确认操作界面"><div><div class="section-label">AI 操作界面提案</div><strong>{surfaceDraft.spec.title}</strong><p>{surfaceDraft.summary || `包含 ${surfaceDraft.spec.widgets.length} 个只读组件，确认后才会查询 DSH 数据。`}</p></div><div class="surface-proposal__meta"><span>{surfaceDraft.spec.widgets.length} 个组件</span><span>{surfaceDraft.spec.dataSources.length} 个数据源</span></div><div class="customization-actions"><Button variant="ghost" size="sm" onclick={() => { surfaceDraft = undefined; surfaceNotice = "已忽略操作界面提案。"; }}>忽略</Button><Button size="sm" onclick={applySurfaceProposal}><Check size={13} />确认渲染</Button></div></section>{/if}
@@ -1135,13 +1132,21 @@
                 messages={messages}
                 {sending}
                 {productName}
+                {selectedModel}
+                contextWindow={selectedModelInfo()?.contextWindow}
                 quickActions={customization.quickActions.length ? customization.quickActions : [{ label: "检查当前项目", prompt: "检查当前项目状态并给出最值得先处理的问题。" }, { label: "理解代码结构", prompt: "梳理当前项目的主要模块和启动流程。" }, { label: "运行测试", prompt: "运行测试并汇总失败项。" }]}
                 onPromptSelect={(prompt) => input = prompt}
               />
-              <aside class:open={activityOpen} class="activity-panel"><div class="panel-heading"><div><div class="section-label">活动记录</div><strong>{runningTools.length ? `${runningTools.length} 个工具运行中` : "当前会话轨迹"}</strong></div><Button variant="ghost" size="icon-sm" aria-label="关闭活动面板" onclick={() => setActivityOpen(false)}><X size={14} /></Button></div><div class="activity-summary" aria-label="活动摘要"><div><strong>{runningTools.length}</strong><span>运行中</span></div><div><strong>{completedTools}</strong><span>已完成</span></div><div><strong>{todos.filter((todo) => todo.status === "completed").length}/{todos.length}</strong><span>待办</span></div></div><div class="activity-content">{#if todos.length > 0}<section class="todo-section"><div class="panel-subheading"><ClipboardList size={14} />任务计划</div>{#each todos as todo (todo.content)}<div class="todo-row"><span class:todo-done={todo.status === "completed"} class:todo-active={todo.status === "in_progress"} class="todo-check">{#if todo.status === "completed"}<Check size={12} />{:else if todo.status === "in_progress"}<LoaderCircle class="animate-spin" size={10} />{/if}</span><span>{todo.content}</span><small>{todo.status === "completed" ? "完成" : todo.status === "in_progress" ? "进行中" : "待处理"}</small></div>{/each}</section>{/if}<section class="activity-list"><div class="panel-subheading"><History size={14} />最近活动</div>{#if activityItems.length === 0}<div class="panel-empty"><History size={18} /><p>任务开始后，工具调用和执行状态会显示在这里。</p></div>{:else}{#each activityItems as item (item.id)}<div class:error={item.tool?.state === "error"} class="activity-row"><span class="tool-dot" class:tool-running={item.tool?.state === "running"}></span><span title={item.tool?.name}>{item.tool?.name}</span><small>{item.tool?.state === "running" ? "运行中" : item.tool?.state === "error" ? "失败" : "完成"}</small></div>{/each}{/if}</section></div></aside>
+              <ActivityPanel {messages} {todos} {sending} open={activityOpen} onClose={() => setActivityOpen(false)} />
             </div>
-            {#if pendingApproval}<div class="interaction-card approval-card"><div class="interaction-icon"><ShieldAlert size={17} /></div><div class="interaction-content"><strong>需要批准工具操作</strong><p>{pendingApproval.reason || `${pendingApproval.toolName} 请求访问工作区资源。`}</p><div class="interaction-actions"><Button variant="outline" size="sm" onclick={() => void respondApproval("rejected")}>拒绝</Button><Button size="sm" onclick={() => void respondApproval("allowed-once")}><Check size={14} />允许一次</Button></div></div></div>{/if}
-            {#if pendingQuestion}<div class="interaction-card question-card"><div class="interaction-icon"><CircleAlert size={17} /></div><div class="interaction-content"><strong>DSH 需要你的选择</strong>{#each pendingQuestion.questions as question (String(question.id))}<div class="question-block"><label for={`question-${String(question.id)}`}>{String(question.question || question.header || "请选择")}</label>{#if Array.isArray(question.options) && question.options.length > 0}<select id={`question-${String(question.id)}`} aria-label={String(question.question || question.id)} value={questionAnswers[String(question.id)] || ""} onchange={(event) => questionAnswers[String(question.id)] = (event.currentTarget as HTMLSelectElement).value}><option value="">请选择…</option>{#each question.options as option (String(option.label))}<option value={String(option.label)}>{String(option.label)}</option>{/each}</select>{:else}<Input id={`question-${String(question.id)}`} aria-label={String(question.question || question.id)} placeholder="输入回答" value={questionAnswers[`${String(question.id)}:custom`] || ""} oninput={(event) => questionAnswers[`${String(question.id)}:custom`] = (event.currentTarget as HTMLInputElement).value} />{/if}</div>{/each}<div class="interaction-actions"><Button size="sm" onclick={() => void respondQuestion()}><Send size={14} />提交回答</Button></div></div></div>{/if}
+            <PendingInteractions
+              approval={pendingApproval}
+              question={pendingQuestion}
+              answers={questionAnswers}
+              onAnswer={(id, value, custom = false) => { questionAnswers[custom ? `${id}:custom` : id] = value; }}
+              onApproval={(outcome) => void respondApproval(outcome)}
+              onQuestion={() => void respondQuestion()}
+            />
             <div class="composer"><div class="composer-shell"><PromptInput
               bind:value={input}
               disabled={!activeSessionId || !!pendingApproval || !!pendingQuestion}

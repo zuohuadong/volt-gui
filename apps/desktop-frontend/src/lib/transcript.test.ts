@@ -31,6 +31,16 @@ describe("transcript folding", () => {
     expect(next.messages[0].tool).toMatchObject({ callId: "c1", result: "denied", state: "error" });
   });
 
+  it("keeps source metadata separate from assistant text", () => {
+    const next = applyTranscriptEvent({ messages: [], todos: [] }, event("assistant/message", 3, {
+      message: { content: [
+        { type: "text", text: "结论" },
+        { type: "source-url", id: "docs", title: "文档", url: "https://example.com/docs" },
+      ] },
+    }));
+    expect(next.messages[0]).toMatchObject({ text: "结论", sources: [{ id: "docs", title: "文档", url: "https://example.com/docs" }] });
+  });
+
   it("selects only the assistant message created by the current event", () => {
     const previous = { id: "assistant-4", role: "assistant" as const, text: "old proposal", seq: 4 };
     const currentEvent = event("assistant/message", 5, { message: "new proposal" });

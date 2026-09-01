@@ -206,3 +206,4 @@ minimumReleaseAgeExclude:
   - '@tanstack/query-core@5.102.6'
   - '@tanstack/svelte-query@6.1.46'
   - '@svadmin/surface@0.7.1'
+  - '@svadmin/ai-elements@0.1.0'

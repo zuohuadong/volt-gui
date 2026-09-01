@@ -83,6 +83,7 @@ $:
             $portable = Get-Item -LiteralPath "dist/anyong-windows-x64-portable-$version.zip"
             $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
             if ($signature.Status -ne 'NotSigned') { throw "Unexpected signature state for $($installer.Name): $($signature.Status)" }
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
             $zip = [System.IO.Compression.ZipFile]::OpenRead($portable.FullName)
             try {
               if ($zip.Entries.Count -eq 0) { throw "Portable ZIP is empty" }

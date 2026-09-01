@@ -1,5 +1,7 @@
 # Agent Progress Log
 
+[2026-09-01T15:35:00+0800] [codex] [running:ANYONG-CNB-ZIP-ASSEMBLY-FOLLOWUP-20260901] `v0.31.15` tag pipeline `cnb-um8-1k1dtriqj` 的 verify/environment/install/set version 成功，package 在生成 installer/portable 后因 PowerShell 未加载 `System.IO.Compression.ZipFile` 失败并跳过 publish；Release 未创建，tag 保持精确指向候选提交。已创建 high-risk follow-up，仅修复 `.cnb.yml` 显式 `Add-Type -AssemblyName System.IO.Compression.FileSystem`，修复后的实际发布版本递增为 `v0.31.16`，不移动或覆盖失败 tag。
+
 [2026-09-01T15:24:34+0800] [codex] [running:ANYONG-CNB-ATOMIC-RELEASE-20260901] 原子发布候选完成并通过 high-risk panel：atomic implementation PASS、contract PASS、release security PASS。发布脚本已覆盖 HTTP 201、正式 Release 幂等、陈旧 draft 重建、PATCH 响应丢失恢复、状态不明保留和同 ID draft 条件清理；main/tag 均运行发布测试。Node 26 下发布/workflow 19/19、核心测试、DSH integration、migration、Electron boundary、skills sync、production audit、build 与 diff check 全部通过；下一门禁为推送候选并等待精确 main SHA 的 CNB pipeline 全绿。
 
 [2026-09-01T14:50:00+0800] [codex] [running:ANYONG-CNB-ATOMIC-RELEASE-20260901] 用户明确要求修复未发布问题。已建立 high-risk panel follow-up：唯一 writer 将 CNB tag pipeline 改为 draft→upload/verify→API hash/size 回读→PATCH latest，失败后仅在 CNB 明确确认同 ID 且仍为 draft 时删除，并补 Authenticode `NotSigned`、本地 SHA-256、ZIP 完整性门禁；完成候选验证和三路复核后才恢复 `v0.31.15` tag 发布。

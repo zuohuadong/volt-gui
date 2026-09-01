@@ -111,6 +111,7 @@ test("CNB validates the same Node 26 source contract", () => {
   assert.match(cnb, /Desktop packaging failed with exit code/);
   assert.match(cnb, /Get-AuthenticodeSignature/);
   assert.match(cnb, /NotSigned/);
+  assert.match(cnb, /Add-Type -AssemblyName System\.IO\.Compression\.FileSystem/);
   assert.match(cnb, /ZipFile\]::OpenRead/);
   assert.match(cnb, /CopyTo\(\[System\.IO\.Stream\]::Null\)/);
   assert.match(cnb, /Anyong\.exe/);

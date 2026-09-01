@@ -10,7 +10,7 @@ description: Use for Xigu AI product strategy, Anyong distribution scope, Chines
 - 官方 `@deepseek-ai/dsh` 是唯一 Harness 与产品 UI。
 - Electron 仅拥有窗口、安全、导航与 DSH 子进程生命周期。
 - `profiles/anyong.yml` 仅覆盖官方 profile 已提供的配置行。
-- CNB 验证 Node 源码；GitHub 仅打包 Windows x64 未签名评审产物。
+- CNB 验证 Node 源码并通过原子草稿/上传/校验流程发布 Windows x64 未签名评审版本；GitHub 保留手动未签名构建产物流程。
 
 ## 决策规则
 
@@ -23,7 +23,7 @@ description: Use for Xigu AI product strategy, Anyong distribution scope, Chines
 ## 发布规则
 
 - 只宣称实际验证的平台与产物。
-- 未签名产物只用于评审，不宣称正式发布。
+- 未签名产物只用于评审，不宣称签名或生产发布；CNB Release 必须在所有资产校验完成后才设为 latest。
 - 签名、updater、macOS、Linux 或生产部署需要单独合同和证据。
 - 不输出或持久化任何真实密钥。
 

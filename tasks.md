@@ -55,6 +55,7 @@
 |---------|----------|------|------------|-------|----------|------|--------|-------|-------|-------------|--------------|--------|--------------------|
 | ANYONG-AI-ELEMENTS-COMPOSER-DECOMPOSE-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | user-request | 将自研 Composer 拆解迁移到 PromptInput 官方复合组件族 | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/decompose-ai-elements-composer | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/218 |
 | ANYONG-AI-ELEMENTS-RELEASE-20260901 | cnb | aizhuliren/xgic/anyong-agent | user-request | 发布 ai-elements 0.2.0 迁移后的 Windows x64 新版 | high | high | blocked | codex | gpt-5.6 | - | review-high | codex/release-run-v0.31.15 | - |
+| ANYONG-CNB-ATOMIC-RELEASE-20260901 | cnb | aizhuliren/xgic/anyong-agent | user-request | 修复 CNB Release 原子性并恢复 v0.31.15 发布 | high | high | running | codex | gpt-5.6 | - | review-high | main | - |
 | ANYONG-AI-ELEMENTS-FULL-COVERAGE-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | https://www.npmjs.com/package/@svadmin/ai-elements | 完整接入 AI Elements 对话交互与结构化输出组件 | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/complete-ai-elements-coverage | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/217 |
 | ANYONG-AI-ELEMENTS-MIGRATION-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | https://www.npmjs.com/package/@svadmin/ai-elements | 迁移桌面对话到已发布的 SVAdmin AI Elements | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/migrate-svadmin-ai-elements | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/216 |
 | ANYONG-CNB-ISSUES-211-215-20260831 | cnb | aizhuliren/xgic/anyong-agent | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/issues | 修复并关闭全部开放 CNB issues #211-#215 | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/fix-cnb-issues-211-215 | - |
@@ -91,6 +92,16 @@
 - 相关 skill：`xigu-ai-ops`、`cnb-ci-cd`、`electron-desktop`、`typescript-development`、`agent-team-automation`、`provider-adapter`；保持官方 DSH 单一运行时与 Windows x64 未签名评审产物边界。
 - 风险与回滚：CNB self-hosted runner 当前曾因 workspace 数量上限在 Prepare 阶段失败；先通过本 Task Contract 的普通 main push 重试，CI 不绿则保持 blocked。tag 推送后不重写 tag；构建失败通过明确 follow-up 修复并发布下一 patch，错误 Release 仅通过 CNB 管理撤回。
 - interruption_recovery：稳定基线 `origin/main@2716cd82d57d294b593d78c2f2dca99c512aaf35`、最新正式 Release `v0.31.14`、目标 `v0.31.15`；任何版本或产物范围变化需用户确认。
+
+### ANYONG-CNB-ATOMIC-RELEASE-20260901 Task Contract
+
+- parent：`ANYONG-AI-ELEMENTS-RELEASE-20260901`；source：用户在 Release 页面未看到新版后明确要求“修复”；reason：旧 CNB tag pipeline 在资产上传前创建正式 latest Release，且缺少签名、哈希和 ZIP 完整性门禁。
+- 目标：将 CNB 发布改为草稿创建、两资产上传/verify、API 回读 hash/size、最后 PATCH 为 latest 的原子流程；失败后仅删除 CNB 明确确认仍属于本轮的草稿，状态不明或已发布时保留现场并继续核验；打包阶段验证 Authenticode `NotSigned`、SHA-256、ZIP 非空且包含 `Anyong.exe`；通过后恢复并完成 `v0.31.15` 发布。
+- 非目标：不引入签名、updater、macOS/Linux、生产部署或第二套打包链；不覆盖已有 tag 或已发布 Release；对同 tag 的陈旧 draft 允许先删除再按原子流程重建；不持久化 CNB 凭据；不修改应用业务行为。
+- 验收标准：mock 测试证明成功路径只在两资产验证后发布、失败路径删除草稿；CI/workflow、核心、DSH integration、build、migration 和 diff 门禁通过；main 精确候选流水线全绿；tag pipeline 全阶段成功；live `v0.31.15` tag 精确指向候选，Release 非 draft/prerelease、latest=true、仅含两项资产，API hash/size 与真实下载一致，ZIP 完整，installer 为 `NotSigned`。
+- orchestration.mode：`panel`，risk=high。主代理唯一 writer 和远端执行者；候选实现、发布契约和 live 安全由三名只读 reviewer 独立复核，任一阻断不推 tag。
+- 相关 skill：`cnb-ci-cd`、`cicd-release-management`、`xigu-ai-ops`、`electron-desktop`、`typescript`、`agent-team-automation`、`provider-adapter`。
+- 风险与回滚：创建草稿后上传失败会先回读 CNB 状态，仅确认同 ID 且仍为 draft 时删除；状态无法确认时不做破坏性清理。tag 不重写，若 tag pipeline 失败则保留 tag 并以明确 follow-up 修复，不创建不完整正式 Release；代码回滚使用普通 revert。
 
 ### ANYONG-AI-ELEMENTS-COMPOSER-DECOMPOSE-20260901 Task Contract
 

@@ -1,5 +1,5 @@
 # CNB validates the Node 26 + official DSH + Electron source distribution.
-# Windows x64 packaging remains on GitHub's Windows runner.
+# Semver tags publish atomic Windows x64 unsigned-review releases on the Windows runner.
 
 main:
   push:
@@ -27,7 +27,7 @@ main:
             $ErrorActionPreference = "Stop"
             pnpm.cmd run test:dsh-integration
             pnpm.cmd test
-            node --test scripts/ci-workflows.test.mjs scripts/package-dist.test.mjs scripts/pnpm-invocation.test.mjs scripts/set-electron-package-version.test.mjs
+            node --test scripts/ci-workflows.test.mjs scripts/package-dist.test.mjs scripts/pnpm-invocation.test.mjs scripts/set-electron-package-version.test.mjs scripts/publish-cnb-release.test.mjs scripts/upload-cnb-release-assets.test.mjs
             node scripts/check-migration-boundary.mjs
             pnpm.cmd audit --prod --audit-level high
         - name: build
@@ -62,6 +62,7 @@ $:
             $ErrorActionPreference = "Stop"
             pnpm.cmd run test:dsh-integration
             pnpm.cmd test
+            node --test scripts/publish-cnb-release.test.mjs scripts/upload-cnb-release-assets.test.mjs
             node scripts/check-migration-boundary.mjs
         - name: set version
           script: |
@@ -78,22 +79,26 @@ $:
             $version = $env:CNB_BRANCH -replace '^desktop-v', '' -replace '^v', ''
             if (-not (Test-Path "dist/anyong-windows-x64-installer-$version.exe")) { throw "Versioned installer not found" }
             if (-not (Test-Path "dist/anyong-windows-x64-portable-$version.zip")) { throw "Versioned portable archive not found" }
-        - name: create release
-          type: git:release
-          options:
-            title: $CNB_BRANCH
-            description: "Unsigned Windows x64 release for $CNB_BRANCH"
-            preRelease: false
-            latest: true
-        - name: upload installer asset
-          timeout: 30m
+            $installer = Get-Item -LiteralPath "dist/anyong-windows-x64-installer-$version.exe"
+            $portable = Get-Item -LiteralPath "dist/anyong-windows-x64-portable-$version.zip"
+            $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
+            if ($signature.Status -ne 'NotSigned') { throw "Unexpected signature state for $($installer.Name): $($signature.Status)" }
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($portable.FullName)
+            try {
+              if ($zip.Entries.Count -eq 0) { throw "Portable ZIP is empty" }
+              if (-not ($zip.Entries.FullName -contains 'Anyong.exe')) { throw "Portable ZIP missing Anyong.exe" }
+              foreach ($entry in $zip.Entries) {
+                if ($entry.FullName.EndsWith('/')) { continue }
+                $stream = $entry.Open()
+                try { $stream.CopyTo([System.IO.Stream]::Null) } finally { $stream.Dispose() }
+              }
+            } finally { $zip.Dispose() }
+            Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName
+            Get-FileHash -Algorithm SHA256 -LiteralPath $portable.FullName
+        - name: publish release atomically
+          timeout: 60m
           script: |
             $ErrorActionPreference = "Stop"
-            $env:CNB_RELEASE_ASSET = "anyong-windows-x64-installer-$($env:CNB_BRANCH -replace '^v', '').exe"
-            node scripts/upload-cnb-release-assets.mjs
-        - name: upload portable asset
-          timeout: 30m
-          script: |
-            $ErrorActionPreference = "Stop"
-            $env:CNB_RELEASE_ASSET = "anyong-windows-x64-portable-$($env:CNB_BRANCH -replace '^v', '').zip"
-            node scripts/upload-cnb-release-assets.mjs
+            $env:CNB_API_ENDPOINT = "https://api.cnb.cool"
+            $env:CNB_REPO_SLUG = "aizhuliren/xgic/anyong-agent"
+            node scripts/publish-cnb-release.mjs

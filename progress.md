@@ -1,5 +1,9 @@
 # Agent Progress Log
 
+[2026-09-01T15:24:34+0800] [codex] [running:ANYONG-CNB-ATOMIC-RELEASE-20260901] 原子发布候选完成并通过 high-risk panel：atomic implementation PASS、contract PASS、release security PASS。发布脚本已覆盖 HTTP 201、正式 Release 幂等、陈旧 draft 重建、PATCH 响应丢失恢复、状态不明保留和同 ID draft 条件清理；main/tag 均运行发布测试。Node 26 下发布/workflow 19/19、核心测试、DSH integration、migration、Electron boundary、skills sync、production audit、build 与 diff check 全部通过；下一门禁为推送候选并等待精确 main SHA 的 CNB pipeline 全绿。
+
+[2026-09-01T14:50:00+0800] [codex] [running:ANYONG-CNB-ATOMIC-RELEASE-20260901] 用户明确要求修复未发布问题。已建立 high-risk panel follow-up：唯一 writer 将 CNB tag pipeline 改为 draft→upload/verify→API hash/size 回读→PATCH latest，失败后仅在 CNB 明确确认同 ID 且仍为 draft 时删除，并补 Authenticode `NotSigned`、本地 SHA-256、ZIP 完整性门禁；完成候选验证和三路复核后才恢复 `v0.31.15` tag 发布。
+
 [2026-09-01T14:42:39+0800] [codex] [blocked:ANYONG-AI-ELEMENTS-RELEASE-20260901] PARTIAL：本地 Node 26.8.1 / pnpm 12.1.0 发布门禁全部通过，`main@531379b55bee3bcc9ce224535e6f06caac1bc828` 已推送，CNB build `cnb-n2o-1k1dquoqc` 的 Prepare/environment/install/verify/build 全部 success，workspace 配额阻断已解除；`v0.31.15` tag 与 Release 均不存在。三路 panel 结论为候选代码 PASS、版本契约 PARTIAL、发布安全 FAIL。当前治理规则要求 CNB 仅做源码门禁、GitHub 仅生成 Windows x64 未签名评审产物，但旧 `.cnb.yml` 会在 tag pipeline 中先创建正式 `latest=true` Release、再分步上传两项资产，上传失败可能留下不完整 latest，且缺少 Authenticode、下载后 SHA-256/size/ZIP 完整性门禁。按高风险发布与 PARTIAL 终止规则，未推送 `v0.31.15` tag、未创建 Release。恢复需要人工明确选择：遵循现行治理，仅触发 GitHub `release-desktop.yml` 生成 14 天未签名评审 artifact；或批准新的发布链 Task Contract，先实现原子/可回滚 Release 与完整 live 验证，再发布正式 CNB Release。
 
 [2026-09-01T11:46:00+0800] [codex] [done:ANYONG-AI-ELEMENTS-FULL-COVERAGE-20260901] CNB PR #217 已按 merge commit 方式合并，生成 `221bc13c0287d8e9267ea36896e47ffc453cbf62`；反查 PR 为 closed/is_merged=true，`origin/main` 指向该 SHA 且包含最终 PR head `61bea9f84b3b21f3e178343aae47eecd4d9e297a`。最终候选覆盖全部约定的 AI Elements 组件，官方 DSH 单一运行时边界保持；Node 26 前端 39/39、类型检查、生产构建、diff 门禁及独立 verifier 均 PASS。

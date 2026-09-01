@@ -7,13 +7,13 @@ description: Use when configuring or reviewing the CNB validation pipeline for t
 
 ## Current Scope
 
-CNB is a source-validation runner. It uses the exact Node and pnpm versions from
-the repository contract, installs the frozen lockfile, runs official DSH and
-Electron tests, audits production dependencies, and builds the source bundle.
-
-Windows packaging remains on GitHub's native Windows runner. CNB does not create
-tags, publish releases, sign artifacts, package other platforms, or synchronize
-external source trees.
+CNB is the source-validation runner and the controlled Windows x64 unsigned-review
+release runner. It uses the exact Node and pnpm versions from the repository
+contract, installs the frozen lockfile, runs official DSH and Electron tests,
+audits production dependencies, and builds the source bundle. Tag releases must
+use the repository's atomic draft/upload/verify/publish script; signed releases,
+updater publication, macOS/Linux packaging, and external synchronization remain
+disabled.
 
 ## Required Pipeline
 
@@ -39,8 +39,9 @@ main:
 - Pin Node and pnpm to the repository's current approved versions.
 - Never print tokens, registry credentials, provider keys, or secret-bearing URLs.
 - Keep the lockfile frozen in CI.
-- Do not add automatic tag, release, deployment, or external synchronization steps.
-- Do not claim Windows packaging from a Linux source-build result.
+- Keep Release creation draft-only until all assets are uploaded and verified.
+- Require Authenticode `NotSigned`, local SHA-256, ZIP integrity, and API asset hash/size verification.
+- Do not claim signed or production release status from an unsigned-review artifact.
 
 ## Verification
 

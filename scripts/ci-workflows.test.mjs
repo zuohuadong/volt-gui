@@ -99,6 +99,7 @@ test("CNB validates the same Node 26 source contract", () => {
   assert.match(cnb, /pnpm\.cmd/);
   assert.match(cnb, /Test-Path/);
   assert.match(cnb, /pnpm\.cmd run test:dsh-integration/);
+  assert.equal((cnb.match(/publish-cnb-release\.test\.mjs/g) || []).length, 2);
   assert.match(cnb, /check-migration-boundary/);
   assert.match(cnb, /^\$:\s*[\r\n]+\s+tag_push:/m);
   assert.match(cnb, /Unsupported release tag/);
@@ -108,15 +109,17 @@ test("CNB validates the same Node 26 source contract", () => {
   assert.match(cnb, /ELECTRON_BUILDER_BINARIES_MIRROR/);
   assert.match(cnb, /CSC_IDENTITY_AUTO_DISCOVERY/);
   assert.match(cnb, /Desktop packaging failed with exit code/);
-  assert.match(cnb, /type: git:release/);
-  assert.match(cnb, /preRelease: false/);
-  assert.match(cnb, /latest: true/);
-  assert.doesNotMatch(cnb, /preRelease: true|latest: false/);
-  assert.match(cnb, /name: upload installer asset/);
-  assert.match(cnb, /name: upload portable asset/);
-  assert.equal((cnb.match(/timeout:\s*30m/g) || []).length, 2);
-  assert.match(cnb, /CNB_RELEASE_ASSET/);
-  assert.match(cnb, /upload-cnb-release-assets\.mjs/);
+  assert.match(cnb, /Get-AuthenticodeSignature/);
+  assert.match(cnb, /NotSigned/);
+  assert.match(cnb, /ZipFile\]::OpenRead/);
+  assert.match(cnb, /CopyTo\(\[System\.IO\.Stream\]::Null\)/);
+  assert.match(cnb, /Anyong\.exe/);
+  assert.match(cnb, /name: publish release atomically/);
+  assert.match(cnb, /timeout: 60m/);
+  assert.match(cnb, /CNB_API_ENDPOINT = "https:\/\/api\.cnb\.cool"/);
+  assert.match(cnb, /CNB_REPO_SLUG = "aizhuliren\/xgic\/anyong-agent"/);
+  assert.match(cnb, /publish-cnb-release\.mjs/);
+  assert.doesNotMatch(cnb, /type: git:release|latest:\s*true/);
   assert.doesNotMatch(cnb, /docker:|test -f|desktop-frontend|check-runtime-mocks|\bgo\b|wails/i);
 });
 

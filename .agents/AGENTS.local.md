@@ -7,7 +7,7 @@
 - Root workspace: 官方 `@deepseek-ai/dsh`、Node 26 launcher、distribution bundle 与共享 profile patch。
 - Desktop workspace: Electron main process in `apps/desktop-electron/`; no local renderer or preload.
 - Site: Astro documentation site in `site/`, using npm and Node 26 in CI.
-- Release: CNB `.cnb.yml` validates source on `main`; GitHub packages Windows x64 Electron artifacts with `pnpm run dist:desktop`. Public release, signing, updater, macOS and Linux remain fail closed.
+- Release: CNB `.cnb.yml` validates source on `main` and publishes only Windows x64 unsigned-review Releases through the atomic draft/upload/verify flow; GitHub keeps the manual unsigned artifact workflow. Public signed release, updater, macOS and Linux remain fail closed. The root generated overlay's source-only wording is superseded for this repository by this explicit unsigned-review CNB exception.
 
 ## Required Skills
 

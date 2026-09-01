@@ -7,6 +7,7 @@ import {
   findProviderSettings,
   mergeDiscoveredModels,
   modelCapabilityLabel,
+  modelSupportsImages,
   providerCredentialRef,
   providerDefaultApi,
   providerDefaultBaseURL,
@@ -70,5 +71,11 @@ describe("XG 网关模型目录", () => {
     ] }];
     expect(supportedReasoningEffort(groups, "xg-gomodel", "vlm", "high")).toBeUndefined();
     expect(supportedReasoningEffort(groups, "xg-gomodel", "reasoner", "high")).toBe("high");
+  });
+
+  it("仅对明确声明图片输入的模型开放多模态入口", () => {
+    expect(modelSupportsImages({ id: "vision", name: "Vision", input: ["text", "image"] })).toBe(true);
+    expect(modelSupportsImages({ id: "text", name: "Text", input: ["text"] })).toBe(false);
+    expect(modelSupportsImages(undefined)).toBe(false);
   });
 });

@@ -34,6 +34,7 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
     readonly loading?: boolean;
     readonly selectedModel: string;
     readonly modelGroups: ModelGroup[];
+    readonly imageInputSupported?: boolean;
     readonly modelBusy?: boolean;
     readonly contextPermissions?: PermissionSelect;
     readonly activityOpen?: boolean;
@@ -54,6 +55,7 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
     loading = false,
     selectedModel,
     modelGroups,
+    imageInputSupported = false,
     modelBusy = false,
     contextPermissions,
     activityOpen = true,
@@ -98,10 +100,10 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
 
 <PromptInput
   bind:value
-  accept="image/png,image/jpeg,image/webp,image/gif"
+  accept={imageInputSupported ? "image/png,image/jpeg,image/webp,image/gif" : undefined}
   multiple
   maxFileSize={10 * 1024 * 1024}
-  globalDrop
+  globalDrop={imageInputSupported}
   disabled={disabled || !sessionId}
   loading={loading}
   status={loading ? "streaming" : "ready"}
@@ -128,8 +130,8 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
      <PromptInputActionMenu bind:open={actionMenuOpen} aria-label={t("composer.moreTools")}>
        <PromptInputActionMenuTrigger aria-label={t("composer.moreTools")} title={t("composer.moreToolsTitle")} />
        <PromptInputActionMenuContent>
-         <PromptInputActionAddAttachments label={t("composer.addAttachments")} accept="image/png,image/jpeg,image/webp,image/gif" multiple disabled={disabled || !sessionId} onclick={() => actionMenuOpen = false} />
-         <PromptInputActionAddScreenshot label={t("composer.addScreenshot")} disabled={disabled || !sessionId} onselect={() => actionMenuOpen = false} />
+         <PromptInputActionAddAttachments label={t("composer.addAttachments")} accept="image/png,image/jpeg,image/webp,image/gif" multiple disabled={disabled || !sessionId || !imageInputSupported} onclick={() => actionMenuOpen = false} />
+         <PromptInputActionAddScreenshot label={t("composer.addScreenshot")} disabled={disabled || !sessionId || !imageInputSupported} onselect={() => actionMenuOpen = false} />
        </PromptInputActionMenuContent>
      </PromptInputActionMenu>
       <ModelPicker groups={modelGroups} selected={selectedModel} disabled={modelBusy || !sessionId} onSelect={onModelSelect} />

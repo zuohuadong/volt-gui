@@ -40,6 +40,7 @@
     enrichModelGroups,
     mergeDiscoveredModels,
     modelCapabilityLabel,
+    modelSupportsImages,
     providerCredentialRef,
     resolveProviderSettings,
     supportedReasoningEffort,
@@ -1753,6 +1754,7 @@
               loading={sending}
               {selectedModel}
               {modelGroups}
+              imageInputSupported={modelSupportsImages(selectedModelInfo())}
               {modelBusy}
               contextPermissions={activeSession?.projections?.values?.permissions}
               {activityOpen}

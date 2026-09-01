@@ -162,6 +162,10 @@ export function modelCapabilityLabel(model: ModelInfo, unknown = false): string 
   return "能力未声明";
 }
 
+export function modelSupportsImages(model: ModelInfo | undefined): boolean {
+  return model?.input?.includes("image") ?? false;
+}
+
 export function supportedReasoningEffort(
   groups: ModelGroup[],
   provider: string,

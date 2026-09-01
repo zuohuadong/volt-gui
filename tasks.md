@@ -53,7 +53,7 @@
 
 | task_id | provider | repo | source_url | title | priority | risk | status | owner | model | needs_model | review_class | branch | change_request_url |
 |---------|----------|------|------------|-------|----------|------|--------|-------|-------|-------------|--------------|--------|--------------------|
-| ANYONG-AI-ELEMENTS-MIGRATION-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | https://www.npmjs.com/package/@svadmin/ai-elements | 迁移桌面对话到已发布的 SVAdmin AI Elements | high | medium | running | codex | gpt-5.6 | - | review-medium | codex/migrate-svadmin-ai-elements | - |
+| ANYONG-AI-ELEMENTS-MIGRATION-20260901 | npm/cnb | aizhuliren/xgic/anyong-agent | https://www.npmjs.com/package/@svadmin/ai-elements | 迁移桌面对话到已发布的 SVAdmin AI Elements | high | medium | review | codex | gpt-5.6 | - | review-medium | codex/migrate-svadmin-ai-elements | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/pull/216 |
 | ANYONG-CNB-ISSUES-211-215-20260831 | cnb | aizhuliren/xgic/anyong-agent | https://cnb.cool/aizhuliren/xgic/anyong-agent/-/issues | 修复并关闭全部开放 CNB issues #211-#215 | high | medium | done | codex | gpt-5.6 | - | review-medium | codex/fix-cnb-issues-211-215 | - |
 | VOLTGUI-PR103-ELECTRON-FOLLOWUP-20260824 | github | zuohuadong/volt-gui | https://github.com/zuohuadong/volt-gui/pull/103 | 完成 Electron + DSH 上游迁移并永久退役 Wails | high | high | review | codex | gpt-5.6 | - | review-high | codex/electron-dsh-upstream-migration | https://github.com/zuohuadong/volt-gui/pull/103 |
 | VOLTGUI-004 | local | aizhuliren/volt/anyong-agent | - | 迁移桌面自动发布为 CNB Windows-only | high | medium | done | codex | gpt-5-codex | - | - | main | - |
@@ -90,6 +90,7 @@
 - 风险与回滚：第三方组件样式和状态映射可能影响主会话布局或流式显示；通过现有适配状态、局部 class 和构建/视觉 smoke 控制风险。若回归，以普通 revert/follow-up 撤回迁移提交，不改写历史。
 - 验证计划：`pnpm --filter @voltui/desktop-frontend test`、`check`、`build`；`npx @sveltejs/mcp svelte-autofixer apps/desktop-frontend/src/App.svelte --svelte-version 5`；`node scripts/check-electron-runtime-boundary.mjs`、`node scripts/check-migration-boundary.mjs`、`pnpm test`、`pnpm run test:dsh-integration`、`pnpm run build`、`git diff --check`；候选 diff 独立 verifier PASS。
 - interruption_recovery：稳定证据为本 Task Contract、npm `0.1.0` 元数据、候选 diff 与测试输出；verifier 失败时只重派一次，仍无结论则保持 `running/PARTIAL`，不创建 PR。
+- completion_evidence：提交 `36cabd166` 已推送至 `origin/codex/migrate-svadmin-ai-elements`；CNB PR #216 已创建并更新为 `feat(desktop): migrate chat UI to svadmin ai elements`，当前 `open/mergeable`。前端 33 项测试、Svelte check 0 errors/0 warnings、Vite build、Node 26 根测试、DSH 集成、Electron runtime boundary、migration boundary、Svelte autofixer 和 `git diff --check` 均通过；独立 verifier 已对同一 head 返回 `PASS`，无 blocking findings。非阻断风险：暂无组件级 DOM 测试，建议后续补桌面/窄屏真实会话 smoke。
 
 ### ANYONG-CNB-ISSUES-211-215-20260831 Task Contract
 

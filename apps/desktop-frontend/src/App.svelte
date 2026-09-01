@@ -1191,7 +1191,7 @@
     return !!activeSessionId;
   }
   async function runKnowledgeOperation(operation: KnowledgeOperation, query = ""): Promise<void> {
-    if (!client || !(await ensureKnowledgeSession())) return;
+    if (sending || !client || !(await ensureKnowledgeSession())) return;
     const normalizedQuery = query.trim();
     if (operation === "query" && !normalizedQuery) return;
     knowledgeOperation = operation;

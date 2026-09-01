@@ -76,6 +76,7 @@
   let sessions = $state<SessionSummary[]>([]);
   let archivedSessionIds = $state<string[]>([]);
   let activeSessionId = $state("");
+  let sessionSelectionRequest = 0;
   let messages = $state<TranscriptMessage[]>([]);
   let todos = $state<TodoItem[]>([]);
   let input = $state("");
@@ -376,12 +377,17 @@
 
   async function refresh(): Promise<void> {
     if (!client) return;
-    const [workspaceResult, sessionResult] = await Promise.all([client.listWorkspaces(), client.listSessions()]);
-    workspaces = workspaceResult.items;
-    archivedSessionIds = workspaceResult.archivedSessionIds;
-    sessions = visibleSessions(sessionResult.items, archivedSessionIds, activeSessionId);
-    if (activeSessionId && !sessions.some((item) => item.sessionId === activeSessionId)) activeSessionId = sessions[0]?.sessionId || "";
-    if (!activeSessionId && sessions[0]) await selectSession(sessions[0].sessionId);
+    try {
+      const [workspaceResult, sessionResult] = await Promise.all([client.listWorkspaces(), client.listSessions()]);
+      workspaces = workspaceResult.items;
+      archivedSessionIds = workspaceResult.archivedSessionIds;
+      sessions = visibleSessions(sessionResult.items, archivedSessionIds, activeSessionId);
+      if (activeSessionId && !sessions.some((item) => item.sessionId === activeSessionId)) activeSessionId = sessions[0]?.sessionId || "";
+      if (!activeSessionId && sessions[0]) await selectSession(sessions[0].sessionId);
+    } catch (error) {
+      runtimeError = userFacingError(error);
+      runtimeConnectionError = runtimeError;
+    }
   }
 
   async function refreshManagement(): Promise<void> {
@@ -424,37 +430,51 @@
 
   async function createSession(cwd = workspacePath): Promise<void> {
     if (!client) return;
-    const created = await client.createSession(cwd);
-    activeSessionId = created.sessionId;
-    await refresh();
-    await selectSession(created.sessionId);
+    try {
+      const created = await client.createSession(cwd);
+      activeSessionId = created.sessionId;
+      await refresh();
+      await selectSession(created.sessionId);
+    } catch (error) {
+      runtimeError = userFacingError(error);
+      runtimeConnectionError = runtimeError;
+    }
   }
 
   async function selectSession(sessionId: string): Promise<void> {
     if (!client) return;
+    const requestId = ++sessionSelectionRequest;
     activeSessionId = sessionId;
     view = "conversation";
+    sending = false;
+    messages = [];
+    todos = [];
+    selectedModel = "";
+    reasoningEffort = "";
     pendingApproval = undefined;
     pendingQuestion = undefined;
     runtimeError = "";
-    const [result, settingsResult, providerResult] = await Promise.all([
-      client.history(sessionId),
-      client.describeSettings().catch(() => ({ writable: false, hasDocument: false, namespaces: [] })),
-      client.listProviders().catch(() => ({ providers: [] })),
-    ]);
-    const transcript = foldHistory(result.events);
-    messages = transcript.messages;
-    todos = transcript.todos;
-    settingsWritable = settingsResult.writable;
-    settingsHasDocument = settingsResult.hasDocument;
-    settingsNamespaces = settingsResult.namespaces;
-    providers = providerResult.providers;
-    credentialRefs = collectCredentialRefs(settingsNamespaces);
-    credentials = credentialRefs.length
-      ? (await client.describeCredentials(credentialRefs).catch(() => ({ credentials: {} }))).credentials
-      : {};
     try {
+      const [result, settingsResult, providerResult] = await Promise.all([
+        client.history(sessionId),
+        client.describeSettings().catch(() => ({ writable: false, hasDocument: false, namespaces: [] })),
+        client.listProviders().catch(() => ({ providers: [] })),
+      ]);
+      if (requestId !== sessionSelectionRequest || activeSessionId !== sessionId) return;
+      const transcript = foldHistory(result.events);
+      messages = transcript.messages;
+      todos = transcript.todos;
+      settingsWritable = settingsResult.writable;
+      settingsHasDocument = settingsResult.hasDocument;
+      settingsNamespaces = settingsResult.namespaces;
+      providers = providerResult.providers;
+      credentialRefs = collectCredentialRefs(settingsNamespaces);
+      credentials = credentialRefs.length
+        ? (await client.describeCredentials(credentialRefs).catch(() => ({ credentials: {} }))).credentials
+        : {};
+      if (requestId !== sessionSelectionRequest || activeSessionId !== sessionId) return;
       const modelResult = await client.models(sessionId);
+      if (requestId !== sessionSelectionRequest || activeSessionId !== sessionId) return;
       modelGroups = enrichModelGroups(modelResult.groups, settingsNamespaces);
       selectedModel = `${modelResult.current.provider}/${modelResult.current.model}`;
       const currentInfo = modelResult.groups.find((group) => group.id === modelResult.current.provider)?.models.find((model) => model.id === modelResult.current.model);
@@ -468,6 +488,7 @@
         sessionErrors = remaining;
       }
     } catch (error) {
+      if (requestId !== sessionSelectionRequest || activeSessionId !== sessionId) return;
       runtimeError = userFacingError(error);
       sessionErrors = { ...sessionErrors, [sessionId]: runtimeError };
     }
@@ -737,13 +758,15 @@
    if (!client) return;
    await performManagementAction(`session-archive:${sessionId}`, async () => {
      const wasActive = activeSessionId === sessionId;
-     await client!.archiveSession(sessionId);
-     await refresh();
      if (wasActive) {
        activeSessionId = "";
        messages = [];
        todos = [];
+       pendingApproval = undefined;
+       pendingQuestion = undefined;
      }
+     await client!.archiveSession(sessionId);
+     await refresh();
       managementNotice = t("session.archiveSuccess");
    });
  }
@@ -1169,9 +1192,9 @@
                               <div class="row-actions session-actions">
                                 <Button variant="ghost" size="icon-sm" aria-label={t("session.openSession")} title={health === "error" ? t("session.openSessionHelp") : t("session.openSession")} onclick={() => void selectSession(item.sessionId)}><ExternalLink size={14} /></Button>
                                 <Button variant="ghost" size="icon-sm" aria-label={t("session.renameSession")} title={t("session.renameSession")} onclick={() => beginSessionRename(item)}><Pencil size={14} /></Button>
-                                <Button variant="ghost" size="icon-sm" aria-label={t("session.duplicateSession")} title={t("session.duplicateSession")} disabled={!!managementBusy} onclick={() => void duplicateSession(item.sessionId)}><Copy size={14} /></Button>
+                                <Button variant="ghost" size="icon-sm" aria-label={t("session.duplicateSession")} title={item.running ? t("session.runningActionUnavailable") : t("session.duplicateSession")} disabled={!!managementBusy || item.running} onclick={() => void duplicateSession(item.sessionId)}><Copy size={14} /></Button>
                                 <Button variant="ghost" size="icon-sm" aria-label={t("session.exportSession")} title={t("session.exportSession")} disabled={!!managementBusy} onclick={() => void exportSession(item.sessionId)}><Save size={14} /></Button>
-                                <Button variant="ghost" size="icon-sm" aria-label={t("session.archiveSession")} title={t("session.archiveSession")} disabled={!!managementBusy} onclick={() => void archiveManagedSession(item.sessionId)}><Archive size={14} /></Button>
+                                <Button variant="ghost" size="icon-sm" aria-label={t("session.archiveSession")} title={item.running ? t("session.runningActionUnavailable") : t("session.archiveSession")} disabled={!!managementBusy || item.running} onclick={() => void archiveManagedSession(item.sessionId)}><Archive size={14} /></Button>
                               </div>
                             {/if}
                           </div>
@@ -1195,7 +1218,7 @@
                               </div>
                               <small class="checkpoint-detail truncate">{(message.text || message.tool?.name || t("checkpoints.event", { seq: message.seq || "" })).slice(0, 80)}</small>
                             </div>
-                            <Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void forkSessionAtSeq(message.seq!)}><GitBranch size={13} />{t("checkpoints.forkFromHere")}</Button>
+                            <Button variant="outline" size="sm" disabled={!!managementBusy || !!activeSession?.running} title={activeSession?.running ? t("session.runningActionUnavailable") : undefined} onclick={() => void forkSessionAtSeq(message.seq!)}><GitBranch size={13} />{t("checkpoints.forkFromHere")}</Button>
                           </div>
                         {/each}
                       </div>

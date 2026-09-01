@@ -174,6 +174,7 @@ export const zhCN: TranslationDict = {
     archiveConfirm: "确认归档会话“{title}”？",
     restoreSuccess: "会话已恢复为活跃状态",
     archiveSuccess: "会话已归档",
+    runningActionUnavailable: "对话运行中，完成后可执行此操作",
     defaultAgent: "默认 Agent",
     openSession: "打开会话",
     openSessionHelp: "打开会话并查看修复提示",

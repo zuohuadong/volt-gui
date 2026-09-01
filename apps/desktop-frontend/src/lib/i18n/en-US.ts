@@ -174,6 +174,7 @@ export const enUS: TranslationDict = {
     archiveConfirm: "Archive session \"{title}\"?",
     restoreSuccess: "Session restored to active state",
     archiveSuccess: "Session archived",
+    runningActionUnavailable: "Finish the running turn before using this action",
     defaultAgent: "Default Agent",
     openSession: "Open session",
     openSessionHelp: "Open session and view repair hints",

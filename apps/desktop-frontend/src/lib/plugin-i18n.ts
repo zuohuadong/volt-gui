@@ -13,6 +13,7 @@ export type PluginCategory =
   | "model"
   | "workflow"
   | "infrastructure"
+  | "browser"
   | "mcp"
   | "custom";
 
@@ -34,6 +35,7 @@ export const PLUGIN_CATEGORIES: Record<PluginCategory, PluginCategoryMeta> = {
   model: { id: "model", label: "模型与网关", description: "大语言模型提供商适配与推理路由" },
   workflow: { id: "workflow", label: "工作流与自动化", description: "后台多线程工作流编排与批处理" },
   infrastructure: { id: "infrastructure", label: "基础设施", description: "会话持久化、状态投影与框架内核" },
+  browser: { id: "browser", label: "浏览器与计算机控制", description: "浏览器会话、页面观察与受控交互" },
   mcp: { id: "mcp", label: "MCP 协议服务", description: "Model Context Protocol 上下文协议连接" },
   custom: { id: "custom", label: "扩展插件", description: "第三方或用户自定义扩展模块" },
 };
@@ -549,6 +551,20 @@ const KNOWN_PLUGIN_REGISTRY: Record<string, BilingualPluginSpec> = {
     isMcp: true,
     tags: { "zh-CN": ["MCP", "Model Context Protocol", "外部工具", "资源服务"], "en-US": ["MCP", "Model Context Protocol", "Tools", "Resources"] },
   },
+  "@wxg-prc-cpg/browser-skill-dsh-plugin": {
+    name: { "zh-CN": "BrowserSkill 浏览器控制", "en-US": "BrowserSkill Browser Control" },
+    description: {
+      "zh-CN": "通过官方 DSH 插件桥接 BrowserSkill，支持浏览器会话、页面观察、截图和受控交互。",
+      "en-US": "Bridges BrowserSkill through an official DSH plugin for browser sessions, inspection, screenshots, and controlled interaction.",
+    },
+    category: "browser",
+    vendor: { "zh-CN": "腾讯 BrowserSkill", "en-US": "Tencent BrowserSkill" },
+    isMcp: false,
+    tags: {
+      "zh-CN": ["BrowserSkill", "浏览器", "截图", "页面观察", "Computer Use"],
+      "en-US": ["BrowserSkill", "Browser", "Screenshot", "Inspection", "Computer Use"],
+    },
+  },
 };
 
 export function isMcpIdentifier(identifier?: string | null): boolean {
@@ -719,4 +735,3 @@ export function filterEnrichedPlugins(
     return searchable.includes(trimmed);
   });
 }
-

@@ -62,6 +62,7 @@ function getCategoryIcon(cat: PluginCategory) {
     case "model": return Cpu;
     case "workflow": return Workflow;
     case "infrastructure": return Layers;
+    case "browser": return Globe;
     default: return Blocks;
   }
 }

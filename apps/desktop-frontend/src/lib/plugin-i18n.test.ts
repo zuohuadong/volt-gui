@@ -56,6 +56,15 @@ describe("plugin-i18n metadata and classification", () => {
     expect(xgGateway.name).toBe("XG GOModel / 多模型提供商网关");
     expect(xgGateway.category).toBe("model");
     expect(xgGateway.categoryLabel).toBe("模型与网关");
+
+    const browserSkill = resolvePluginI18n({
+      moduleName: "@wxg-prc-cpg/browser-skill-dsh-plugin",
+      entryId: "browserskill",
+    });
+    expect(browserSkill.name).toBe("BrowserSkill 浏览器控制");
+    expect(browserSkill.category).toBe("browser");
+    expect(browserSkill.categoryLabel).toBe("浏览器与计算机控制");
+    expect(browserSkill.tags).toContain("Computer Use");
   });
 
   it("resolves English names and descriptions when en-US is active", () => {
@@ -74,6 +83,13 @@ describe("plugin-i18n metadata and classification", () => {
     });
     expect(compaction.name).toBe("Context Auto-Compaction");
     expect(compaction.categoryLabel).toBe("Context & Perf");
+
+    const browserSkill = resolvePluginI18n({
+      moduleName: "@wxg-prc-cpg/browser-skill-dsh-plugin",
+      entryId: "browserskill",
+    });
+    expect(browserSkill.name).toBe("BrowserSkill Browser Control");
+    expect(browserSkill.categoryLabel).toBe("Browser & Computer Control");
   });
 
   it("accurately identifies MCP entries and marks them as MCP category", () => {
@@ -222,4 +238,3 @@ describe("plugin-i18n metadata and classification", () => {
     expect(allFiltered.length).toBe(4);
   });
 });
-

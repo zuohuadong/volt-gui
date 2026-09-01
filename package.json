@@ -26,7 +26,10 @@
     "dist:desktop": "pnpm --filter @voltui/desktop-electron run build && pnpm --filter @voltui/desktop-electron run dist && pnpm --filter @voltui/desktop-electron run smoke:package && node ./scripts/package-dist.mjs",
     "dsh": "node ./scripts/anyong.mjs",
     "bundle": "node ./scripts/bundle.mjs",
-    "check:dsh-plugins": "node ./scripts/check-dsh-plugin-compatibility.mjs"
+    "check:dsh-plugins": "node ./scripts/check-dsh-plugin-compatibility.mjs",
+    "setup:browser-skill": "node ./scripts/setup-browser-skill.mjs install",
+    "check:browser-skill": "node ./scripts/setup-browser-skill.mjs check",
+    "doctor:browser-skill": "node ./scripts/setup-browser-skill.mjs doctor"
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.1-rc.2"

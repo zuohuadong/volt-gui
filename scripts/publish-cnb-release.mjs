@@ -99,6 +99,7 @@ async function deleteRelease({ fetchImpl, endpoint, slug, releaseId, token, labe
     url: `${endpoint}/${slug}/-/releases/${releaseId}`,
     options: { method: "DELETE", headers: { Accept: "application/vnd.cnb.api+json", Authorization: `Bearer ${token}` } },
     label,
+    expectedStatus: [200, 204],
   });
 }
 
@@ -155,7 +156,7 @@ function assertPublishedAssets(release, expected) {
 }
 
 function assertDraftAssets(release, expected) {
-  if (!release || release.draft !== true || release.prerelease === true || release.is_latest === true) {
+  if (!release || release.draft !== true || release.prerelease === true) {
     throw new Error("CNB release is not an unpublished draft");
   }
   assertAssetSet(release, expected, "CNB draft");

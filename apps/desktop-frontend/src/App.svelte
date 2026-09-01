@@ -30,7 +30,16 @@
     type PromptContentPart, type SettingsNamespace, type SubagentEntry, type Workspace, type PluginInventoryEntry,
   } from "$lib/dsh-client";
   import { assistantMessageForEvent, applyTranscriptEvent, foldHistory, type TodoItem, type TranscriptMessage } from "$lib/transcript";
-  import { enrichModelGroups, mergeDiscoveredModels, modelCapabilityLabel, providerCredentialRef, resolveProviderSettings, supportedReasoningEffort } from "$lib/model-catalog";
+  import {
+    credentialRefHint,
+    credentialRefTitle,
+    enrichModelGroups,
+    mergeDiscoveredModels,
+    modelCapabilityLabel,
+    providerCredentialRef,
+    resolveProviderSettings,
+    supportedReasoningEffort,
+  } from "$lib/model-catalog";
   import { agentPresetLocked, clearsSessionError, sessionHealth, sessionHealthLabel } from "$lib/session-health";
   import { userFacingError } from "$lib/user-error";
   import { buildQuestionAnswers, questionsAnswered } from "$lib/ai-elements-adapter";
@@ -124,6 +133,7 @@
   let questionAnswers = $state<Record<string, string>>({});
   let customization = $state<UiCustomizationState>(DEFAULT_UI_CUSTOMIZATION);
   let customizationOpen = $state(false);
+  let settingsViewMode = $state<"user" | "merged">("user");
   let customizationDraft = $state<UiCustomizationPatch | undefined>();
   let customizationSourceId = $state("");
   let customizationNotice = $state("");
@@ -480,9 +490,21 @@
     return !ref || !!credentials[ref]?.configured;
   }
 
+  function pickCredentialQuickChip(ref: string): void {
+    credentialRefDraft = ref;
+    setTimeout(() => {
+      const input = document.querySelector<HTMLInputElement>('.credential-form input[type="password"]');
+      input?.focus();
+    }, 50);
+  }
+
   function openCredentialSettings(ref: string | undefined): void {
     if (ref) credentialRefDraft = ref;
     openManagement("settings");
+    setTimeout(() => {
+      const input = document.querySelector<HTMLInputElement>('.credential-form input[type="password"]');
+      input?.focus();
+    }, 100);
   }
 
   async function xgProviderSettings() {
@@ -1082,10 +1104,139 @@
                   <SettingsGroup title="插件与 MCP" description="只读显示官方 DSH Loader 的实时插件清单，不伪造连接或启用状态。"><div class="management-actions"><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><RefreshCw size={13} />刷新清单</Button><span class="management-capability">{pluginInventory.length} 个条目</span></div>{#if pluginInventory.length === 0}<DataState state="empty" title="暂无插件清单" description="官方 DSH 尚未返回 Host Loader 条目。" />{:else}<div class="management-list">{#each pluginInventory.filter((item) => !settingsQuery || `${item.moduleName} ${item.entryId}`.toLowerCase().includes(settingsQuery.toLowerCase())) as plugin (plugin.entryId)}<div class="management-list-row"><span class="row-icon"><PlugZap size={15} /></span><div><strong>{plugin.moduleName}</strong><small>{plugin.entryId}</small></div><StatusBadge status={plugin.enabled ? "success" : "neutral"} label={plugin.enabled ? "已启用" : "未启用"} /><span class={`plugin-phase plugin-phase--${plugin.fiberPhase || "none"}`}>{plugin.fiberPhase || "无运行 Fiber"}</span></div>{/each}</div>{/if}<div class="knowledge-note"><ShieldAlert size={14} /><span>插件启停、安装和 MCP 配置必须通过官方 DSH Profile/设置完成，本界面不维护第二套状态。</span></div></SettingsGroup>
                 {:else if managementTab === "knowledge"}
                   <SettingsGroup title="知识库与资料" description="知识入口接入官方 DSH Skill、工作区文件和会话附件。"><div class="knowledge-health-grid"><div><span>官方 Skill</span><strong>{skills.length}</strong><small>{skills.length ? "已加载" : "未加载"}</small></div><div><span>工作区文件</span><strong>{workspacePath ? "可用" : "未选择"}</strong><small>由 DSH 工具读取</small></div><div><span>会话资料</span><strong>{activeSession ? "可用" : "需会话"}</strong><small>由官方会话管理</small></div><div><span>持久知识库</span><strong>未接入</strong><small>等待官方插件 RPC</small></div></div><div class="knowledge-toolbar"><Button size="sm" onclick={() => void pickWorkspace()}><FolderOpen size={14} />选择知识工作区</Button><Button variant="outline" size="sm" onclick={() => void createSession()}><MessageSquarePlus size={14} />新建资料会话</Button><Button variant="outline" size="sm" onclick={() => openKnowledgePrompt("扫描当前工作区的文档与资料，按目录、类型和用途整理一份知识清单。") }><ClipboardList size={14} />扫描工作区资料</Button><Button variant="outline" size="sm" onclick={() => openKnowledgePrompt("检索当前工作区资料，找出与我的问题最相关的文件、段落和依据，并给出引用路径。") }><Search size={14} />检索工作区</Button><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />刷新知识源</Button></div>{#if skills.length === 0}<DataState state="empty" title="暂无官方知识源" description="选择会话与工作区后，可让 DSH 读取项目资料；持久索引需要官方知识插件。" />{:else}<div class="knowledge-skill-list">{#each skills.filter((skill) => !settingsQuery || `${skill.name} ${skill.description}`.toLowerCase().includes(settingsQuery.toLowerCase())) as skill (skill.name)}<article><div class="skill-heading"><span class="row-icon"><BookOpen size={15} /></span><div><strong>{skill.name}</strong><small>{skill.modelInvocable ? "模型可调用" : "仅用户可调用"}</small></div></div><p>{skill.description}</p>{#if skill.whenToUse}<em>{skill.whenToUse}</em>{/if}</article>{/each}</div>{/if}<div class="knowledge-note"><ShieldAlert size={14} /><span>旧版 SQLite、FTS5 和向量知识库属于已删除的私有 Wails 后端。当前页面只显示官方 DSH 的真实能力，不伪造本地索引状态。</span></div></SettingsGroup>
-                {:else if managementTab === "settings"}
-                  <SettingsGroup title="模型 Provider" description="Provider 目录、模型发现与配置地址来自官方 DSH。">{#if client}<ProviderWorkbench {client} providers={filteredProviders} onSelectNamespace={(ns) => selectSettingsNamespace(ns)} />{/if}</SettingsGroup>
-                  <SettingsGroup title="凭据" description="官方接口不会返回凭据值，只显示配置状态并接受单向写入。"><div class="credential-form"><Input aria-label="凭据引用名" bind:value={credentialRefDraft} placeholder="例如 DEEPSEEK_API_KEY" /><Input aria-label="凭据值" type="password" bind:value={credentialValueDraft} placeholder="输入后只用于本次写入" /><Button size="sm" disabled={!credentialRefDraft.trim() || !credentialValueDraft || !!managementBusy} onclick={() => void saveCredential()}><KeyRound size={13} />保存凭据</Button></div>{#if credentialRefs.length === 0}<DataState state="empty" title="暂无凭据引用" description="Provider 设置中尚未声明 apiKeyEnv；也可在上方手动输入引用名。" />{:else}<div class="management-list">{#each credentialRefs as ref (ref)}<div class="management-list-row credential-row"><span class="row-icon"><KeyRound size={15} /></span><div><strong>{ref}</strong><small>{credentialSummary(ref)}</small></div><StatusBadge status={credentials[ref]?.configured ? "success" : "neutral"} label={credentials[ref]?.writable === false ? "只读" : "可写"} />{#if credentials[ref]?.configured && credentials[ref]?.writable}{#if confirmingCredentialRef === ref}<Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => void unsetCredential(ref)}><Trash2 size={13} />确认移除</Button><Button variant="ghost" size="sm" onclick={() => confirmingCredentialRef = ""}>取消</Button>{:else}<Button variant="ghost" size="icon-sm" aria-label="移除凭据" title="移除凭据" onclick={() => confirmingCredentialRef = ref}><Trash2 size={14} /></Button>{/if}{/if}</div>{/each}</div>{/if}</SettingsGroup>
-                  <SettingsGroup title="设置命名空间" description="以 JSON 对象合并更新用户层；secret 字段保持写入专用，不会显示在这里。"><div class="management-actions"><Button variant="outline" size="sm" disabled={!settingsHasDocument || !!managementBusy} onclick={() => void openSettingsDocument()}><ExternalLink size={14} />打开设置文件</Button><span class="management-capability">{settingsWritable ? "可写" : "只读"}</span></div>{#if settingsNamespaces.length === 0}<DataState state="empty" title="暂无设置命名空间" description="官方 DSH 尚未注册设置项。" />{:else}<div class="settings-editor-grid"><nav class="settings-namespace-list" aria-label="设置命名空间">{#each filteredSettingsNamespaces as namespace (namespace.ns)}<button class:active={namespace.ns === selectedSettingsNamespace()?.ns} onclick={() => selectSettingsNamespace(namespace.ns)}><strong>{namespace.ns}</strong><small>{namespace.applies === "restart" ? "重启生效" : "即时生效"} · r{namespace.revision}</small></button>{/each}</nav><div class="settings-json-editor">{#if selectedSettingsNamespace()}<div class="agent-preview-heading"><strong>{selectedSettingsNamespace()?.ns}</strong><span>{selectedSettingsNamespace()?.secrets.filter((item) => item.set).length} 个 secret 已配置</span></div><Textarea aria-label="设置 JSON" rows={14} bind:value={settingsDraft} spellcheck={false} /><div class="row-actions"><Button size="sm" disabled={!settingsWritable || !!managementBusy} onclick={() => void saveSettingsNamespace()}><Save size={13} />合并更新</Button><Button variant="ghost" size="sm" onclick={() => selectSettingsNamespace(selectedSettingsNamespace()?.ns || "")}>重置编辑</Button></div>{/if}</div></div>{/if}</SettingsGroup>
+               {:else if managementTab === "settings"}
+                  <SettingsGroup title="模型 Provider" description="Provider 目录、模型发现与配置地址来自官方 DSH。">
+                    {#if client}
+                      <ProviderWorkbench
+                        {client}
+                        providers={filteredProviders}
+                        namespaces={settingsNamespaces}
+                        {credentials}
+                        onSelectNamespace={(ns) => selectSettingsNamespace(ns)}
+                        onCredentialSaved={async (ref) => {
+                          credentials = { ...credentials, ...(await client!.describeCredentials([ref])).credentials };
+                          if (!credentialRefs.includes(ref)) credentialRefs = [...credentialRefs, ref].sort();
+                          if (ref === "XG_GOMODEL_API_KEY" && credentials[ref]?.configured) await refreshXgGatewayModels();
+                        }}
+                      />
+                    {/if}
+                  </SettingsGroup>
+                  <SettingsGroup title="凭据" description="官方接口不会返回凭据值，只显示配置状态并接受单向写入。">
+                    <div class="credential-chips">
+                      <span class="credential-chips-label">快捷预设：</span>
+                      <button type="button" class="credential-chip" class:chosen={credentialRefDraft === "XG_GOMODEL_API_KEY"} onclick={() => pickCredentialQuickChip("XG_GOMODEL_API_KEY")}>
+                        <strong>XG_GOMODEL_API_KEY</strong>
+                        <small>西谷内网网关 (内置默认)</small>
+                      </button>
+                      <button type="button" class="credential-chip" class:chosen={credentialRefDraft === "DEEPSEEK_API_KEY"} onclick={() => pickCredentialQuickChip("DEEPSEEK_API_KEY")}>
+                        <strong>DEEPSEEK_API_KEY</strong>
+                        <small>DeepSeek 官方</small>
+                      </button>
+                    </div>
+                    <div class="credential-form">
+                      <Input aria-label="凭据引用名" bind:value={credentialRefDraft} placeholder="例如 XG_GOMODEL_API_KEY" />
+                      <Input
+                        aria-label="凭据值"
+                        type="password"
+                        bind:value={credentialValueDraft}
+                        placeholder="输入后只用于本次写入 (按回车保存)"
+                        onkeydown={(event) => { if (event.key === "Enter") void saveCredential(); }}
+                      />
+                      <Button size="sm" disabled={!credentialRefDraft.trim() || !credentialValueDraft || !!managementBusy} onclick={() => void saveCredential()}>
+                        <KeyRound size={13} />
+                        保存凭据
+                      </Button>
+                    </div>
+                    {#if credentialRefs.length === 0}
+                      <DataState state="empty" title="暂无凭据引用" description="Provider 设置中尚未声明 apiKeyEnv；也可在上方手动输入引用名。" />
+                    {:else}
+                      <div class="management-list">
+                        {#each credentialRefs as ref (ref)}
+                          <div class="management-list-row credential-row">
+                            <span class="row-icon"><KeyRound size={15} /></span>
+                            <div>
+                              <strong>{credentialRefTitle(ref)}</strong>
+                              <small>{ref} · {credentialSummary(ref)} · {credentialRefHint(ref)}</small>
+                            </div>
+                            <StatusBadge status={credentials[ref]?.configured ? "success" : "neutral"} label={credentials[ref]?.configured ? (credentials[ref]?.writable === false ? "已配置 · 只读" : "已配置") : "未配置"} />
+                            {#if !credentials[ref]?.configured}
+                              <Button variant="outline" size="sm" onclick={() => pickCredentialQuickChip(ref)}>
+                                <KeyRound size={12} />
+                                填入 Key
+                              </Button>
+                            {:else if credentials[ref]?.writable}
+                              {#if confirmingCredentialRef === ref}
+                                <Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => void unsetCredential(ref)}>
+                                  <Trash2 size={13} />
+                                  确认移除
+                                </Button>
+                                <Button variant="ghost" size="sm" onclick={() => confirmingCredentialRef = ""}>取消</Button>
+                              {:else}
+                                <Button variant="ghost" size="icon-sm" aria-label="移除凭据" title="移除凭据" onclick={() => confirmingCredentialRef = ref}>
+                                  <Trash2 size={14} />
+                                </Button>
+                              {/if}
+                            {/if}
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                  </SettingsGroup>
+                  <SettingsGroup title="设置命名空间" description="以 JSON 对象合并更新用户层；secret 字段保持写入专用，不会显示在这里。">
+                    <div class="management-actions">
+                      <Button variant="outline" size="sm" disabled={!settingsHasDocument || !!managementBusy} onclick={() => void openSettingsDocument()}>
+                        <ExternalLink size={14} />
+                        打开设置文件
+                      </Button>
+                      <span class="management-capability">{settingsWritable ? "可写" : "只读"}</span>
+                    </div>
+                    {#if settingsNamespaces.length === 0}
+                      <DataState state="empty" title="暂无设置命名空间" description="官方 DSH 尚未注册设置项。" />
+                    {:else}
+                      <div class="settings-editor-grid">
+                        <nav class="settings-namespace-list" aria-label="设置命名空间">
+                          {#each filteredSettingsNamespaces as namespace (namespace.ns)}
+                            <button class:active={namespace.ns === selectedSettingsNamespace()?.ns} onclick={() => selectSettingsNamespace(namespace.ns)}>
+                              <strong>{namespace.ns}</strong>
+                              <small>{namespace.applies === "restart" ? "重启生效" : "即时生效"} · r{namespace.revision}</small>
+                            </button>
+                          {/each}
+                        </nav>
+                        <div class="settings-json-editor">
+                          {#if selectedSettingsNamespace()}
+                            <div class="agent-preview-heading">
+                              <div>
+                                <strong>{selectedSettingsNamespace()?.ns}</strong>
+                                <small style="margin-left: 8px; color: var(--muted-foreground);">{selectedSettingsNamespace()?.secrets.filter((item) => item.set).length} 个 secret 已配置</small>
+                              </div>
+                              <div class="settings-view-tabs">
+                                <button type="button" class:active={settingsViewMode === "user"} onclick={() => settingsViewMode = "user"}>用户覆盖层 (编辑)</button>
+                                <button type="button" class:active={settingsViewMode === "merged"} onclick={() => settingsViewMode = "merged"}>生效配置 (只读)</button>
+                              </div>
+                            </div>
+                            {#if settingsViewMode === "user"}
+                              <Textarea aria-label="设置 JSON" rows={14} bind:value={settingsDraft} spellcheck={false} />
+                              <div class="row-actions">
+                                <Button size="sm" disabled={!settingsWritable || !!managementBusy} onclick={() => void saveSettingsNamespace()}>
+                                  <Save size={13} />
+                                  合并更新
+                                </Button>
+                                <Button variant="ghost" size="sm" onclick={() => selectSettingsNamespace(selectedSettingsNamespace()?.ns || "")}>重置编辑</Button>
+                              </div>
+                            {:else}
+                              <div class="merged-settings-viewer">
+                                <pre><code>{JSON.stringify(selectedSettingsNamespace()?.value || {}, null, 2)}</code></pre>
+                                <div class="knowledge-note" style="margin-top: 8px;">
+                                  <ShieldAlert size={14} />
+                                  <span>展示当前命名空间合并生效的完整系统配置（包含内置 Provider 与模型定义）。修改请切回“用户覆盖层”。</span>
+                                </div>
+                              </div>
+                            {/if}
+                          {/if}
+                        </div>
+                      </div>
+                    {/if}
+                  </SettingsGroup>
                 {:else}
                   <SettingsGroup title="运行状态与诊断" description="桌面 shell、官方 DSH 事件流和设置命名空间。"><div class="status-line"><StatusBadge status={runtimeError ? "danger" : "success"} label={runtimeError ? "连接异常" : "连接正常"} /><span>{runtimeError || "事件流已建立，状态由官方 DSH 提供。"}</span></div><div class="diagnostic-row"><span>活跃会话</span><strong>{activeSession ? sessionTitle(activeSession) : "无"}</strong></div><div class="diagnostic-row"><span>活动工具</span><strong>{runningTools.length}</strong></div><div class="diagnostic-row"><span>设置命名空间</span><strong>{settingsNamespaces.length}</strong></div><div class="diagnostic-row"><span>Provider</span><strong>{providers.length}</strong></div><div class="diagnostic-row"><span>子 Agent</span><strong>{subagents.length}</strong></div><div class="management-list settings-namespaces">{#each settingsNamespaces as namespace (namespace.ns)}<div class="management-list-row"><span class="row-icon"><Settings2 size={15} /></span><div><strong>{namespace.ns}</strong><small>{namespace.applies === "restart" ? "重启生效" : "即时生效"} · revision {namespace.revision}</small></div><code>{namespace.secrets.length} secrets</code></div>{/each}</div></SettingsGroup>
                 {/if}

@@ -44,6 +44,47 @@ export function providerCredentialRef(
   return typeof ref === "string" && ref ? ref : undefined;
 }
 
+export function providerDefaultBaseURL(
+  namespaces: SettingsNamespace[],
+  providers: ConfigurableProvider[],
+  provider: string,
+): string {
+  const config = resolveProviderSettings(namespaces, providers, provider)?.config;
+  return typeof config?.baseURL === "string" ? config.baseURL : "";
+}
+
+export function providerDefaultApi(
+  namespaces: SettingsNamespace[],
+  providers: ConfigurableProvider[],
+  provider: string,
+): string {
+  const config = resolveProviderSettings(namespaces, providers, provider)?.config;
+  return typeof config?.api === "string" ? config.api : "";
+}
+
+export function credentialRefTitle(ref: string): string {
+  switch (ref) {
+    case "XG_GOMODEL_API_KEY":
+      return "西谷内网网关 API Key (内置默认)";
+    case "DEEPSEEK_API_KEY":
+      return "DeepSeek 官方 API Key";
+    case "OPENAI_API_KEY":
+      return "OpenAI API Key";
+    case "ANTHROPIC_API_KEY":
+      return "Anthropic API Key";
+    case "GEMINI_API_KEY":
+      return "Gemini API Key";
+    default:
+      return ref;
+  }
+}
+
+export function credentialRefHint(ref: string): string {
+  if (ref === "XG_GOMODEL_API_KEY") return "内置内网网关（http://192.168.1.47:9010/v1），保存后自动同步模型列表";
+  if (ref === "DEEPSEEK_API_KEY") return "用于 DeepSeek 官方模型服务";
+  return "Provider 关联凭据引用";
+}
+
 function valueAtPath(value: unknown, path: string[]): unknown {
   let current = value;
   for (const segment of path) {

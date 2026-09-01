@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { enrichModelGroups, findProviderSettings, mergeDiscoveredModels, modelCapabilityLabel, providerCredentialRef, resolveProviderSettings, supportedReasoningEffort } from "./model-catalog";
+import {
+  credentialRefHint,
+  credentialRefTitle,
+  enrichModelGroups,
+  findProviderSettings,
+  mergeDiscoveredModels,
+  modelCapabilityLabel,
+  providerCredentialRef,
+  providerDefaultApi,
+  providerDefaultBaseURL,
+  resolveProviderSettings,
+  supportedReasoningEffort,
+} from "./model-catalog";
 import type { SettingsNamespace } from "./dsh-client";
 
 const namespace: SettingsNamespace = {
@@ -25,6 +37,17 @@ describe("XG 网关模型目录", () => {
     const providers = [{ provider: "deepseek-official", displayName: "DeepSeek", settingsNs: "llm-deepseek", settingsPath: [], active: true }];
     expect(resolveProviderSettings([deepseek], providers, "deepseek-official")?.config.apiKeyEnv).toBe("DEEPSEEK_API_KEY");
     expect(providerCredentialRef([deepseek], providers, "deepseek-official")).toBe("DEEPSEEK_API_KEY");
+  });
+
+  it("解析 Provider 默认 Base URL、API 类型与友好凭据描述", () => {
+    const providers = [{ provider: "xg-gomodel", displayName: "XG GOModel", settingsNs: "llm-pi-ai", settingsPath: ["providers", "xg-gomodel"], active: true }];
+    expect(providerDefaultBaseURL([namespace], providers, "xg-gomodel")).toBe("http://192.168.1.47:9010/v1");
+    expect(providerDefaultApi([namespace], providers, "xg-gomodel")).toBe("");
+    expect(credentialRefTitle("XG_GOMODEL_API_KEY")).toBe("西谷内网网关 API Key (内置默认)");
+    expect(credentialRefTitle("DEEPSEEK_API_KEY")).toBe("DeepSeek 官方 API Key");
+    expect(credentialRefTitle("CUSTOM_KEY")).toBe("CUSTOM_KEY");
+    expect(credentialRefHint("XG_GOMODEL_API_KEY")).toContain("http://192.168.1.47:9010/v1");
+    expect(credentialRefHint("DEEPSEEK_API_KEY")).toContain("DeepSeek 官方");
   });
 
   it("刷新时保留已声明能力，并保守标记新模型", () => {

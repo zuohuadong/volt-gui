@@ -257,9 +257,31 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .provider-discovery { min-width: 0; padding-left: 12px; border-left: 1px solid var(--border); }
 .provider-discovery-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .provider-discovery-heading strong, .provider-discovery-heading small { display: block; }.provider-discovery-heading strong { font-size: 11px; }.provider-discovery-heading small { margin-top: 3px; color: var(--muted-foreground); font-size: 9px; }
-.provider-discovery-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 6px; margin-top: 10px; }
+.provider-meta-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); }
+.provider-meta-item { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--muted-foreground); }
+.provider-meta-item strong { color: var(--foreground); font-size: 10px; font-family: "Cascadia Code", Consolas, monospace; }
+.provider-quick-key { margin-top: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); }
+.provider-quick-key-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.provider-quick-key-header strong { font-size: 11px; }
+.provider-quick-key-header small { color: var(--muted-foreground); font-size: 9px; }
+.provider-quick-key-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+.provider-discovery-form { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr) auto; gap: 6px; margin-top: 10px; }
 .discovered-models { display: grid; gap: 4px; margin-top: 9px; max-height: 210px; overflow: auto; }
 .discovered-models > div { padding: 7px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); }.discovered-models strong, .discovered-models small { display: block; }.discovered-models strong { font-size: 10px; }.discovered-models small { margin-top: 2px; color: var(--muted-foreground); font-size: 9px; }
+
+.credential-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 9px; }
+.credential-chips-label { color: var(--muted-foreground); font-size: 10px; }
+.credential-chip { display: inline-flex; align-items: baseline; gap: 5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--card); color: var(--foreground); cursor: pointer; text-align: left; transition: background-color 0.15s ease, border-color 0.15s ease; }
+.credential-chip:hover { border-color: var(--primary); background: var(--muted); }
+.credential-chip.chosen { border-color: var(--primary); background: color-mix(in oklch, var(--primary) 10%, var(--card)); }
+.credential-chip strong { font-size: 10px; font-family: "Cascadia Code", Consolas, monospace; }
+.credential-chip small { color: var(--muted-foreground); font-size: 9px; }
+
+.settings-view-tabs { display: flex; align-items: center; gap: 4px; }
+.settings-view-tabs button { padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--card); color: var(--muted-foreground); font-size: 10px; cursor: pointer; transition: all 0.15s ease; }
+.settings-view-tabs button:hover { color: var(--foreground); }
+.settings-view-tabs button.active { border-color: var(--primary); background: var(--primary); color: var(--primary-foreground); }
+.merged-settings-viewer pre { margin: 0; padding: 10px; max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--background); font-family: "Cascadia Code", Consolas, monospace; font-size: 10px; line-height: 1.5; color: var(--foreground); }
 @media (max-width: 760px) { .provider-workbench, .provider-discovery-form { grid-template-columns: 1fr; }.provider-discovery { padding-top: 10px; padding-left: 0; border-top: 1px solid var(--border); border-left: 0; } }
 
 /* 保持桌面工作台在窗口缩放后仍有明确的滚动边界和可见操作区。 */

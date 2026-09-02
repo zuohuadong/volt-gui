@@ -71,7 +71,7 @@
  let client = $state<DshClient>();
   let customProductName = $state("");
   const productName = $derived(customProductName || t("app.name"));
- let appVersion = $state("0.31.1");
+ let appVersion = $state("0.31.20");
  let workspacePath = $state("");
   let workspaces = $state<Workspace[]>([]);
   let sessions = $state<SessionSummary[]>([]);

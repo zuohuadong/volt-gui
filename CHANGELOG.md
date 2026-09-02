@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.31.20 - 2026-09-02
+
+### Added
+
+- Added official DSH knowledge-base indexing workflows with guarded concurrent
+  indexing and Svelte management surfaces.
+- Bundled the audited BrowserSkill DSH plugin and CLI for Computer Use, plus
+  OfficeCLI as a default DSH MCP integration.
+
+### Fixed
+
+- Stabilized conversation, project, workspace, multimodal attachment, and
+  internal-model workflows across the Svelte desktop interface.
+- Improved SMB mapping consistency, offline diagnostics, and configuration
+  handling without persisting credentials.
+- Added structured rendering for browser and Computer Use tool results and
+  refined responsive, localized desktop interaction states.
+
 ## 0.31.1 - 2026-08-31
 
 ### Fixed

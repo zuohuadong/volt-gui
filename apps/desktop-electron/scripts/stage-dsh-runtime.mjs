@@ -54,6 +54,26 @@ const required = [
   "node_modules/node-pty/package.json",
   "node_modules/koffi/package.json",
 ];
+
+if (process.platform === "win32") {
+  const officeBinary = path.join(target, "node_modules", "@officecli", "officecli", "vendor", "officecli.exe");
+  if (!fs.existsSync(officeBinary) || fs.statSync(officeBinary).size === 0) {
+    const cacheRoot = process.env.CNB_OFFICECLI_CACHE || "C:\\data\\orange-ci\\tool-cache\\officecli\\1.0.146";
+    const sourceCandidates = [
+      path.resolve(appDir, "..", "..", "node_modules", "@officecli", "officecli", "vendor", "officecli.exe"),
+      path.join(cacheRoot, "officecli.exe"),
+    ];
+    const expectedHash = "ad36ca99a50102d8f953e8ed1742fab65c9e201a29733601ea6ca9e676b2eed0";
+    const sourceBinary = sourceCandidates.find((candidate) => {
+      if (!fs.existsSync(candidate)) return false;
+      return createHash("sha256").update(fs.readFileSync(candidate)).digest("hex") === expectedHash;
+    });
+    if (!sourceBinary) throw new Error("A verified OfficeCLI binary is unavailable for runtime staging");
+    fs.mkdirSync(path.dirname(officeBinary), { recursive: true });
+    fs.copyFileSync(sourceBinary, officeBinary);
+  }
+}
+
 for (const relativePath of required) {
   if (!fs.existsSync(path.join(target, relativePath))) {
     throw new Error(`staged DSH runtime is incomplete: ${relativePath}`);

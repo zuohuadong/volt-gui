@@ -27,7 +27,7 @@ main:
             # still contains the audited native tool.
             $env:OFFICECLI_SKIP_BINARY_DOWNLOAD = "1"
             pnpm.cmd install --frozen-lockfile
-            pwsh -NoProfile -File scripts/install-cnb-officecli.ps1
+            & .\scripts\install-cnb-officecli.ps1
         - name: verify
           script: |
             $ErrorActionPreference = "Stop"
@@ -68,7 +68,7 @@ $:
             # still contains the audited native tool.
             $env:OFFICECLI_SKIP_BINARY_DOWNLOAD = "1"
             pnpm.cmd install --frozen-lockfile
-            pwsh -NoProfile -File scripts/install-cnb-officecli.ps1
+            & .\scripts\install-cnb-officecli.ps1
         - name: verify
           script: |
             $ErrorActionPreference = "Stop"

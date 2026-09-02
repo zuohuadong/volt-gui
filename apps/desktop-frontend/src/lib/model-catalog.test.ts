@@ -11,6 +11,8 @@ import {
   providerCredentialRef,
   providerDefaultApi,
   providerDefaultBaseURL,
+  isLocalOrIntranetBaseURL,
+  isProviderCredentialOptional,
   resolveProviderSettings,
   supportedReasoningEffort,
 } from "./model-catalog";
@@ -71,6 +73,14 @@ describe("XG 网关模型目录", () => {
     ] }];
     expect(supportedReasoningEffort(groups, "xg-gomodel", "vlm", "high")).toBeUndefined();
     expect(supportedReasoningEffort(groups, "xg-gomodel", "reasoner", "high")).toBe("high");
+  });
+
+  it("识别内网网关与本地 URL 无需强制要求外部云 API Key", () => {
+    const providers = [{ provider: "xg-gomodel", displayName: "XG GOModel", settingsNs: "llm-pi-ai", settingsPath: ["providers", "xg-gomodel"], active: true }];
+    expect(isLocalOrIntranetBaseURL("http://192.168.1.47:9010/v1")).toBe(true);
+    expect(isLocalOrIntranetBaseURL("http://localhost:11434/v1")).toBe(true);
+    expect(isLocalOrIntranetBaseURL("https://api.deepseek.com")).toBe(false);
+    expect(isProviderCredentialOptional([namespace], providers, "xg-gomodel")).toBe(true);
   });
 
   it("仅对明确声明图片输入的模型开放多模态入口", () => {

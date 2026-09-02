@@ -71,7 +71,7 @@
  let client = $state<DshClient>();
   let customProductName = $state("");
   const productName = $derived(customProductName || t("app.name"));
- let appVersion = $state("0.31.27");
+ let appVersion = $state("0.31.28");
  let workspacePath = $state("");
   let workspaces = $state<Workspace[]>([]);
   let sessions = $state<SessionSummary[]>([]);
@@ -487,9 +487,14 @@
       if (!modelCredentialConfigured(modelResult.current.provider)) {
         runtimeError = t("errors.noApiKey");
         sessionErrors = { ...sessionErrors, [sessionId]: runtimeError };
-      } else if (sessionErrors[sessionId]) {
-        const { [sessionId]: _cleared, ...remaining } = sessionErrors;
-        sessionErrors = remaining;
+      } else {
+        if (runtimeError === t("errors.noApiKey") || runtimeError.includes("API Key") || runtimeError.includes("凭据") || runtimeError.startsWith("当前模型需要 ")) {
+          runtimeError = "";
+        }
+        if (sessionErrors[sessionId] && (sessionErrors[sessionId] === t("errors.noApiKey") || sessionErrors[sessionId]?.includes("API Key") || sessionErrors[sessionId]?.includes("凭据"))) {
+          const { [sessionId]: _cleared, ...remaining } = sessionErrors;
+          sessionErrors = remaining;
+        }
       }
     } catch (error) {
       if (requestId !== sessionSelectionRequest || activeSessionId !== sessionId) return;
@@ -537,6 +542,7 @@
   }
 
   function modelCredentialConfigured(provider: string): boolean {
+    if (isProviderCredentialOptional(settingsNamespaces, providers, provider)) return true;
     const ref = providerCredentialRef(settingsNamespaces, providers, provider);
     return !ref || !!credentials[ref]?.configured;
   }
@@ -644,6 +650,15 @@
         runtimeError = userFacingError(toolErrorMessage || transcript.messages.at(-1)?.tool?.result || toolErrorCode);
       }
     }
+    if (payload.event.type === "assistant/chunk" || payload.event.type === "assistant/message" || payload.event.type === "tool/call") {
+      if (runtimeError === t("errors.noApiKey") || runtimeError.includes("API Key") || runtimeError.includes("凭据") || runtimeError.startsWith("当前模型需要 ")) {
+        runtimeError = "";
+      }
+      if (sessionErrors[activeSessionId] && (sessionErrors[activeSessionId] === t("errors.noApiKey") || sessionErrors[activeSessionId]?.includes("API Key") || sessionErrors[activeSessionId]?.includes("凭据"))) {
+        const { [activeSessionId]: _cleared, ...remaining } = sessionErrors;
+        sessionErrors = remaining;
+      }
+    }
     if (payload.event.type === "assistant/message") {
       const assistantMessage = assistantMessageForEvent(transcript.messages, payload.event);
       captureCustomization(assistantMessage);
@@ -691,7 +706,8 @@
     const text = (textOverride ?? input).trim();
     if (!client || !activeSessionId || (!text && imageAttachments.length === 0) || sending) return;
     const credentialRef = selectedProviderCredentialRef();
-    if (credentialRef && !credentials[credentialRef]?.configured) {
+    const currentProvider = selectedModel.split("/", 1)[0];
+    if (credentialRef && !modelCredentialConfigured(currentProvider) && !credentials[credentialRef]?.configured) {
       credentialRefDraft = credentialRef;
       runtimeError = t("models.missingApiKeyRuntime", { credentialRef });
       sessionErrors = { ...sessionErrors, [activeSessionId]: runtimeError };
@@ -747,6 +763,15 @@
       }
       selectedModel = `${result.selected.provider}/${result.selected.model}`;
       reasoningEffort = result.selected.reasoningEffort || "";
+      if (modelCredentialConfigured(provider)) {
+        if (runtimeError === t("errors.noApiKey") || runtimeError.includes("API Key") || runtimeError.includes("凭据") || runtimeError.startsWith("当前模型需要 ")) {
+          runtimeError = "";
+        }
+        if (sessionErrors[activeSessionId] && (sessionErrors[activeSessionId] === t("errors.noApiKey") || sessionErrors[activeSessionId]?.includes("API Key") || sessionErrors[activeSessionId]?.includes("凭据"))) {
+          const { [activeSessionId]: _cleared, ...remaining } = sessionErrors;
+          sessionErrors = remaining;
+        }
+      }
     } catch (error) {
       runtimeError = userFacingError(error);
       sessionErrors = { ...sessionErrors, [activeSessionId]: runtimeError };

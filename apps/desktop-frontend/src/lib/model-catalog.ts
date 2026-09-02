@@ -53,6 +53,31 @@ export function providerDefaultBaseURL(
   return typeof config?.baseURL === "string" ? config.baseURL : "";
 }
 
+export function isLocalOrIntranetBaseURL(url: string | undefined): boolean {
+  if (!url || typeof url !== "string") return false;
+  const trimmed = url.trim().toLowerCase();
+  return (
+    trimmed.includes("localhost") ||
+    trimmed.includes("127.0.0.1") ||
+    trimmed.includes("192.168.") ||
+    trimmed.includes("10.") ||
+    /172\.(1[6-9]|2[0-9]|3[0-1])\./.test(trimmed) ||
+    trimmed.endsWith(".local")
+  );
+}
+
+export function isProviderCredentialOptional(
+  namespaces: SettingsNamespace[],
+  providers: ConfigurableProvider[],
+  provider: string,
+): boolean {
+  if (provider === "xg-gomodel" || provider.includes("internal") || provider.includes("local")) {
+    return true;
+  }
+  const baseURL = providerDefaultBaseURL(namespaces, providers, provider);
+  return isLocalOrIntranetBaseURL(baseURL);
+}
+
 export function providerDefaultApi(
   namespaces: SettingsNamespace[],
   providers: ConfigurableProvider[],

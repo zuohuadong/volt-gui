@@ -32,36 +32,116 @@ export function foldHistory(entries: HistoryEntry[]): TranscriptState {
   return state;
 }
 
+function extractChunkDelta(data: Record<string, unknown>): { text?: string; reasoning?: string } {
+  const chunk = data.chunk;
+  if (typeof chunk === "string") {
+    return { text: chunk };
+  }
+  if (typeof data.delta === "string") {
+    return { text: data.delta };
+  }
+  if (typeof data.text === "string" && !data.message) {
+    return { text: data.text };
+  }
+  const record = asRecord(chunk);
+  if (!record) return {};
+
+  const type = typeof record.type === "string" ? record.type.toLowerCase() : "";
+  const isReasoning = type.includes("reasoning") || type.includes("thought");
+
+  const rawText = typeof record.text === "string"
+    ? record.text
+    : typeof record.delta === "string"
+      ? record.delta
+      : typeof record.content === "string"
+        ? record.content
+        : typeof (asRecord(record.delta)?.content) === "string"
+          ? String(asRecord(record.delta)!.content)
+          : typeof (asRecord(record.delta)?.text) === "string"
+            ? String(asRecord(record.delta)!.text)
+            : undefined;
+
+  const rawReasoning = typeof record.reasoning === "string"
+    ? record.reasoning
+    : typeof record.thought === "string"
+      ? record.thought
+      : typeof (asRecord(record.delta)?.reasoning) === "string"
+        ? String(asRecord(record.delta)!.reasoning)
+        : typeof (asRecord(record.delta)?.thought) === "string"
+          ? String(asRecord(record.delta)!.thought)
+          : undefined;
+
+  if (isReasoning) {
+    return { reasoning: rawText || rawReasoning };
+  }
+  return { text: rawText, reasoning: rawReasoning };
+}
+
 export function applyTranscriptEvent(state: TranscriptState, event: SessionEvent, view?: Record<string, unknown>): TranscriptState {
   const messages: TranscriptMessage[] = state.messages.map((item) => ({ ...item, ...(item.tool ? { tool: { ...item.tool } } : {}) }));
   let todos = state.todos;
   const data = event.data || {};
 
   if (event.type === "user/message") {
-    const text = visibleText(data.message ?? data.content);
+    const text = visibleText(data.message ?? data.content ?? data.text);
     if (!text) return { messages, todos };
     const pendingIndex = messages.findIndex((item) => item.pending && item.role === "user" && item.text === text);
     if (pendingIndex >= 0) messages.splice(pendingIndex, 1);
     messages.push({ id: `user-${event.seq}`, role: "user", text, seq: event.seq });
   } else if (event.type === "assistant/chunk") {
-    const chunk = asRecord(data.chunk);
     const key = `stream-${String(data.turn ?? "0")}-${String(data.step ?? "0")}`;
     let existing: TranscriptMessage | undefined = messages.find((item) => item.id === key);
     if (!existing) {
       existing = { id: key, role: "assistant", text: "", reasoning: "", pending: true, seq: event.seq };
       messages.push(existing);
     }
-    if (chunk?.type === "text-delta" && typeof chunk.text === "string") existing.text += chunk.text;
-    if (chunk?.type === "reasoning-delta" && typeof chunk.text === "string") existing.reasoning = `${existing.reasoning || ""}${chunk.text}`;
+    const { text, reasoning } = extractChunkDelta(data);
+    if (text) existing.text += text;
+    if (reasoning) existing.reasoning = `${existing.reasoning || ""}${reasoning}`;
   } else if (event.type === "assistant/message") {
     const message = data.message;
     const key = `stream-${String(data.turn ?? "0")}-${String(data.step ?? "0")}`;
     const usage = asRecord(data.usage);
-    const text = visibleText(message ?? data.content);
+    let index = messages.findIndex((item) => item.id === key);
+    if (index < 0) {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === "assistant" && messages[i].pending) {
+          index = i;
+          break;
+        }
+      }
+    }
+    const existing = index >= 0 ? messages[index] : undefined;
+    const rawPayload = message ?? data.content ?? data.text;
+    const isFilteredInternal =
+      (typeof rawPayload === "string" && isInternalRuntimeText(rawPayload)) ||
+      (typeof message === "string" && isInternalRuntimeText(message)) ||
+      (typeof data.content === "string" && isInternalRuntimeText(data.content));
+
+    const extractedText = visibleText(rawPayload);
+    let resolvedText = extractedText;
+    if (!resolvedText && !isFilteredInternal) {
+      if (existing?.text && !isInternalRuntimeText(existing.text)) {
+        resolvedText = existing.text;
+      }
+    }
+
+    const extractedReasoning = reasoningText(message ?? data.reasoning);
+    const resolvedReasoning = extractedReasoning || (isFilteredInternal ? "" : existing?.reasoning || "");
     const sources = extractSources(message ?? data.content);
-    const next = { id: `assistant-${event.seq}`, role: "assistant" as const, text, reasoning: reasoningText(message ?? data.reasoning), pending: false, seq: event.seq, usage, sources };
-    const index = messages.findIndex((item) => item.id === key);
-    if (!text && !next.reasoning) {
+
+    const next: TranscriptMessage = {
+      id: `assistant-${event.seq}`,
+      role: "assistant",
+      text: resolvedText,
+      reasoning: resolvedReasoning,
+      pending: false,
+      seq: event.seq,
+      usage,
+      sources,
+    };
+
+    if (!resolvedText && !resolvedReasoning) {
       if (index >= 0) messages.splice(index, 1);
       return { messages, todos };
     }
@@ -103,39 +183,46 @@ export function visibleText(value: unknown): string {
   if (typeof value === "string") return isInternalRuntimeText(value) ? "" : value;
   if (Array.isArray(value)) return value.map((item) => {
     const block = asRecord(item);
-    if (block?.type === "reasoning") return "";
+    if (block?.type === "reasoning" || block?.type === "thought") return "";
     if (block?.type === "image") return `[图片${asRecord(block.attachment)?.name ? `：${String(asRecord(block.attachment)?.name)}` : ""}]`;
     return visibleText(item);
   }).filter(Boolean).join("\n");
   const record = asRecord(value);
   if (!record) return value == null ? "" : String(value);
-  if (record.type === "reasoning") return "";
+  if (record.type === "reasoning" || record.type === "thought") return "";
   if (typeof record.type === "string" && (record.type.includes("source") || record.type.includes("citation"))) return "";
   if (typeof record.text === "string") return visibleText(record.text);
   if (typeof record.content === "string") return visibleText(record.content);
   if (Array.isArray(record.content)) return visibleText(record.content);
+  if (Array.isArray(record.parts)) return visibleText(record.parts);
+  if (typeof record.value === "string") return visibleText(record.value);
+  if (typeof record.delta === "string") return visibleText(record.delta);
   if (typeof record.output === "string") return record.output;
+  if (record.message) return visibleText(record.message);
   const serialized = JSON.stringify(value, null, 2);
   return isInternalRuntimeText(serialized) ? "" : serialized;
 }
 
 function isInternalRuntimeText(value: string): boolean {
   const normalized = value.trim().toLowerCase();
-  return normalized.includes("current runtime context")
-    || normalized.includes("current dsh file policy")
-    || normalized.includes("runtime context snapshot")
-    || normalized.includes("this snapshot supersedes earlier")
-    || normalized.includes("dsh file policy:")
-    || normalized.includes("workspace-write");
+  if (!normalized) return false;
+  const isSnapshotPrompt =
+    (normalized.startsWith("current runtime context") || normalized.startsWith("runtime context snapshot")) &&
+    normalized.includes("supersedes");
+  const isPolicyPrompt =
+    normalized.startsWith("current dsh file policy:") ||
+    (normalized.startsWith("dsh file policy:") && (normalized.includes("workspace-write") || normalized.includes("readonly")));
+  return isSnapshotPrompt || isPolicyPrompt;
 }
 
 export function reasoningText(value: unknown): string {
   if (Array.isArray(value)) return value.map(reasoningText).filter(Boolean).join("\n");
   const record = asRecord(value);
   if (!record) return "";
-  if (record.type === "reasoning" && typeof record.text === "string") return record.text;
+  if ((record.type === "reasoning" || record.type === "thought") && typeof record.text === "string") return record.text;
   if (Array.isArray(record.content)) return reasoningText(record.content);
   if (typeof record.reasoning === "string") return record.reasoning;
+  if (typeof record.thought === "string") return record.thought;
   return "";
 }
 

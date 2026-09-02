@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.31.28 - 2026-09-02
+
+### Fixed
+
+- Support intranet and local LAN model endpoints (e.g. `xg-gomodel`) without
+  enforcing external API keys or displaying false "missing key" banners (#234).
+- Prevent transcript and streaming message truncation by preserving accumulated
+  delta chunks and relaxing runtime context keyword filters (#234).
+- Dismiss stale credential requirement errors immediately upon model selection
+  or incoming assistant streaming events (#234).
+
 ## 0.31.27 - 2026-09-02
 
 ### Fixed

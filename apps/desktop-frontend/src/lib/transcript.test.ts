@@ -74,4 +74,35 @@ describe("transcript folding", () => {
     }));
     expect(final.messages).toHaveLength(0);
   });
+  it("merges raw string and delta chunks without truncation", () => {
+    const next = foldHistory([
+      { event: event("assistant/chunk", 1, { turn: 1, step: 1, chunk: "第一段" }) },
+      { event: event("assistant/chunk", 2, { turn: 1, step: 1, chunk: { delta: "第二段" } }) },
+      { event: event("assistant/chunk", 3, { turn: 1, step: 1, chunk: { text: "第三段" } }) },
+    ]);
+    expect(next.messages[0]).toMatchObject({ text: "第一段第二段第三段", pending: true });
+  });
+
+  it("preserves streamed text when assistant/message only carries status or empty text", () => {
+    const chunk = foldHistory([
+      { event: event("assistant/chunk", 1, { turn: 1, step: 1, chunk: { type: "text-delta", text: "已完整生成的长文本回复" } }) },
+    ]);
+    expect(chunk.messages[0].text).toBe("已完整生成的长文本回复");
+    const final = applyTranscriptEvent(chunk, event("assistant/message", 2, {
+      turn: 1,
+      step: 1,
+      message: null,
+      usage: { totalTokens: 100 },
+    }));
+    expect(final.messages).toHaveLength(1);
+    expect(final.messages[0]).toMatchObject({ text: "已完整生成的长文本回复", pending: false, usage: { totalTokens: 100 } });
+  });
+
+  it("does not falsely filter out assistant text that mentions policy words", () => {
+    const next = applyTranscriptEvent({ messages: [], todos: [] }, event("assistant/message", 1, {
+      message: "这里我们可以使用 workspace-write 权限来进行目录写入操作。",
+    }));
+    expect(next.messages).toHaveLength(1);
+    expect(next.messages[0].text).toContain("workspace-write");
+  });
 });

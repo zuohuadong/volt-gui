@@ -53,7 +53,10 @@ interface QuickAction {
   let { messages, sending, productName, quickActions, onPromptSelect, selectedModel, contextWindow }: Props = $props();
   let latestVisible = $state(true);
 
-  const aiMessages = $derived(messages.map(toAiMessage));
+  const displayMessages = $derived(
+    messages.filter((m) => m.role === "tool" || m.pending || !!m.text?.trim() || !!m.reasoning?.trim() || !!m.tool)
+  );
+  const aiMessages = $derived(displayMessages.map(toAiMessage));
 
   function messageRole(message: TranscriptMessage): ChatMessage["role"] {
     if (message.role === "user") return "user";
@@ -95,13 +98,13 @@ interface QuickAction {
 </script>
 
 <Conversation messages={aiMessages} isStreaming={sending} class="conversation-root">
-  {#if messages.length > 0}
+  {#if displayMessages.length > 0}
     <div class="conversation-controls">
       <ConversationDownload messages={aiMessages} filename={`${productName}-conversation.md`} title={t("transcript.download")} />
     </div>
   {/if}
   <ConversationParts.Content class="message-scroll">
-    {#if messages.length === 0}
+    {#if displayMessages.length === 0}
       <ConversationEmptyState title={t("transcript.emptyTitle")} description={t("transcript.emptyDesc")} class="empty-state">
         <span class="empty-mark"><Bot size={22} /></span>
         <Suggestions ariaLabel={t("transcript.quickActions")} class="quick-actions">
@@ -111,7 +114,7 @@ interface QuickAction {
         </Suggestions>
       </ConversationEmptyState>
     {:else}
-      {#each messages as message (message.id)}
+      {#each displayMessages as message (message.id)}
         <Message
           from={messageRole(message)}
           class={`transcript-message ${message.role === "tool" ? "tool-message" : ""} ${message.pending ? "pending" : ""}`}
@@ -197,5 +200,5 @@ interface QuickAction {
       <div class="conversation-latest-sentinel" aria-hidden="true" {@attach observeLatest}></div>
     {/if}
   </ConversationParts.Content>
-  {#if messages.length > 0 && !latestVisible}<ConversationScrollButton class="conversation-scroll-button" />{/if}
+  {#if displayMessages.length > 0 && !latestVisible}<ConversationScrollButton class="conversation-scroll-button" />{/if}
 </Conversation>

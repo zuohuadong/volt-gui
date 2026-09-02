@@ -105,4 +105,17 @@ describe("transcript folding", () => {
     expect(next.messages).toHaveLength(1);
     expect(next.messages[0].text).toContain("workspace-write");
   });
+
+  it("discards empty ghost messages and clears pending on turn/end", () => {
+    const stateWithEmpty: TranscriptState = {
+      messages: [
+        { id: "user-1", role: "user", text: "你好", seq: 1 },
+        { id: "stream-0-0", role: "assistant", text: "", reasoning: "", pending: true, seq: 2 },
+      ],
+      todos: [],
+    };
+    const ended = applyTranscriptEvent(stateWithEmpty, event("turn/end", 3, {}));
+    expect(ended.messages).toHaveLength(1);
+    expect(ended.messages[0].id).toBe("user-1");
+  });
 });

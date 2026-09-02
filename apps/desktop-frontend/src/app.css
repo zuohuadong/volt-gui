@@ -18,6 +18,10 @@
   --secondary: #f0f3f2;
   --secondary-foreground: #111827;
   --ring: #1f5d4b;
+  --sidebar-ring: #1f5d4b;
+  --sidebar-primary: #1f5d4b;
+  --color-ring: #1f5d4b;
+  --svadmin-focus-ring: #1f5d4b;
   --muted: #f0f3f2;
   --muted-foreground: #687386;
   --accent: #e8f2ed;
@@ -39,6 +43,19 @@
   letter-spacing: 0;
   font-size: 14px;
   line-height: 1.5;
+}
+
+:root,
+:root:not([data-theme]),
+:root[data-theme],
+html,
+body {
+  --primary: #1f5d4b;
+  --ring: #1f5d4b;
+  --sidebar-ring: #1f5d4b;
+  --sidebar-primary: #1f5d4b;
+  --color-ring: #1f5d4b;
+  --svadmin-focus-ring: #1f5d4b;
 }
 * { box-sizing: border-box; }
 code, pre, kbd, samp { font-family: var(--font-mono); }
@@ -155,6 +172,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .conversation-root .message-meta {
   margin-bottom: 6px;
   font-size: 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: max-content;
+}
+
+.conversation-root .message-meta span,
+.conversation-root .message-meta strong,
+.conversation-root .message-meta time {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .conversation-root .tool-message {
@@ -1480,14 +1507,21 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 /* 输入与聚焦体验强化 */
 .composer-shell:focus-within {
-  border-color: var(--ring);
-  box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 15%, transparent), var(--svadmin-shadow-overlay);
+  border-color: var(--ring) !important;
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 18%, transparent), var(--svadmin-shadow-overlay) !important;
 }
 .composer textarea:focus,
 .prompt-input-composer textarea:focus,
 .reference-picker textarea:focus {
-  outline: none;
-  box-shadow: none;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--ring) !important;
+  outline-offset: 1px;
 }
 
 /* 会话管理与检查点分层优化 */

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.31.29 - 2026-09-02
+
+### Fixed
+
+- Clear management feedback and error banners on tab transitions to prevent
+  cross-page message lingering in workbench (#235).
+- Suppress empty assistant ghost message bubbles and prevent sender metadata
+  vertical truncation (#234).
+- Enforce brand green ring and border focus states across input controls and
+  composer (#230).
+- Align session error handling and credential state indicators (#233).
+
 ## 0.31.28 - 2026-09-02
 
 ### Fixed

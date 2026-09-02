@@ -29,7 +29,13 @@ export type SessionEvent = { type: string; seq: number; data: Record<string, unk
 export function foldHistory(entries: HistoryEntry[]): TranscriptState {
   let state: TranscriptState = { messages: [], todos: [] };
   for (const entry of entries) state = applyTranscriptEvent(state, entry.event, entry.view as Record<string, unknown> | undefined);
+  state.messages = state.messages.filter(hasMessageContent);
   return state;
+}
+
+export function hasMessageContent(message: TranscriptMessage): boolean {
+  if (message.role === "tool" || message.pending) return true;
+  return !!message.text?.trim() || !!message.reasoning?.trim() || !!message.tool;
 }
 
 function extractChunkDelta(data: Record<string, unknown>): { text?: string; reasoning?: string } {
@@ -166,6 +172,11 @@ export function applyTranscriptEvent(state: TranscriptState, event: SessionEvent
   } else if (event.type === "todo/write") {
     const items = Array.isArray(data.items) ? data.items : Array.isArray(data.todos) ? data.todos : [];
     todos = items.filter(isTodoItem);
+  } else if (event.type === "turn/end") {
+    return {
+      messages: messages.map((m) => (m.pending ? { ...m, pending: false } : m)).filter(hasMessageContent),
+      todos,
+    };
   }
 
   return { messages, todos };

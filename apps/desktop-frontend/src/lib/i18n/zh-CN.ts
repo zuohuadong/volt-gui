@@ -139,6 +139,7 @@ export const zhCN: TranslationDict = {
     settingsDesc: "{namespaces} 个命名空间，{credentials} 个凭据引用",
     runtimeTitle: "运行状态",
     runtimeNormal: "核心服务正常",
+    runtimeNormalWithSessionError: "核心正常 · 会话异常",
     runtimeError: "连接异常",
     currentSession: "当前会话",
     currentSessionDesc: "会话状态、模型和工作区实时同步。",

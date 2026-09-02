@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.31.27 - 2026-09-02
+
+### Fixed
+
+- Correctly recognize invalid or expired API key responses as 401 authentication
+  failures instead of missing API key errors (#233).
+- Sanitize user credentials by stripping surrounding quotes and whitespace on
+  save in workbench and settings.
+- Clear pending status and surface turn errors immediately on `turn/end` event
+  to prevent session stuck in queued state.
+- Align topbar runtime status and session list health state when active session
+  encounters an error.
+
 ## 0.31.20 - 2026-09-02
 
 ### Added

@@ -39,6 +39,31 @@ export function clearsSessionError(event: { type: string; data?: Record<string, 
   return kind !== "error";
 }
 
+export function turnEndError(event: { type: string; data?: Record<string, unknown> }): string | undefined {
+  if (event.type !== "turn/end") return undefined;
+  const reason = event.data?.reason;
+  if (!reason) return undefined;
+  if (typeof reason === "string") {
+    return reason === "error" ? "error" : undefined;
+  }
+  if (typeof reason === "object" && !Array.isArray(reason)) {
+    const rec = reason as Record<string, unknown>;
+    if (rec.kind === "error") {
+      const err = rec.error ?? rec.message ?? rec.details ?? rec.reason;
+      if (typeof err === "string" && err.trim()) return err;
+      if (err && typeof err === "object") {
+        try {
+          return JSON.stringify(err);
+        } catch {
+          return "error";
+        }
+      }
+      return "error";
+    }
+  }
+  return undefined;
+}
+
 function containsFailure(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
   if (Array.isArray(value)) return value.some(containsFailure);

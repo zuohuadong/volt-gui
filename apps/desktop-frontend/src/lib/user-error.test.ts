@@ -33,6 +33,20 @@ describe("userFacingError", () => {
     expect(translatedEn).not.toContain("authentication_error");
   });
 
+  it("maps invalid api key errors including provider variations", () => {
+    setLocale("zh-CN");
+    expect(userFacingError("Authentication Fails, Your api key: ****umAA is invalid"))
+      .toContain("认证失败或已失效（401）");
+    expect(userFacingError(new Error("Your API key is invalid")))
+      .toContain("认证失败或已失效（401）");
+    expect(userFacingError({ error: { message: "Invalid API Key provided" } }))
+      .toContain("认证失败或已失效（401）");
+
+    setLocale("en-US");
+    expect(userFacingError("Authentication Fails, Your api key: ****umAA is invalid"))
+      .toContain("authentication failed or expired (401)");
+  });
+
   it("maps locked preset and unsupported reasoning errors", () => {
     setLocale("zh-CN");
     expect(userFacingError("session \"session-1\" has already started; its agent preset is fixed"))

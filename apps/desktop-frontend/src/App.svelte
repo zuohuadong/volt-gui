@@ -45,7 +45,7 @@
     resolveProviderSettings,
     supportedReasoningEffort,
   } from "$lib/model-catalog";
-  import { agentPresetLocked, clearsSessionError, sessionHealth, sessionHealthLabel, visibleSessions } from "$lib/session-health";
+  import { agentPresetLocked, clearsSessionError, sessionHealth, sessionHealthLabel, turnEndError, visibleSessions } from "$lib/session-health";
   import { userFacingError } from "$lib/user-error";
   import { buildKnowledgePrompt, knowledgeToolName, parseKnowledgeReport, stripKnowledgeReport, type KnowledgeIndexReport, type KnowledgeOperation } from "$lib/knowledge";
   import { buildQuestionAnswers, questionsAnswered } from "$lib/ai-elements-adapter";
@@ -71,7 +71,7 @@
  let client = $state<DshClient>();
   let customProductName = $state("");
   const productName = $derived(customProductName || t("app.name"));
- let appVersion = $state("0.31.20");
+ let appVersion = $state("0.31.27");
  let workspacePath = $state("");
   let workspaces = $state<Workspace[]>([]);
   let sessions = $state<SessionSummary[]>([]);
@@ -161,6 +161,7 @@
   let unsubscribeRuntimeError: (() => void) | undefined;
 
  const activeSession = $derived(sessions.find((item) => item.sessionId === activeSessionId));
+  const activeSessionHasError = $derived(activeSession ? sessionHealth(activeSession, !!sessionErrors[activeSession.sessionId]) === "error" : false);
   const workspaceName = $derived(workspacePath.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || t("app.noWorkspaceSelected"));
  const filteredSessions = $derived.by(() => {
     const query = sessionQuery.trim().toLowerCase();
@@ -661,15 +662,27 @@
     }
     if (payload.event.type === "assistant/message" || payload.event.type === "turn/end") {
       sending = false;
-      if (payload.event.type === "turn/end" && knowledgeOperation) {
-        knowledgeIndex = { ...knowledgeIndex, state: "partial", failures: [t("knowledge.reportMissing")] };
-        knowledgeOperation = "";
-      }
-      if (clearsSessionError(payload.event) && sessionErrors[activeSessionId]) {
-        const clearedMessage = sessionErrors[activeSessionId];
-        const { [activeSessionId]: _cleared, ...remaining } = sessionErrors;
-        sessionErrors = remaining;
-        if (runtimeError === clearedMessage) runtimeError = "";
+      if (payload.event.type === "turn/end") {
+        messages = messages.map((item) => item.pending ? { ...item, pending: false } : item);
+        if (knowledgeOperation) {
+          knowledgeIndex = { ...knowledgeIndex, state: "partial", failures: [t("knowledge.reportMissing")] };
+          knowledgeOperation = "";
+        }
+        const endError = turnEndError(payload.event);
+        if (endError) {
+          const formatted = userFacingError(endError);
+          runtimeError = formatted;
+          sessionErrors = { ...sessionErrors, [activeSessionId]: formatted };
+          messages = [
+            ...messages,
+            { id: `turn-error-${Date.now()}`, role: "system", text: formatted },
+          ];
+        } else if (clearsSessionError(payload.event) && sessionErrors[activeSessionId]) {
+          const clearedMessage = sessionErrors[activeSessionId];
+          const { [activeSessionId]: _cleared, ...remaining } = sessionErrors;
+          sessionErrors = remaining;
+          if (runtimeError === clearedMessage) runtimeError = "";
+        }
       }
     }
   }
@@ -1072,7 +1085,8 @@
 
   async function saveCredential(): Promise<void> {
     const ref = credentialRefDraft.trim();
-    const value = credentialValueDraft;
+    const rawValue = credentialValueDraft.trim();
+    const value = rawValue.replace(/^[\"']|[\"']$/g, "").trim();
     if (!client || !ref || !value || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(ref)) return;
     const saved = await performManagementAction("credential-set:" + ref, async () => {
       await client!.setCredential(ref, value);
@@ -1091,7 +1105,7 @@
   }
 
   function clearCredentialRequirementError(): void {
-    if (!runtimeError.includes("API Key") && !runtimeError.includes("401") && !runtimeError.includes("凭据") && !runtimeError.startsWith("当前模型需要 ")) return;
+    if (!runtimeError.includes("API Key") && !runtimeError.includes("401") && !runtimeError.includes("凭据") && !runtimeError.includes("认证失败") && !runtimeError.startsWith("当前模型需要 ")) return;
     const previousError = runtimeError;
     runtimeError = "";
     if (!activeSessionId || sessionErrors[activeSessionId] !== previousError) return;
@@ -1220,8 +1234,29 @@
 {:else}
   <main class="app-shell" class:compact={customization.density === "compact"}>
     <header class="topbar">
-      <div class="brand"><span class="brand-mark"><Bot size={16} /></span><strong>{productName}</strong><span class="version-label">v{appVersion}</span><span class:offline={!!runtimeConnectionError} class="status-dot"></span><span class="status-copy">{runtimeConnectionError ? t("overview.runtimeError") : t("overview.runtimeNormal")}</span></div>
-      <div class="topbar-center">{#if view === "settings"}<span class="topbar-workspace"><Settings2 size={13} />{t("app.workbench")}</span><span class="topbar-separator">/</span><span>{managementTitle(managementTab)}</span>{:else}<span class="topbar-workspace"><FolderOpen size={13} />{workspaceName}</span>{#if activeSession}<span class="topbar-separator">/</span><span>{sessionTitle(activeSession)}</span>{/if}{/if}</div>
+      <div class="brand">
+        <span class="brand-mark"><Bot size={16} /></span>
+        <strong>{productName}</strong>
+        <span class="version-label">v{appVersion}</span>
+        <span class="status-dot" class:offline={!!runtimeConnectionError} class:warning={!runtimeConnectionError && activeSessionHasError}></span>
+        <span class="status-copy">{runtimeConnectionError ? t("overview.runtimeError") : (activeSessionHasError ? t("overview.runtimeNormalWithSessionError") : t("overview.runtimeNormal"))}</span>
+      </div>
+      <div class="topbar-center">
+        {#if view === "settings"}
+          <span class="topbar-workspace"><Settings2 size={13} />{t("app.workbench")}</span>
+          <span class="topbar-separator">/</span>
+          <span>{managementTitle(managementTab)}</span>
+        {:else}
+          <span class="topbar-workspace"><FolderOpen size={13} />{workspaceName}</span>
+          {#if activeSession}
+            <span class="topbar-separator">/</span>
+            <span>{sessionTitle(activeSession)}</span>
+            {#if activeSessionHasError}
+              <span class="session-health session-health--error" style="margin-left: 4px; font-size: 10.5px; padding: 1px 5px;">{sessionHealthLabel("error")}</span>
+            {/if}
+          {/if}
+        {/if}
+      </div>
       <div class="topbar-actions" style="margin-left: auto; display: flex; align-items: center; gap: 6px;">
         <Button variant="ghost" size="sm" onclick={() => toggleLocale()} title={t("app.switchLanguage")} style="font-size: 11px; gap: 4px; height: 26px; padding: 0 8px;">
           <Languages size={13} />

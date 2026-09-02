@@ -1,6 +1,6 @@
 {
   "name": "@voltui/desktop-frontend",
-  "version": "0.31.20",
+  "version": "0.31.27",
   "private": true,
   "type": "module",
   "scripts": {

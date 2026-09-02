@@ -1,6 +1,6 @@
 {
   "name": "@voltui/desktop-electron",
-  "version": "0.31.20",
+  "version": "0.31.27",
   "description": "西谷智灯暗涌平台 desktop shell for the official DeepSeek Harness runtime",
   "main": "dist/main.js",
   "type": "module",

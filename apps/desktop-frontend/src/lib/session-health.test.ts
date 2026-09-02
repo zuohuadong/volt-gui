@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { agentPresetLocked, clearsSessionError, sessionHealth, sessionHealthLabel, visibleSessions } from "./session-health";
+import {
+  agentPresetLocked,
+  clearsSessionError,
+  sessionHealth,
+  sessionHealthLabel,
+  turnEndError,
+  visibleSessions,
+} from "./session-health";
 
 const base = { sessionId: "s1", updatedAt: 0, running: false, blank: false };
 
@@ -18,9 +25,20 @@ describe("sessionHealth", () => {
     expect(agentPresetLocked({ ...base, blank: true }, 1)).toBe(true);
   });
 
-  it("keeps failure state for error turn endings", () => {
+  it("keeps failure state for error turn endings and extracts turn errors", () => {
     expect(clearsSessionError({ type: "turn/end", data: { reason: { kind: "error" } } })).toBe(false);
     expect(clearsSessionError({ type: "turn/end", data: { reason: { kind: "complete" } } })).toBe(true);
+
+    expect(turnEndError({ type: "turn/end", data: { reason: { kind: "error", error: "Authentication Fails" } } }))
+      .toBe("Authentication Fails");
+    expect(turnEndError({ type: "turn/end", data: { reason: { kind: "error", message: "api key invalid" } } }))
+      .toBe("api key invalid");
+    expect(turnEndError({ type: "turn/end", data: { reason: "error" } }))
+      .toBe("error");
+    expect(turnEndError({ type: "turn/end", data: { reason: { kind: "complete" } } }))
+      .toBeUndefined();
+    expect(turnEndError({ type: "user/message", data: {} }))
+      .toBeUndefined();
   });
 
   it("keeps the active blank session visible while hiding stale drafts and archived sessions", () => {

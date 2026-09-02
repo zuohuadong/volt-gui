@@ -139,6 +139,7 @@ export const enUS: TranslationDict = {
     settingsDesc: "{namespaces} namespaces, {credentials} credential references",
     runtimeTitle: "Runtime Status",
     runtimeNormal: "Core Service Healthy",
+    runtimeNormalWithSessionError: "Core Healthy · Session Error",
     runtimeError: "Connection Anomaly",
     currentSession: "Current Session",
     currentSessionDesc: "Session status, model, and workspace synced in real time.",

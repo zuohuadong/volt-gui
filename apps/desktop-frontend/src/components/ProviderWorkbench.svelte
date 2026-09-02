@@ -48,12 +48,14 @@
   const isCredentialConfigured = $derived(credentialRef ? !!credentials[credentialRef]?.configured : false);
 
   async function saveInlineKey(): Promise<void> {
-    if (!client || !credentialRef || !inlineKeyDraft.trim() || savingKey) return;
+    const raw = inlineKeyDraft.trim();
+    const key = raw.replace(/^[\"']|[\"']$/g, "").trim();
+    if (!client || !credentialRef || !key || savingKey) return;
     savingKey = true;
     error = "";
     inlineKeyNotice = "";
     try {
-      await client.setCredential(credentialRef, inlineKeyDraft.trim());
+      await client.setCredential(credentialRef, key);
       inlineKeyDraft = "";
       inlineKeyNotice = t("settings.credentialSaved");
       await onCredentialSaved?.(credentialRef);
@@ -76,7 +78,7 @@
         provider: selected.provider,
         baseURL: baseURLDraft.trim() || defaultBaseURL || undefined,
         api: apiDraft.trim() || defaultApi || undefined,
-        apiKey: inlineKeyDraft.trim() || undefined,
+        apiKey: inlineKeyDraft.trim().replace(/^[\"']|[\"']$/g, "").trim() || undefined,
       });
       discovered = result.models;
     } catch (e) { error = userFacingError(e); }

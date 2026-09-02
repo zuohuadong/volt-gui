@@ -7,7 +7,7 @@ import { isMap, parseDocument, type Document } from "yaml";
 import { provisionBundledBrowserSkillProfile } from "../../../scripts/provision-dsh-profile.mjs";
 
 const require = createRequire(import.meta.url);
-const STARTUP_TIMEOUT_MS = 180_000;
+const STARTUP_TIMEOUT_MS = 30_000;
 const STOP_TIMEOUT_MS = 5_000;
 const MAX_DIAGNOSTIC_LINES = 20;
 const STARTUP_RETRY_DELAY_MS = 500;
@@ -36,7 +36,8 @@ export interface OfficialDshRuntimeOptions {
 
 function isTransientStartupExit(error: unknown): error is Error {
   return error instanceof Error
-    && /Official DSH exited before startup: code=1 signal=null/.test(error.message);
+    && (/Official DSH exited before startup: code=1 signal=null/.test(error.message)
+      || /Official DSH did not publish its loopback URL within \d+ms/.test(error.message));
 }
 
 export async function startOfficialDshWithRetry(
@@ -207,14 +208,11 @@ export class OfficialDshRuntime {
     this.child = child;
 
     return new Promise<string>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error(`Official DSH did not publish its loopback URL within ${this.options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS}ms.`));
-        void this.stop();
-      }, this.options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS);
       let stdoutBuffer = "";
       let stderrBuffer = "";
       const diagnostics: string[] = [];
       let settled = false;
+      let ready = false;
 
       const remember = (line: string) => {
         const trimmed = line.trim();
@@ -227,6 +225,13 @@ export class OfficialDshRuntime {
       const diagnosticText = () => diagnostics.length > 0
         ? `\nDSH output:\n${diagnostics.join("\n")}`
         : "";
+
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        const error = new Error(`Official DSH did not publish its loopback URL within ${this.options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS}ms.${diagnosticText()}`);
+        void this.stop().then(() => reject(error), () => reject(error));
+      }, this.options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS);
 
       const fail = (error: Error) => {
         if (settled) return;
@@ -241,6 +246,7 @@ export class OfficialDshRuntime {
         const match = trimmed.match(DSH_URL_PATTERN);
         if (!match || settled) return;
         settled = true;
+        ready = true;
         clearTimeout(timeout);
         this.runtimeUrl = match[1];
         resolve(this.runtimeUrl);
@@ -267,7 +273,7 @@ export class OfficialDshRuntime {
         this.child = null;
         this.runtimeUrl = "";
         if (!settled) fail(new Error(`Official DSH exited before startup: code=${code} signal=${signal}`));
-        else this.options.onExit?.(code, signal);
+        else if (ready) this.options.onExit?.(code, signal);
       });
     });
   }

@@ -8,6 +8,7 @@ export interface DesktopBootstrap {
 
 export interface DesktopShellApi {
   bootstrap(): Promise<DesktopBootstrap>;
+  retryRuntime(): Promise<DesktopBootstrap>;
   minimize(): Promise<void>;
   maximize(): Promise<boolean>;
   close(): Promise<void>;
@@ -23,6 +24,7 @@ export interface DesktopShellApi {
   dshRespond(message: unknown): Promise<unknown>;
   onDshFrame(listener: (frame: unknown) => void): () => void;
   onRuntimeError(listener: (message: string) => void): () => void;
+  onRuntimeReady(listener: () => void): () => void;
 }
 
 export type SmbMountStatus = "mounted" | "unmounted" | "offline" | "requires_credentials" | "error" | "unsupported";

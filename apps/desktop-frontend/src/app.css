@@ -64,7 +64,14 @@ body { overflow: hidden; background: var(--background); color: var(--foreground)
 button, input, textarea, select { font: inherit; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; margin: -1px; padding: 0; border: 0; clip: rect(0, 0, 0, 0); white-space: nowrap; }
-.loading-screen { display: grid; min-height: 100vh; place-items: center; gap: 10px; color: var(--muted-foreground); font-size: 12px; }
+.loading-screen { display: grid; min-height: 100vh; place-content: center; justify-items: center; gap: 10px; padding: 24px; color: var(--muted-foreground); text-align: center; font-size: 12px; }
+.loading-screen strong { color: var(--foreground); font-size: 14px; font-weight: 600; }
+.loading-screen span { max-width: 460px; line-height: 1.6; }
+.startup-failure-screen { display: grid; min-height: 100vh; place-content: center; justify-items: center; gap: 12px; padding: 28px; background: var(--background); text-align: center; }
+.startup-failure-icon { display: grid; width: 44px; height: 44px; place-items: center; border: 1px solid color-mix(in oklch, var(--destructive) 30%, var(--border)); border-radius: 8px; background: color-mix(in oklch, var(--destructive) 8%, var(--card)); color: var(--destructive); }
+.startup-failure-screen h1 { margin: 0; font-size: 18px; letter-spacing: 0; }
+.startup-failure-screen p { max-width: 560px; margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.6; }
+.startup-failure-screen pre { width: min(680px, calc(100vw - 48px)); max-height: 220px; margin: 4px 0; overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--card); color: var(--foreground); text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.55; }
 .app-shell { display: grid; height: 100vh; min-height: 0; overflow: hidden; grid-template-rows: 48px minmax(0, 1fr); }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--border); background: color-mix(in oklch, var(--card) 94%, transparent); }
 .brand, .sidebar-toolbar, .workspace-row, .header-actions, .composer-footer, .composer-actions, .typing, .tool-title, .panel-heading, .panel-subheading, .activity-row, .status-line, .diagnostic-row, .interaction-actions, .topbar-workspace, .topbar-center { display: flex; align-items: center; }

@@ -285,7 +285,15 @@ test("does not retry deterministic startup errors", async () => {
   assert.equal(attempts, 1);
 });
 
-test("allows the packaged DSH cold start budget", async () => {
+test("bounds the packaged DSH startup attempt to 30 seconds", async () => {
   const source = await readFile(new URL("./official-dsh-runtime.ts", import.meta.url), "utf8");
-  assert.match(source, /STARTUP_TIMEOUT_MS\s*=\s*180_000/);
+  assert.match(source, /STARTUP_TIMEOUT_MS\s*=\s*30_000/);
+});
+
+test("keeps the desktop shell visible while the official runtime starts and exposes recovery IPC", async () => {
+  const source = await readFile(new URL("./main.ts", import.meta.url), "utf8");
+  assert.match(source, /mainWindow\s*=\s*createWindow\(\);\s*\n\s*void beginDesktopStart\(\);/);
+  assert.match(source, /mainWindow\?\.webContents\.send\("desktop:runtime-ready"\)/);
+  assert.match(source, /ipcMain\.handle\("desktop:retry-runtime"/);
+  assert.match(source, /AbortSignal\.timeout\(DSH_REQUEST_TIMEOUT_MS\)/);
 });

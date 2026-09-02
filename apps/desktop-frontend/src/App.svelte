@@ -6,7 +6,7 @@
     HardDrive, History, KeyRound, MessageSquare, MessageSquarePlus, Network,
     Pause, Pencil, Play, PanelLeftClose, PanelLeftOpen, Save, Search, Send,
     Settings2, ShieldAlert, SlidersHorizontal, Square, Target, Trash2, UserRoundCog,
-    X, RefreshCw, PlugZap, GitBranch, Blocks, Cable, Boxes, Globe, Languages, Database,
+    X, RefreshCw, PlugZap, GitBranch, Blocks, Cable, Boxes, Globe, Languages, Database, RotateCcw,
   } from "@lucide/svelte";
   import { Button } from "$components/ui/button";
   import { Textarea } from "$components/ui/textarea";
@@ -71,7 +71,7 @@
  let client = $state<DshClient>();
   let customProductName = $state("");
   const productName = $derived(customProductName || t("app.name"));
-  let appVersion = $state("0.31.29");
+  let appVersion = $state("0.31.30");
  let workspacePath = $state("");
   let workspaces = $state<Workspace[]>([]);
   let sessions = $state<SessionSummary[]>([]);
@@ -159,6 +159,9 @@
   let knowledgeIndex = $state<KnowledgeIndexReport & { state: "idle" | "building" | "ready" | "partial" | "failed" }>({ state: "idle", status: "failed", files: 0, chunks: 0, failures: [] });
   let knowledgeOperation = $state<KnowledgeOperation | "">("");
   let unsubscribeRuntimeError: (() => void) | undefined;
+  let unsubscribeRuntimeReady: (() => void) | undefined;
+  let unsubscribeDshFrames: (() => void) | undefined;
+  let bootstrapInFlight = false;
 
  const activeSession = $derived(sessions.find((item) => item.sessionId === activeSessionId));
   const activeSessionHasError = $derived(activeSession ? sessionHealth(activeSession, !!sessionErrors[activeSession.sessionId]) === "error" : false);
@@ -227,12 +230,17 @@
     ]);
   });
 
- onMount(() => {
+  onMount(() => {
     customization = readUiCustomization();
     generatedSurface = readGeneratedSurface();
     applyRuntimeCustomization(customization);
+    unsubscribeRuntimeReady = window.voltDesktop?.onRuntimeReady(() => void bootstrap());
     void bootstrap();
-    return () => unsubscribeRuntimeError?.();
+    return () => {
+      unsubscribeRuntimeError?.();
+      unsubscribeRuntimeReady?.();
+      unsubscribeDshFrames?.();
+    };
   });
 
   function readUiCustomization(): UiCustomizationState {
@@ -350,6 +358,8 @@
  }
 
   async function bootstrap(): Promise<void> {
+    if (bootstrapInFlight) return;
+    bootstrapInFlight = true;
     try {
       const shell = window.voltDesktop;
      if (!shell) throw new Error(t("smb.bridgeNotLoaded"));
@@ -357,18 +367,24 @@
       if (info.productName) customProductName = info.productName;
       appVersion = info.version;
       workspacePath = info.workspace;
+      unsubscribeRuntimeError?.();
       unsubscribeRuntimeError = shell.onRuntimeError((message) => {
         runtimeConnectionError = message;
         runtimeError = message;
         sending = false;
+        if (message) loading = false;
       });
+      if (!info.dshReady && !info.startupError) return;
       if (info.startupError || !info.dshReady) {
         runtimeConnectionError = info.startupError || t("runtime.noAddressProvided");
         runtimeError = runtimeConnectionError;
         return;
       }
+      runtimeConnectionError = "";
+      runtimeError = "";
+      unsubscribeDshFrames?.();
       client = new DshClient(shell);
-      client.subscribe(handleFrame, (error) => {
+      unsubscribeDshFrames = client.subscribe(handleFrame, (error) => {
         runtimeConnectionError = userFacingError(error);
         runtimeError = runtimeConnectionError;
       });
@@ -376,7 +392,43 @@
     } catch (error) {
       runtimeConnectionError = userFacingError(error);
       runtimeError = runtimeConnectionError;
-    } finally { loading = false; }
+    } finally {
+      loading = !client && !runtimeConnectionError;
+      bootstrapInFlight = false;
+    }
+  }
+
+  async function retryRuntime(): Promise<void> {
+    const shell = window.voltDesktop;
+    if (!shell || bootstrapInFlight) return;
+    loading = true;
+    runtimeConnectionError = "";
+    runtimeError = "";
+    unsubscribeDshFrames?.();
+    unsubscribeDshFrames = undefined;
+    client = undefined;
+    try {
+      await withTimeout(shell.retryRuntime(), 70_000, t("app.startupRetryTimeout"));
+      await bootstrap();
+    } catch (error) {
+      runtimeConnectionError = userFacingError(error);
+      runtimeError = runtimeConnectionError;
+      loading = false;
+    }
+  }
+
+  async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   }
 
   async function refresh(): Promise<void> {
@@ -1263,7 +1315,15 @@
 <svelte:head><title>{productName}</title></svelte:head>
 
 {#if loading}
-  <main class="loading-screen"><Loader size={24} label={t("app.connecting")} /><span>{t("app.connecting")}</span></main>
+  <main class="loading-screen"><Loader size={24} label={t("app.connecting")} /><strong>{t("app.connecting")}</strong><span>{t("app.startupProgress")}</span></main>
+{:else if !client && runtimeConnectionError}
+  <main class="startup-failure-screen">
+    <div class="startup-failure-icon"><CircleAlert size={22} /></div>
+    <h1>{t("app.startupFailed")}</h1>
+    <p>{t("app.startupFailedDesc")}</p>
+    <pre>{runtimeConnectionError}</pre>
+    <Button onclick={() => void retryRuntime()}><RotateCcw size={14} />{t("common.retry")}</Button>
+  </main>
 {:else}
   <main class="app-shell" class:compact={customization.density === "compact"}>
     <header class="topbar">

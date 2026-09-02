@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.31.30 - 2026-09-02
+
+### Fixed
+
+- Show the desktop window before the official DSH runtime finishes starting,
+  bound each startup attempt to 30 seconds, and report actionable diagnostics
+  instead of waiting indefinitely (#236).
+- Add runtime restart IPC, request timeouts, and a localized retry surface while
+  preserving the official DSH credential and session ownership boundaries (#236).
+
 ## 0.31.29 - 2026-09-02
 
 ### Fixed

@@ -57,6 +57,8 @@ let dshRuntime: OfficialDshRuntime | null = null;
 let quitting = false;
 let dshEventController: AbortController | null = null;
 let smbMountManager: SmbMountManager | null = null;
+let runtimeStartPromise: Promise<void> | null = null;
+const DSH_REQUEST_TIMEOUT_MS = 30_000;
 let desktopBootstrap = {
   dshReady: false,
   productName: electronProfile.productName,
@@ -223,9 +225,37 @@ async function startDesktop(): Promise<void> {
   const dshUrl = await startOfficialDshWithRetry(dshRuntime);
   desktopBootstrap = { ...desktopBootstrap, dshReady: true, startupError: "" };
   startDshEventBridge(dshUrl);
+  mainWindow?.webContents.send("desktop:runtime-ready");
+}
+
+function beginDesktopStart(): Promise<void> {
+  if (runtimeStartPromise) return runtimeStartPromise;
+  desktopBootstrap = { ...desktopBootstrap, dshReady: false, startupError: "" };
+  runtimeStartPromise = startDesktop()
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[Electron] Failed to start official DSH:", error);
+      desktopBootstrap = { ...desktopBootstrap, dshReady: false, startupError: message };
+      mainWindow?.webContents.send("desktop:runtime-error", message);
+    })
+    .finally(() => {
+      runtimeStartPromise = null;
+    });
+  return runtimeStartPromise;
+}
+
+async function restartDesktopRuntime(): Promise<typeof desktopBootstrap> {
+  if (runtimeStartPromise) await runtimeStartPromise;
+  dshEventController?.abort();
+  dshEventController = null;
+  await dshRuntime?.stop();
+  dshRuntime = null;
+  await beginDesktopStart();
+  return desktopBootstrap;
 }
 
 ipcMain.handle("desktop:bootstrap", () => desktopBootstrap);
+ipcMain.handle("desktop:retry-runtime", () => restartDesktopRuntime());
 ipcMain.handle("desktop:dsh-request", async (_event, method: string, payload: unknown) => {
   if (!dshRuntime?.url) throw new Error("官方 DSH 尚未启动");
   if (!allowedDshMethods.has(method)) {
@@ -235,6 +265,7 @@ ipcMain.handle("desktop:dsh-request", async (_event, method: string, payload: un
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ type: "client-request", rpcId: randomUUID(), method, payload }),
+    signal: AbortSignal.timeout(DSH_REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`DSH 请求失败（HTTP ${response.status}）`);
   return response.json();
@@ -250,6 +281,7 @@ ipcMain.handle("desktop:dsh-respond", async (_event, message: unknown) => {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(message),
+    signal: AbortSignal.timeout(DSH_REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`DSH 响应失败（HTTP ${response.status}）`);
   return response.json();
@@ -379,17 +411,11 @@ if (!gotSingleInstanceLock) {
     mainWindow.focus();
   });
 
-  app.whenReady().then(async () => {
+  app.whenReady().then(() => {
     configureBrowserPermissions();
     void requireSmbManager().mountAuto().catch((error) => console.warn("[Electron] SMB 自动挂载失败", error));
-    try {
-      await startDesktop();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error("[Electron] Failed to start official DSH:", error);
-      desktopBootstrap = { ...desktopBootstrap, dshReady: false, startupError: message };
-    }
     mainWindow = createWindow();
+    void beginDesktopStart();
   });
 
   app.on("activate", () => {

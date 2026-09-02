@@ -36,3 +36,24 @@
             input: [text]
             contextWindow: 1048576
             maxTokens: 32768
+
+# 默认内置 BrowserSkill Host 插件。官方 Bundle 已提供 browserskill loader，
+# 这里只覆盖桌面/CLI 的固定 bsk 路径和懒加载设置，避免重复插入。
+- id: browserskill
+  config:
+    bskPath: !!js "process.env.ANYONG_BSK_PATH ?? process.env.BSK_PATH ?? 'bsk'"
+    lazyTools: true
+
+# OfficeCLI 原生提供 MCP stdio server；官方 DSH MCP client 负责工具注册、
+# 超时、中止和结果投影，OfficeCLI 仅负责文档处理。
+- insert:
+    - id: mcp-officecli
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: officecli
+        transport: stdio
+        command: !!js "process.env.ANYONG_OFFICECLI_COMMAND ?? 'officecli'"
+        args: !!js "JSON.parse(process.env.ANYONG_OFFICECLI_ARGS_JSON ?? '[\"mcp\"]')"
+        cwd: !!js "process.env.DSH_CWD ?? process.cwd()"
+        toolCallTimeoutMs: 120000
+        failOnStartupError: true

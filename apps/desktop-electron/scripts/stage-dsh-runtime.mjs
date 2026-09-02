@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { resolvePnpmInvocation } from "./pnpm-invocation.mjs";
+import { stageBrowserSkillCli } from "./stage-browser-skill-cli.mjs";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const target = path.join(appDir, ".dsh-runtime");
@@ -14,6 +15,8 @@ const pnpmEntrypoint = process.env.npm_execpath;
 
 if (process.version !== "v26.8.1") throw new Error(`Node 26.8.1 is required to stage the desktop runtime; received ${process.version}`);
 const pnpm = resolvePnpmInvocation(pnpmEntrypoint);
+
+await stageBrowserSkillCli();
 
 fs.rmSync(target, { recursive: true, force: true });
 fs.rmSync(nodeTargetDir, { recursive: true, force: true });
@@ -44,6 +47,9 @@ const required = [
   "node_modules/@deepseek-ai/dsh/lib/bin.js",
   "node_modules/@deepseek-ai/dsh-app-boot/package.json",
   "node_modules/@deepseek-ai/cordis-plugin-group/package.json",
+  "node_modules/@officecli/officecli/officecli.js",
+  `node_modules/@officecli/officecli/vendor/${process.platform === "win32" ? "officecli.exe" : "officecli"}`,
+  "node_modules/@wxg-prc-cpg/browser-skill-dsh-plugin/package.json",
   "node_modules/js-yaml/package.json",
   "node_modules/node-pty/package.json",
   "node_modules/koffi/package.json",

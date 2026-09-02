@@ -114,6 +114,27 @@ function nodeRuntimePath(): string {
   return path.join(root, process.platform === "win32" ? "node.exe" : "node");
 }
 
+function browserSkillCliPath(): string {
+  const root = app.isPackaged
+    ? path.join(process.resourcesPath, "browser-skill-runtime")
+    : path.join(desktopRoot, ".browser-skill-runtime");
+  return path.join(root, process.platform === "win32" ? "bsk.exe" : "bsk");
+}
+
+function officeCliEntryPath(): string {
+  const runtimeRoot = app.isPackaged
+    ? path.join(process.resourcesPath, "dsh-runtime")
+    : path.join(desktopRoot, ".dsh-runtime");
+  return path.join(runtimeRoot, "node_modules", "@officecli", "officecli", "officecli.js");
+}
+
+function browserSkillPluginPackagePath(): string {
+  const runtimeRoot = app.isPackaged
+    ? path.join(process.resourcesPath, "dsh-runtime")
+    : path.join(desktopRoot, ".dsh-runtime");
+  return path.join(runtimeRoot, "node_modules", "@wxg-prc-cpg", "browser-skill-dsh-plugin");
+}
+
 function frontendIndexPath(): string {
   return app.isPackaged
     ? path.join(process.resourcesPath, "frontend", "index.html")
@@ -183,8 +204,14 @@ async function startDesktop(): Promise<void> {
     dshHome,
     patchFile: profilePatchPath(),
     workspace,
+    bundledBrowserSkillPackageDir: browserSkillPluginPackagePath(),
     executable: nodeRuntimePath(),
     executableArgs: ["--expose-internals"],
+    environment: {
+      ANYONG_BSK_PATH: browserSkillCliPath(),
+      ANYONG_OFFICECLI_COMMAND: nodeRuntimePath(),
+      ANYONG_OFFICECLI_ARGS_JSON: JSON.stringify([officeCliEntryPath(), "mcp"]),
+    },
     onExit: (code, signal) => {
       if (quitting) return;
       console.error(`[Electron] Official DSH exited unexpectedly: code=${code} signal=${signal}`);

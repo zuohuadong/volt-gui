@@ -1,12 +1,18 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { existsSync, lstatSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { provisionBundledBrowserSkillProfile } from "./provision-dsh-profile.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const desktopRequire = createRequire(path.join(root, "apps", "desktop-electron", "package.json"));
+const electronBuilderRequire = createRequire(desktopRequire.resolve("electron-builder/package.json"));
+const { listPackage } = electronBuilderRequire("@electron/asar");
 const packageOutput = path.join(root, "apps", "desktop-electron", "dist-package");
 const expectedNodeVersion = "v26.8.1";
 const expectedDshVersion = "0.1.1-rc.2";
@@ -20,7 +26,19 @@ const requiredRuntimeFiles = [
   "dsh-runtime/node_modules/node-pty/package.json",
   "dsh-runtime/node_modules/koffi/package.json",
   "profiles/anyong.yml",
+  "dsh-runtime/node_modules/@officecli/officecli/officecli.js",
+  "dsh-runtime/node_modules/@wxg-prc-cpg/browser-skill-dsh-plugin/package.json",
 ];
+
+function requiredRuntimeFilesForPlatform(platform) {
+  const officeBinary = platform === "win32" ? "officecli.exe" : "officecli";
+  const bskBinary = platform === "win32" ? "bsk.exe" : "bsk";
+  return [
+    ...requiredRuntimeFiles,
+    `dsh-runtime/node_modules/@officecli/officecli/vendor/${officeBinary}`,
+    `browser-skill-runtime/${bskBinary}`,
+  ];
+}
 
 function resolveMacResources(outputDir) {
   for (const directory of readdirSync(outputDir, { withFileTypes: true })) {
@@ -45,13 +63,14 @@ export function resolvePackagedResources(outputDir = packageOutput, platform = p
 
 export function inspectPackagedResources(resourcesDir, platform = process.platform) {
   const nodeExecutable = path.join(resourcesDir, "node-runtime", platform === "win32" ? "node.exe" : "node");
-  const missing = [nodeExecutable, ...requiredRuntimeFiles.map((file) => path.join(resourcesDir, file))]
+  const platformFiles = requiredRuntimeFilesForPlatform(platform);
+  const missing = [nodeExecutable, ...platformFiles.map((file) => path.join(resourcesDir, file))]
     .filter((file) => !existsSync(file));
   if (missing.length > 0) {
     throw new Error(`packaged DSH runtime is incomplete:\n${missing.map((file) => `- ${file}`).join("\n")}`);
   }
 
-  const linkedRuntimeFiles = requiredRuntimeFiles
+  const linkedRuntimeFiles = platformFiles
     .filter((file) => file.startsWith("dsh-runtime/node_modules/"))
     .map((file) => path.join(resourcesDir, file))
     .filter((file) => lstatSync(file).isSymbolicLink());
@@ -62,6 +81,17 @@ export function inspectPackagedResources(resourcesDir, platform = process.platfo
   const duplicateDsh = path.join(resourcesDir, "app.asar.unpacked", "node_modules", "@deepseek-ai", "dsh");
   if (existsSync(duplicateDsh)) {
     throw new Error(`retired duplicate DSH runtime was packaged: ${duplicateDsh}`);
+  }
+  const appAsar = path.join(resourcesDir, "app.asar");
+  if (existsSync(appAsar)) {
+    const bundledModules = listPackage(appAsar).map((entry) => entry.replaceAll("\\", "/"));
+    const duplicatePrefixes = [
+      "/node_modules/@deepseek-ai/dsh/",
+      "/node_modules/@officecli/officecli/",
+      "/node_modules/@wxg-prc-cpg/browser-skill-dsh-plugin/",
+    ];
+    const duplicate = bundledModules.find((entry) => duplicatePrefixes.some((prefix) => entry.startsWith(prefix)));
+    if (duplicate) throw new Error(`runtime dependency was duplicated inside app.asar: ${duplicate}`);
   }
 
   return {
@@ -171,23 +201,49 @@ async function verifyPackagedVersions(runtime) {
 }
 
 function startPackagedDsh(runtime, temporaryRoot) {
+  const dshHome = path.join(temporaryRoot, "home");
+  const resourcesDir = path.resolve(path.dirname(runtime.dshBin), "..", "..", "..", "..", "..");
+  const officeCliEntry = path.join(resourcesDir, "dsh-runtime", "node_modules", "@officecli", "officecli", "officecli.js");
+  provisionBundledBrowserSkillProfile({
+    dshHome,
+    profileName: "web",
+    bundledPackageDir: path.join(resourcesDir, "dsh-runtime", "node_modules", "@wxg-prc-cpg", "browser-skill-dsh-plugin"),
+  });
   return spawn(runtime.nodeExecutable, [
     "--expose-internals", runtime.dshBin, "web",
     "--patch", runtime.patchFile,
     "--host", "127.0.0.1", "--port", "0", "--no-open",
   ], {
     cwd: temporaryRoot,
-    env: { ...process.env, DSH_HOME: path.join(temporaryRoot, "home") },
+    env: {
+      ...process.env,
+      DSH_HOME: dshHome,
+      ANYONG_BSK_PATH: path.join(resourcesDir, "browser-skill-runtime", process.platform === "win32" ? "bsk.exe" : "bsk"),
+      ANYONG_OFFICECLI_COMMAND: runtime.nodeExecutable,
+      ANYONG_OFFICECLI_ARGS_JSON: JSON.stringify([officeCliEntry, "mcp"]),
+    },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
 }
 
-async function verifyDshWeb(child) {
+async function verifyDshRuntime(child) {
   const runtimeUrl = await waitForRuntimeUrl(child);
-  const response = await fetch(runtimeUrl, { signal: AbortSignal.timeout(30_000) });
-  if (response.status !== 200) throw new Error(`packaged DSH Web returned HTTP ${response.status}`);
-  await response.body?.cancel();
+  const rpcId = randomUUID();
+  const response = await fetch(`${runtimeUrl}/api/pluginInventory/list`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "client-request", rpcId, method: "pluginInventory/list", payload: { args: {} } }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (response.status !== 200) throw new Error(`packaged DSH RPC returned HTTP ${response.status}`);
+  const message = await response.json();
+  const entries = message?.result?.value?.entries;
+  if (!Array.isArray(entries)) throw new Error("packaged DSH plugin inventory response is invalid");
+  for (const moduleName of ["@wxg-prc-cpg/browser-skill-dsh-plugin", "@deepseek-ai/dsh-mcp-client"]) {
+    const entry = entries.find((candidate) => candidate?.moduleName === moduleName);
+    if (!entry?.enabled || entry.fiberPhase !== "active") throw new Error(`packaged DSH plugin is not active: ${moduleName}`);
+  }
   return new URL(runtimeUrl).origin;
 }
 
@@ -198,8 +254,8 @@ export async function smokePackagedDshRuntime(resourcesDir, platform = process.p
   const child = startPackagedDsh(runtime, temporaryRoot);
 
   try {
-    const origin = await verifyDshWeb(child);
-    console.log(`Packaged ${versions.nodeVersion}, official DSH ${versions.dshVersion}, and Web passed at ${origin}.`);
+    const origin = await verifyDshRuntime(child);
+    console.log(`Packaged ${versions.nodeVersion}, official DSH ${versions.dshVersion}, and plugin RPC passed at ${origin}.`);
   } finally {
     await waitForExit(child);
     rmSync(temporaryRoot, { recursive: true, force: true });

@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { browserSkill } from "./third-party-browser-tools.mjs";
+import { officeCli } from "./third-party-office-tools.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
@@ -38,7 +39,13 @@ if (browserSkill.version !== "0.1.2" || browserSkill.license !== "MIT") {
 if (!browserSkill.integrity.startsWith("sha512-")) {
   throw new Error("BrowserSkill integrity must be recorded as an npm sha512 value");
 }
+if (officeCli.packageName !== "@officecli/officecli" || officeCli.version !== "1.0.146" || officeCli.license !== "Apache-2.0") {
+  throw new Error("OfficeCLI must remain pinned to the audited Apache-2.0 1.0.146 release");
+}
+if (!officeCli.integrity.startsWith("sha512-") || !/^[a-f0-9]{64}$/i.test(officeCli.windowsX64Sha256)) {
+  throw new Error("OfficeCLI integrity metadata is incomplete");
+}
 
 console.log(
-  `DSH plugin compatibility passed: official DSH is pinned, BrowserSkill ${browserSkill.version} is audited, and no parallel workbench package is installed.`,
+  `DSH plugin compatibility passed: official DSH is pinned, BrowserSkill ${browserSkill.version} and OfficeCLI ${officeCli.version} are audited, and no parallel workbench package is installed.`,
 );

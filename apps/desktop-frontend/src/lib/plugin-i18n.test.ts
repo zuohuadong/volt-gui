@@ -65,6 +65,14 @@ describe("plugin-i18n metadata and classification", () => {
     expect(browserSkill.category).toBe("browser");
     expect(browserSkill.categoryLabel).toBe("浏览器与计算机控制");
     expect(browserSkill.tags).toContain("Computer Use");
+
+    const officeCli = resolvePluginI18n({
+      moduleName: "@deepseek-ai/dsh-mcp-client",
+      entryId: "mcp-officecli",
+    });
+    expect(officeCli.name).toBe("OfficeCLI 文档处理");
+    expect(officeCli.category).toBe("office");
+    expect(officeCli.isMcp).toBe(true);
   });
 
   it("resolves English names and descriptions when en-US is active", () => {
@@ -90,6 +98,13 @@ describe("plugin-i18n metadata and classification", () => {
     });
     expect(browserSkill.name).toBe("BrowserSkill Browser Control");
     expect(browserSkill.categoryLabel).toBe("Browser & Computer Control");
+
+    const officeCli = resolvePluginI18n({
+      moduleName: "@deepseek-ai/dsh-mcp-client",
+      entryId: "mcp-officecli",
+    });
+    expect(officeCli.name).toBe("OfficeCLI Document Tools");
+    expect(officeCli.categoryLabel).toBe("Office Documents");
   });
 
   it("accurately identifies MCP entries and marks them as MCP category", () => {

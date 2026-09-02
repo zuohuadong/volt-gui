@@ -18,12 +18,14 @@ export default {
     "dist/main.js",
     "dist/preload.cjs",
     "package.json",
+    "!node_modules/**/*",
   ],
   extraResources: [
     { from: "../desktop-frontend/dist", to: "frontend" },
     { from: "../../profiles", to: "profiles", filter: ["anyong.yml"] },
     { from: ".dsh-runtime/node_modules", to: "dsh-runtime/node_modules" },
     { from: ".node-runtime", to: "node-runtime" },
+    { from: ".browser-skill-runtime", to: "browser-skill-runtime" },
   ],
   win: {
     icon: "icon.ico",

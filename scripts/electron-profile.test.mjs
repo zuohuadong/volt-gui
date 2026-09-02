@@ -42,6 +42,7 @@ test("packages only explicit production Electron files", () => {
     "dist/main.js",
     "dist/preload.cjs",
     "package.json",
+    "!node_modules/**/*",
   ]);
   assert.equal(electronBuilderConfig.files.includes("dist/**/*"), false);
   assert.deepEqual(electronBuilderConfig.extraResources, [
@@ -49,6 +50,7 @@ test("packages only explicit production Electron files", () => {
     { from: "../../profiles", to: "profiles", filter: ["anyong.yml"] },
     { from: ".dsh-runtime/node_modules", to: "dsh-runtime/node_modules" },
     { from: ".node-runtime", to: "node-runtime" },
+    { from: ".browser-skill-runtime", to: "browser-skill-runtime" },
   ]);
   assert.equal(electronBuilderConfig.beforeBuild(), false);
   assert.equal(electronBuilderConfig.asarUnpack, undefined);
@@ -58,6 +60,8 @@ test("packages only explicit production Electron files", () => {
   assert.equal(packageJson.scripts["test:security"], "node --test ../../scripts/check-electron-runtime-boundary.test.mjs");
   assert.equal(packageJson.scripts["stage:runtime"], "node ./scripts/stage-dsh-runtime.mjs");
   assert.equal(packageJson.dependencies["@deepseek-ai/dsh"], "0.1.1-rc.2");
+  assert.equal(packageJson.dependencies["@officecli/officecli"], "1.0.146");
+  assert.equal(packageJson.dependencies["@wxg-prc-cpg/browser-skill-dsh-plugin"], "0.1.2");
   assert.equal(packageJson.dependencies["js-yaml"], undefined);
 });
 

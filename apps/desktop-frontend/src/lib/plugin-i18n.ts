@@ -14,6 +14,7 @@ export type PluginCategory =
   | "workflow"
   | "infrastructure"
   | "browser"
+  | "office"
   | "mcp"
   | "custom";
 
@@ -36,6 +37,7 @@ export const PLUGIN_CATEGORIES: Record<PluginCategory, PluginCategoryMeta> = {
   workflow: { id: "workflow", label: "工作流与自动化", description: "后台多线程工作流编排与批处理" },
   infrastructure: { id: "infrastructure", label: "基础设施", description: "会话持久化、状态投影与框架内核" },
   browser: { id: "browser", label: "浏览器与计算机控制", description: "浏览器会话、页面观察与受控交互" },
+  office: { id: "office", label: "Office 文档", description: "Word、Excel 与 PowerPoint 文档创建、编辑和验证" },
   mcp: { id: "mcp", label: "MCP 协议服务", description: "Model Context Protocol 上下文协议连接" },
   custom: { id: "custom", label: "扩展插件", description: "第三方或用户自定义扩展模块" },
 };
@@ -551,6 +553,20 @@ const KNOWN_PLUGIN_REGISTRY: Record<string, BilingualPluginSpec> = {
     isMcp: true,
     tags: { "zh-CN": ["MCP", "Model Context Protocol", "外部工具", "资源服务"], "en-US": ["MCP", "Model Context Protocol", "Tools", "Resources"] },
   },
+  "mcp-officecli": {
+    name: { "zh-CN": "OfficeCLI 文档处理", "en-US": "OfficeCLI Document Tools" },
+    description: {
+      "zh-CN": "通过官方 DSH MCP 客户端调用内置 OfficeCLI，创建、读取、修改、验证和预览 Word、Excel 与 PowerPoint 文档。",
+      "en-US": "Uses the official DSH MCP client with bundled OfficeCLI to create, inspect, edit, validate, and preview Word, Excel, and PowerPoint documents.",
+    },
+    category: "office",
+    vendor: { "zh-CN": "iOfficeAI OfficeCLI", "en-US": "iOfficeAI OfficeCLI" },
+    isMcp: true,
+    tags: {
+      "zh-CN": ["OfficeCLI", "Word", "Excel", "PowerPoint", "MCP"],
+      "en-US": ["OfficeCLI", "Word", "Excel", "PowerPoint", "MCP"],
+    },
+  },
   "@wxg-prc-cpg/browser-skill-dsh-plugin": {
     name: { "zh-CN": "BrowserSkill 浏览器控制", "en-US": "BrowserSkill Browser Control" },
     description: {
@@ -616,7 +632,7 @@ export function resolvePluginI18n(
   const loc = targetLocale || getLocale();
   const isZh = loc === "zh-CN";
 
-  const match = KNOWN_PLUGIN_REGISTRY[moduleName] || KNOWN_PLUGIN_REGISTRY[entryId];
+  const match = KNOWN_PLUGIN_REGISTRY[entryId] || KNOWN_PLUGIN_REGISTRY[moduleName];
   if (match) {
     const categoryLabel = t(`plugins.categories.${match.category}`);
     const vendor = match.vendor ? match.vendor[loc] || match.vendor["zh-CN"] : DEFAULT_OFFICIAL_VENDOR[loc];

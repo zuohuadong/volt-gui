@@ -126,7 +126,13 @@ test("starts the official DSH child with a loopback-only web profile", async () 
   await writeFile(patchFile, "[]\n");
   await writeFile(childScript, `
     import { writeFile } from "node:fs/promises";
-    await writeFile(process.env.ARGS_FILE, JSON.stringify({ argv: process.argv.slice(2), dshHome: process.env.DSH_HOME }));
+    await writeFile(process.env.ARGS_FILE, JSON.stringify({
+      argv: process.argv.slice(2),
+      dshHome: process.env.DSH_HOME,
+      dshCwd: process.env.DSH_CWD,
+      officeCliCommand: process.env.ANYONG_OFFICECLI_COMMAND,
+      officeCliArgs: process.env.ANYONG_OFFICECLI_ARGS_JSON,
+    }));
     console.log("dsh web: http://127.0.0.1:43123");
     setInterval(() => {}, 1000);
   `);
@@ -136,6 +142,10 @@ test("starts the official DSH child with a loopback-only web profile", async () 
     dshHome: path.join(root, "home"),
     patchFile,
     workspace: root,
+    environment: {
+      ANYONG_OFFICECLI_COMMAND: process.execPath,
+      ANYONG_OFFICECLI_ARGS_JSON: JSON.stringify([path.join(root, "officecli.js"), "mcp"]),
+    },
     startupTimeoutMs: 5_000,
   });
   const previousArgsFile = process.env.ARGS_FILE;
@@ -148,6 +158,9 @@ test("starts the official DSH child with a loopback-only web profile", async () 
       "--host", "127.0.0.1", "--port", "0", "--no-open",
     ]);
     assert.equal(observed.dshHome, path.join(root, "home"));
+    assert.equal(observed.dshCwd, root);
+    assert.equal(observed.officeCliCommand, process.execPath);
+    assert.deepEqual(JSON.parse(observed.officeCliArgs), [path.join(root, "officecli.js"), "mcp"]);
   } finally {
     if (previousArgsFile === undefined) delete process.env.ARGS_FILE;
     else process.env.ARGS_FILE = previousArgsFile;

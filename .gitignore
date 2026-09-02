@@ -24,6 +24,7 @@ mem.prof
 /apps/desktop-electron/dist-package/
 /apps/desktop-electron/.dsh-runtime/
 /apps/desktop-electron/.node-runtime/
+/apps/desktop-electron/.browser-skill-runtime/
 
 # Environment / local config (voltui.example.toml is a shared template)
 .env

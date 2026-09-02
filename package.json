@@ -17,7 +17,7 @@
     "pretest": "node ./scripts/ensure-pnpm.mjs",
     "predist:desktop": "node ./scripts/ensure-pnpm.mjs",
     "build": "node ./scripts/bundle.mjs && pnpm run build:desktop",
-    "test": "pnpm --filter @voltui/desktop-electron run test && node --test ./scripts/check-migration-boundary.test.mjs ./scripts/smoke-packaged-dsh-runtime.test.mjs && pnpm run check:dsh-plugins",
+    "test": "pnpm --filter @voltui/desktop-electron run test && node --test ./scripts/check-migration-boundary.test.mjs ./scripts/provision-dsh-profile.test.mjs ./scripts/smoke-packaged-dsh-runtime.test.mjs && pnpm run check:dsh-plugins",
     "test:dsh-integration": "node --test ./scripts/dsh-integration.test.mjs",
     "start": "node ./scripts/anyong.mjs",
     "web": "node ./scripts/anyong.mjs web",
@@ -32,10 +32,14 @@
     "doctor:browser-skill": "node ./scripts/setup-browser-skill.mjs doctor"
   },
   "dependencies": {
-    "@deepseek-ai/dsh": "0.1.1-rc.2"
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
+    "@deepseek-ai/schemastery": "3.18.1",
+    "@officecli/officecli": "1.0.146"
   },
   "devDependencies": {
-    "typescript": "7.0.2",
-    "@types/node": "26.4.0"
+    "@types/node": "26.4.0",
+    "typescript": "7.0.2"
   }
 }

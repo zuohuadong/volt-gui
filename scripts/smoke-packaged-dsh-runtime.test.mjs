@@ -27,6 +27,10 @@ function createResources(platform = "win32") {
     path.join(resources, "dsh-runtime", "node_modules", "node-pty", "package.json"),
     path.join(resources, "dsh-runtime", "node_modules", "koffi", "package.json"),
     path.join(resources, "profiles", "anyong.yml"),
+    path.join(resources, "dsh-runtime", "node_modules", "@officecli", "officecli", "officecli.js"),
+    path.join(resources, "dsh-runtime", "node_modules", "@wxg-prc-cpg", "browser-skill-dsh-plugin", "package.json"),
+    path.join(resources, "dsh-runtime", "node_modules", "@officecli", "officecli", "vendor", platform === "win32" ? "officecli.exe" : "officecli"),
+    path.join(resources, "browser-skill-runtime", platform === "win32" ? "bsk.exe" : "bsk"),
   ];
   for (const file of files) {
     mkdirSync(path.dirname(file), { recursive: true });

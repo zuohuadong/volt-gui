@@ -3,12 +3,15 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import rootPackage from '../package.json' with { type: 'json' };
+import { browserSkill } from './third-party-browser-tools.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
 const distDir = path.join(rootDir, 'dist', 'anyong-dsh');
 const dshVersion = rootPackage.dependencies['@deepseek-ai/dsh'];
+const officeCliVersion = rootPackage.dependencies['@officecli/officecli'];
+const browserSkillVersion = browserSkill.version;
 
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(dshVersion)) {
   throw new Error(`@deepseek-ai/dsh must use an exact version, got ${JSON.stringify(dshVersion)}`);
@@ -26,6 +29,7 @@ async function main() {
   // 2. Copy launcher
   await fs.mkdir(path.join(distDir, 'scripts'), { recursive: true });
   await fs.cp(path.join(rootDir, 'scripts', 'anyong.mjs'), path.join(distDir, 'scripts', 'anyong.mjs'));
+  await fs.cp(path.join(rootDir, 'scripts', 'provision-dsh-profile.mjs'), path.join(distDir, 'scripts', 'provision-dsh-profile.mjs'));
 
   // 3. Create pre-configured package.json in dist
   const distPkg = {
@@ -45,6 +49,8 @@ async function main() {
     },
     dependencies: {
       '@deepseek-ai/dsh': dshVersion,
+      '@officecli/officecli': officeCliVersion,
+      '@wxg-prc-cpg/browser-skill-dsh-plugin': browserSkillVersion,
     },
   };
 

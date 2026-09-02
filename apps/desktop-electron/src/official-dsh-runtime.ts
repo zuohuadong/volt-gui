@@ -4,6 +4,7 @@ import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, renameSyn
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { isMap, parseDocument, type Document } from "yaml";
+import { provisionBundledBrowserSkillProfile } from "../../../scripts/provision-dsh-profile.mjs";
 
 const require = createRequire(import.meta.url);
 const STARTUP_TIMEOUT_MS = 180_000;
@@ -26,6 +27,8 @@ export interface OfficialDshRuntimeOptions {
   workspace: string;
   executable?: string;
   executableArgs?: string[];
+  environment?: Readonly<Record<string, string>>;
+  bundledBrowserSkillPackageDir?: string;
   startupTimeoutMs?: number;
   onLog?: (line: string) => void;
   onExit?: (code: number | null, signal: NodeJS.Signals | null) => void;
@@ -170,6 +173,13 @@ export class OfficialDshRuntime {
 
     this.validatePaths();
     acknowledgeOfficialDshWelcomeNotice(this.options.dshHome);
+    if (this.options.bundledBrowserSkillPackageDir) {
+      provisionBundledBrowserSkillProfile({
+        dshHome: this.options.dshHome,
+        profileName: "web",
+        bundledPackageDir: this.options.bundledBrowserSkillPackageDir,
+      });
+    }
 
     const executable = this.options.executable || process.execPath;
     const child = spawn(executable, [
@@ -187,7 +197,9 @@ export class OfficialDshRuntime {
       cwd: this.options.workspace,
       env: {
         ...process.env,
+        ...this.options.environment,
         DSH_HOME: this.options.dshHome,
+        DSH_CWD: this.options.workspace,
       },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,

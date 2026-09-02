@@ -16,7 +16,8 @@
 | `dsh-conversation-navigator` | `0.2.1` | 暂不引入 | 仅官方 Web conversation 注入，Volt 已在本地 renderer 管理会话导航。 |
 | `@tecfancy/dsh-dock-terminal` | `0.5.3` | 暂不引入 | 带 `node-pty` 和 React client；会建立第二个终端呈现/权限面。 |
 | `dsh-localqwen-rolefix` | `1.0.3` | 观察名单 | Host-only Profile Bundle，MIT；依赖 pi-ai 内部 model descriptor，需针对 Volt 的本地 provider 做真实回归后才能启用。 |
-| `@wxg-prc-cpg/browser-skill-dsh-plugin` | `0.1.2` | 采用（可选） | 腾讯 BrowserSkill 的 DSH 原生 Profile Bundle，MIT；Host 侧只是 `bsk --json` 的结构化桥接，不复制会话、权限或持久化。 |
+| `@wxg-prc-cpg/browser-skill-dsh-plugin` | `0.1.2` | 默认内置 | 腾讯 BrowserSkill 的 DSH 原生 Profile Bundle，MIT；Host 侧只是 `bsk --json` 的结构化桥接，不复制会话、权限或持久化。 |
+| `@officecli/officecli` | `1.0.146` | 默认内置 | Apache-2.0；没有 DSH Profile Bundle，但原生提供 `officecli mcp` stdio server，因此由官方 `@deepseek-ai/dsh-mcp-client` 接入，不复制 Office 文档引擎。 |
 
 ## 浏览器与 Computer Use 评估
 
@@ -29,12 +30,12 @@
 
 采用 BrowserSkill 的理由：
 
-1. 通过官方 `dsh plugin --profile web add` 安装，不改变 DSH 的会话、工具与权限权威。
+1. 桌面与 CLI 在首次启动前把随包发布的固定版本离线 provision 到官方 DSH `web`/`headless` Profile；仍使用插件自带的 `dsh.bundle` 和 `cordis.patch.yml`，不改变 DSH 的会话、工具与权限权威。
 2. `browser_session`、`browser_page`、`browser_inspect`、`browser_interact`、`browser_tabs`、`browser_assist` 使用结构化参数；任意页面脚本执行未暴露给模型。
 3. 默认延迟公开工具 schema，适合内网模型与有限上下文；真实浏览器连接由 BrowserSkill daemon 和扩展管理。
 4. 本地 Svelte 工作台只读取官方 `pluginInventory/list` 并呈现插件状态，不加载或复制第三方 Web renderer。
 
-仓库记录了精确版本、MIT 许可证与 npm SHA-512 完整性。安装与诊断命令：
+仓库记录了精确版本、许可证、npm SHA-512 与平台二进制 SHA-256。桌面包默认包含 `bsk 0.1.11`；安装与诊断命令：
 
 ```bash
 pnpm run setup:browser-skill
@@ -42,7 +43,17 @@ pnpm run check:browser-skill
 pnpm run doctor:browser-skill
 ```
 
-`bsk` CLI 与 Chrome/Edge BrowserSkill 扩展是外部前置条件。`check` 验证 CLI 和 DSH Profile；`doctor` 进一步验证 daemon、协议及扩展连接。不要把本机 `bskPath`、用户 Profile 或浏览器状态提交到仓库。
+`bsk` CLI 已随桌面包内置，Chrome/Edge BrowserSkill 扩展仍需用户安装并连接。`setup` 重新校验并 staging 固定版本，`check` 验证 CLI 和两个官方 DSH Profile，`doctor` 进一步验证 daemon、协议及扩展连接；扩展离线时真实浏览器调用明确失败。不要把本机 `bskPath`、用户 Profile 或浏览器状态提交到仓库。
+
+## OfficeCLI 接入
+
+OfficeCLI `1.0.146` 已验证能够真实创建和读取 DOCX、XLSX、PPTX。其 npm 包没有 `dsh.bundle`，但 CLI 原生提供 MCP server，所以默认 Profile 通过官方 DSH MCP client 启动：
+
+```text
+node officecli.js mcp
+```
+
+桌面发行包同时 staging OfficeCLI JavaScript launcher 与平台二进制。Svelte 插件页以 `mcp-officecli` entry id 呈现为“OfficeCLI 文档处理”，实际工具注册、超时、中止和结果投影仍由官方 DSH 负责。
 
 ## 采用原则
 

@@ -89,19 +89,24 @@ export function applyTranscriptEvent(state: TranscriptState, event: SessionEvent
   const data = event.data || {};
 
   if (event.type === "user/message") {
+    const source = asRecord(data.source);
+    if (source && typeof source.kind === "string" && source.kind !== "user") {
+      return { messages, todos };
+    }
     const text = visibleText(data.message ?? data.content ?? data.text);
     if (!text) return { messages, todos };
     const pendingIndex = messages.findIndex((item) => item.pending && item.role === "user" && item.text === text);
     if (pendingIndex >= 0) messages.splice(pendingIndex, 1);
     messages.push({ id: `user-${event.seq}`, role: "user", text, seq: event.seq });
   } else if (event.type === "assistant/chunk") {
+    const { text, reasoning } = extractChunkDelta(data);
+    if (!text && !reasoning) return { messages, todos };
     const key = `stream-${String(data.turn ?? "0")}-${String(data.step ?? "0")}`;
     let existing: TranscriptMessage | undefined = messages.find((item) => item.id === key);
     if (!existing) {
       existing = { id: key, role: "assistant", text: "", reasoning: "", pending: true, seq: event.seq };
       messages.push(existing);
     }
-    const { text, reasoning } = extractChunkDelta(data);
     if (text) existing.text += text;
     if (reasoning) existing.reasoning = `${existing.reasoning || ""}${reasoning}`;
   } else if (event.type === "assistant/message") {
@@ -217,13 +222,20 @@ export function visibleText(value: unknown): string {
 function isInternalRuntimeText(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   if (!normalized) return false;
+  const isSystemReminder =
+    normalized.startsWith("<system-reminder>") ||
+    (normalized.includes("<system-reminder>") &&
+      (normalized.includes("<available_skills>") ||
+        normalized.includes("instructions from:") ||
+        normalized.includes("workspace instructions") ||
+        normalized.includes("reusable set of task-specific instructions")));
   const isSnapshotPrompt =
     (normalized.startsWith("current runtime context") || normalized.startsWith("runtime context snapshot")) &&
     normalized.includes("supersedes");
   const isPolicyPrompt =
     normalized.startsWith("current dsh file policy:") ||
     (normalized.startsWith("dsh file policy:") && (normalized.includes("workspace-write") || normalized.includes("readonly")));
-  return isSnapshotPrompt || isPolicyPrompt;
+  return isSystemReminder || isSnapshotPrompt || isPolicyPrompt;
 }
 
 export function reasoningText(value: unknown): string {

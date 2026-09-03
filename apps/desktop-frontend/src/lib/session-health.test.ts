@@ -31,6 +31,8 @@ describe("sessionHealth", () => {
 
     expect(turnEndError({ type: "turn/end", data: { reason: { kind: "error", error: "Authentication Fails" } } }))
       .toBe("Authentication Fails");
+    expect(turnEndError({ type: "turn/end", data: { reason: { kind: "error", error: { message: "llm-pi-ai: no credential", code: "MISSING_CREDENTIAL" } } } }))
+      .toBe("llm-pi-ai: no credential");
     expect(turnEndError({ type: "turn/end", data: { reason: { kind: "error", message: "api key invalid" } } }))
       .toBe("api key invalid");
     expect(turnEndError({ type: "turn/end", data: { reason: "error" } }))

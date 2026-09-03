@@ -52,6 +52,8 @@ export function turnEndError(event: { type: string; data?: Record<string, unknow
       const err = rec.error ?? rec.message ?? rec.details ?? rec.reason;
       if (typeof err === "string" && err.trim()) return err;
       if (err && typeof err === "object") {
+        const nestedMsg = (err as Record<string, unknown>).message;
+        if (typeof nestedMsg === "string" && nestedMsg.trim()) return nestedMsg;
         try {
           return JSON.stringify(err);
         } catch {

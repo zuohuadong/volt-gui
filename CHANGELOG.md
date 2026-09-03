@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.31.31 - 2026-09-03
+
+### Fixed
+
+- Filter internal runtime context and `<system-reminder>` directives (including
+  workspace instruction sets and skill catalogs) from the conversation
+  transcript so internal prompts never leak into user chat bubbles.
+- Prevent ghost message bubbles when runtime emits empty finish chunks, and
+  cleanly unpack nested turn error messages for clearer error surfacing.
+- Synchronize composer input reset on message submission with error recovery,
+  and restore missing `isProviderCredentialOptional` import in desktop shell.
+
 ## 0.31.30 - 2026-09-02
 
 ### Fixed

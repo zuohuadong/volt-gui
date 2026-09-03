@@ -38,6 +38,7 @@
     credentialRefHint,
     credentialRefTitle,
     enrichModelGroups,
+    isProviderCredentialOptional,
     mergeDiscoveredModels,
     modelCapabilityLabel,
     modelSupportsImages,
@@ -771,7 +772,7 @@
       runtimeError = t("models.unsupportedImage", { model: selectedModel || t("common.unselected") });
       throw new Error(runtimeError);
     }
-    if (textOverride === undefined) input = "";
+    input = "";
     sending = true; view = "conversation";
     const pendingId = `pending-${Date.now()}`;
     messages = [...messages, { id: pendingId, role: "user", text, pending: true }];
@@ -786,6 +787,7 @@
     }
     catch (error) {
       sending = false;
+      input = text;
       messages = messages.map((message) => message.id === pendingId ? { ...message, pending: false } : message);
       runtimeError = userFacingError(error);
       sessionErrors = { ...sessionErrors, [activeSessionId]: runtimeError };

@@ -1,6 +1,6 @@
 {
   "name": "volt-gui",
-  "version": "0.31.30",
+  "version": "0.31.31",
   "private": true,
   "type": "module",
   "engines": {

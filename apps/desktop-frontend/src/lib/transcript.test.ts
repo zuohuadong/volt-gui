@@ -118,4 +118,33 @@ describe("transcript folding", () => {
     expect(ended.messages).toHaveLength(1);
     expect(ended.messages[0].id).toBe("user-1");
   });
+
+  it("ignores internal user messages from agent-instructions, plugin, or skill-catalog sources", () => {
+    const initial: TranscriptState = { messages: [], todos: [] };
+    const instructions = applyTranscriptEvent(initial, event("user/message", 1, {
+      content: [{ type: "text", text: "<system-reminder>\nInstructions from: AGENTS.md\n# Agent Configuration" }],
+      source: { kind: "agent-instructions" },
+    }));
+    expect(instructions.messages).toHaveLength(0);
+
+    const skills = applyTranscriptEvent(initial, event("user/message", 2, {
+      content: [{ type: "text", text: "<system-reminder>\nA skill is a reusable set of task-specific instructions." }],
+      source: { kind: "skill-catalog" },
+    }));
+    expect(skills.messages).toHaveLength(0);
+
+    const textOnlyReminder = applyTranscriptEvent(initial, event("user/message", 3, {
+      content: [{ type: "text", text: "<system-reminder>\n<available_skills>\n- browser-skill\n</available_skills></system-reminder>" }],
+    }));
+    expect(textOnlyReminder.messages).toHaveLength(0);
+  });
+
+  it("ignores finish chunks with no text or reasoning to prevent ghost bubbles", () => {
+    const state = applyTranscriptEvent({ messages: [], todos: [] }, event("assistant/chunk", 1, {
+      turn: 1,
+      step: 1,
+      chunk: { type: "finish", reason: { kind: "error", failure: { message: "no credential" } } },
+    }));
+    expect(state.messages).toHaveLength(0);
+  });
 });

@@ -6,6 +6,7 @@ import {
   VOLT_SURFACE_AGENT_SCHEMA,
   VOLT_SURFACE_CATALOG,
 } from "./surface-agent";
+import { setLocale } from "./i18n";
 
 function proposal(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -56,10 +57,13 @@ describe("Volt operation surface protocol", () => {
   it("detects surface intent and describes the bounded catalog", () => {
     expect(isSurfaceGenerationIntent("生成一个会话运营看板")).toBe(true);
     expect(isSurfaceGenerationIntent("把侧栏收起来")).toBe(false);
+    setLocale("zh-CN");
     const prompt = buildVoltSurfacePrompt("创建工作区看板");
     expect(prompt).toContain(VOLT_SURFACE_AGENT_SCHEMA);
     expect(prompt).toContain("不要生成或执行 Svelte、HTML、CSS、JavaScript");
     expect(prompt).toContain("sessions(read=id,title,cwd,running,updatedAt");
+    setLocale("en-US");
+    expect(buildVoltSurfacePrompt("create a workspace dashboard")).toContain("Do not generate or execute Svelte, HTML, CSS, JavaScript");
   });
 
   it("accepts object input and preserves the official agent schema", () => {

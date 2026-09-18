@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
-          version: 11.23.0
+          version: 12.1.0
           run_install: false
       - uses: actions/setup-node@v7
         with:
@@ -36,14 +36,26 @@ jobs:
       - name: Install locked workspace
         run: pnpm install --frozen-lockfile
       - name: Verify official DSH and Electron contracts
+        shell: pwsh
         run: |
           pnpm run test:dsh-integration
+          if ($LASTEXITCODE -ne 0) { throw "DSH integration tests failed" }
           pnpm test
-          node --test scripts/ci-workflows.test.mjs scripts/package-dist.test.mjs scripts/set-electron-package-version.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Core tests failed" }
+          node --test scripts/ci-workflows.test.mjs scripts/package-dist.test.mjs scripts/pnpm-invocation.test.mjs scripts/set-electron-package-version.test.mjs scripts/native-executable.test.mjs scripts/smoke-packaged-dsh-runtime.test.mjs scripts/smoke-staged-dsh-runtime.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Workflow and packaging tests failed" }
       - name: Build distributions
-        run: pnpm run build
+        shell: pwsh
+        run: |
+          pnpm run build
+          if ($LASTEXITCODE -ne 0) { throw "Source build failed" }
       - name: Check migration boundary
-        run: node scripts/check-migration-boundary.mjs
+        shell: pwsh
+        run: |
+          node scripts/check-migration-boundary.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Migration boundary check failed" }
+          node scripts/check-skills-sync.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Skills sync check failed" }
 
   site:
     runs-on: ubuntu-latest
@@ -66,7 +78,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
-          version: 11.23.0
+          version: 12.1.0
           run_install: false
       - uses: actions/setup-node@v7
         with:

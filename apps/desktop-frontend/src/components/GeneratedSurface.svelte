@@ -3,6 +3,7 @@
   import { defaultSurfaceCatalog, SurfaceRenderer, type SurfaceRendererError } from "@svadmin/surface/svelte";
   import type { DshClient } from "$lib/dsh-client";
   import { createDshSurfaceProvider, VOLT_SURFACE_POLICY } from "$lib/surface-agent";
+  import { userFacingError } from "$lib/user-error";
 
   interface Props {
     readonly spec: SurfaceSpec;
@@ -16,10 +17,10 @@
 
   function reportError(error: SurfaceRendererError): void {
     if (error.type === "validation") {
-      onError?.(error.issues.map((issue) => issue.message).join("；"));
+      onError?.(error.issues.map((issue) => userFacingError(issue.message)).join("; "));
       return;
     }
-    onError?.(error.error.message);
+    onError?.(userFacingError(error.error));
   }
 </script>
 

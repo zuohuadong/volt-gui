@@ -1,34 +1,59 @@
 {
   "name": "volt-gui",
-  "version": "0.30.0",
+  "version": "0.31.56",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=26.8.1 <27"
   },
-  "packageManager": "pnpm@11.23.0",
+  "packageManager": "pnpm@12.1.0",
   "bin": {
-    "anyong": "./scripts/anyong.mjs",
-    "dsh-anyong": "./scripts/anyong.mjs"
+    "anyong": "scripts/anyong.mjs",
+    "dsh-anyong": "scripts/anyong.mjs"
   },
   "scripts": {
+    "preinstall": "node ./scripts/ensure-pnpm.mjs",
+    "prebuild": "node ./scripts/ensure-pnpm.mjs",
+    "pretest": "node ./scripts/ensure-pnpm.mjs",
+    "predist:desktop": "node ./scripts/ensure-pnpm.mjs",
     "build": "node ./scripts/bundle.mjs && pnpm run build:desktop",
-    "test": "pnpm --filter @voltui/desktop-electron run test && node --test ./scripts/check-migration-boundary.test.mjs ./scripts/smoke-packaged-dsh-runtime.test.mjs && pnpm run check:dsh-plugins",
-    "test:dsh-integration": "node --test ./scripts/dsh-integration.test.mjs",
+    "test": "pnpm --dir apps/desktop-electron run test && pnpm --dir apps/desktop-frontend test && node --test ./scripts/anyong-integrations-mcp.test.mjs ./scripts/third-party-office-tools.test.mjs ./scripts/check-migration-boundary.test.mjs ./scripts/provision-dsh-profile.test.mjs ./scripts/native-executable.test.mjs ./scripts/smoke-packaged-dsh-runtime.test.mjs ./scripts/smoke-staged-dsh-runtime.test.mjs && pnpm run check:dsh-plugins",
+    "test:dsh-integration": "node --test --test-concurrency=1 ./scripts/dsh-integration.test.mjs ./scripts/desktop-credentials.integration.test.mjs",
+    "test:dsh-upgrade": "node --test ./scripts/dsh-upgrade.test.mjs",
     "start": "node ./scripts/anyong.mjs",
     "web": "node ./scripts/anyong.mjs web",
-    "desktop": "pnpm --filter @voltui/desktop-electron run build && pnpm --filter @voltui/desktop-electron run start",
-    "build:desktop": "pnpm --filter @voltui/desktop-electron run build",
-    "dist:desktop": "pnpm --filter @voltui/desktop-electron run build && pnpm --filter @voltui/desktop-electron run dist && pnpm --filter @voltui/desktop-electron run smoke:package && node ./scripts/package-dist.mjs",
+    "desktop": "pnpm --dir apps/desktop-electron run build && pnpm --dir apps/desktop-electron run start",
+    "build:desktop": "pnpm --dir apps/desktop-electron run build",
+    "dist:desktop": "pnpm --dir apps/desktop-electron run build && pnpm --dir apps/desktop-electron run dist && pnpm --dir apps/desktop-electron run smoke:package && node ./scripts/package-dist.mjs",
     "dsh": "node ./scripts/anyong.mjs",
     "bundle": "node ./scripts/bundle.mjs",
-    "check:dsh-plugins": "node ./scripts/check-dsh-plugin-compatibility.mjs"
+    "check:dsh-plugins": "node ./scripts/check-dsh-plugin-compatibility.mjs",
+    "setup:browser-skill": "node ./scripts/setup-browser-skill.mjs install",
+    "check:browser-skill": "node ./scripts/setup-browser-skill.mjs check",
+    "doctor:browser-skill": "node ./scripts/setup-browser-skill.mjs doctor",
+    "test:clean-windows": ".\\scripts\\test-clean-windows-sandbox.cmd",
+    "test:clean-env": ".\\scripts\\test-clean-windows-environment.cmd",
+    "test:ui-chat": "node ./scripts/automate-ui-chat-test.mjs",
+    "smoke:staged-runtime": "node ./scripts/smoke-staged-dsh-runtime.mjs"
   },
   "dependencies": {
-    "@deepseek-ai/dsh": "0.1.1-rc.2"
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.1",
+    "@deepseek-ai/schemastery": "3.18.2",
+    "@officecli/officecli": "1.0.149",
+    "@wxg-prc-cpg/dsh-weknora": "0.1.0",
+    "yaml": "2.9.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
-    "typescript": "7.0.2",
-    "@types/node": "26.4.0"
-  }
+    "@types/node": "26.4.0",
+    "typescript": "7.0.2"
+  },
+  "description": "VoltUI 是围绕官方 DeepSeek Harness（DSH）Web Profile 的本地 Electron 桌面 Shell。",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zuohuadong/volt-gui.git"
+  },
+  "license": "MIT"
 }

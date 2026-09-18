@@ -1,0 +1,121 @@
+import { describe, expect, it } from "vitest";
+import { buildQuestionAnswers, extractSources, questionsAnswered, toolDisplay, toolErrorSummary, toolErrorTrace, toolPresentation, toolResultSummary } from "./ai-elements-adapter";
+import { setLocale, t } from "./i18n";
+
+describe("AI Elements adapters", () => {
+  it("extracts real source and citation parts without duplicates", () => {
+    expect(extractSources({ content: [
+      { type: "source-url", id: "docs", title: "Docs", url: "https://example.com/docs" },
+      { type: "citation", title: "Docs", url: "https://example.com/docs" },
+    ] })).toEqual([{ id: "docs", title: "Docs", url: "https://example.com/docs", description: undefined, quote: undefined }]);
+  });
+
+  it("maps structured tool views to tests, files, code and terminal output", () => {
+    const presentation = toolPresentation({
+      callId: "1",
+      name: "run_tests",
+      state: "success",
+      view: {
+        code: { code: "const ok = true", language: "ts" },
+        terminal: { output: "33 passed", cwd: "D:/workspace" },
+        tests: [{ name: "frontend", status: "passed", durationMs: 42 }],
+        files: [{ name: "src", type: "directory", children: [{ name: "App.svelte", type: "file" }] }],
+      },
+    });
+    expect(presentation.code).toEqual({ code: "const ok = true", language: "ts" });
+    expect(presentation.terminal).toMatchObject({ output: "33 passed", cwd: "D:/workspace" });
+    expect(presentation.tests[0]).toMatchObject({ name: "frontend", status: "passed" });
+    expect(presentation.files[0]).toMatchObject({ name: "src", type: "directory" });
+  });
+
+  it("keeps generic tool output available to Tool instead of inventing an artifact", () => {
+    expect(toolPresentation({ callId: "2", name: "read_report", state: "success", result: "report body" }).artifact).toBeUndefined();
+  });
+
+  it("renders an artifact only when DSH provides an explicit artifact view", () => {
+    expect(toolPresentation({ callId: "3", name: "render_report", state: "success", result: "report body", view: {
+      artifact: { title: "报告", content: "report body", kind: "text" },
+    } }).artifact).toMatchObject({ title: "报告", kind: "text", content: "report body" });
+  });
+
+  it("renders official DSH web result cards and source links", () => {
+    const presentation = toolPresentation({
+      callId: "web-1",
+      name: "web_search",
+      state: "success",
+      view: { for: "result", view: {
+        card: "web",
+        kind: "search",
+        title: "Node.js 26",
+        answer: "Current release line",
+        sources: [{ id: "node", title: "Node.js", url: "https://nodejs.org/", snippet: "Docs" }],
+      } },
+    });
+    expect(presentation.web).toMatchObject({ kind: "search", title: "Node.js 26", answer: "Current release line" });
+    expect(presentation.web?.sources).toEqual([{ id: "node", title: "Node.js", url: "https://nodejs.org/", description: undefined, quote: "Docs" }]);
+  });
+
+  it("normalizes computer-use screenshots into safe image sources", () => {
+    const presentation = toolPresentation({
+      callId: "computer-1",
+      name: "computer",
+      state: "success",
+      view: { card: "computer", kind: "computer", screenshot: { type: "image", mediaType: "image/png", data: "AA==", alt: "页面截图" } },
+    });
+    expect(presentation.web?.kind).toBe("computer");
+    expect(presentation.images[0]).toMatchObject({ src: "data:image/png;base64,AA==", alt: "页面截图" });
+  });
+
+  it("turns tool arguments into concise user-facing activity labels", () => {
+    setLocale("zh-CN");
+    expect(toolDisplay({ name: "browser_session", args: JSON.stringify({ action: "start", url: "https://example.com" }) })).toEqual({
+      label: t("transcript.toolBrowser"),
+      detail: `${t("transcript.actionOpenPage")} · https://example.com`,
+    });
+    expect(toolDisplay({ name: "powershell", args: JSON.stringify({ command: "pnpm test" }) })).toEqual({
+      label: t("transcript.toolCommand"),
+      detail: "pnpm test",
+    });
+    expect(toolDisplay({ name: "skill", args: JSON.stringify({ name: "browser-skill" }) })).toEqual({
+      label: t("transcript.toolSkill"),
+      detail: t("transcript.toolLoadSkill", { name: "browser-skill" }),
+    });
+    expect(toolDisplay({ name: "browser_session", args: "{action:start,url: https://example.com\\\"}" })).toEqual({
+      label: t("transcript.toolBrowser"),
+      detail: `${t("transcript.actionOpenPage")} · https://example.com`,
+    });
+    setLocale("en-US");
+    expect(toolDisplay({ name: "browser_session", args: JSON.stringify({ action: "start", url: "https://example.com" }) })).toEqual({
+      label: t("transcript.toolBrowser"),
+      detail: `${t("transcript.actionOpenPage")} · https://example.com`,
+    });
+  });
+
+  it("uses StackTrace only for real structured or stack-shaped DSH errors", () => {
+    expect(toolErrorTrace({ callId: "4", name: "exec", state: "error", result: "Error: boom\n    at run (D:/workspace/app.ts:12:4)" })).toContain("app.ts:12:4");
+    expect(toolErrorTrace({ callId: "5", name: "exec", state: "error", result: JSON.stringify({ error: { stack: "Error: bad\n at main (index.ts:1:2)" } }) })).toContain("index.ts:1:2");
+    expect(toolErrorTrace({ callId: "6", name: "exec", state: "error", result: "命令执行失败" })).toBeUndefined();
+  });
+
+  it("keeps tool summaries concise and classifies common execution failures", () => {
+    expect(toolResultSummary("\nfirst line\nsecond line")).toBe("first line");
+    setLocale("zh-CN");
+    expect(toolErrorSummary("permission denied by policy")).toBe(t("transcript.toolNeedsApproval"));
+    expect(toolErrorSummary("request timed out")).toBe(t("transcript.toolTimeout"));
+    setLocale("en-US");
+    expect(toolErrorSummary("permission denied by policy")).toBe(t("transcript.toolNeedsApproval"));
+  });
+
+  it("requires every DSH question to have the matching answer kind", () => {
+    const questions = [
+      { id: "choice", options: [{ label: "A" }, { label: "B" }] },
+      { id: "detail" },
+    ];
+    expect(questionsAnswered(questions, { choice: "A" })).toBe(false);
+    expect(questionsAnswered(questions, { choice: "A", "detail:custom": "说明" })).toBe(true);
+    expect(buildQuestionAnswers(questions, { choice: "A", "detail:custom": "说明" })).toEqual([
+      { id: "choice", selected: ["A"], custom: undefined },
+      { id: "detail", selected: [], custom: "说明" },
+    ]);
+  });
+});

@@ -33,7 +33,7 @@ jobs:
           ref: ${{ inputs.ref }}
       - uses: pnpm/action-setup@v6
         with:
-          version: 11.23.0
+          version: 12.1.0
           run_install: false
       - uses: actions/setup-node@v7
         with:
@@ -42,14 +42,45 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - name: Verify candidate
+        shell: pwsh
         run: |
+          pnpm audit --prod --audit-level high
+          if ($LASTEXITCODE -ne 0) { throw "Production dependency audit failed" }
           pnpm run test:dsh-integration
+          if ($LASTEXITCODE -ne 0) { throw "DSH integration tests failed" }
           pnpm test
+          if ($LASTEXITCODE -ne 0) { throw "Core tests failed" }
           node scripts/check-migration-boundary.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Migration boundary check failed" }
+          node scripts/check-skills-sync.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Skills sync check failed" }
       - name: Set package version
-        run: node scripts/set-electron-package-version.mjs "$env:DESKTOP_VERSION"
+        shell: pwsh
+        run: |
+          node scripts/set-electron-package-version.mjs "$env:DESKTOP_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "Version staging failed" }
+      - name: Require bundled model credential
+        shell: pwsh
+        env:
+          XG_GOMODEL_API_KEY: ${{ secrets.XG_GOMODEL_API_KEY || secrets.XIGU_API_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:XG_GOMODEL_API_KEY)) {
+            throw "Missing release secret XG_GOMODEL_API_KEY; refusing to publish a package that cannot authenticate"
+          }
       - name: Package Windows x64
-        run: pnpm run dist:desktop
+        shell: pwsh
+        env:
+          XG_GOMODEL_API_KEY: ${{ secrets.XG_GOMODEL_API_KEY || secrets.XIGU_API_KEY }}
+          XG_GOMODEL_ENDPOINT: ${{ vars.XG_GOMODEL_ENDPOINT || vars.XG_MODEL_BASE_URL || vars.XIGU_MODEL_BASE_URL || 'http://192.168.1.47:9010/v1' }}
+          REQUIRE_XG_MODEL_BUNDLE: "1"
+        run: |
+          pnpm run dist:desktop
+          if ($LASTEXITCODE -ne 0) { throw "Desktop packaging failed" }
+      - name: Verify bundled model credential is packaged
+        shell: pwsh
+        run: |
+          node scripts/verify-bundled-model-credentials.mjs apps/desktop-electron/dist-package/win-unpacked/resources
+          if ($LASTEXITCODE -ne 0) { throw "Packaged model credential verification failed" }
       - name: Confirm artifacts remain unsigned
         shell: pwsh
         run: |

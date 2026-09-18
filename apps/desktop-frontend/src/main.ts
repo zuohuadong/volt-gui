@@ -1,5 +1,6 @@
 import "@svadmin/ui/app.css";
 import "./app.css";
+import "./plugins-mcp.css";
 
 import { mount } from "svelte";
 import App from "./App.svelte";

@@ -5,9 +5,9 @@ VoltUI is a local Electron desktop shell for the official DeepSeek Harness (DSH)
 ## Runtime contract
 
 - Node.js `26.8.1` (Node 26 type stripping is supported for erasable `.ts` scripts).
-- pnpm `11.23.0` with a frozen lockfile.
+- pnpm `12.1.0` with a frozen lockfile.
 - Electron `44.0.0` and electron-builder `26.15.3`.
-- Official `@deepseek-ai/dsh@0.1.1-rc.2`, pinned exactly in the root and Electron packages.
+- Official `@deepseek-ai/dsh@0.1.5-rc.1`, pinned exactly in the root and Electron packages.
 - Windows x64 is the verified packaging target. Release artifacts are unsigned-review artifacts until signing and updater contracts are approved.
 
 Electron owns the window, navigation policy, process lifecycle and package identity. The official DSH process owns sessions, tools, permissions, credentials, workspace state and storage. The repository does not maintain a second agent engine.
@@ -16,7 +16,7 @@ Electron owns the window, navigation policy, process lifecycle and package ident
 
 ```sh
 corepack enable
-corepack prepare pnpm@11.23.0 --activate
+corepack prepare pnpm@12.1.0 --activate
 pnpm install --frozen-lockfile
 pnpm run desktop
 ```
@@ -41,6 +41,12 @@ The migration gate rejects tracked legacy modules, retired native package trees,
 - `profiles/`: ordered profile overlays applied to official DSH bundles.
 - `scripts/`: launcher, integration tests, runtime boundary checks, migration checks and packaging helpers.
 - `site/`: Astro documentation site for the current runtime contract.
+
+## Anyong product-line reference
+
+CNB [anyong-agent](https://cnb.cool/aizhuliren/xgic/anyong-agent) is a product-line reference, not a git upstream. Do not merge its `main`, and do not import CNB release jobs, tracked secrets, or `vendor/bsk/`.
+
+The allowlisted port paths, exclusions, and GitHub unsigned-review contract are in [docs/RELEASING.md](docs/RELEASING.md). Runtime upgrades still come from exact npm versions of official `@deepseek-ai/dsh`, not from copying Anyong `node_modules`.
 
 ## License
 

@@ -3,6 +3,8 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { DesktopErrorCode, desktopErrorMessage } from "./desktop-error.ts";
+
 const execFileAsync = promisify(execFile);
 
 export type SmbMountStatus = "mounted" | "unmounted" | "offline" | "requires_credentials" | "error" | "unsupported";
@@ -46,12 +48,22 @@ export interface SmbMountManagerOptions {
 
 export class SmbMountError extends Error {
   readonly status: Exclude<SmbMountStatus, "mounted" | "unmounted" | "unsupported">;
+  readonly code: string;
 
-  constructor(status: Exclude<SmbMountStatus, "mounted" | "unmounted" | "unsupported">, message: string) {
-    super(message);
+  constructor(
+    status: Exclude<SmbMountStatus, "mounted" | "unmounted" | "unsupported">,
+    code: string,
+    detail: string,
+  ) {
+    super(desktopErrorMessage(code, detail));
     this.name = "SmbMountError";
     this.status = status;
+    this.code = code;
   }
+}
+
+function mappedElsewhereDetail(localPath: string, action?: string): string {
+  return action ? `${localPath} 已映射到其他网络路径，${action}` : `${localPath} 已映射到其他网络路径`;
 }
 
 function psLiteral(value: string): string {
@@ -60,20 +72,23 @@ function psLiteral(value: string): string {
 
 function validateId(value: string): string {
   const id = value.trim();
-  if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(id)) throw new SmbMountError("error", "SMB 配置 ID 无效");
+  if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(id)) throw new SmbMountError("error", DesktopErrorCode.SMB_INVALID_ID, "SMB 配置 ID 无效");
   return id;
 }
 
 function validateLocalPath(value: string): string {
   const localPath = value.trim().toUpperCase();
-  if (!/^[A-Z]:$/u.test(localPath)) throw new SmbMountError("error", "本地路径必须是 Windows 盘符，例如 Z:");
+  if (!/^[A-Z]:$/u.test(localPath)) throw new SmbMountError("error", DesktopErrorCode.SMB_INVALID_DRIVE, "本地路径必须是 Windows 盘符，例如 Z:");
   return localPath;
 }
 
 function validateRemotePath(value: string): string {
   const remotePath = value.trim().replaceAll("/", "\\").replace(/\\+$/u, "");
-  if (!/^\\\\[^\\\0\r\n]+\\[^\\\0\r\n]+(?:\\[^\\\0\r\n]+)*$/u.test(remotePath)) {
-    throw new SmbMountError("error", "远程路径必须是 SMB UNC 路径，例如 \\\\nas\\engineering");
+  const segments = remotePath.slice(2).split("\\");
+  if (!remotePath.startsWith("\\\\")
+    || segments.length < 2
+    || segments.some((segment) => !segment || segment === "." || segment === ".." || /[<>:"|?*\u0000-\u001F]/u.test(segment))) {
+    throw new SmbMountError("error", DesktopErrorCode.SMB_INVALID_UNC, "远程路径必须是 SMB UNC 路径，例如 \\\\nas\\engineering");
   }
   return remotePath;
 }
@@ -88,6 +103,12 @@ function classifyError(value: string): Exclude<SmbMountStatus, "mounted" | "unmo
   if (/(credential|password|logon failure|1326|1219|access is denied|凭据|密码)/u.test(normalized)) return "requires_credentials";
   if (/(network|unreachable|timeout|offline|53|67|资源名称)/u.test(normalized)) return "offline";
   return "error";
+}
+
+function toMountError(error: unknown): SmbMountError {
+  if (error instanceof SmbMountError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  return new SmbMountError(classifyError(message), DesktopErrorCode.SMB_OPERATION_FAILED, sanitizeError(message));
 }
 
 function defaultRunner(file: string, args: readonly string[]): Promise<CommandResult> {
@@ -114,13 +135,19 @@ export class SmbMountManager {
   async list(): Promise<SmbMountView[]> {
     await this.ensureLoaded();
     if (this.platform !== "win32") return this.definitions.map((definition) => ({ ...definition, status: "unsupported" }));
-    const mappings = await this.readMappings();
+    let mappings: Array<{ localPath: string; remotePath: string }>;
+    try {
+      mappings = await this.readMappings();
+    } catch (error) {
+      const classified = toMountError(error);
+      return this.definitions.map((definition) => ({ ...definition, status: classified.status, lastError: classified.message }));
+    }
     return this.definitions.map((definition) => {
       const mapping = mappings.find((item) => item.localPath.toUpperCase() === definition.localPath);
       return mapping?.remotePath.toLowerCase() === definition.remotePath.toLowerCase()
         ? { ...definition, status: "mounted" as const }
         : mapping
-          ? { ...definition, status: "error" as const, lastError: `${definition.localPath} 已映射到其他网络路径` }
+          ? { ...definition, status: "error" as const, lastError: desktopErrorMessage(DesktopErrorCode.SMB_MAPPED_ELSEWHERE, mappedElsewhereDetail(definition.localPath)) }
         : { ...definition, status: "unmounted" as const };
     });
   }
@@ -135,17 +162,25 @@ export class SmbMountManager {
   async mount(request: SmbMountRequest): Promise<SmbMountView> {
     await this.ensureLoaded();
     const definition = this.normalizeRequest(request);
-    this.definitions = [...this.definitions.filter((item) => item.id !== definition.id && item.localPath !== definition.localPath), definition];
-    await this.save();
-    if (this.platform !== "win32") return { ...definition, status: "unsupported" };
+    if (this.platform !== "win32") {
+      this.definitions = [...this.definitions.filter((item) => item.id !== definition.id && item.localPath !== definition.localPath), definition];
+      await this.save();
+      return { ...definition, status: "unsupported" };
+    }
     try {
       const existing = (await this.readMappings()).find((item) => item.localPath === definition.localPath);
-      if (existing?.remotePath.toLowerCase() === definition.remotePath.toLowerCase()) return { ...definition, status: "mounted" };
-      if (existing) return { ...definition, status: "error", lastError: `${definition.localPath} 已映射到其他网络路径` };
+      if (existing && existing.remotePath.toLowerCase() !== definition.remotePath.toLowerCase()) {
+        return { ...definition, status: "error", lastError: desktopErrorMessage(DesktopErrorCode.SMB_MAPPED_ELSEWHERE, mappedElsewhereDetail(definition.localPath)) };
+      }
+      this.definitions = [...this.definitions.filter((item) => item.id !== definition.id && item.localPath !== definition.localPath), definition];
+      await this.save();
+      if (existing) return { ...definition, status: "mounted" };
       await this.runPowerShell(`New-SmbMapping -LocalPath ${psLiteral(definition.localPath)} -RemotePath ${psLiteral(definition.remotePath)} -Persistent $${definition.autoMount ? "true" : "false"} -ErrorAction Stop | Out-Null`);
       return { ...definition, status: "mounted" };
     } catch (error) {
-      const classified = error instanceof SmbMountError ? error : new SmbMountError(classifyError(String(error)), sanitizeError(String(error)));
+      const classified = toMountError(error);
+      this.definitions = [...this.definitions.filter((item) => item.id !== definition.id && item.localPath !== definition.localPath), definition];
+      await this.save().catch(() => undefined);
       return { ...definition, status: classified.status, lastError: classified.message };
     }
   }
@@ -153,18 +188,18 @@ export class SmbMountManager {
   async unmount(id: string): Promise<SmbMountView> {
     await this.ensureLoaded();
     const definition = this.definitions.find((item) => item.id === validateId(id));
-    if (!definition) throw new SmbMountError("error", "SMB 配置不存在");
+    if (!definition) throw new SmbMountError("error", DesktopErrorCode.SMB_MISSING, "SMB 配置不存在");
     if (this.platform !== "win32") return { ...definition, status: "unsupported" };
     try {
       const existing = (await this.readMappings()).find((item) => item.localPath === definition.localPath);
       if (!existing) return { ...definition, status: "unmounted" };
       if (existing.remotePath.toLowerCase() !== definition.remotePath.toLowerCase()) {
-        return { ...definition, status: "error", lastError: `${definition.localPath} 已映射到其他网络路径，拒绝卸载` };
+        return { ...definition, status: "error", lastError: desktopErrorMessage(DesktopErrorCode.SMB_MAPPED_ELSEWHERE, mappedElsewhereDetail(definition.localPath, "拒绝卸载")) };
       }
       await this.runPowerShell(`Remove-SmbMapping -LocalPath ${psLiteral(definition.localPath)} -Force -UpdateProfile -ErrorAction Stop`);
       return { ...definition, status: "unmounted" };
     } catch (error) {
-      const classified = error instanceof SmbMountError ? error : new SmbMountError(classifyError(String(error)), sanitizeError(String(error)));
+      const classified = error instanceof SmbMountError ? error : new SmbMountError(classifyError(String(error)), DesktopErrorCode.SMB_OPERATION_FAILED, sanitizeError(String(error)));
       return { ...definition, status: classified.status, lastError: classified.message };
     }
   }
@@ -172,6 +207,21 @@ export class SmbMountManager {
   async remove(id: string): Promise<{ deleted: true }> {
     await this.ensureLoaded();
     const normalizedId = validateId(id);
+    const definition = this.definitions.find((item) => item.id === normalizedId);
+    if (!definition) throw new SmbMountError("error", DesktopErrorCode.SMB_MISSING, "SMB 配置不存在");
+    if (this.platform === "win32") {
+      try {
+        const existing = (await this.readMappings()).find((item) => item.localPath === definition.localPath);
+        if (existing && existing.remotePath.toLowerCase() !== definition.remotePath.toLowerCase()) {
+          throw new SmbMountError("error", DesktopErrorCode.SMB_MAPPED_ELSEWHERE, mappedElsewhereDetail(definition.localPath, "拒绝移除配置"));
+        }
+        if (existing) {
+          await this.runPowerShell(`Remove-SmbMapping -LocalPath ${psLiteral(definition.localPath)} -Force -UpdateProfile -ErrorAction Stop`);
+        }
+      } catch (error) {
+        throw toMountError(error);
+      }
+    }
     this.definitions = this.definitions.filter((item) => item.id !== normalizedId);
     await this.save();
     return { deleted: true };
@@ -180,8 +230,8 @@ export class SmbMountManager {
   async resolveOpenPath(localPath: string): Promise<string> {
     const normalizedPath = validateLocalPath(localPath);
     const view = (await this.list()).find((item) => item.localPath === normalizedPath);
-    if (!view) throw new SmbMountError("error", "SMB 配置不存在");
-    if (view.status !== "mounted") throw new SmbMountError("error", "SMB 共享尚未挂载");
+    if (!view) throw new SmbMountError("error", DesktopErrorCode.SMB_MISSING, "SMB 配置不存在");
+    if (view.status !== "mounted") throw new SmbMountError("error", DesktopErrorCode.SMB_NOT_MOUNTED, "SMB 共享尚未挂载");
     return normalizedPath;
   }
 
@@ -189,7 +239,7 @@ export class SmbMountManager {
     const remotePath = validateRemotePath(request.remotePath);
     const localPath = validateLocalPath(request.localPath);
     const displayName = request.displayName.trim();
-    if (!displayName || displayName.length > 80) throw new SmbMountError("error", "显示名称不能为空且不能超过 80 个字符");
+    if (!displayName || displayName.length > 80) throw new SmbMountError("error", DesktopErrorCode.SMB_INVALID_DISPLAY_NAME, "显示名称不能为空且不能超过 80 个字符");
     const id = validateId(request.id?.trim() || `smb-${localPath.slice(0, 1).toLowerCase()}`);
     return { id, displayName, remotePath, localPath, autoMount: request.autoMount === true };
   }
@@ -200,7 +250,7 @@ export class SmbMountManager {
     try {
       const parsed = JSON.parse(await readFile(this.configPath, "utf8")) as Partial<StoredConfig>;
       if (parsed.version !== 1 || !Array.isArray(parsed.mounts)) return;
-      this.definitions = parsed.mounts.flatMap((item) => {
+      const loaded = parsed.mounts.flatMap((item) => {
         try {
           const normalized = this.normalizeRequest(item);
           return [normalized];
@@ -208,6 +258,14 @@ export class SmbMountManager {
           return [];
         }
       });
+      const deduped: SmbMountDefinition[] = [];
+      for (const definition of loaded) {
+        for (let index = deduped.length - 1; index >= 0; index -= 1) {
+          if (deduped[index].id === definition.id || deduped[index].localPath === definition.localPath) deduped.splice(index, 1);
+        }
+        deduped.push(definition);
+      }
+      this.definitions = deduped;
     } catch {
       this.definitions = [];
     }
@@ -225,8 +283,7 @@ export class SmbMountManager {
       const result = await this.run(powershellFile(this.platform), ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command]);
       if (result.stderr.trim()) throw new Error(sanitizeError(result.stderr));
     } catch (error) {
-      if (error instanceof SmbMountError) throw error;
-      throw new SmbMountError(classifyError(error instanceof Error ? error.message : String(error)), sanitizeError(error instanceof Error ? error.message : String(error)));
+      throw toMountError(error);
     }
   }
 
@@ -243,8 +300,8 @@ export class SmbMountManager {
           ? [{ localPath: value.LocalPath.toUpperCase(), remotePath: value.RemotePath }]
           : [];
       });
-    } catch {
-      return [];
+    } catch (error) {
+      throw toMountError(error);
     }
   }
 
@@ -253,7 +310,7 @@ export class SmbMountManager {
       const result = await this.run(powershellFile(this.platform), ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command]);
       return result.stdout;
     } catch (error) {
-      throw new SmbMountError(classifyError(error instanceof Error ? error.message : String(error)), sanitizeError(error instanceof Error ? error.message : String(error)));
+      throw new SmbMountError(classifyError(error instanceof Error ? error.message : String(error)), DesktopErrorCode.SMB_OPERATION_FAILED, sanitizeError(error instanceof Error ? error.message : String(error)));
     }
   }
 }

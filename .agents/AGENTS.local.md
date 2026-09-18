@@ -1,25 +1,26 @@
 # Volt GUI Project Overlay
 
-本仓库的产品运行时是 Node 26 + Electron + 官方 DeepSeek Harness。DSH Web 是唯一 renderer 和 Harness；本仓库不维护第二套会话、工具、权限、凭据、工作区或持久化实现。
+本仓库的产品运行时是 Node 26 + Electron + 官方 DeepSeek Harness。官方 DSH 是唯一 Harness，并拥有会话、工具、权限、凭据和工作区；桌面只保留薄 Svelte workbench 与隔离 preload，不维护第二套持久化实现。
 
 ## Stack Profile
 
 - Root workspace: 官方 `@deepseek-ai/dsh`、Node 26 launcher、distribution bundle 与共享 profile patch。
-- Desktop workspace: Electron main process in `apps/desktop-electron/`; no local renderer or preload.
+- Desktop: `apps/desktop-electron/` owns the window, security boundary, navigation, and official DSH child lifecycle. `apps/desktop-frontend/` is a thin Svelte workbench over official DSH, not a second session/tool/credential/persistence stack. Preload stays an isolated IPC allowlist.
 - Site: Astro documentation site in `site/`, using npm and Node 26 in CI.
-- Release: CNB `.cnb.yml` validates source on `main`; GitHub packages Windows x64 Electron artifacts with `pnpm run dist:desktop`. Public release, signing, updater, macOS and Linux remain fail closed.
+- Release: CNB `.cnb.yml` validates source on `main`; GitHub packages Windows x64 Electron unsigned-review artifacts with `pnpm run dist:desktop`. OEM bundled credentials come from GitHub Actions secrets, never from tracked files. Public signed release, updater, macOS and Linux remain fail closed.
 
 ## Required Skills
 
 - 默认先读 `references/private-skills/INDEX.md`，判断是否存在 VOLT 私有行业 skill；若任务不属于私有技能覆盖范围，再读 `references/skills/INDEX.md`。
 - 项目私有技能安装在 `.voltui/skills/`，VoltUI 可直接发现；`references/private-skills/skills-manifest.json` 是全量清单。
-- DSH Web UI 由官方 npm 包提供；需要 UI 能力时优先使用官方 profile/plugin 扩展点，不在仓库中重建 renderer。
-- Desktop/Electron 任务需要关注 `apps/desktop-electron/`、根 `pnpm-lock.yaml`、loopback 导航、浏览器权限和原生依赖打包。
+- 桌面 UI 只做薄 Svelte workbench；会话、工具、权限、凭据和工作区仍由官方 DSH 拥有，不在仓库里再做第二套 Harness 或持久化。
+- Desktop/Electron 任务需要关注 `apps/desktop-electron/`、`apps/desktop-frontend/`、根 `pnpm-lock.yaml`、loopback 导航、浏览器权限和原生依赖打包。
 - Site/Astro 任务需要加载 `typescript`；如涉及部署，再加载 `deployment-target-selector`。
 - 涉及 agent-team 自动化、Task Ledger、mailbox、provider adapter 时加载 `agent-team-automation` 和 `provider-adapter`。
 - **暗涌品牌相关**：加载 `anyong-brand-config` — 使用 Electron profile 和 DSH patch，不重建旧品牌配置层。
-- **CNB CI/CD 相关**：加载 `cnb-ci-cd` — 涉及 .cnb.yml、自动发版、CNB API。
+- **CNB CI/CD 相关**：加载 `cnb-ci-cd` — 本仓库 `.cnb.yml` 只做 Node 26 源码门禁，不导入密钥、不发布安装包。
 - **Volt 内部决策**：加载 `volt-ops` — 涉及产品策略、上游同步、中国市场背景。
+- **对照 CNB anyong-agent**：加载 `xigu-ai-ops` — 仅用于学习/移植那条更快的产品线，不把 CNB 发版合同复制进本仓库。
 - 半导体 ATE、测试程序、良率/SPC、失效分析、LIMS/OCR 数据组织等行业任务，优先加载 `.voltui/skills/semiconductor-*` 和相关工程/数据技能。
 
 ## Computation & Tool Execution Policy
@@ -35,7 +36,7 @@
 - Core: `pnpm test`，`pnpm run test:dsh-integration`，`pnpm run build`
 - Desktop: `pnpm run build:desktop`
 - Electron boundary: `node --test scripts/check-electron-runtime-boundary.test.mjs`，`node scripts/check-electron-runtime-boundary.mjs`
-- Site: `cd site && npm ci && npm run build`
+- Site: `cd site && npm ci && npm test`
 - Migration: `node scripts/check-migration-boundary.mjs`
 - Workflows: `node --test scripts/ci-workflows.test.mjs`
 - Agent-team config: `agent-team automation smoke .`，`agent-team automation diff-check`

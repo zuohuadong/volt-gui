@@ -1,3 +1,5 @@
+import { t } from "./i18n";
+
 export const UI_CUSTOMIZATION_SCHEMA = "voltui/ui-patch-v1" as const;
 
 export type UiDensity = "compact" | "comfortable";
@@ -34,7 +36,7 @@ export const DEFAULT_UI_CUSTOMIZATION: UiCustomizationState = {
   subtitle: "",
   density: "comfortable",
   sidebar: "expanded",
-  activity: "visible",
+  activity: "hidden",
   composerRows: 3,
   quickActions: [],
 };
@@ -52,38 +54,38 @@ export type UiCustomizationParseResult =
 function boundedText(value: unknown, max: number, label: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string" || value.trim().length === 0 || value.length > max || forbiddenText.test(value)) {
-    throw new Error(`${label} 无效`);
+    throw new Error(t("customization.invalidField", { label }));
   }
   return value.trim();
 }
 
 function parsePatch(value: unknown): UiCustomizationPatch {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("界面 patch 必须是 JSON 对象");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(t("customization.patchMustBeObject"));
   const record = value as Record<string, unknown>;
-  if (record.schemaVersion !== UI_CUSTOMIZATION_SCHEMA) throw new Error("不支持的界面 patch 版本");
+  if (record.schemaVersion !== UI_CUSTOMIZATION_SCHEMA) throw new Error(t("customization.unsupportedPatchVersion"));
   const allowed = new Set([
     "schemaVersion", "title", "subtitle", "density", "sidebar", "activity", "composerRows", "quickActions",
   ]);
-  for (const key of Object.keys(record)) if (!allowed.has(key)) throw new Error(`不允许的界面字段：${key}`);
+  for (const key of Object.keys(record)) if (!allowed.has(key)) throw new Error(t("customization.unknownPatchField", { key }));
 
   const density = record.density === undefined ? undefined : record.density;
-  if (density !== undefined && density !== "compact" && density !== "comfortable") throw new Error("density 无效");
+  if (density !== undefined && density !== "compact" && density !== "comfortable") throw new Error(t("customization.invalidDensity"));
   const sidebar = record.sidebar === undefined ? undefined : record.sidebar;
-  if (sidebar !== undefined && sidebar !== "expanded" && sidebar !== "collapsed") throw new Error("sidebar 无效");
+  if (sidebar !== undefined && sidebar !== "expanded" && sidebar !== "collapsed") throw new Error(t("customization.invalidSidebar"));
   const activity = record.activity === undefined ? undefined : record.activity;
-  if (activity !== undefined && activity !== "visible" && activity !== "hidden") throw new Error("activity 无效");
+  if (activity !== undefined && activity !== "visible" && activity !== "hidden") throw new Error(t("customization.invalidActivity"));
   const composerRows = record.composerRows === undefined ? undefined : record.composerRows;
-  if (composerRows !== undefined && composerRows !== 2 && composerRows !== 3 && composerRows !== 4) throw new Error("composerRows 无效");
+  if (composerRows !== undefined && composerRows !== 2 && composerRows !== 3 && composerRows !== 4) throw new Error(t("customization.invalidComposerRows"));
 
   let quickActions: UiQuickAction[] | undefined;
   if (record.quickActions !== undefined) {
-    if (!Array.isArray(record.quickActions) || record.quickActions.length > MAX_QUICK_ACTIONS) throw new Error("quickActions 数量无效");
+    if (!Array.isArray(record.quickActions) || record.quickActions.length > MAX_QUICK_ACTIONS) throw new Error(t("customization.invalidQuickActionCount"));
     quickActions = record.quickActions.map((item) => {
-      if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("quickAction 必须是对象");
+      if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error(t("customization.quickActionMustBeObject"));
       const action = item as Record<string, unknown>;
       const label = boundedText(action.label, 32, "quickAction.label");
       const prompt = boundedText(action.prompt, MAX_PROMPT_LENGTH, "quickAction.prompt");
-      if (!label || !prompt) throw new Error("quickAction 缺少 label 或 prompt");
+      if (!label || !prompt) throw new Error(t("customization.quickActionMissingFields"));
       return { label, prompt };
     });
   }
@@ -137,7 +139,7 @@ export function parseUiCustomization(text: string): UiCustomizationParseResult {
       // Continue searching; an assistant may include an explanatory JSON block first.
     }
   }
-  return { ok: false, error: "未找到有效的界面 patch" };
+  return { ok: false, error: t("customization.patchNotFound") };
 }
 
 export function applyUiCustomization(
@@ -156,11 +158,11 @@ export function applyUiCustomization(
 }
 
 export function isUiCustomizationIntent(text: string): boolean {
-  const target = /(界面|布局|侧栏|活动面板|工作台|输入框|快捷操作|标题|副标题|密度)/u;
-  const change = /(调整|修改|改变|改成|改为|切换|收起|展开|显示|隐藏|自定义|定制|紧凑|舒适|增加|减少)/u;
+  const target = /(界面|布局|侧栏|活动面板|工作台|输入框|快捷操作|标题|副标题|密度|interface|layout|sidebar|activity panel|workbench|composer|quick action|\btitle\b|\bsubtitle\b|\bdensity\b)/iu;
+  const change = /(调整|修改|改变|改成|改为|切换|收起|展开|显示|隐藏|自定义|定制|紧凑|舒适|增加|减少|collapse|expand|hide|show|switch|change|customize|compact|comfortable)/iu;
   return target.test(text) && change.test(text);
 }
 
 export function buildUiCustomizationPrompt(text: string): string {
-  return `${text}\n\n[Volt UI customization protocol]\n如果请求包含界面、布局、侧栏、活动面板、密度、标题、快捷操作或输入框定制，请在回答末尾追加一个 fenced JSON patch。只能使用以下字段：schemaVersion="${UI_CUSTOMIZATION_SCHEMA}"、title、subtitle、density(compact|comfortable)、sidebar(expanded|collapsed)、activity(visible|hidden)、composerRows(2|3|4)、quickActions([{label,prompt}])。不要输出 HTML、CSS、JavaScript、Svelte、URL、文件路径或事件处理器。只修改用户明确要求的部分。`;
+  return `${text}\n\n[Volt UI customization protocol]\n${t("customization.protocol", { schema: UI_CUSTOMIZATION_SCHEMA })}`;
 }

@@ -17,6 +17,7 @@ import {
 } from "@svadmin/surface";
 import { defaultSurfaceCatalog } from "@svadmin/surface/svelte";
 import type { DshClient, SessionSummary, Workspace } from "$lib/dsh-client";
+import { t } from "./i18n";
 
 export const VOLT_SURFACE_AGENT_SCHEMA = SURFACE_AGENT_SCHEMA_VERSION;
 export const VOLT_SURFACE_CATALOG: SurfaceCatalog = defaultSurfaceCatalog;
@@ -68,14 +69,14 @@ export function isSurfaceGenerationIntent(text: string): boolean {
 }
 
 export function buildVoltSurfacePrompt(text: string): string {
-  return `${buildSurfaceAgentPrompt(text, VOLT_SURFACE_CATALOG, VOLT_SURFACE_POLICY)}\n\n[Volt host policy]\n所有界面只读，必须经过 VoltUI 预览与用户明确确认后才渲染；不要生成或执行 Svelte、HTML、CSS、JavaScript、SQL、URL、事件处理器或 mutation；不要猜测资源、字段或执行任何 mutation。`;
+  return `${buildSurfaceAgentPrompt(text, VOLT_SURFACE_CATALOG, VOLT_SURFACE_POLICY)}\n\n[Volt host policy]\n${t("surface.hostPolicy")}`;
 }
 
 function sessionRecord(session: SessionSummary): BaseRecord {
   const title = session.projections?.values?.title;
   return {
     id: session.sessionId,
-    title: typeof title === "string" && title.trim() ? title : session.cwd || "新会话",
+    title: typeof title === "string" && title.trim() ? title : session.cwd || t("app.newSession"),
     cwd: session.cwd || "",
     running: session.running,
     updatedAt: session.updatedAt,

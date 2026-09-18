@@ -7,6 +7,19 @@ contributors.
 
 ------------------------------------------------------------
 
+JavaScript Dependencies (Runtime)
+---------------------------------
+
+@modelcontextprotocol/sdk 1.30.0 (via official DSH MCP client)
+  License: MIT
+  Source: https://github.com/modelcontextprotocol/typescript-sdk
+
+zod 4.4.3
+  License: MIT
+  Source: https://github.com/colinhacks/zod
+
+------------------------------------------------------------
+
 Go Dependencies (Direct)
 ------------------------
 

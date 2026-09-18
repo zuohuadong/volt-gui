@@ -3,6 +3,7 @@ desktop:
   - changed-files:
       - any-glob-to-any-file:
           - 'apps/desktop-electron/**'
+          - 'apps/desktop-frontend/**'
           - 'profiles/**'
 
 runtime:

@@ -7,7 +7,7 @@
     provider: xg-gomodel
     model: vlm
 
-# XG 内置 GOModel 网关。密钥只通过官方 DSH 凭据引用解析，绝不写入此文件。
+# XG 内置 GOModel 网关。apiKeyEnv 是官方 DSH 的凭据引用名；Electron 会清空同名系统环境变量，密钥只通过官方 DSH credentials service 解析，绝不写入此文件。
 - id: llm-pi-ai
   name: '@deepseek-ai/dsh-llm-pi-ai'
   config:
@@ -16,7 +16,7 @@
         displayName: XG GOModel
         apiKeyEnv: XG_GOMODEL_API_KEY
         api: openai-completions
-        baseURL: http://192.168.1.47:9010/v1
+        baseURL: !!js "process.env.XG_MODEL_BASE_URL || 'http://192.168.1.47:9010/v1'"
         compat:
           supportsDeveloperRole: false
           maxTokensField: max_tokens
@@ -36,3 +36,162 @@
             input: [text]
             contextWindow: 1048576
             maxTokens: 32768
+
+# 默认内置 BrowserSkill Host 插件。官方 Bundle 已提供 browserskill loader，
+# 这里只覆盖桌面/CLI 的固定 bsk 路径和懒加载设置，避免重复插入。
+- id: browserskill
+  config:
+    bskPath: !!js "process.env.ANYONG_BSK_PATH ?? process.env.BSK_PATH ?? 'bsk'"
+    lazyTools: true
+
+# OfficeCLI 原生提供 MCP stdio server；官方 DSH MCP client 负责工具注册、
+# 超时、中止和结果投影，OfficeCLI 仅负责文档处理。
+- insert:
+    - id: mcp-officecli
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: officecli
+        transport: stdio
+        command: !!js "process.env.ANYONG_OFFICECLI_COMMAND ?? 'officecli'"
+        args: !!js "JSON.parse(process.env.ANYONG_OFFICECLI_ARGS_JSON ?? '[\"mcp\"]')"
+        cwd: !!js "process.env.DSH_CWD ?? process.cwd()"
+        toolCallTimeoutMs: 120000
+        failOnStartupError: true
+
+# WeKnora 官方只读知识检索插件由 Profile Bundle 提供；这里只覆盖部署配置。
+# 凭据由官方 DSH credentials service 或进程环境注入，profile 文件不保存密钥。
+- id: weknora
+  config:
+    # 本地默认地址可用；远端 WeKnora 必须使用 HTTPS 且显式加入主机白名单。
+    baseUrl: !!js "(() => { const raw = (process.env.WEKNORA_BASE_URL || 'http://localhost:8080/api/v1').trim(); const url = new URL(raw); const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname); const allowed = new Set((process.env.WEKNORA_ALLOWED_HOSTS || '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean)); if ((url.protocol !== 'https:' && !(local && url.protocol === 'http:')) || (!local && !allowed.has(url.hostname.toLowerCase())) || url.username || url.password || url.search || url.hash) throw new Error('WEKNORA_BASE_URL must use HTTPS and an approved host without credentials or query parameters'); return raw; })()"
+    apiKey: !!js "process.env.WEKNORA_API_KEY"
+    tenantId: !!js "process.env.WEKNORA_TENANT_ID"
+    knowledgeBaseIds: !!js "(process.env.WEKNORA_KNOWLEDGE_BASE_IDS ?? '').split(',').map((id) => id.trim()).filter(Boolean)"
+    agentId: !!js "process.env.WEKNORA_AGENT_ID"
+    tools:
+      listKnowledgeBases: true
+      search: true
+      readDocument: true
+      ask: !!js "process.env.WEKNORA_ASK_ENABLED === '1'"
+
+# 项目级 Web 检索默认拒绝。只有明确设置 ANYONG_WEB_RETRIEVAL_ENABLED=1
+# 时，官方 DSH 的搜索、抓取 provider 与 tool-web 才会被启用。
+- id: web
+  disabled: !!js "process.env.ANYONG_WEB_RETRIEVAL_ENABLED !== '1'"
+- id: web-search-deepseek
+  disabled: !!js "process.env.ANYONG_WEB_RETRIEVAL_ENABLED !== '1'"
+- id: web-fetch-http
+  disabled: !!js "process.env.ANYONG_WEB_RETRIEVAL_ENABLED !== '1'"
+- id: tool-web
+  disabled: !!js "process.env.ANYONG_WEB_RETRIEVAL_ENABLED !== '1'"
+  config:
+    search: !!js "process.env.ANYONG_WEB_RETRIEVAL_ENABLED === '1'"
+    fetch: !!js "process.env.ANYONG_WEB_RETRIEVAL_ENABLED === '1'"
+    searchTimeoutMs: 60000
+
+# 外部 MCP 连接器使用独立开关；Web、GitHub、CNB、飞书默认关闭，
+# Sentry 与文档导入默认可用。连接失败不阻塞官方 DSH 启动。
+- insert:
+    - id: mcp-github
+      disabled: !!js "process.env.ANYONG_GITHUB_ENABLED !== '1'"
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: github
+        transport: stdio
+        command: !!js "process.env.ANYONG_INTEGRATIONS_MCP_COMMAND ?? process.execPath"
+        args: !!js "JSON.parse(process.env.ANYONG_GITHUB_MCP_ARGS_JSON ?? JSON.stringify([process.env.ANYONG_INTEGRATIONS_MCP_SCRIPT ?? 'scripts/anyong-integrations-mcp.mjs', '--scope=github']))"
+        env:
+          GITHUB_TOKEN: !!js "process.env.GITHUB_TOKEN ?? ''"
+          GITHUB_API_BASE_URL: !!js "process.env.GITHUB_API_BASE_URL ?? ''"
+          GITHUB_ALLOWED_HOSTS: !!js "process.env.GITHUB_ALLOWED_HOSTS ?? ''"
+        cwd: !!js "process.env.DSH_CWD ?? process.cwd()"
+        toolCallTimeoutMs: 60000
+        failOnStartupError: false
+        reconnect:
+          enabled: false
+
+    - id: mcp-cnb
+      disabled: !!js "process.env.ANYONG_CNB_ENABLED !== '1'"
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: cnb
+        transport: stdio
+        command: !!js "process.env.ANYONG_INTEGRATIONS_MCP_COMMAND ?? process.execPath"
+        args: !!js "JSON.parse(process.env.ANYONG_CNB_MCP_ARGS_JSON ?? JSON.stringify([process.env.ANYONG_INTEGRATIONS_MCP_SCRIPT ?? 'scripts/anyong-integrations-mcp.mjs', '--scope=cnb']))"
+        env:
+          CNB_TOKEN: !!js "process.env.CNB_TOKEN ?? ''"
+          CNB_API_ENDPOINT: !!js "process.env.CNB_API_ENDPOINT ?? ''"
+          CNB_REPO_SLUG: !!js "process.env.CNB_REPO_SLUG ?? ''"
+          CNB_PIPELINES_PATH: !!js "process.env.CNB_PIPELINES_PATH ?? ''"
+          CNB_LOGS_PATH: !!js "process.env.CNB_LOGS_PATH ?? ''"
+          CNB_ALLOWED_HOSTS: !!js "process.env.CNB_ALLOWED_HOSTS ?? ''"
+        cwd: !!js "process.env.DSH_CWD ?? process.cwd()"
+        toolCallTimeoutMs: 60000
+        failOnStartupError: false
+        reconnect:
+          enabled: false
+
+    - id: mcp-sentry
+      disabled: !!js "process.env.ANYONG_SENTRY_ENABLED === '0'"
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: sentry
+        transport: stdio
+        command: !!js "process.env.ANYONG_INTEGRATIONS_MCP_COMMAND ?? process.execPath"
+        args: !!js "JSON.parse(process.env.ANYONG_SENTRY_MCP_ARGS_JSON ?? JSON.stringify([process.env.ANYONG_INTEGRATIONS_MCP_SCRIPT ?? 'scripts/anyong-integrations-mcp.mjs', '--scope=sentry']))"
+        env:
+          SENTRY_AUTH_TOKEN: !!js "process.env.SENTRY_AUTH_TOKEN ?? ''"
+          SENTRY_ORG: !!js "process.env.SENTRY_ORG ?? ''"
+          SENTRY_BASE_URL: !!js "process.env.SENTRY_BASE_URL ?? ''"
+          SENTRY_ALLOWED_HOSTS: !!js "process.env.SENTRY_ALLOWED_HOSTS ?? ''"
+        cwd: !!js "process.env.DSH_CWD ?? process.cwd()"
+        toolCallTimeoutMs: 60000
+        failOnStartupError: false
+        reconnect:
+          enabled: false
+
+    - id: mcp-feishu
+      disabled: !!js "process.env.ANYONG_FEISHU_ENABLED !== '1'"
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: feishu
+        transport: stdio
+        command: !!js "process.env.ANYONG_INTEGRATIONS_MCP_COMMAND ?? process.execPath"
+        args: !!js "JSON.parse(process.env.ANYONG_FEISHU_MCP_ARGS_JSON ?? JSON.stringify([process.env.ANYONG_INTEGRATIONS_MCP_SCRIPT ?? 'scripts/anyong-integrations-mcp.mjs', '--scope=feishu']))"
+        env:
+          FEISHU_TENANT_ACCESS_TOKEN: !!js "process.env.FEISHU_TENANT_ACCESS_TOKEN ?? ''"
+          FEISHU_APP_ID: !!js "process.env.FEISHU_APP_ID ?? ''"
+          FEISHU_APP_SECRET: !!js "process.env.FEISHU_APP_SECRET ?? ''"
+          FEISHU_BASE_URL: !!js "process.env.FEISHU_BASE_URL ?? ''"
+          FEISHU_ALLOWED_HOSTS: !!js "process.env.FEISHU_ALLOWED_HOSTS ?? ''"
+          ANYONG_FEISHU_WRITE_ENABLED: !!js "process.env.ANYONG_FEISHU_WRITE_ENABLED ?? ''"
+        cwd: !!js "process.env.DSH_CWD ?? process.cwd()"
+        toolCallTimeoutMs: 60000
+        failOnStartupError: false
+        reconnect:
+          enabled: false
+
+    - id: mcp-document-import
+      disabled: !!js "process.env.ANYONG_DOCUMENT_IMPORT_ENABLED === '0'"
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: document_import
+        transport: stdio
+        command: !!js "process.env.ANYONG_INTEGRATIONS_MCP_COMMAND ?? process.execPath"
+        args: !!js "JSON.parse(process.env.ANYONG_DOCUMENT_IMPORT_MCP_ARGS_JSON ?? JSON.stringify([process.env.ANYONG_INTEGRATIONS_MCP_SCRIPT ?? 'scripts/anyong-integrations-mcp.mjs', '--scope=documents']))"
+        env:
+          ANYONG_IMPORT_ROOT: !!js "process.env.ANYONG_IMPORT_ROOT ?? process.env.DSH_CWD ?? process.cwd()"
+          ANYONG_OCR_COMMAND: !!js "process.env.ANYONG_OCR_COMMAND ?? ''"
+          ANYONG_OCR_ARGS_JSON: !!js "process.env.ANYONG_OCR_ARGS_JSON ?? '[\"{{file}}\"]'"
+          ANYONG_PDFTOTEXT_COMMAND: !!js "process.env.ANYONG_PDFTOTEXT_COMMAND ?? 'pdftotext'"
+          ANYONG_WEKNORA_INGEST_ENABLED: !!js "process.env.ANYONG_WEKNORA_INGEST_ENABLED ?? ''"
+          WEKNORA_INGEST_URL: !!js "process.env.WEKNORA_INGEST_URL ?? ''"
+          WEKNORA_API_KEY: !!js "process.env.WEKNORA_API_KEY ?? ''"
+          WEKNORA_TENANT_ID: !!js "process.env.WEKNORA_TENANT_ID ?? ''"
+          WEKNORA_ALLOWED_HOSTS: !!js "process.env.WEKNORA_ALLOWED_HOSTS ?? ''"
+          WEKNORA_KNOWLEDGE_BASE_IDS: !!js "process.env.WEKNORA_KNOWLEDGE_BASE_IDS ?? ''"
+        cwd: !!js "process.env.DSH_CWD ?? process.cwd()"
+        toolCallTimeoutMs: 120000
+        failOnStartupError: false
+        reconnect:
+          enabled: false

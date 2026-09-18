@@ -2,24 +2,27 @@
   import { onMount } from "svelte";
   import {
     Archive, BookOpen, Bot, Check, ChevronDown, ChevronRight, CircleAlert,
-    CircleCheck, ClipboardList, Code2, Copy, ExternalLink, FileText, FolderOpen,
-    HardDrive, History, KeyRound, LoaderCircle, MessageSquare, MessageSquarePlus, Network,
+    CircleCheck, ClipboardList, Copy, ExternalLink, FileText, FolderOpen,
+    HardDrive, History, KeyRound, MessageSquare, MessageSquarePlus, Network,
     Pause, Pencil, Play, PanelLeftClose, PanelLeftOpen, Save, Search, Send,
-    Settings2, ShieldAlert, SlidersHorizontal, Square, Target, Terminal, Trash2, UserRoundCog,
-    Wrench, X, RefreshCw, PlugZap, GitBranch,
+    Settings2, ShieldAlert, SlidersHorizontal, Square, Target, Trash2, UserRoundCog,
+    X, RefreshCw, PlugZap, GitBranch, Blocks, Cable, Boxes, Globe, Languages, Database, RotateCcw,
   } from "@lucide/svelte";
   import { Button } from "$components/ui/button";
   import { Textarea } from "$components/ui/textarea";
-  import GeneratedSurface from "$components/GeneratedSurface.svelte";
+  import DshPromptComposer from "$components/DshPromptComposer.svelte";
+  import PendingInteractions from "$components/PendingInteractions.svelte";
   import SmbMounts from "$components/SmbMounts.svelte";
-  import ImageAttachments from "$components/ImageAttachments.svelte";
-  import PermissionSelector from "$components/PermissionSelector.svelte";
   import ProviderWorkbench from "$components/ProviderWorkbench.svelte";
   import WorkspaceBrowser from "$components/WorkspaceBrowser.svelte";
-  import ReferencePicker from "$components/ReferencePicker.svelte";
+  import PluginInventoryView from "$components/PluginInventoryView.svelte";
+  import McpInventoryView from "$components/McpInventoryView.svelte";
+  import { separatePluginsAndMcp } from "$lib/plugin-i18n";
+  import { t, getLocale, setLocale, toggleLocale, AVAILABLE_LOCALES, i18n } from "$lib/i18n";
   import { Input } from "$components/ui/input";
   import { Separator } from "$components/ui/separator";
   import { DataState, SettingsGroup, StatusBadge } from "@svadmin/ui";
+  import { Loader } from "@svadmin/ai-elements";
   import { setResources } from "@svadmin/core";
   import {
     DshClient, type AgentPreset, type ConfigurableProvider, type CredentialView,
@@ -27,7 +30,34 @@
     type PendingApproval, type PendingQuestion, type SessionSummary,
     type PromptContentPart, type SettingsNamespace, type SubagentEntry, type Workspace, type PluginInventoryEntry,
   } from "$lib/dsh-client";
-  import { assistantMessageForEvent, applyTranscriptEvent, foldHistory, type TodoItem, type TranscriptMessage } from "$lib/transcript";
+  import { assistantMessageForEvent, applyTranscriptEvent, foldHistory, hasMessageContent, type SessionEvent, type TodoItem, type TranscriptMessage } from "$lib/transcript";
+  import {
+    credentialRefHint,
+    credentialRefTitle,
+    enrichModelGroups,
+    isProviderCredentialOptional,
+    mergeDiscoveredModels,
+    modelCapabilityLabel,
+    modelSelectionKey,
+    modelSupportsImages,
+    parseModelSelectionKey,
+    providerCredentialRef,
+    resolveProviderSettings,
+    supportedReasoningEffort,
+  } from "$lib/model-catalog";
+  import { agentPresetLocked, clearsSessionError, sessionHealth, sessionHealthLabel, turnEndError, visibleSessions } from "$lib/session-health";
+  import { isCredentialSettingsError, shouldOfferCredentialSettingsAction, userFacingError } from "$lib/user-error";
+  import { buildKnowledgePrompt, knowledgeToolName, parseKnowledgeReport, stripKnowledgeReport, type KnowledgeIndexReport, type KnowledgeOperation } from "$lib/knowledge";
+  import { buildQuestionAnswers, questionsAnswered } from "$lib/ai-elements-adapter";
+  import {
+    clearPendingApproval,
+    clearPendingQuestion,
+    clearPendingSession,
+    setPendingApproval,
+    setPendingQuestion,
+    setQuestionAnswer,
+    type PendingInteractionsBySession,
+  } from "$lib/pending-interactions";
   import {
     applyUiCustomization,
     buildUiCustomizationPrompt,
@@ -45,29 +75,34 @@
   } from "$lib/surface-agent";
   import type { SurfaceSpec } from "@svadmin/surface";
   type View = "conversation" | "knowledge" | "settings";
-  type ManagementTab = "overview" | "sessions" | "goals" | "subagents" | "agents" | "models" | "workspaces" | "mounts" | "plugins" | "knowledge" | "settings" | "runtime";
+ type ManagementTab = "overview" | "sessions" | "goals" | "subagents" | "agents" | "models" | "workspaces" | "mounts" | "plugins" | "mcp" | "knowledge" | "settings" | "runtime";
 
-  let client = $state<DshClient>();
-  let productName = $state("西谷智灯暗涌平台");
-  let appVersion = $state("0.30.0");
-  let workspacePath = $state("");
+ let client = $state<DshClient>();
+  let customProductName = $state("");
+  const productName = $derived(customProductName || t("app.name"));
+  let appVersion = $state("0.31.36");
+ let workspacePath = $state("");
   let workspaces = $state<Workspace[]>([]);
   let sessions = $state<SessionSummary[]>([]);
   let archivedSessionIds = $state<string[]>([]);
   let activeSessionId = $state("");
+  let sessionSelectionRequest = 0;
+  let modelSelectionRequest = 0;
+  let historyLoad: { requestId: number; sessionId: string; frames: Array<{ event: SessionEvent; view?: Record<string, unknown> }> } | undefined;
   let messages = $state<TranscriptMessage[]>([]);
   let todos = $state<TodoItem[]>([]);
   let input = $state("");
-  let attachments = $state<Extract<PromptContentPart, { type: "image" }>[]>([]);
   let sessionQuery = $state("");
   let settingsQuery = $state("");
   let managementTab = $state<ManagementTab>("overview");
   let loading = $state(true);
   let sending = $state(false);
   let sidebarCollapsed = $state(false);
-  let activityOpen = $state(true);
+  let activityOpen = $state(false);
   let view = $state<View>("conversation");
   let runtimeError = $state("");
+  let runtimeConnectionError = $state("");
+  let sessionErrors = $state<Record<string, string>>({});
   let modelGroups = $state<ModelGroup[]>([]);
   let selectedModel = $state("");
   let reasoningEffort = $state("");
@@ -107,30 +142,153 @@
   let catalogFailures = $state<Array<{ id: string; name: string; message: string }>>([]);
   let hostInfo = $state<{ version: string; cwd: string; provider?: string; model?: string; attachedSessions: number; home: string; canOpenPath: boolean }>();
   let pluginInventory = $state<PluginInventoryEntry[]>([]);
+  const currentLocale = $derived(i18n.locale);
+  const pluginPartition = $derived(separatePluginsAndMcp(pluginInventory, currentLocale));
+  const purePlugins = $derived(pluginPartition.plugins);
+  const mcpInventoryEntries = $derived(pluginPartition.mcpEntries);
   let credentialRefs = $state<string[]>([]);
   let credentials = $state<Record<string, CredentialView>>({});
   let credentialRefDraft = $state("");
   let credentialValueDraft = $state("");
   let confirmingCredentialRef = $state("");
-  let pendingApproval = $state<PendingApproval | undefined>();
-  let pendingQuestion = $state<PendingQuestion | undefined>();
-  let questionAnswers = $state<Record<string, string>>({});
+  let unknownModelCapabilities = $state<Set<string>>(new Set());
+  let pendingInteractionsBySession = $state<PendingInteractionsBySession>({});
   let customization = $state<UiCustomizationState>(DEFAULT_UI_CUSTOMIZATION);
   let customizationOpen = $state(false);
+  let settingsViewMode = $state<"user" | "merged">("user");
   let customizationDraft = $state<UiCustomizationPatch | undefined>();
   let customizationSourceId = $state("");
   let customizationNotice = $state("");
   let customizationHistory = $state<UiCustomizationState[]>([]);
   let surfaceDraft = $state<{ summary?: string; spec: SurfaceSpec }>();
   let generatedSurface = $state<SurfaceSpec>();
+  type GeneratedSurfaceComponent = typeof import("$components/GeneratedSurface.svelte").default;
+  type ConversationTranscriptComponent = typeof import("$components/ConversationTranscript.svelte").default;
+  type ActivityPanelComponent = typeof import("$components/ActivityPanel.svelte").default;
+  let GeneratedSurface = $state<GeneratedSurfaceComponent>();
+  let generatedSurfaceImport = $state<Promise<void>>();
+  let generatedSurfaceLoadFailed = $state(false);
+  let ConversationTranscript = $state<ConversationTranscriptComponent>();
+  let conversationTranscriptImport = $state<Promise<void>>();
+  let ActivityPanel = $state<ActivityPanelComponent>();
+  let activityPanelImport = $state<Promise<void>>();
   let surfaceSourceId = $state("");
   let surfaceNotice = $state("");
   let surfaceHistory = $state<Array<SurfaceSpec | undefined>>([]);
+  let knowledgeIndex = $state<KnowledgeIndexReport & { state: "idle" | "building" | "ready" | "partial" | "failed" }>({ state: "idle", status: "failed", files: 0, chunks: 0, failures: [] });
+  let knowledgeOperation = $state<KnowledgeOperation | "">("");
   let unsubscribeRuntimeError: (() => void) | undefined;
+  let unsubscribeRuntimeReady: (() => void) | undefined;
+  let unsubscribeDshFrames: (() => void) | undefined;
+  let bootstrapInFlight = false;
+  let bootstrapQueued = false;
+  let startupPollingTimer: ReturnType<typeof setInterval> | undefined;
+  let startupTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  let responseTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  let activePrompt: {
+    sessionId: string;
+    pendingId: string;
+    text: string;
+    images: Extract<PromptContentPart, { type: "image" }>[];
+  } | undefined;
+  let lastFailedPrompt = $state<typeof activePrompt>();
 
-  const activeSession = $derived(sessions.find((item) => item.sessionId === activeSessionId));
-  const workspaceName = $derived(workspacePath.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "未选择工作区");
-  const filteredSessions = $derived.by(() => {
+  const RESPONSE_INACTIVITY_TIMEOUT_MS = 70_000;
+
+  function clearStartupTimers(): void {
+    if (startupPollingTimer) {
+      clearInterval(startupPollingTimer);
+      startupPollingTimer = undefined;
+    }
+    if (startupTimeoutTimer) {
+      clearTimeout(startupTimeoutTimer);
+      startupTimeoutTimer = undefined;
+    }
+  }
+
+  function armStartupTimers(): void {
+    clearStartupTimers();
+    startupTimeoutTimer = setTimeout(() => {
+      if (!client && !runtimeConnectionError) {
+        clearStartupTimers();
+        runtimeConnectionError = t("app.startupRetryTimeout");
+        runtimeError = runtimeConnectionError;
+        loading = false;
+      }
+    }, 70_000);
+
+    startupPollingTimer = setInterval(() => {
+      if (client || runtimeConnectionError) {
+        clearStartupTimers();
+        return;
+      }
+      void bootstrap();
+    }, 600);
+  }
+
+  function clearResponseTimeout(): void {
+    if (!responseTimeoutTimer) return;
+    clearTimeout(responseTimeoutTimer);
+    responseTimeoutTimer = undefined;
+  }
+
+  function providerAwareError(error: unknown): string {
+    const message = userFacingError(error);
+    if (message !== t("errors.authFailed")) return message;
+    const { provider } = parseModelSelectionKey(selectedModel);
+    const providerName = modelGroups.find((group) => group.id === provider)?.name || provider;
+    return providerName ? t("errors.providerAuthFailed", { provider: providerName }) : message;
+  }
+
+  function applyRuntimeConnectionError(error: unknown): void {
+    runtimeConnectionError = userFacingError(error);
+    runtimeError = runtimeConnectionError;
+  }
+
+  function setSessionRuntimeError(sessionId: string, error: unknown): string {
+    const message = providerAwareError(error);
+    sessionErrors = { ...sessionErrors, [sessionId]: message };
+    if (sessionId === activeSessionId) runtimeError = message;
+    return message;
+  }
+
+  function armResponseTimeout(prompt: NonNullable<typeof activePrompt>): void {
+    clearResponseTimeout();
+    activePrompt = prompt;
+    responseTimeoutTimer = setTimeout(() => {
+      if (activePrompt?.sessionId !== prompt.sessionId || activePrompt.pendingId !== prompt.pendingId) return;
+      responseTimeoutTimer = undefined;
+      sending = false;
+      lastFailedPrompt = prompt;
+      setSessionRuntimeError(prompt.sessionId, t("errors.requestTimeout"));
+      if (prompt.sessionId === activeSessionId) {
+        messages = messages.map((item) => item.id === prompt.pendingId ? { ...item, pending: false } : item);
+      }
+      activePrompt = undefined;
+    }, RESPONSE_INACTIVITY_TIMEOUT_MS);
+  }
+
+  function noteResponseActivity(sessionId: string): void {
+    if (activePrompt?.sessionId !== sessionId) return;
+    armResponseTimeout(activePrompt);
+  }
+
+  function finishResponse(sessionId: string, failed = false): void {
+    if (activePrompt?.sessionId !== sessionId) return;
+    if (failed) lastFailedPrompt = activePrompt;
+    clearResponseTimeout();
+    activePrompt = undefined;
+    if (!failed) lastFailedPrompt = undefined;
+  }
+
+ const activeSession = $derived(sessions.find((item) => item.sessionId === activeSessionId));
+  const activePendingInteractions = $derived(pendingInteractionsBySession[activeSessionId]);
+  const pendingApproval = $derived(activePendingInteractions?.approval);
+  const pendingQuestion = $derived(activePendingInteractions?.question);
+  const questionAnswers = $derived(activePendingInteractions?.answers ?? {});
+  const activeSessionHasError = $derived(activeSession ? sessionHealth(activeSession, !!sessionErrors[activeSession.sessionId]) === "error" : false);
+  const workspaceName = $derived(workspacePath.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || t("app.noWorkspaceSelected"));
+ const filteredSessions = $derived.by(() => {
     const query = sessionQuery.trim().toLowerCase();
     if (!query) return sessions;
     return sessions.filter((item) => sessionTitle(item).toLowerCase().includes(query) || (item.cwd || "").toLowerCase().includes(query));
@@ -163,32 +321,65 @@
     return workspaces.filter((item) => `${item.title} ${item.path}`.toLowerCase().includes(query));
   });
   const runningTools = $derived(messages.filter((item) => item.tool?.state === "running"));
-  const activityItems = $derived(messages.filter((item) => item.tool).slice(-12).reverse());
-  const completedTools = $derived(messages.filter((item) => item.tool && item.tool.state === "success").length);
-  const latestAssistant = $derived.by(() => {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      if (messages[index].role === "assistant") return messages[index];
-    }
-    return undefined;
+  const xgGatewayCredentialReady = $derived.by(() => {
+    const config = resolveProviderSettings(settingsNamespaces, providers, "xg-gomodel")?.config;
+    if (!config) return false;
+    const ref = config.apiKeyEnv;
+    return typeof ref !== "string" || !ref || !!credentials[ref]?.configured;
   });
+  const selectedProviderCredentialReady = $derived.by(() => {
+    const { provider } = parseModelSelectionKey(selectedModel);
+    return provider ? modelCredentialConfigured(provider) : true;
+  });
+  const builtinFallbackModel = $derived.by(() => {
+    const group = modelGroups.find((item) => item.id === "xg-gomodel");
+    return group?.models.find((item) => item.id === "vlm") || group?.models[0];
+  });
+  const canSwitchToBuiltinModel = $derived(
+    !!activeSessionId
+      && xgGatewayCredentialReady
+      && !!builtinFallbackModel
+      && parseModelSelectionKey(selectedModel).provider !== "xg-gomodel"
+      && isCredentialSettingsError(runtimeError),
+  );
+  const activeAgentPresetLocked = $derived(agentPresetLocked(activeSession, messages.length));
+ const latestAssistant = $derived.by(() => {
+   for (let index = messages.length - 1; index >= 0; index -= 1) {
+     if (messages[index].role === "assistant") return messages[index];
+   }
+   return undefined;
+ });
 
-  setResources([
-    { name: "sessions", label: "会话", fields: [{ key: "title", label: "标题", type: "text" }], showInMenu: true },
-    { name: "goals", label: "目标", fields: [{ key: "objective", label: "目标", type: "text" }], showInMenu: true },
-    { name: "subagents", label: "子 Agent", fields: [{ key: "label", label: "名称", type: "text" }], showInMenu: true },
-    { name: "agents", label: "Agent", fields: [{ key: "name", label: "名称", type: "text" }], showInMenu: true },
-    { name: "workspaces", label: "工作区", fields: [{ key: "path", label: "路径", type: "text" }], showInMenu: true },
-    { name: "models", label: "模型", fields: [{ key: "name", label: "名称", type: "text" }], showInMenu: true },
-    { name: "knowledge", label: "知识库", fields: [{ key: "name", label: "名称", type: "text" }], showInMenu: true },
-    { name: "settings", label: "设置", fields: [{ key: "ns", label: "命名空间", type: "text" }], showInMenu: true },
-  ]);
+  $effect(() => {
+    setResources([
+      { name: "sessions", label: t("nav.sessions"), fields: [{ key: "title", label: t("common.name"), type: "text" }], showInMenu: true },
+      { name: "goals", label: t("nav.goals"), fields: [{ key: "objective", label: t("goals.objective"), type: "text" }], showInMenu: true },
+      { name: "subagents", label: t("nav.subagents"), fields: [{ key: "label", label: t("common.name"), type: "text" }], showInMenu: true },
+      { name: "agents", label: t("nav.agents"), fields: [{ key: "name", label: t("common.name"), type: "text" }], showInMenu: true },
+      { name: "workspaces", label: t("nav.workspaces"), fields: [{ key: "path", label: t("common.path"), type: "text" }], showInMenu: true },
+      { name: "models", label: t("nav.models"), fields: [{ key: "name", label: t("common.name"), type: "text" }], showInMenu: true },
+      { name: "knowledge", label: t("nav.knowledge"), fields: [{ key: "name", label: t("common.name"), type: "text" }], showInMenu: true },
+      { name: "settings", label: t("nav.settings"), fields: [{ key: "ns", label: t("settings.namespacesTitle"), type: "text" }], showInMenu: true },
+    ]);
+  });
 
   onMount(() => {
     customization = readUiCustomization();
     generatedSurface = readGeneratedSurface();
+    if (generatedSurface) void ensureGeneratedSurfaceComponent();
+    void ensureConversationComponents();
     applyRuntimeCustomization(customization);
+    armStartupTimers();
+    unsubscribeRuntimeReady = window.voltDesktop?.onRuntimeReady(() => void bootstrap());
     void bootstrap();
-    return () => unsubscribeRuntimeError?.();
+    return () => {
+      clearStartupTimers();
+      clearResponseTimeout();
+      activePrompt = undefined;
+      unsubscribeRuntimeError?.();
+      unsubscribeRuntimeReady?.();
+      unsubscribeDshFrames?.();
+    };
   });
 
   function readUiCustomization(): UiCustomizationState {
@@ -225,6 +416,56 @@
     }
   }
 
+  async function ensureGeneratedSurfaceComponent(): Promise<void> {
+    if (GeneratedSurface) return;
+    if (generatedSurfaceImport) return generatedSurfaceImport;
+    generatedSurfaceLoadFailed = false;
+
+    generatedSurfaceImport = import("$components/GeneratedSurface.svelte")
+      .then((module) => {
+        GeneratedSurface = module.default;
+        generatedSurfaceLoadFailed = false;
+      })
+      .catch((error: unknown) => {
+        generatedSurfaceLoadFailed = true;
+        surfaceNotice = userFacingError(error);
+      })
+      .finally(() => {
+        generatedSurfaceImport = undefined;
+      });
+
+    return generatedSurfaceImport;
+  }
+
+  async function ensureConversationComponents(): Promise<void> {
+    const imports: Promise<void>[] = [];
+    if (!ConversationTranscript && !conversationTranscriptImport) {
+      conversationTranscriptImport = import("$components/ConversationTranscript.svelte")
+        .then((module) => {
+          ConversationTranscript = module.default;
+        })
+        .finally(() => {
+          conversationTranscriptImport = undefined;
+        });
+    }
+    if (!ActivityPanel && !activityPanelImport) {
+      activityPanelImport = import("$components/ActivityPanel.svelte")
+        .then((module) => {
+          ActivityPanel = module.default;
+        })
+        .finally(() => {
+          activityPanelImport = undefined;
+        });
+    }
+    if (conversationTranscriptImport) imports.push(conversationTranscriptImport);
+    if (activityPanelImport) imports.push(activityPanelImport);
+    try {
+      await Promise.all(imports);
+    } catch (error: unknown) {
+      runtimeError = userFacingError(error);
+    }
+  }
+
   function applyRuntimeCustomization(value: UiCustomizationState): void {
     sidebarCollapsed = value.sidebar === "collapsed";
     activityOpen = value.activity === "visible";
@@ -242,94 +483,179 @@
     persistUiCustomization(customization);
   }
 
-  function applyCustomizationPatch(patch: UiCustomizationPatch): void {
-    customizationHistory = [...customizationHistory.slice(-9), customization];
-    customization = applyUiCustomization(customization, patch);
-    persistUiCustomization(customization);
-    applyRuntimeCustomization(customization);
-    customizationDraft = undefined;
-    customizationNotice = "界面定制已应用，可继续用对话调整或撤销。";
-  }
+ function applyCustomizationPatch(patch: UiCustomizationPatch): void {
+   customizationHistory = [...customizationHistory.slice(-9), customization];
+   customization = applyUiCustomization(customization, patch);
+   persistUiCustomization(customization);
+   applyRuntimeCustomization(customization);
+   customizationDraft = undefined;
+    customizationNotice = t("customization.appliedNotice");
+ }
 
-  function undoCustomization(): void {
-    const previous = customizationHistory.at(-1);
-    if (!previous) return;
-    customizationHistory = customizationHistory.slice(0, -1);
-    customization = previous;
-    persistUiCustomization(customization);
-    applyRuntimeCustomization(customization);
-    customizationNotice = "已撤销上一次界面定制。";
-  }
+ function undoCustomization(): void {
+   const previous = customizationHistory.at(-1);
+   if (!previous) return;
+   customizationHistory = customizationHistory.slice(0, -1);
+   customization = previous;
+   persistUiCustomization(customization);
+   applyRuntimeCustomization(customization);
+    customizationNotice = t("customization.undoneNotice");
+ }
 
-  function captureCustomization(message: TranscriptMessage | undefined): void {
-    if (!message || message.role !== "assistant" || !message.text || message.id === customizationSourceId) return;
-    const result = parseUiCustomization(message.text);
-    if (!result.ok) return;
-    customizationDraft = result.value;
-    customizationSourceId = message.id;
-    customizationOpen = true;
-    customizationNotice = "检测到对话生成的界面方案，请确认后应用。";
-  }
+ function captureCustomization(message: TranscriptMessage | undefined): void {
+   if (!message || message.role !== "assistant" || !message.text || message.id === customizationSourceId) return;
+   const result = parseUiCustomization(message.text);
+   if (!result.ok) return;
+   customizationDraft = result.value;
+   customizationSourceId = message.id;
+   customizationOpen = true;
+    customizationNotice = t("customization.proposalNotice");
+ }
 
-  function captureSurfaceProposal(message: TranscriptMessage | undefined): void {
-    if (!message || message.role !== "assistant" || !message.text || message.id === surfaceSourceId) return;
-    const result = parseVoltSurfaceProposal(message.text);
-    if (!result.ok) return;
-    surfaceDraft = { summary: result.value.summary, spec: result.value.spec };
-    surfaceSourceId = message.id;
-    customizationOpen = true;
-    surfaceNotice = "检测到 AI 生成的操作界面，请预览并确认后渲染。";
-  }
+ function captureSurfaceProposal(message: TranscriptMessage | undefined): void {
+   if (!message || message.role !== "assistant" || !message.text || message.id === surfaceSourceId) return;
+   const result = parseVoltSurfaceProposal(message.text);
+   if (!result.ok) return;
+   surfaceDraft = { summary: result.value.summary, spec: result.value.spec };
+   surfaceSourceId = message.id;
+   customizationOpen = true;
+    surfaceNotice = t("surface.detectedNotice");
+ }
 
-  function applySurfaceProposal(): void {
-    if (!surfaceDraft) return;
-    surfaceHistory = [...surfaceHistory.slice(-9), generatedSurface];
-    generatedSurface = surfaceDraft.spec;
-    persistGeneratedSurface(generatedSurface);
-    surfaceDraft = undefined;
-    surfaceNotice = "操作界面已渲染；数据由官方 DSH 会话 API 提供。";
-  }
+ function applySurfaceProposal(): void {
+   if (!surfaceDraft) return;
+   void ensureGeneratedSurfaceComponent();
+   surfaceHistory = [...surfaceHistory.slice(-9), generatedSurface];
+   generatedSurface = surfaceDraft.spec;
+   persistGeneratedSurface(generatedSurface);
+   surfaceDraft = undefined;
+    surfaceNotice = t("surface.renderedNotice");
+ }
 
-  function removeGeneratedSurface(): void {
-    surfaceHistory = [...surfaceHistory.slice(-9), generatedSurface];
-    generatedSurface = undefined;
-    persistGeneratedSurface(undefined);
-    surfaceNotice = "已移除操作界面。";
-  }
+ function removeGeneratedSurface(): void {
+   surfaceHistory = [...surfaceHistory.slice(-9), generatedSurface];
+   generatedSurface = undefined;
+   persistGeneratedSurface(undefined);
+    surfaceNotice = t("surface.removedNotice");
+ }
 
-  function undoGeneratedSurface(): void {
-    if (surfaceHistory.length === 0) return;
-    generatedSurface = surfaceHistory.at(-1);
-    surfaceHistory = surfaceHistory.slice(0, -1);
-    persistGeneratedSurface(generatedSurface);
-    surfaceNotice = generatedSurface ? "已恢复上一个操作界面。" : "已撤销操作界面。";
-  }
+ function undoGeneratedSurface(): void {
+   if (surfaceHistory.length === 0) return;
+   const previous = surfaceHistory.at(-1);
+   if (previous) void ensureGeneratedSurfaceComponent();
+   generatedSurface = previous;
+   surfaceHistory = surfaceHistory.slice(0, -1);
+   persistGeneratedSurface(generatedSurface);
+    surfaceNotice = generatedSurface ? t("surface.restoredNotice") : t("surface.undoneNotice");
+ }
 
   async function bootstrap(): Promise<void> {
+    if (client) {
+      clearStartupTimers();
+      loading = false;
+      return;
+    }
+    if (bootstrapInFlight) {
+      bootstrapQueued = true;
+      return;
+    }
+    bootstrapInFlight = true;
     try {
       const shell = window.voltDesktop;
-      if (!shell) throw new Error("桌面桥接未加载");
+      if (!shell) throw new Error(t("smb.bridgeNotLoaded"));
       const info = await shell.bootstrap();
-      productName = info.productName;
+      if (info.productName) customProductName = info.productName;
       appVersion = info.version;
       workspacePath = info.workspace;
-      unsubscribeRuntimeError = shell.onRuntimeError((message) => { runtimeError = message; sending = false; });
-      if (info.startupError || !info.dshReady) { runtimeError = info.startupError || "DSH runtime 未提供连接地址"; return; }
+      unsubscribeRuntimeError?.();
+      unsubscribeRuntimeError = shell.onRuntimeError((message) => {
+        applyRuntimeConnectionError(message);
+        sending = false;
+        if (message) {
+          sessionSelectionRequest += 1;
+          historyLoad = undefined;
+          unsubscribeDshFrames?.();
+          unsubscribeDshFrames = undefined;
+          client = undefined;
+          clearStartupTimers();
+          loading = false;
+        }
+      });
+      if (!info.dshReady && !info.startupError) return;
+      if (info.startupError || !info.dshReady) {
+        clearStartupTimers();
+        applyRuntimeConnectionError(info.startupError || t("runtime.noAddressProvided"));
+        return;
+      }
+      clearStartupTimers();
+      runtimeConnectionError = "";
+      runtimeError = "";
+      unsubscribeDshFrames?.();
       client = new DshClient(shell);
-      client.subscribe(handleFrame, (error) => { runtimeError = error.message; });
+      unsubscribeDshFrames = client.subscribe(handleFrame, (error) => {
+        applyRuntimeConnectionError(error);
+      });
       await refresh();
     } catch (error) {
-      runtimeError = error instanceof Error ? error.message : String(error);
-    } finally { loading = false; }
+      clearStartupTimers();
+      applyRuntimeConnectionError(error);
+    } finally {
+      loading = !client && !runtimeConnectionError;
+      bootstrapInFlight = false;
+      if (bootstrapQueued) {
+        bootstrapQueued = false;
+        void bootstrap();
+      }
+    }
+  }
+
+  async function retryRuntime(): Promise<void> {
+    const shell = window.voltDesktop;
+    if (!shell || bootstrapInFlight) return;
+    loading = true;
+    runtimeConnectionError = "";
+    runtimeError = "";
+    unsubscribeDshFrames?.();
+    unsubscribeDshFrames = undefined;
+    client = undefined;
+    armStartupTimers();
+    try {
+      await withTimeout(shell.retryRuntime(), 70_000, t("app.startupRetryTimeout"));
+      await bootstrap();
+    } catch (error) {
+      clearStartupTimers();
+      applyRuntimeConnectionError(error);
+      loading = false;
+    }
+  }
+
+  async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   }
 
   async function refresh(): Promise<void> {
     if (!client) return;
-    const [workspaceResult, sessionResult] = await Promise.all([client.listWorkspaces(), client.listSessions()]);
-    workspaces = workspaceResult.items;
-    archivedSessionIds = workspaceResult.archivedSessionIds;
-    sessions = sessionResult.items.filter((item) => !item.blank && !archivedSessionIds.includes(item.sessionId));
-    if (!activeSessionId && sessions[0]) await selectSession(sessions[0].sessionId);
+    try {
+      const [workspaceResult, sessionResult] = await Promise.all([client.listWorkspaces(), client.listSessions()]);
+      workspaces = workspaceResult.items;
+      archivedSessionIds = workspaceResult.archivedSessionIds;
+      sessions = visibleSessions(sessionResult.items, archivedSessionIds, activeSessionId);
+      if (activeSessionId && !sessions.some((item) => item.sessionId === activeSessionId)) activeSessionId = sessions[0]?.sessionId || "";
+      if (!activeSessionId && sessions[0]) await selectSession(sessions[0].sessionId);
+    } catch (error) {
+      runtimeError = userFacingError(error);
+      runtimeConnectionError = runtimeError;
+    }
   }
 
   async function refreshManagement(): Promise<void> {
@@ -347,6 +673,7 @@
     settingsWritable = settingsResult.writable;
     settingsHasDocument = settingsResult.hasDocument;
     settingsNamespaces = settingsResult.namespaces;
+    modelGroups = enrichModelGroups(modelGroups, settingsNamespaces);
     if (!selectedSettingsNs || !settingsNamespaces.some((item) => item.ns === selectedSettingsNs)) {
       selectedSettingsNs = settingsNamespaces[0]?.ns || "";
       settingsDraft = JSON.stringify(settingsNamespaces[0]?.user || {}, null, 2);
@@ -371,31 +698,91 @@
 
   async function createSession(cwd = workspacePath): Promise<void> {
     if (!client) return;
-    const created = await client.createSession(cwd);
-    await refresh();
-    await selectSession(created.sessionId);
+    try {
+      const created = await client.createSession(cwd);
+      activeSessionId = created.sessionId;
+      await refresh();
+      await selectSession(created.sessionId);
+    } catch (error) {
+      runtimeError = userFacingError(error);
+      runtimeConnectionError = runtimeError;
+    }
   }
 
   async function selectSession(sessionId: string): Promise<void> {
     if (!client) return;
+    const requestId = ++sessionSelectionRequest;
+    modelSelectionRequest += 1;
     activeSessionId = sessionId;
+    clearResponseTimeout();
+    activePrompt = undefined;
+    lastFailedPrompt = undefined;
     view = "conversation";
-    pendingApproval = undefined;
-    pendingQuestion = undefined;
-    const result = await client.history(sessionId);
-    const transcript = foldHistory(result.events);
-    messages = transcript.messages;
-    todos = transcript.todos;
-    const modelResult = await client.models(sessionId);
-    modelGroups = modelResult.groups;
-    selectedModel = `${modelResult.current.provider}/${modelResult.current.model}`;
-    reasoningEffort = modelResult.current.reasoningEffort || "";
+    sending = false;
+    messages = [];
+    todos = [];
+    selectedModel = "";
+    reasoningEffort = "";
+    modelBusy = false;
+    runtimeError = "";
+    historyLoad = { requestId, sessionId, frames: [] };
+    try {
+      const [result, settingsResult, providerResult] = await Promise.all([
+        client.history(sessionId),
+        client.describeSettings().catch(() => ({ writable: false, hasDocument: false, namespaces: [] })),
+        client.listProviders().catch(() => ({ providers: [] })),
+      ]);
+      if (requestId !== sessionSelectionRequest || activeSessionId !== sessionId) return;
+      if (result.projections) {
+        sessions = sessions.map((session) => session.sessionId === sessionId
+          ? { ...session, projections: result.projections }
+          : session);
+      }
+      const bufferedFrames = historyLoad?.requestId === requestId ? historyLoad.frames : [];
+      if (historyLoad?.requestId === requestId) historyLoad = undefined;
+      let transcript = foldHistory(result.events);
+      for (const frame of bufferedFrames) transcript = applyTranscriptEvent(transcript, frame.event, frame.view);
+      messages = transcript.messages;
+      todos = transcript.todos;
+      settingsWritable = settingsResult.writable;
+      settingsHasDocument = settingsResult.hasDocument;
+      settingsNamespaces = settingsResult.namespaces;
+      providers = providerResult.providers;
+      credentialRefs = collectCredentialRefs(settingsNamespaces);
+      credentials = credentialRefs.length
+        ? (await client.describeCredentials(credentialRefs).catch(() => ({ credentials: {} }))).credentials
+        : {};
+      if (requestId !== sessionSelectionRequest || activeSessionId !== sessionId) return;
+      const modelResult = await client.models(sessionId);
+      if (requestId !== sessionSelectionRequest || activeSessionId !== sessionId) return;
+      modelGroups = enrichModelGroups(modelResult.groups, settingsNamespaces);
+      selectedModel = modelSelectionKey(modelResult.current.provider, modelResult.current.model);
+      const currentInfo = modelResult.groups.find((group) => group.id === modelResult.current.provider)?.models.find((model) => model.id === modelResult.current.model);
+      reasoningEffort = currentInfo?.reasoning?.efforts.some((effort) => effort.id === modelResult.current.reasoningEffort) ? (modelResult.current.reasoningEffort || "") : "";
+      if (modelResult.current.reasoningEffort && !reasoningEffort) { try { await client.selectModel(sessionId, modelResult.current.provider, modelResult.current.model); } catch { /* clear incompatible parameters */ } }
+      if (!modelCredentialConfigured(modelResult.current.provider)) {
+        runtimeError = t("errors.noApiKey");
+        sessionErrors = { ...sessionErrors, [sessionId]: runtimeError };
+      } else {
+        clearCredentialRequirementError(sessionId);
+      }
+    } catch (error) {
+      if (requestId !== sessionSelectionRequest || activeSessionId !== sessionId) return;
+      const bufferedFrames = historyLoad?.requestId === requestId ? historyLoad.frames : [];
+      if (historyLoad?.requestId === requestId) historyLoad = undefined;
+      let transcript = { messages, todos };
+      for (const frame of bufferedFrames) transcript = applyTranscriptEvent(transcript, frame.event, frame.view);
+      messages = transcript.messages;
+      todos = transcript.todos;
+      runtimeError = userFacingError(error);
+      sessionErrors = { ...sessionErrors, [sessionId]: runtimeError };
+    }
   }
 
-  function sessionTitle(session: SessionSummary): string {
-    const title = session.projections?.values?.title;
-    return typeof title === "string" && title.trim() ? title : (session.cwd || "新会话").split(/[\\/]/).pop() || "新会话";
-  }
+ function sessionTitle(session: SessionSummary): string {
+   const title = session.projections?.values?.title;
+    return typeof title === "string" && title.trim() ? title : (session.cwd || t("session.untitled")).split(/[\\/]/).pop() || t("session.untitled");
+ }
 
   function goalProjection(session: SessionSummary | undefined): GoalProjection | undefined {
     const value = session?.projections?.values?.goal;
@@ -420,61 +807,299 @@
     return refs.sort();
   }
 
+  function selectedModelInfo(): ModelGroup["models"][number] | undefined {
+    const { provider, model } = parseModelSelectionKey(selectedModel);
+    return modelGroups.find((group) => group.id === provider)?.models.find((item) => item.id === model);
+  }
+
+  function selectedProviderCredentialRef(): string | undefined {
+    const { provider } = parseModelSelectionKey(selectedModel);
+    return providerCredentialRef(settingsNamespaces, providers, provider);
+  }
+
+  function modelCredentialConfigured(provider: string): boolean {
+    if (isProviderCredentialOptional(settingsNamespaces, providers, provider)) return true;
+    const ref = providerCredentialRef(settingsNamespaces, providers, provider);
+    return !ref || !!credentials[ref]?.configured;
+  }
+
+  function pickCredentialQuickChip(ref: string): void {
+    credentialRefDraft = ref;
+    setTimeout(() => {
+      const input = document.querySelector<HTMLInputElement>('.credential-form input[type="password"]');
+      input?.focus();
+    }, 50);
+  }
+
+  function openCredentialSettings(ref?: string): void {
+    if (ref) credentialRefDraft = ref;
+    view = "settings";
+    managementTab = "settings";
+    void refreshManagement();
+    setTimeout(() => {
+      const input = document.querySelector<HTMLInputElement>('.credential-form input[type="password"]');
+      input?.focus();
+    }, 100);
+  }
+
+  async function xgProviderSettings() {
+    let providerSettings = resolveProviderSettings(settingsNamespaces, providers, "xg-gomodel");
+    if (providerSettings || !client) return providerSettings;
+    const [described, providerResult] = await Promise.all([client.describeSettings(), client.listProviders()]);
+    settingsNamespaces = described.namespaces;
+    providers = providerResult.providers;
+    return resolveProviderSettings(settingsNamespaces, providers, "xg-gomodel");
+  }
+
+  async function requireConfiguredCredential(config: Record<string, unknown>): Promise<void> {
+    const ref = typeof config.apiKeyEnv === "string" ? config.apiKeyEnv : "";
+    if (!ref || !client) return;
+    const described = await client.describeCredentials([ref]);
+    credentials = { ...credentials, ...described.credentials };
+    if (described.credentials[ref]?.configured) return;
+    credentialRefDraft = ref;
+    throw new Error(t("models.requireKeyNotice", { ref }));
+  }
+
+  async function applyXgModels(namespace: SettingsNamespace, models: Record<string, unknown>[]): Promise<void> {
+    if (!client) return;
+    const updated = await client.updateSettings(namespace.ns, { providers: { "xg-gomodel": { models } } }, namespace.revision);
+    settingsNamespaces = settingsNamespaces.map((item) => item.ns === updated.ns ? updated : item);
+    const sessionId = activeSessionId;
+    if (sessionId) {
+      const sessionModels = await client.models(sessionId);
+      if (activeSessionId === sessionId) {
+        modelGroups = enrichModelGroups(sessionModels.groups, settingsNamespaces);
+        selectedModel = modelSelectionKey(sessionModels.current.provider, sessionModels.current.model);
+      }
+    }
+    catalogGroups = (await client.listModelCatalog()).groups;
+  }
+
   function handleFrame(frame: DshFrame): void {
     const payload = frame.payload;
-    if (payload.type === "approval/requested") { pendingApproval = { rpcId: frame.rpcId, ...payload } as unknown as PendingApproval; sending = false; return; }
-    if (payload.type === "question/requested") { pendingQuestion = { rpcId: frame.rpcId, ...payload } as unknown as PendingQuestion; sending = false; return; }
-    if (payload.type === "approval/resolved" || payload.type === "question/resolved") { pendingApproval = undefined; pendingQuestion = undefined; return; }
+    if (payload.type === "approval/requested") {
+      if (typeof payload.sessionId !== "string" || !payload.sessionId) return;
+      const approval = { rpcId: frame.rpcId, ...payload } as unknown as PendingApproval;
+      pendingInteractionsBySession = setPendingApproval(pendingInteractionsBySession, payload.sessionId, approval);
+      finishResponse(payload.sessionId);
+      if (payload.sessionId === activeSessionId) sending = false;
+      return;
+    }
+    if (payload.type === "question/requested") {
+      if (typeof payload.sessionId !== "string" || !payload.sessionId) return;
+      const question = { rpcId: frame.rpcId, ...payload } as unknown as PendingQuestion;
+      pendingInteractionsBySession = setPendingQuestion(pendingInteractionsBySession, payload.sessionId, question);
+      finishResponse(payload.sessionId);
+      if (payload.sessionId === activeSessionId) sending = false;
+      return;
+    }
+    if (payload.type === "approval/resolved") {
+      if (typeof payload.sessionId !== "string" || !payload.sessionId) return;
+      pendingInteractionsBySession = clearPendingApproval(pendingInteractionsBySession, payload.sessionId, frame.rpcId);
+      return;
+    }
+    if (payload.type === "question/resolved") {
+      if (typeof payload.sessionId !== "string" || !payload.sessionId) return;
+      pendingInteractionsBySession = clearPendingQuestion(pendingInteractionsBySession, payload.sessionId, frame.rpcId);
+      return;
+    }
     if (payload.type === "session/queue") return;
     if (payload.type === "session/jobs") return;
     if (payload.type === "session/projection") { void refresh(); return; }
     if (payload.type === "host/session-added" || payload.type === "host/session-status" || payload.type === "host/session-removed" || payload.type === "host/workspace-changed" || payload.type === "host/workspace-removed") { void refresh(); return; }
-    if (payload.type === "host/agent-error") { runtimeError = payload.message || "DSH agent 运行失败"; sending = false; return; }
+    if (payload.type === "host/agent-error") {
+      const sessionId = payload.sessionId || activeSessionId;
+      const message = sessionId
+        ? setSessionRuntimeError(sessionId, payload.message || t("errors.agentFailed"))
+        : providerAwareError(payload.message || t("errors.agentFailed"));
+      if (sessionId) finishResponse(sessionId, true);
+      if (sessionId !== activeSessionId) return;
+      sending = false;
+      messages = messages.map((item) => item.pending ? { ...item, pending: false } : item);
+      return;
+    }
     if (payload.type !== "session/event" || payload.sessionId !== activeSessionId || !payload.event) return;
+    noteResponseActivity(payload.sessionId);
+    if (historyLoad?.sessionId === payload.sessionId) {
+      historyLoad.frames.push({ event: payload.event, view: payload.view as Record<string, unknown> | undefined });
+      return;
+    }
     const transcript = applyTranscriptEvent({ messages, todos }, payload.event, payload.view as Record<string, unknown> | undefined);
     messages = transcript.messages;
     todos = transcript.todos;
+    if (payload.event.type === "tool/call" && knowledgeToolName(String(payload.event.data.name || "")) && knowledgeOperation) {
+      knowledgeIndex = { ...knowledgeIndex, state: "building" };
+    }
+    if (payload.event.type === "tool/result") {
+      const toolError = payload.event.data.error;
+      const toolErrorCode = toolError && typeof toolError === "object" ? String((toolError as Record<string, unknown>).code || "") : "";
+      const toolErrorMessage = toolError && typeof toolError === "object" ? String((toolError as Record<string, unknown>).message || "") : "";
+      if (toolErrorCode.startsWith("WEB_PROVIDER_") || toolErrorMessage.toLowerCase().includes("api key")) {
+        runtimeError = userFacingError(toolErrorMessage || transcript.messages.at(-1)?.tool?.result || toolErrorCode);
+      }
+    }
+    if (payload.event.type === "assistant/chunk" || payload.event.type === "assistant/message" || payload.event.type === "tool/call") {
+      clearCredentialRequirementError(activeSessionId);
+    }
     if (payload.event.type === "assistant/message") {
       const assistantMessage = assistantMessageForEvent(transcript.messages, payload.event);
       captureCustomization(assistantMessage);
       captureSurfaceProposal(assistantMessage);
+      const report = parseKnowledgeReport(assistantMessage?.text || "");
+      if (report) {
+        knowledgeIndex = { ...knowledgeIndex, ...report, state: report.status };
+        knowledgeOperation = "";
+        if (assistantMessage) assistantMessage.text = stripKnowledgeReport(assistantMessage.text);
+      }
     }
-    if (payload.event.type === "assistant/message" || payload.event.type === "turn/end") sending = false;
+    if (payload.event.type === "tool/result" && payload.event.data.error && knowledgeOperation) {
+      const errorText = userFacingError(payload.event.data.error);
+      knowledgeIndex = { ...knowledgeIndex, state: "failed", failures: [errorText] };
+      knowledgeOperation = "";
+    }
+    if (payload.event.type === "assistant/message" || payload.event.type === "turn/end") {
+      sending = false;
+      if (payload.event.type === "turn/end") {
+        messages = messages.map((item) => item.pending ? { ...item, pending: false } : item).filter(hasMessageContent);
+        if (knowledgeOperation) {
+          knowledgeIndex = { ...knowledgeIndex, state: "partial", failures: [t("knowledge.reportMissing")] };
+          knowledgeOperation = "";
+        }
+        const endError = turnEndError(payload.event);
+        if (endError) {
+          finishResponse(payload.sessionId, true);
+          setSessionRuntimeError(activeSessionId, endError);
+        } else if (clearsSessionError(payload.event) && sessionErrors[activeSessionId]) {
+          finishResponse(payload.sessionId);
+          const clearedMessage = sessionErrors[activeSessionId];
+          const { [activeSessionId]: _cleared, ...remaining } = sessionErrors;
+          sessionErrors = remaining;
+          if (runtimeError === clearedMessage) runtimeError = "";
+        } else {
+          finishResponse(payload.sessionId);
+        }
+      } else {
+        finishResponse(payload.sessionId);
+      }
+    }
   }
 
-  async function submit(): Promise<void> {
-    const text = input.trim();
-    if (!client || !activeSessionId || (!text && attachments.length === 0) || sending) return;
-    input = ""; sending = true; view = "conversation";
-    messages = [...messages, { id: `pending-${Date.now()}`, role: "user", text, pending: true }];
+  async function submit(textOverride?: string, imageAttachments: Extract<PromptContentPart, { type: "image" }>[] = []): Promise<void> {
+    const text = (textOverride ?? input).trim();
+    if (!client || !activeSessionId || (!text && imageAttachments.length === 0) || sending) return;
+    const credentialRef = selectedProviderCredentialRef();
+    const currentProvider = parseModelSelectionKey(selectedModel).provider;
+    if (credentialRef && !modelCredentialConfigured(currentProvider) && !credentials[credentialRef]?.configured) {
+      credentialRefDraft = credentialRef;
+      runtimeError = t("models.missingApiKeyRuntime", { credentialRef });
+      sessionErrors = { ...sessionErrors, [activeSessionId]: runtimeError };
+      openCredentialSettings(credentialRef);
+      if (textOverride !== undefined) throw new Error(runtimeError);
+      return;
+    }
+    if (imageAttachments.length > 0 && !(selectedModelInfo()?.input || []).includes("image")) {
+      runtimeError = t("models.unsupportedImage", { model: selectedModel || t("common.unselected") });
+      throw new Error(runtimeError);
+    }
+    input = "";
+    sending = true; view = "conversation";
+    const pendingId = `pending-${Date.now()}`;
+    const failedPrompt = {
+      sessionId: activeSessionId,
+      pendingId,
+      text,
+      images: imageAttachments.map((image) => ({ ...image })),
+    };
+    armResponseTimeout(failedPrompt);
+    messages = [...messages, { id: pendingId, role: "user", text, pending: true }];
     const prompt = isSurfaceGenerationIntent(text)
       ? buildVoltSurfacePrompt(text)
       : isUiCustomizationIntent(text)
         ? buildUiCustomizationPrompt(text)
         : text;
     try {
-      const content: PromptContentPart[] = [...(prompt ? [{ type: "text", text: prompt } satisfies PromptContentPart] : []), ...attachments];
+      const content: PromptContentPart[] = [...(prompt ? [{ type: "text", text: prompt } satisfies PromptContentPart] : []), ...imageAttachments];
       await client.prompt(activeSessionId, content);
-      attachments = [];
     }
-    catch (error) { sending = false; runtimeError = error instanceof Error ? error.message : String(error); }
+    catch (error) {
+      clearResponseTimeout();
+      activePrompt = undefined;
+      sending = false;
+      input = text;
+      messages = messages.map((message) => message.id === pendingId ? { ...message, pending: false } : message);
+      lastFailedPrompt = failedPrompt;
+      const message = setSessionRuntimeError(activeSessionId, error);
+      if (isCredentialSettingsError(message)) openCredentialSettings(selectedProviderCredentialRef());
+      if (textOverride !== undefined) throw error;
+    }
+  }
+
+  async function retryLastPrompt(): Promise<void> {
+    const failed = lastFailedPrompt;
+    if (!failed || failed.sessionId !== activeSessionId || sending) return;
+    lastFailedPrompt = undefined;
+    runtimeError = "";
+    const { [failed.sessionId]: _cleared, ...remaining } = sessionErrors;
+    sessionErrors = remaining;
+    messages = messages.filter((message) => message.id !== failed.pendingId);
+    input = failed.text;
+    await submit(undefined, failed.images);
   }
 
   async function cancel(): Promise<void> {
     if (!client || !activeSessionId) return;
-    try { await client.cancel(activeSessionId); } finally { sending = false; }
+    try {
+      await client.cancel(activeSessionId);
+    } finally {
+      clearResponseTimeout();
+      activePrompt = undefined;
+      lastFailedPrompt = undefined;
+      sending = false;
+      messages = messages.map((item) => (item.pending ? { ...item, pending: false } : item)).filter(hasMessageContent);
+    }
   }
 
   async function chooseModel(provider: string, model: string): Promise<void> {
     if (!client || !activeSessionId || modelBusy) return;
+    const sessionId = activeSessionId;
+    const requestId = ++modelSelectionRequest;
     modelBusy = true;
     try {
-      const result = await client.selectModel(activeSessionId, provider, model, reasoningEffort || undefined);
-      selectedModel = `${result.selected.provider}/${result.selected.model}`;
+      const validEffort = supportedReasoningEffort(modelGroups, provider, model, reasoningEffort);
+      let result;
+      try {
+        result = await client.selectModel(sessionId, provider, model, validEffort);
+      } catch (e) {
+        const msg = String(e || "").toLowerCase();
+        if (msg.includes("reasoning effort") || msg.includes("does not support reasoning")) {
+          result = await client.selectModel(sessionId, provider, model);
+        } else throw e;
+      }
+      if (requestId !== modelSelectionRequest || activeSessionId !== sessionId) return;
+      selectedModel = modelSelectionKey(result.selected.provider, result.selected.model);
       reasoningEffort = result.selected.reasoningEffort || "";
-    } catch (error) { runtimeError = error instanceof Error ? error.message : String(error); }
-    finally { modelBusy = false; }
+      if (modelCredentialConfigured(provider)) {
+        clearCredentialRequirementError(sessionId);
+      }
+    } catch (error) {
+      const message = userFacingError(error);
+      sessionErrors = { ...sessionErrors, [sessionId]: message };
+      if (requestId === modelSelectionRequest && activeSessionId === sessionId) runtimeError = message;
+    }
+    finally { if (requestId === modelSelectionRequest) modelBusy = false; }
   }
+
+  async function switchToBuiltinModel(): Promise<void> {
+    if (!builtinFallbackModel || !activeSessionId || modelBusy) return;
+    await chooseModel("xg-gomodel", builtinFallbackModel.id);
+    if (selectedModel === modelSelectionKey("xg-gomodel", builtinFallbackModel.id)) {
+      runtimeError = "";
+      const { [activeSessionId]: _cleared, ...remaining } = sessionErrors;
+      sessionErrors = remaining;
+    }
+  }
+
 
   async function pickWorkspace(): Promise<void> {
     const selected = await window.voltDesktop?.pickWorkspace();
@@ -483,14 +1108,18 @@
     await createSession(selected);
   }
 
-  async function performManagementAction(key: string, action: () => Promise<void>): Promise<void> {
-    if (managementBusy) return;
+  async function performManagementAction(key: string, action: () => Promise<void>): Promise<boolean> {
+    if (managementBusy) return false;
     managementBusy = key;
     managementError = "";
     managementNotice = "";
-    try { await action(); }
-    catch (error) { managementError = error instanceof Error ? error.message : String(error); }
-    finally { managementBusy = ""; }
+    try {
+      await action();
+      return true;
+    } catch (error) {
+      managementError = userFacingError(error);
+      return false;
+    } finally { managementBusy = ""; }
   }
 
   function beginSessionRename(session: SessionSummary): void {
@@ -500,104 +1129,111 @@
 
   async function saveSessionRename(sessionId: string): Promise<void> {
     const title = sessionTitleDraft.trim();
-    if (!client || !title) return;
-    await performManagementAction(`session-rename:${sessionId}`, async () => {
-      await client!.rename(sessionId, title);
-      editingSessionId = "";
-      await refresh();
-      managementNotice = "会话名称已更新";
-    });
-  }
+   if (!client || !title) return;
+   await performManagementAction(`session-rename:${sessionId}`, async () => {
+     await client!.rename(sessionId, title);
+     editingSessionId = "";
+     await refresh();
+      managementNotice = t("session.renamedNotice");
+   });
+ }
 
-  async function duplicateSession(sessionId: string): Promise<void> {
-    if (!client) return;
-    await performManagementAction(`session-fork:${sessionId}`, async () => {
-      const created = await client!.fork(sessionId);
-      await refresh();
-      await selectSession(created.sessionId);
-    });
-  }
+ async function duplicateSession(sessionId: string): Promise<void> {
+   if (!client) return;
+   await performManagementAction(`session-fork:${sessionId}`, async () => {
+     const created = await client!.fork(sessionId);
+     const source = sessions.find((item) => item.sessionId === sessionId);
+      await client!.rename(created.sessionId, `${source ? sessionTitle(source) : t("nav.sessions")}${t("session.copySuffix")}`);
+     await refresh();
+     await selectSession(created.sessionId);
+      managementNotice = t("session.duplicatedNotice");
+   });
+ }
 
-  async function forkSessionAtSeq(seq: number): Promise<void> {
-    if (!client || !activeSessionId) return;
-    await performManagementAction(`session-fork:${activeSessionId}:${seq}`, async () => {
-      const created = await client!.fork(activeSessionId, seq);
-      await refresh();
-      await selectSession(created.sessionId);
-      managementNotice = `已从事件 #${seq} 创建分支会话`;
-    });
-  }
+ async function forkSessionAtSeq(seq: number): Promise<void> {
+   if (!client || !activeSessionId) return;
+   await performManagementAction(`session-fork:${activeSessionId}:${seq}`, async () => {
+     const created = await client!.fork(activeSessionId, seq);
+     await refresh();
+     await selectSession(created.sessionId);
+      managementNotice = t("checkpoints.forkSuccess", { seq });
+   });
+ }
 
-  async function archiveManagedSession(sessionId: string): Promise<void> {
-    if (!client) return;
-    await performManagementAction(`session-archive:${sessionId}`, async () => {
-      const wasActive = activeSessionId === sessionId;
-      await client!.archiveSession(sessionId);
-      await refresh();
-      if (wasActive) {
-        activeSessionId = "";
-        messages = [];
-        todos = [];
-      }
-      managementNotice = "会话已归档";
-    });
-  }
+ async function archiveManagedSession(sessionId: string): Promise<void> {
+   if (!client) return;
+   await performManagementAction(`session-archive:${sessionId}`, async () => {
+     const wasActive = activeSessionId === sessionId;
+     if (wasActive) {
+       activeSessionId = "";
+       messages = [];
+       todos = [];
+     }
+     pendingInteractionsBySession = clearPendingSession(pendingInteractionsBySession, sessionId);
+     await client!.archiveSession(sessionId);
+     await refresh();
+      managementNotice = t("session.archiveSuccess");
+   });
+ }
 
-  async function exportSession(sessionId: string): Promise<void> {
-    const api = window.voltDesktop;
-    if (!api) return;
-    await performManagementAction(`session-export:${sessionId}`, async () => {
-      const result = await api.exportSession(sessionId);
-      managementNotice = result.saved ? `会话已导出到 ${result.path}` : "已取消会话导出";
-    });
-  }
+ async function exportSession(sessionId: string): Promise<void> {
+   const api = window.voltDesktop;
+   if (!api) return;
+   await performManagementAction(`session-export:${sessionId}`, async () => {
+     const result = await api.exportSession(sessionId);
+      managementNotice = result.saved ? t("session.exportedNotice", { path: result.path }) : t("session.exportCancelled");
+   });
+ }
 
-  async function previewAgentPreset(agentPreset: string): Promise<void> {
-    if (!client) return;
-    await performManagementAction(`agent-read:${agentPreset}`, async () => {
-      const result = await client!.readAgentPreset(agentPreset);
-      agentPreview = { id: result.agentPreset, content: result.content };
-    });
-  }
+ async function previewAgentPreset(agentPreset: string): Promise<void> {
+   if (!client) return;
+   await performManagementAction(`agent-read:${agentPreset}`, async () => {
+     const result = await client!.readAgentPreset(agentPreset);
+     agentPreview = { id: result.agentPreset, content: result.content };
+   });
+ }
 
-  async function chooseAgentPreset(agentPreset: string): Promise<void> {
-    if (!client || !activeSessionId) return;
-    await performManagementAction(`agent-select:${agentPreset}`, async () => {
-      await client!.selectAgentPreset(activeSessionId, agentPreset);
-      await refresh();
-      managementNotice = "当前会话的 Agent 预设已更新";
-    });
-  }
+ async function chooseAgentPreset(agentPreset: string): Promise<void> {
+   if (!client || !activeSessionId) return;
+   await performManagementAction(`agent-select:${agentPreset}`, async () => {
+     if (activeAgentPresetLocked) throw new Error(t("errors.presetFixed"));
+     await client!.selectAgentPreset(activeSessionId, agentPreset);
+     await refresh();
+      managementNotice = t("agents.appliedNotice");
+   });
+ }
 
-  async function openAgentPresetDocument(agentPreset: string): Promise<void> {
-    if (!client) return;
-    await performManagementAction(`agent-open:${agentPreset}`, async () => {
-      const result = await client!.openAgentPresetDocument(agentPreset);
-      managementNotice = result.opened ? "已打开 Agent 配置文件" : `配置文件位于 ${result.path}`;
-    });
-  }
+ async function openAgentPresetDocument(agentPreset: string): Promise<void> {
+   if (!client) return;
+   await performManagementAction(`agent-open:${agentPreset}`, async () => {
+     const preset = agentPresets.find((item) => item.id === agentPreset);
+     if (preset?.trust === "system") throw new Error(t("agents.readonlyPreset"));
+     const result = await client!.openAgentPresetDocument(agentPreset);
+      managementNotice = result.opened ? t("agents.openedNotice") : t("agents.pathNotice", { path: result.path });
+   });
+ }
 
-  async function copyAgentPreset(agentPreset: AgentPreset): Promise<void> {
-    if (!client || agentPreset.trust !== "user") return;
-    const name = copyAgentNameDraft.trim();
-    await performManagementAction(`agent-copy:${agentPreset.id}`, async () => {
-      await client!.copyAgentPreset("user", agentPreset.id, name || undefined);
-      copyingAgentPreset = "";
-      copyAgentNameDraft = "";
-      await refreshManagement();
-      managementNotice = "Agent 预设已复制";
-    });
-  }
+ async function copyAgentPreset(agentPreset: AgentPreset): Promise<void> {
+   if (!client || agentPreset.trust !== "user") return;
+   const name = copyAgentNameDraft.trim();
+   await performManagementAction(`agent-copy:${agentPreset.id}`, async () => {
+     await client!.copyAgentPreset("user", agentPreset.id, name || undefined);
+     copyingAgentPreset = "";
+     copyAgentNameDraft = "";
+     await refreshManagement();
+      managementNotice = t("agents.copiedNotice");
+   });
+ }
 
-  async function removeAgentPreset(agentPreset: AgentPreset): Promise<void> {
-    if (!client || agentPreset.trust !== "user" || agentPreset.isDefault) return;
-    await performManagementAction(`agent-remove:${agentPreset.id}`, async () => {
-      await client!.removeAgentPreset(agentPreset.id);
-      confirmingAgentPreset = "";
-      await refreshManagement();
-      managementNotice = "用户 Agent 预设已移除";
-    });
-  }
+ async function removeAgentPreset(agentPreset: AgentPreset): Promise<void> {
+   if (!client || agentPreset.trust !== "user" || agentPreset.isDefault) return;
+   await performManagementAction(`agent-remove:${agentPreset.id}`, async () => {
+     await client!.removeAgentPreset(agentPreset.id);
+     confirmingAgentPreset = "";
+     await refreshManagement();
+      managementNotice = t("agents.removedNotice");
+   });
+ }
 
   function beginWorkspaceRename(workspace: Workspace): void {
     editingWorkspaceId = workspace.workspaceId;
@@ -612,7 +1248,7 @@
       await client!.renameWorkspace(workspaceId, title);
       editingWorkspaceId = "";
       await refresh();
-      managementNotice = "工作区名称已更新";
+      managementNotice = t("workspaces.renamedNotice");
     });
   }
 
@@ -627,7 +1263,7 @@
     if (!client) return;
     await performManagementAction(`workspace-open:${workspace.workspaceId}`, async () => {
       await client!.openPath(workspace.path);
-      managementNotice = "已在资源管理器中打开工作区";
+      managementNotice = t("workspaces.openedInExplorer");
     });
   }
 
@@ -637,7 +1273,7 @@
       await client!.deleteWorkspace(workspaceId);
       confirmingWorkspaceId = "";
       await refresh();
-      managementNotice = "工作区注册已移除，磁盘文件未删除";
+      managementNotice = t("workspaces.registrationRemoved");
     });
   }
 
@@ -649,7 +1285,7 @@
     await performManagementAction(`workspace-order:${workspaceId}`, async () => {
       await client!.insertWorkspaceBefore(workspaceId, beforeWorkspaceId);
       await refresh();
-      managementNotice = "工作区顺序已更新";
+      managementNotice = t("workspaces.orderUpdated");
     });
   }
 
@@ -661,7 +1297,7 @@
     await performManagementAction(`session-order:${sessionId}`, async () => {
       await client!.insertSessionBefore(workspace.workspaceId, sessionId, beforeSessionId);
       await refresh();
-      managementNotice = "会话顺序已更新";
+      managementNotice = t("workspaces.sessionOrderUpdated");
     });
   }
 
@@ -683,7 +1319,7 @@
       else await client!.createGoal(activeSessionId, objective, maxGoalRounds);
       editingGoal = false;
       await refresh();
-      managementNotice = existing ? "目标已更新" : "目标已创建";
+      managementNotice = existing ? t("goals.updatedNotice") : t("goals.createdNotice");
     });
   }
 
@@ -697,7 +1333,7 @@
       if (action === "clear") await client!.clearGoal(activeSessionId, ref);
       confirmingGoalClear = false;
       await refresh();
-      managementNotice = action === "clear" ? "目标已清除" : "目标状态已更新";
+      managementNotice = action === "clear" ? t("goals.clearedNotice") : t("goals.statusUpdatedNotice");
     });
   }
 
@@ -717,7 +1353,7 @@
       await client!.promptSubagent(activeSessionId, selectedSubagent.id, text);
       subagentPromptDraft = "";
       await refreshManagement();
-      managementNotice = "子 Agent 已收到继续指令";
+      managementNotice = t("subagents.continuedNotice");
     });
   }
 
@@ -726,7 +1362,7 @@
     await performManagementAction("subagent-interrupt:" + selectedSubagent.id, async () => {
       await client!.interruptSubagent(activeSessionId, selectedSubagent.id);
       await refreshManagement();
-      managementNotice = "已发送停止信号";
+      managementNotice = t("subagents.stopSentNotice");
     });
   }
 
@@ -746,17 +1382,17 @@
     let patchValue: Record<string, unknown>;
     try {
       const parsed: unknown = JSON.parse(settingsDraft);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("设置必须是 JSON 对象");
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(t("settings.jsonMustBeObject"));
       patchValue = parsed as Record<string, unknown>;
     } catch (error) {
-      managementError = error instanceof Error ? error.message : String(error);
+      managementError = userFacingError(error);
       return;
     }
     await performManagementAction("settings-update:" + namespace.ns, async () => {
       const updated = await client!.updateSettings(namespace.ns, patchValue, namespace.revision);
       settingsNamespaces = settingsNamespaces.map((item) => item.ns === updated.ns ? updated : item);
       settingsDraft = JSON.stringify(updated.user || {}, null, 2);
-      managementNotice = updated.applies === "restart" ? "设置已保存，重启后生效" : "设置已保存";
+      managementNotice = updated.applies === "restart" ? t("settings.savedRestartNotice") : t("settings.savedNotice");
     });
   }
 
@@ -764,21 +1400,60 @@
     if (!client || !settingsHasDocument) return;
     await performManagementAction("settings-open-document", async () => {
       await client!.openSettingsDocument();
-      managementNotice = "已打开设置文件";
+      managementNotice = t("settings.openedFileNotice");
+    });
+  }
+
+  async function refreshXgGatewayModels(): Promise<void> {
+    if (!client) return;
+    await performManagementAction("models-discover:xg-gomodel", async () => {
+      const providerSettings = await xgProviderSettings();
+      if (!providerSettings) throw new Error(t("settings.noXgGomodelConfig"));
+      const { namespace, config } = providerSettings;
+      await requireConfiguredCredential(config);
+      const baseURL = typeof config.baseURL === "string" ? config.baseURL : "";
+      if (!baseURL) throw new Error(t("settings.noXgGomodelBaseUrl"));
+      const discovered = await client!.discoverModels({
+        settingsNs: namespace.ns,
+        provider: "xg-gomodel",
+        baseURL,
+        ...(typeof config.api === "string" ? { api: config.api } : {}),
+      });
+      if (discovered.models.length === 0) throw new Error(t("settings.noModelsReturned"));
+      if (!discovered.models.some((model) => model.id === "vlm")) throw new Error(t("settings.gatewayMissingVlm"));
+      const merged = mergeDiscoveredModels(discovered.models, config.models);
+      unknownModelCapabilities = merged.unknownCapabilities;
+      await applyXgModels(namespace, merged.models);
+      managementNotice = t("models.refreshedNotice", { count: discovered.models.length });
     });
   }
 
   async function saveCredential(): Promise<void> {
     const ref = credentialRefDraft.trim();
-    const value = credentialValueDraft;
+    const rawValue = credentialValueDraft.trim();
+    const value = rawValue.replace(/^[\"']|[\"']$/g, "").trim();
     if (!client || !ref || !value || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(ref)) return;
-    await performManagementAction("credential-set:" + ref, async () => {
+    const saved = await performManagementAction("credential-set:" + ref, async () => {
       await client!.setCredential(ref, value);
       credentialValueDraft = "";
       credentials = { ...credentials, ...(await client!.describeCredentials([ref])).credentials };
       if (!credentialRefs.includes(ref)) credentialRefs = [...credentialRefs, ref].sort();
-      managementNotice = "凭据已保存，实际值不会回显";
+      managementNotice = t("settings.credentialSaved");
     });
+    if (!saved || !credentials[ref]?.configured) return;
+    clearCredentialRequirementError();
+    if (ref === "XG_GOMODEL_API_KEY") {
+      await refreshXgGatewayModels();
+      if (managementError) managementNotice = t("settings.credentialSavedModelFailed");
+      else managementNotice = t("settings.credentialSaved");
+    }
+  }
+
+  function clearCredentialRequirementError(sessionId = activeSessionId): void {
+    if (isCredentialSettingsError(runtimeError)) runtimeError = "";
+    if (!sessionId || !isCredentialSettingsError(sessionErrors[sessionId])) return;
+    const { [sessionId]: _cleared, ...remaining } = sessionErrors;
+    sessionErrors = remaining;
   }
 
   async function unsetCredential(ref: string): Promise<void> {
@@ -787,61 +1462,76 @@
       await client!.unsetCredential(ref);
       credentials = { ...credentials, ...(await client!.describeCredentials([ref])).credentials };
       confirmingCredentialRef = "";
-      managementNotice = "凭据已从可写层移除";
+      managementNotice = t("settings.credentialRemovedNotice");
     });
   }
 
   async function respondApproval(outcome: "allowed-once" | "rejected"): Promise<void> {
     if (!client || !pendingApproval) return;
-    await client.respond({ type: "client-response", rpcId: pendingApproval.rpcId, result: { ok: true, value: { sessionId: pendingApproval.sessionId, approvalId: pendingApproval.approvalId, outcome } } });
+    const request = pendingApproval;
+    try {
+      await client.respond({ type: "client-response", rpcId: request.rpcId, result: { ok: true, value: { sessionId: request.sessionId, approvalId: request.approvalId, outcome } } });
+      pendingInteractionsBySession = clearPendingApproval(pendingInteractionsBySession, request.sessionId, request.rpcId);
+      if (activeSessionId === request.sessionId) sending = outcome === "allowed-once";
+    } catch (error) {
+      runtimeError = userFacingError(error);
+    }
   }
 
   async function respondQuestion(): Promise<void> {
     if (!client || !pendingQuestion) return;
-    const answers = pendingQuestion.questions.map((item) => ({ id: String(item.id), selected: questionAnswers[String(item.id)] ? [questionAnswers[String(item.id)]] : [], custom: questionAnswers[`${String(item.id)}:custom`] || undefined }));
-    await client.respond({ type: "client-response", rpcId: pendingQuestion.rpcId, result: { ok: true, value: { sessionId: pendingQuestion.sessionId, answer: { answers } } } });
+    if (!questionsAnswered(pendingQuestion.questions, questionAnswers)) return;
+    const answers = buildQuestionAnswers(pendingQuestion.questions, questionAnswers);
+    const request = pendingQuestion;
+    try {
+      await client.respond({ type: "client-response", rpcId: request.rpcId, result: { ok: true, value: { sessionId: request.sessionId, answer: { answers } } } });
+      pendingInteractionsBySession = clearPendingQuestion(pendingInteractionsBySession, request.sessionId, request.rpcId);
+      if (activeSessionId === request.sessionId) sending = true;
+    } catch (error) {
+      runtimeError = userFacingError(error);
+    }
   }
 
-  function formatTime(value: number): string { return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(value); }
+  function formatTime(value: number): string { return new Intl.DateTimeFormat(i18n.locale, { hour: "2-digit", minute: "2-digit" }).format(value); }
   function managementTitle(tab: ManagementTab): string {
-    const titles: Record<ManagementTab, string> = {
-      overview: "系统总览",
-      sessions: "会话管理",
-      goals: "目标控制",
-      subagents: "子 Agent",
-      agents: "Agent 预设",
-      models: "模型与推理",
-      workspaces: "工作区与资源",
-      mounts: "SMB 共享",
-      plugins: "插件与 MCP",
-      knowledge: "知识库与资料",
-      settings: "设置与凭据",
-      runtime: "运行诊断",
-    };
-    return titles[tab];
+    return t(`nav.${tab}`);
   }
   function agentPresetLabel(preset: AgentPreset): string { return preset.name?.trim() || preset.id; }
   function goalPhaseLabel(phase: GoalProjection["goal"]["phase"]): string {
-    return { active: "进行中", paused: "已暂停", blocked: "已阻塞", complete: "已完成" }[phase];
+    switch (phase) {
+      case "active": return t("goals.phaseExecuting");
+      case "paused": return t("goals.phasePaused");
+      case "blocked": return t("goals.phaseBlocked");
+      case "complete": return t("goals.phaseCompleted");
+      default: return phase;
+    }
   }
   function subagentLabel(entry: SubagentEntry): string {
     if (entry.kind === "diagnostic") return entry.id;
-    return entry.label?.trim() || "子 Agent " + entry.id.slice(0, 8);
+    return entry.label?.trim() || `${t("common.agent")} ${entry.id.slice(0, 8)}`;
   }
   function subagentStatusLabel(entry: SubagentEntry): string {
-    if (entry.kind === "diagnostic") return "诊断：" + entry.reason;
-    return (entry.mode === "continuable" ? "可继续" : "一次性") + " · " + (entry.activity === "running" ? "运行中" : "未运行");
+    if (entry.kind === "diagnostic") return t("subagents.diagnostic", { reason: entry.reason });
+    return (entry.mode === "continuable" ? t("subagents.continuable") : t("subagents.oneOff")) + " · " + (entry.activity === "running" ? t("common.running") : t("common.pending"));
   }
   function credentialSummary(ref: string): string {
     const credential = credentials[ref];
-    return credential?.configured ? "已配置 · " + (credential.source || "可写层") : "未配置";
+    return credential?.configured ? `${t("common.enabled")} · ` + (credential.source || t("settings.userLayerShort")) : t("common.disabled");
   }
-  function openManagement(tab: ManagementTab): void {
+  function switchManagementTab(tab: ManagementTab): void {
     managementTab = tab;
-    view = "settings";
     managementError = "";
     managementNotice = "";
+    confirmingWorkspaceId = "";
+    editingWorkspaceId = "";
+    editingSessionId = "";
+    confirmingAgentPreset = "";
+    confirmingGoalClear = false;
     void refreshManagement();
+  }
+  function openManagement(tab: ManagementTab): void {
+    view = "settings";
+    switchManagementTab(tab);
   }
   function openKnowledge(): void {
     view = "knowledge";
@@ -850,115 +1540,800 @@
     void refreshManagement();
   }
   function openKnowledgePrompt(prompt: string): void { input = prompt; view = "conversation"; }
-  function knowledgeStatusLabel(): string { return skills.length > 0 ? "官方 Skill 知识源已加载" : "等待官方知识插件"; }
-  function permissionNotice(message: string): void { managementNotice = message; }
-  async function handlePaste(event: ClipboardEvent): Promise<void> {
-    const files = event.clipboardData?.files;
-    if (!files?.length) return;
-    const supported = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
-    const next: Extract<PromptContentPart, { type: "image" }>[] = [];
-    for (const file of Array.from(files)) {
-      if (!supported.has(file.type) || file.size > 10 * 1024 * 1024) continue;
-      const data = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result).split(",", 2)[1] || "");
-        reader.onerror = () => reject(reader.error || new Error("图片读取失败"));
-        reader.readAsDataURL(file);
-      });
-      if (data) next.push({ type: "image", mediaType: file.type as Extract<PromptContentPart, { type: "image" }>["mediaType"], data, name: file.name });
-    }
-    if (next.length) attachments = [...attachments, ...next];
+  function knowledgeStatusLabel(): string {
+    if (knowledgeIndex.state === "building") return t("knowledge.indexing");
+    if (knowledgeIndex.state === "ready") return t("knowledge.indexReady");
+    if (knowledgeIndex.state === "partial") return t("knowledge.indexPartial");
+    if (knowledgeIndex.state === "failed") return t("knowledge.indexFailed");
+    return skills.length > 0 ? t("knowledge.statusLoaded") : t("knowledge.statusWaiting");
   }
+  async function ensureKnowledgeSession(): Promise<boolean> {
+    if (activeSessionId) return true;
+    await createSession(workspacePath);
+    return !!activeSessionId;
+  }
+  async function runKnowledgeOperation(operation: KnowledgeOperation, query = ""): Promise<void> {
+    if (sending || !client || !(await ensureKnowledgeSession())) return;
+    const normalizedQuery = query.trim();
+    if (operation === "query" && !normalizedQuery) return;
+    knowledgeOperation = operation;
+    knowledgeIndex = {
+      ...knowledgeIndex,
+      state: "building",
+      ...(operation === "query" ? { query: normalizedQuery, matches: undefined } : {}),
+      ...(operation !== "query" ? { root: workspacePath, failures: [] } : {}),
+    };
+    const prompt = buildKnowledgePrompt(operation, workspacePath, normalizedQuery);
+    try {
+      await submit(prompt);
+      view = "knowledge";
+    } catch (error) {
+      knowledgeOperation = "";
+      knowledgeIndex = { ...knowledgeIndex, state: "failed", failures: [userFacingError(error)] };
+    }
+  }
+  function permissionNotice(message: string): void { managementNotice = message; }
 </script>
 
 <svelte:head><title>{productName}</title></svelte:head>
-<svelte:window onpaste={(event) => void handlePaste(event)} />
 
 {#if loading}
-  <main class="loading-screen"><LoaderCircle class="animate-spin" size={24} /><span>正在连接官方 DSH…</span></main>
+  <main class="loading-screen"><Loader size={24} label={t("app.connecting")} /><strong>{t("app.connecting")}</strong><span>{t("app.startupProgress")}</span></main>
+{:else if !client && runtimeConnectionError}
+  <main class="startup-failure-screen">
+    <div class="startup-failure-icon"><CircleAlert size={22} /></div>
+    <h1>{t("app.startupFailed")}</h1>
+    <p>{t("app.startupFailedDesc")}</p>
+    <pre>{runtimeConnectionError}</pre>
+    <Button onclick={() => void retryRuntime()}><RotateCcw size={14} />{t("common.retry")}</Button>
+  </main>
 {:else}
   <main class="app-shell" class:compact={customization.density === "compact"}>
     <header class="topbar">
-      <div class="brand"><span class="brand-mark"><Bot size={16} /></span><strong>{productName}</strong><span class="version-label">v{appVersion}</span><span class:offline={!!runtimeError} class="status-dot"></span><span class="status-copy">{runtimeError ? "运行异常" : "官方 DSH"}</span></div>
-      <div class="topbar-center"><span class="topbar-workspace"><FolderOpen size={13} />{workspaceName}</span>{#if activeSession}<span class="topbar-separator">/</span><span>{sessionTitle(activeSession)}</span>{/if}</div>
+      <div class="brand">
+        <span class="brand-mark"><Bot size={15} /></span>
+        <strong>{productName}</strong>
+        <span class="status-dot" class:offline={!!runtimeConnectionError} class:warning={!runtimeConnectionError && activeSessionHasError} title={runtimeConnectionError ? t("overview.runtimeError") : (activeSessionHasError ? t("overview.runtimeNormalWithSessionError") : t("overview.runtimeNormal"))}></span>
+      </div>
+      <div class="topbar-center">
+        {#if view === "settings"}
+          <span class="topbar-workspace"><Settings2 size={13} />{t("app.workbench")} / {managementTitle(managementTab)}</span>
+        {:else if view === "knowledge"}
+          <span class="topbar-workspace"><BookOpen size={13} />{t("nav.knowledge")}</span>
+        {:else}
+          <span class="topbar-workspace" title={workspacePath}><FolderOpen size={13} />{workspaceName}</span>
+          {#if activeSession}
+            <span class="topbar-separator">/</span>
+            <span class="topbar-session-title" title={sessionTitle(activeSession)}>{sessionTitle(activeSession)}</span>
+            {#if activeSessionHasError}
+              <span class="session-health session-health--error" style="margin-left: 4px; font-size: 10px; padding: 1px 5px;">{sessionHealthLabel("error")}</span>
+            {/if}
+          {/if}
+        {/if}
+      </div>
+      <div class="topbar-actions">
+        {#if view === "conversation"}
+          <Button variant="ghost" size="sm" class="topbar-action-btn" title={t("session.newSession")} onclick={() => void createSession()}>
+            <MessageSquarePlus size={14} />
+            <span class="topbar-btn-label">{t("session.newSession")}</span>
+          </Button>
+          <Button variant="ghost" size="sm" class="topbar-action-btn" title={t("app.workbench")} onclick={() => openManagement("overview")}>
+            <Settings2 size={14} />
+            <span class="topbar-btn-label">{t("app.workbench")}</span>
+          </Button>
+          <Button variant="ghost" size="sm" class="topbar-action-btn" title={t("app.uiCustomization")} onclick={() => customizationOpen = !customizationOpen}>
+            <SlidersHorizontal size={14} />
+          </Button>
+        {:else}
+          <Button variant="ghost" size="sm" class="topbar-action-btn" title={t("app.backToConversation")} onclick={() => view = "conversation"}>
+            <MessageSquare size={14} />
+            <span class="topbar-btn-label">{t("app.backToConversation")}</span>
+          </Button>
+        {/if}
+        <Button variant="ghost" size="sm" class="topbar-action-btn topbar-locale-btn" onclick={() => toggleLocale()} title={t("app.switchLanguage")}>
+          <Languages size={13} />
+          <span>{i18n.locale === "zh-CN" ? "EN" : "中文"}</span>
+        </Button>
+      </div>
     </header>
     <div class:management-active={view === "settings"} class="workspace-layout">
       <aside class:collapsed={sidebarCollapsed} class="sidebar">
-        <div class="sidebar-toolbar"><Button variant="ghost" size="icon-sm" aria-label="折叠侧栏" onclick={() => setSidebarCollapsed(!sidebarCollapsed)}>{#if sidebarCollapsed}<PanelLeftOpen size={16} />{:else}<PanelLeftClose size={16} />{/if}</Button>{#if !sidebarCollapsed}<Button variant="ghost" size="icon-sm" aria-label="新建会话" onclick={() => void createSession()}><MessageSquarePlus size={16} /></Button>{/if}</div>
+        <div class="sidebar-toolbar">
+          {#if !sidebarCollapsed}
+            <Button variant="outline" size="sm" class="sidebar-new-btn" onclick={() => void createSession()}>
+              <MessageSquarePlus size={14} />
+              <span>{t("session.newSession")}</span>
+            </Button>
+          {/if}
+          <Button variant="ghost" size="icon-sm" class="sidebar-collapse-btn" aria-label={sidebarCollapsed ? t("app.expandSidebar") : t("app.collapseSidebar")} onclick={() => setSidebarCollapsed(!sidebarCollapsed)}>
+            {#if sidebarCollapsed}<PanelLeftOpen size={16} />{:else}<PanelLeftClose size={16} />{/if}
+          </Button>
+        </div>
+        {#if sidebarCollapsed}
+          <div class="sidebar-collapsed-actions">
+            <Button variant="ghost" size="icon-sm" aria-label={t("session.newSession")} title={t("session.newSession")} onclick={() => void createSession()}>
+              <MessageSquarePlus size={16} />
+            </Button>
+          </div>
+        {/if}
         {#if !sidebarCollapsed}
-          <div class="workspace-picker"><div class="section-label">工作区</div><button class="workspace-row" onclick={() => void pickWorkspace()}><FolderOpen size={15} /><span title={workspacePath}>{workspaceName}</span><ChevronRight size={14} /></button></div>
-          <div class="sidebar-search"><Search size={14} /><input aria-label="搜索会话" placeholder="搜索会话" bind:value={sessionQuery} /></div>
+          <div class="workspace-picker"><div class="section-label">{t("nav.workspaces")}</div><button class="workspace-row" onclick={() => void pickWorkspace()}><FolderOpen size={15} /><span title={workspacePath}>{workspaceName}</span><ChevronRight size={14} /></button></div>
+          <div class="sidebar-search"><Search size={14} /><input aria-label={t("session.searchSessions")} placeholder={t("session.searchSessions")} bind:value={sessionQuery} /></div>
           <Separator />
-          <div class="session-list"><div class="section-label section-row"><span>会话</span><span class="count-badge">{filteredSessions.length}</span></div>{#if filteredSessions.length === 0}<div class="sidebar-empty"><MessageSquarePlus size={16} /><span>还没有会话</span><small>点击上方按钮新建会话</small></div>{:else}{#each filteredSessions as session (session.sessionId)}<button class:active={session.sessionId === activeSessionId} class="session-row" onclick={() => void selectSession(session.sessionId)}><span class="session-state" class:running={session.running}></span><span class="session-copy"><strong>{sessionTitle(session)}</strong><small>{session.cwd || workspaceName}</small></span><time>{formatTime(session.updatedAt)}</time></button>{/each}{/if}</div>
-          <div class="sidebar-footer"><Button variant="ghost" class={`footer-button${view === "knowledge" ? " active" : ""}`} onclick={() => openKnowledge()}><BookOpen size={15} />知识库</Button><Button variant="ghost" class="footer-button" onclick={() => openManagement("overview")}><Settings2 size={15} />管理</Button><Button variant="ghost" class="footer-button" onclick={() => setActivityOpen(!activityOpen)}><History size={15} />活动记录<span class="footer-spacer"></span><ChevronDown class={!activityOpen ? "rotated" : ""} size={14} /></Button></div>
+          <div class="session-list"><div class="section-label section-row"><span>{t("nav.sessions")}</span><span class="count-badge">{filteredSessions.length}</span></div>{#if filteredSessions.length === 0}<div class="sidebar-empty"><MessageSquarePlus size={16} /><span>{t("session.emptyActive")}</span><small>{t("session.emptyActiveDesc")}</small></div>{:else}{#each filteredSessions as session (session.sessionId)}
+              {@const health = sessionHealth(session, !!sessionErrors[session.sessionId])}
+              <button class:active={session.sessionId === activeSessionId} class="session-row" onclick={() => void selectSession(session.sessionId)}>
+                <span class="session-state" class:running={health === "running"} class:error={health === "error"}></span>
+                <span class="session-copy">
+                  <strong>{sessionTitle(session)}</strong>
+                  <small>{session.cwd || workspaceName}</small>
+                </span>
+                <span class="session-meta-wrap">
+                  <time>{formatTime(session.updatedAt)}</time>
+                  <span
+                    class="session-hover-action"
+                    role="button"
+                    tabindex="0"
+                    title={t("session.archiveSession")}
+                    onclick={(e) => { e.stopPropagation(); void archiveManagedSession(session.sessionId); }}
+                    onkeydown={(e) => { if (e.key === "Enter") { e.stopPropagation(); void archiveManagedSession(session.sessionId); } }}
+                  >
+                    <Archive size={12} />
+                  </span>
+                </span>
+              </button>
+            {/each}{/if}</div>
+          <div class="sidebar-footer"><Button variant="ghost" class={`footer-button${view === "knowledge" ? " active" : ""}`} onclick={() => openKnowledge()}><BookOpen size={15} />{t("nav.knowledge")}</Button><Button variant="ghost" class="footer-button" onclick={() => openManagement("overview")}><Settings2 size={15} />{t("nav.overview")}</Button><Button variant="ghost" class="footer-button" onclick={() => setActivityOpen(!activityOpen)}><History size={15} />{t("activity.title")}<span class="footer-spacer"></span><ChevronDown class={!activityOpen ? "rotated" : ""} size={14} /></Button></div>
         {/if}
       </aside>
       <section class="content-area">
         {#if view === "settings"}
           <div class="management-page">
-            <header class="management-header"><div><div class="eyebrow">暗涌管理</div><h1>管理工作台</h1><p>按领域管理模型、工作区、知识来源和运行状态。</p></div><Button variant="outline" size="sm" onclick={() => view = "conversation"}><ChevronRight class="rotate-180" size={14} />返回会话</Button></header>
+            <header class="management-header"><div><div class="eyebrow">{t("app.eyebrow")}</div><h1>{t("app.workbench")}</h1><p>{t("app.workbenchDesc")}</p></div><Button variant="outline" size="sm" onclick={() => view = "conversation"}><ChevronRight class="rotate-180" size={14} />{t("app.backToConversation")}</Button></header>
             <div class="management-body">
-              <nav class="management-nav" aria-label="管理分区"><button class:active={managementTab === "overview"} onclick={() => managementTab = "overview"}><ClipboardList size={15} /><span>总览</span></button><button class:active={managementTab === "sessions"} onclick={() => managementTab = "sessions"}><MessageSquare size={15} /><span>会话</span></button><button class:active={managementTab === "goals"} onclick={() => managementTab = "goals"}><Target size={15} /><span>目标</span></button><button class:active={managementTab === "subagents"} onclick={() => managementTab = "subagents"}><Network size={15} /><span>子 Agent</span></button><button class:active={managementTab === "agents"} onclick={() => managementTab = "agents"}><UserRoundCog size={15} /><span>Agent 预设</span></button><button class:active={managementTab === "models"} onclick={() => managementTab = "models"}><Bot size={15} /><span>模型与推理</span></button><button class:active={managementTab === "workspaces"} onclick={() => managementTab = "workspaces"}><FolderOpen size={15} /><span>工作区</span></button><button class:active={managementTab === "mounts"} onclick={() => managementTab = "mounts"}><HardDrive size={15} /><span>SMB 共享</span></button><button class:active={managementTab === "plugins"} onclick={() => managementTab = "plugins"}><PlugZap size={15} /><span>插件与 MCP</span></button><button class:active={managementTab === "knowledge"} onclick={() => managementTab = "knowledge"}><BookOpen size={15} /><span>知识库</span></button><button class:active={managementTab === "settings"} onclick={() => managementTab = "settings"}><Settings2 size={15} /><span>设置与凭据</span></button><button class:active={managementTab === "runtime"} onclick={() => managementTab = "runtime"}><ShieldAlert size={15} /><span>运行诊断</span></button></nav>
+              <nav class="management-nav" aria-label={t("app.managementNavAria")}><button class:active={managementTab === "overview"} onclick={() => switchManagementTab("overview")}><ClipboardList size={15} /><span>{t("nav.overview")}</span></button><button class:active={managementTab === "sessions"} onclick={() => switchManagementTab("sessions")}><MessageSquare size={15} /><span>{t("nav.sessions")}</span></button><button class:active={managementTab === "goals"} onclick={() => switchManagementTab("goals")}><Target size={15} /><span>{t("nav.goals")}</span></button><button class:active={managementTab === "subagents"} onclick={() => switchManagementTab("subagents")}><Network size={15} /><span>{t("nav.subagents")}</span></button><button class:active={managementTab === "agents"} onclick={() => switchManagementTab("agents")}><UserRoundCog size={15} /><span>{t("nav.agents")}</span></button><button class:active={managementTab === "models"} onclick={() => switchManagementTab("models")}><Bot size={15} /><span>{t("nav.models")}</span></button><button class:active={managementTab === "workspaces"} onclick={() => switchManagementTab("workspaces")}><FolderOpen size={15} /><span>{t("nav.workspaces")}</span></button><button class:active={managementTab === "mounts"} onclick={() => switchManagementTab("mounts")}><HardDrive size={15} /><span>{t("nav.mounts")}</span></button><button class:active={managementTab === "plugins"} onclick={() => switchManagementTab("plugins")}><Blocks size={15} /><span>{t("nav.plugins")}</span></button><button class:active={managementTab === "mcp"} onclick={() => switchManagementTab("mcp")}><Cable size={15} /><span>{t("nav.mcp")}</span></button><button class:active={managementTab === "knowledge"} onclick={() => switchManagementTab("knowledge")}><BookOpen size={15} /><span>{t("nav.knowledge")}</span></button><button class:active={managementTab === "settings"} onclick={() => switchManagementTab("settings")}><Settings2 size={15} /><span>{t("nav.settings")}</span></button><button class:active={managementTab === "runtime"} onclick={() => switchManagementTab("runtime")}><ShieldAlert size={15} /><span>{t("nav.runtime")}</span></button></nav>
               <section class="management-content">
-                <div class="management-toolbar"><div class="section-label">{managementTitle(managementTab)}</div><div class="settings-filter"><Search size={14} /><Input aria-label="筛选管理内容" placeholder="筛选管理内容" bind:value={settingsQuery} /></div></div>
-                {#if managementError}<div class="management-feedback error"><CircleAlert size={14} /><span>{managementError}</span><button aria-label="关闭管理错误" onclick={() => managementError = ""}><X size={13} /></button></div>{/if}
-                {#if managementNotice}<div class="management-feedback success"><CircleCheck size={14} /><span>{managementNotice}</span><button aria-label="关闭管理提示" onclick={() => managementNotice = ""}><X size={13} /></button></div>{/if}
+                <div class="management-toolbar"><div class="section-label">{managementTitle(managementTab)}</div><div class="settings-filter"><Search size={14} /><Input aria-label={t("overview.filterManagement")} placeholder={t("overview.filterManagement")} bind:value={settingsQuery} /></div></div>
+                {#if managementError}<div class="management-feedback error"><CircleAlert size={14} /><span>{managementError}</span>{#if shouldOfferCredentialSettingsAction(managementError, managementTab)}<Button variant="ghost" size="sm" onclick={() => openCredentialSettings()}><KeyRound size={13} />{t("app.goToConfigure")}</Button>{/if}<button aria-label={t("app.closeManagementError")} onclick={() => managementError = ""}><X size={13} /></button></div>{/if}
+                {#if managementNotice}<div class="management-feedback success"><CircleCheck size={14} /><span>{managementNotice}</span><button aria-label={t("app.closeManagementNotice")} onclick={() => managementNotice = ""}><X size={13} /></button></div>{/if}
                 {#if managementTab === "overview"}
-                  <div class="management-summary-grid"><button onclick={() => managementTab = "sessions"}><span class="summary-icon"><MessageSquare size={16} /></span><strong>会话管理</strong><small>{sessions.length} 个活跃会话，{archivedSessionIds.length} 个已归档</small></button><button onclick={() => managementTab = "goals"}><span class="summary-icon"><Target size={16} /></span><strong>目标</strong><small>{currentGoal ? goalPhaseLabel(currentGoal.goal.phase) : "当前会话暂无目标"}</small></button><button onclick={() => managementTab = "subagents"}><span class="summary-icon"><Network size={16} /></span><strong>子 Agent</strong><small>{subagents.filter((item) => item.kind === "child").length} 个直接子 Agent</small></button><button onclick={() => managementTab = "agents"}><span class="summary-icon"><UserRoundCog size={16} /></span><strong>Agent 预设</strong><small>{agentPresets.length} 个可用预设</small></button><button onclick={() => managementTab = "models"}><span class="summary-icon"><Bot size={16} /></span><strong>模型与推理</strong><small>{selectedModel || "尚未选择模型"}</small></button><button onclick={() => managementTab = "workspaces"}><span class="summary-icon"><FolderOpen size={16} /></span><strong>工作区</strong><small>{workspaces.length} 个已注册工作区</small></button><button onclick={() => managementTab = "knowledge"}><span class="summary-icon"><BookOpen size={16} /></span><strong>知识库</strong><small>{knowledgeStatusLabel()}</small></button><button onclick={() => managementTab = "settings"}><span class="summary-icon"><Settings2 size={16} /></span><strong>设置与凭据</strong><small>{settingsNamespaces.length} 个命名空间，{credentialRefs.length} 个凭据引用</small></button><button onclick={() => managementTab = "runtime"}><span class="summary-icon"><ShieldAlert size={16} /></span><strong>运行状态</strong><small>{runtimeError ? "连接异常" : "官方 DSH 正常"}</small></button></div>
-                  <SettingsGroup title="当前会话" description="会话状态、模型和工作区来自官方 DSH 实时状态。"><div class="diagnostic-row"><span>会话</span><strong>{activeSession ? sessionTitle(activeSession) : "未选择"}</strong></div><div class="diagnostic-row"><span>工作区</span><strong>{workspacePath || "未选择"}</strong></div><div class="diagnostic-row"><span>模型</span><strong>{selectedModel || "默认模型"}</strong></div></SettingsGroup>
+                  <div class="management-summary-grid"><button onclick={() => switchManagementTab("sessions")}><span class="summary-icon"><MessageSquare size={16} /></span><strong>{t("overview.sessionsTitle")}</strong><small>{t("overview.sessionsDesc", { active: sessions.length, archived: archivedSessionIds.length })}</small></button><button onclick={() => switchManagementTab("goals")}><span class="summary-icon"><Target size={16} /></span><strong>{t("overview.goalsTitle")}</strong><small>{currentGoal ? goalPhaseLabel(currentGoal.goal.phase) : t("overview.noGoal")}</small></button><button onclick={() => switchManagementTab("subagents")}><span class="summary-icon"><Network size={16} /></span><strong>{t("overview.subagentsTitle")}</strong><small>{t("overview.subagentsDesc", { count: subagents.filter((item) => item.kind === "child").length })}</small></button><button onclick={() => switchManagementTab("agents")}><span class="summary-icon"><UserRoundCog size={16} /></span><strong>{t("overview.agentsTitle")}</strong><small>{t("overview.agentsDesc", { count: agentPresets.length })}</small></button><button onclick={() => switchManagementTab("models")}><span class="summary-icon"><Bot size={16} /></span><strong>{t("overview.modelsTitle")}</strong><small>{selectedModel || t("overview.noModelSelected")}</small></button><button onclick={() => switchManagementTab("workspaces")}><span class="summary-icon"><FolderOpen size={16} /></span><strong>{t("overview.workspacesTitle")}</strong><small>{t("overview.workspacesDesc", { count: workspaces.length })}</small></button><button onclick={() => switchManagementTab("plugins")}><span class="summary-icon"><Blocks size={16} /></span><strong>{t("overview.pluginsTitle")}</strong><small>{t("overview.pluginsDesc", { total: purePlugins.length, enabled: purePlugins.filter((item) => item.enabled).length })}</small></button><button onclick={() => switchManagementTab("mcp")}><span class="summary-icon"><Cable size={16} /></span><strong>{t("overview.mcpTitle")}</strong><small>{mcpInventoryEntries.length > 0 ? t("overview.mcpDesc", { count: mcpInventoryEntries.length }) : t("overview.mcpReady")}</small></button><button onclick={() => switchManagementTab("knowledge")}><span class="summary-icon"><BookOpen size={16} /></span><strong>{t("overview.knowledgeTitle")}</strong><small>{knowledgeStatusLabel()}</small></button><button onclick={() => switchManagementTab("settings")}><span class="summary-icon"><Settings2 size={16} /></span><strong>{t("overview.settingsTitle")}</strong><small>{t("overview.settingsDesc", { namespaces: settingsNamespaces.length, credentials: credentialRefs.length })}</small></button><button onclick={() => switchManagementTab("runtime")}><span class="summary-icon"><ShieldAlert size={16} /></span><strong>{t("overview.runtimeTitle")}</strong><small>{runtimeConnectionError ? t("overview.runtimeError") : t("overview.runtimeNormal")}</small></button></div>
+                  <SettingsGroup title={t("overview.currentSession")} description={t("overview.currentSessionDesc")}><div class="diagnostic-row"><span>{t("overview.sessionLabel")}</span><strong>{activeSession ? sessionTitle(activeSession) : t("overview.unselected")}</strong></div><div class="diagnostic-row"><span>{t("overview.workspaceLabel")}</span><strong>{workspacePath || t("overview.unselected")}</strong></div><div class="diagnostic-row"><span>{t("overview.modelLabel")}</span><strong>{selectedModel || t("overview.defaultModel")}</strong></div></SettingsGroup>
                 {:else if managementTab === "sessions"}
-                  <SettingsGroup title="会话管理" description="重命名、复制和归档都直接写入官方 DSH。"><div class="management-actions"><Button size="sm" onclick={() => void createSession()}><MessageSquarePlus size={14} />新建会话</Button><Button variant="outline" size="sm" onclick={() => void refresh()}><History size={14} />刷新</Button></div>{#if filteredManagementSessions.length === 0}<DataState state="empty" title="没有匹配的会话" description="调整筛选条件或新建一个会话。" />{:else}<div class="management-list">{#each filteredManagementSessions as item (item.sessionId)}<div class="management-list-row session-management-row"><span class="row-icon"><MessageSquare size={15} /></span><div>{#if editingSessionId === item.sessionId}<Input class="inline-edit-input" aria-label="会话名称" bind:value={sessionTitleDraft} onkeydown={(event) => { if (event.key === "Enter") void saveSessionRename(item.sessionId); if (event.key === "Escape") editingSessionId = ""; }} />{:else}<strong>{sessionTitle(item)}</strong><small>{item.cwd || workspaceName} · {item.agentPreset || "默认 Agent"}</small>{/if}</div>{#if editingSessionId === item.sessionId}<div class="row-actions"><Button size="sm" disabled={!!managementBusy} onclick={() => void saveSessionRename(item.sessionId)}><Check size={13} />保存</Button><Button variant="ghost" size="sm" onclick={() => editingSessionId = ""}>取消</Button></div>{:else}<div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="打开会话" title="打开会话" onclick={() => void selectSession(item.sessionId)}><ExternalLink size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="重命名会话" title="重命名会话" onclick={() => beginSessionRename(item)}><Pencil size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="复制会话" title="复制会话" disabled={!!managementBusy} onclick={() => void duplicateSession(item.sessionId)}><Copy size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="导出会话" title="导出会话" disabled={!!managementBusy} onclick={() => void exportSession(item.sessionId)}><Save size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="归档会话" title="归档会话" disabled={!!managementBusy} onclick={() => void archiveManagedSession(item.sessionId)}><Archive size={14} /></Button></div>{/if}</div>{/each}</div>{/if}</SettingsGroup>
-                  <SettingsGroup title="检查点与分支" description="官方 checkpoint policy 自动保证持久化；回到历史位置使用 DSH 的非破坏性 fork-at-seq。"><div class="management-actions"><StatusBadge status={pluginInventory.some((item) => item.moduleName.includes("session-checkpoint-policy") && item.fiberPhase === "active") ? "success" : "neutral"} label={pluginInventory.some((item) => item.moduleName.includes("session-checkpoint-policy") && item.fiberPhase === "active") ? "自动检查点已启用" : "未检测到活动检查点策略"} /></div>{#if messages.some((message) => typeof message.seq === "number")}<div class="management-list">{#each messages.filter((message) => typeof message.seq === "number").slice(-20).reverse() as message (message.id)}<div class="management-list-row"><span class="row-icon"><GitBranch size={14} /></span><div><strong>事件 #{message.seq}</strong><small>{message.role === "assistant" ? "Agent" : message.role === "user" ? "用户" : "工具"} · {(message.text || message.tool?.name || "事件").slice(0, 80)}</small></div><Button variant="ghost" size="sm" disabled={!!managementBusy} onclick={() => void forkSessionAtSeq(message.seq!)}><GitBranch size={13} />从此分支</Button></div>{/each}</div>{:else}<DataState state="empty" title="暂无可分支事件" description="当前会话产生历史事件后，可以从指定序号创建新会话。" />{/if}</SettingsGroup>
+                  <SettingsGroup title={t("session.sessionManagement")} description={t("session.sessionManagementDesc")}>
+                    <div class="management-actions">
+                      <Button size="sm" onclick={() => void createSession()}><MessageSquarePlus size={14} />{t("session.newSession")}</Button>
+                      <Button variant="outline" size="sm" onclick={() => void refresh()}><History size={14} />{t("session.refresh")}</Button>
+                    </div>
+                    {#if filteredManagementSessions.length === 0}
+                      <DataState state="empty" title={t("session.noMatch")} description={t("session.noMatchDesc")} />
+                    {:else}
+                      <div class="management-list">
+                        {#each filteredManagementSessions as item (item.sessionId)}
+                          {@const health = sessionHealth(item, !!sessionErrors[item.sessionId])}
+                          <div class="management-list-row session-management-row">
+                            <span class="row-icon"><MessageSquare size={15} /></span>
+                            <div class="session-management-info">
+                              {#if editingSessionId === item.sessionId}
+                                <Input class="inline-edit-input" aria-label={t("session.nameLabel")} bind:value={sessionTitleDraft} onkeydown={(event) => { if (event.key === "Enter") void saveSessionRename(item.sessionId); if (event.key === "Escape") editingSessionId = ""; }} />
+                              {:else}
+                                <div class="session-management-title-row">
+                                  <strong class="session-management-title truncate">{sessionTitle(item)}</strong>
+                                  <span class="session-health session-health--{health}">{sessionHealthLabel(health)}</span>
+                                </div>
+                                <small class="session-management-path truncate" title={item.cwd || workspaceName}>{item.cwd || workspaceName} · {item.agentPreset || t("session.defaultAgent")}</small>
+                              {/if}
+                            </div>
+                            {#if editingSessionId === item.sessionId}
+                              <div class="row-actions">
+                                <Button size="sm" disabled={!!managementBusy} onclick={() => void saveSessionRename(item.sessionId)}><Check size={13} />{t("common.save")}</Button>
+                                <Button variant="ghost" size="sm" onclick={() => editingSessionId = ""}>{t("common.cancel")}</Button>
+                              </div>
+                            {:else}
+                              <div class="row-actions session-actions">
+                                <Button variant="ghost" size="icon-sm" aria-label={t("session.openSession")} title={health === "error" ? t("session.openSessionHelp") : t("session.openSession")} onclick={() => void selectSession(item.sessionId)}><ExternalLink size={14} /></Button>
+                                <Button variant="ghost" size="icon-sm" aria-label={t("session.renameSession")} title={t("session.renameSession")} onclick={() => beginSessionRename(item)}><Pencil size={14} /></Button>
+                                <Button variant="ghost" size="icon-sm" aria-label={t("session.duplicateSession")} title={item.running ? t("session.runningActionUnavailable") : t("session.duplicateSession")} disabled={!!managementBusy || item.running} onclick={() => void duplicateSession(item.sessionId)}><Copy size={14} /></Button>
+                                <Button variant="ghost" size="icon-sm" aria-label={t("session.exportSession")} title={t("session.exportSession")} disabled={!!managementBusy} onclick={() => void exportSession(item.sessionId)}><Save size={14} /></Button>
+                                <Button variant="ghost" size="icon-sm" aria-label={t("session.archiveSession")} title={item.running ? t("session.runningActionUnavailable") : t("session.archiveSession")} disabled={!!managementBusy || item.running} onclick={() => void archiveManagedSession(item.sessionId)}><Archive size={14} /></Button>
+                              </div>
+                            {/if}
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                  </SettingsGroup>
+                  <SettingsGroup title={t("session.checkpointsTitle")} description={t("session.checkpointsDesc")}>
+                    <div class="management-actions">
+                      <StatusBadge status={pluginInventory.some((item) => item.moduleName.includes("session-checkpoint-policy") && item.fiberPhase === "active") ? "success" : "neutral"} label={pluginInventory.some((item) => item.moduleName.includes("session-checkpoint-policy") && item.fiberPhase === "active") ? t("session.checkpointsEnabled") : t("session.checkpointsMissing")} />
+                    </div>
+                    {#if messages.some((message) => typeof message.seq === "number")}
+                      <div class="management-list checkpoint-list">
+                        {#each messages.filter((message) => typeof message.seq === "number").slice(-20).reverse() as message (message.id)}
+                          <div class="management-list-row checkpoint-row">
+                            <span class="row-icon"><GitBranch size={14} /></span>
+                            <div class="checkpoint-info">
+                              <div class="checkpoint-title-row">
+                                <strong>{t("checkpoints.event", { seq: message.seq })}</strong>
+                                <span class="checkpoint-role-badge">{message.role === "assistant" ? t("common.agent") : message.role === "user" ? t("common.user") : t("common.tool")}</span>
+                              </div>
+                              <small class="checkpoint-detail truncate">{(message.text || message.tool?.name || t("checkpoints.event", { seq: message.seq || "" })).slice(0, 80)}</small>
+                            </div>
+                            <Button variant="outline" size="sm" disabled={!!managementBusy || !!activeSession?.running} title={activeSession?.running ? t("session.runningActionUnavailable") : undefined} onclick={() => void forkSessionAtSeq(message.seq!)}><GitBranch size={13} />{t("checkpoints.forkFromHere")}</Button>
+                          </div>
+                        {/each}
+                      </div>
+                    {:else}
+                      <DataState state="empty" title={t("session.noBranchEvents")} description={t("session.noBranchEventsDesc")} />
+                    {/if}
+                  </SettingsGroup>
                 {:else if managementTab === "agents"}
-                  <SettingsGroup title="Agent 预设" description="选择当前会话的官方 Agent 预设，或查看它的真实配置内容。"><div class="management-actions"><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />刷新预设</Button>{#if agentAuthorable && agentHasDocument}<span class="management-capability">支持用户配置</span>{/if}</div>{#if filteredAgentPresets.length === 0}<DataState state="empty" title="暂无 Agent 预设" description="官方 DSH 尚未返回可用预设。" />{:else}<div class="management-list">{#each filteredAgentPresets as preset (preset.id)}<div class="management-list-row agent-management-row"><span class="row-icon"><UserRoundCog size={15} /></span><div><strong>{agentPresetLabel(preset)}{#if preset.isDefault}<span class="default-badge">默认</span>{/if}</strong><small>{preset.description || preset.id} · {preset.trust === "system" ? "系统" : "用户"}{#if preset.broken} · {preset.broken}{/if}</small></div><div class="row-actions"><Button variant="ghost" size="sm" disabled={!activeSessionId || !!preset.broken || !!managementBusy} onclick={() => void chooseAgentPreset(preset.id)}>{activeSession?.agentPreset === preset.id ? "当前" : "应用"}</Button><Button variant="ghost" size="icon-sm" aria-label="查看 Agent 配置" title="查看 Agent 配置" disabled={!!managementBusy} onclick={() => void previewAgentPreset(preset.id)}><FileText size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="打开 Agent 配置文件" title="打开 Agent 配置文件" disabled={!!managementBusy} onclick={() => void openAgentPresetDocument(preset.id)}><ExternalLink size={14} /></Button></div></div>{/each}</div>{/if}{#if agentPreview}<div class="agent-preview"><div class="agent-preview-heading"><strong>{agentPreview.id}</strong><Button variant="ghost" size="icon-sm" aria-label="关闭预览" onclick={() => agentPreview = undefined}><X size={14} /></Button></div><pre>{agentPreview.content}</pre></div>{/if}</SettingsGroup>
-                  {#if agentAuthorable}<SettingsGroup title="用户预设维护" description="复制和删除只调用官方 Agent preset API；系统预设和默认预设不可删除。"><div class="agent-preset-maintenance"><select aria-label="选择用户 Agent 预设" bind:value={copyingAgentPreset}><option value="">选择用户预设…</option>{#each agentPresets.filter((preset) => preset.trust === "user") as preset (preset.id)}<option value={preset.id}>{agentPresetLabel(preset)}</option>{/each}</select><Input aria-label="副本名称" bind:value={copyAgentNameDraft} placeholder="可选的新名称" /><Button size="sm" disabled={!copyingAgentPreset || !!managementBusy} onclick={() => { const preset = agentPresets.find((item) => item.id === copyingAgentPreset); if (preset) void copyAgentPreset(preset); }}><Copy size={13} />复制</Button>{#if copyingAgentPreset && agentPresets.find((item) => item.id === copyingAgentPreset)?.isDefault !== true}{#if confirmingAgentPreset === copyingAgentPreset}<Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => { const preset = agentPresets.find((item) => item.id === copyingAgentPreset); if (preset) void removeAgentPreset(preset); }}><Trash2 size={13} />确认删除</Button><Button variant="ghost" size="sm" onclick={() => confirmingAgentPreset = ""}>取消</Button>{:else}<Button variant="ghost" size="sm" onclick={() => confirmingAgentPreset = copyingAgentPreset}><Trash2 size={13} />删除</Button>{/if}{/if}</div></SettingsGroup>{/if}
+                  <SettingsGroup title={t("agents.title")} description={t("agents.description")}>
+                    <div class="management-actions">
+                      <Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />{t("agents.refreshPresets")}</Button>
+                      {#if activeAgentPresetLocked}<span class="management-capability">{t("agents.sessionStartedLocked")}</span>{/if}
+                      {#if agentAuthorable && agentHasDocument}<span class="management-capability">{t("agents.supportsUserConfig")}</span>{/if}
+                    </div>
+                    {#if filteredAgentPresets.length === 0}
+                      <DataState state="empty" title={t("agents.empty")} description={t("agents.emptyDesc")} />
+                    {:else}
+                      <div class="management-list">
+                        {#each filteredAgentPresets as preset (preset.id)}
+                          <div class="management-list-row agent-management-row">
+                            <span class="row-icon"><UserRoundCog size={15} /></span>
+                            <div class="agent-info">
+                              <div class="agent-title-row">
+                                <strong>{agentPresetLabel(preset)}</strong>
+                                <span class="agent-trust-badge">{preset.trust === "system" ? t("agents.systemPreset") : t("agents.userPreset")}</span>
+                                {#if preset.isDefault}<span class="default-badge">{t("agents.defaultBadge")}</span>{/if}
+                              </div>
+                              <small>{preset.description || preset.id}{#if preset.broken} · <span class="text-destructive">{preset.broken}</span>{/if}</small>
+                            </div>
+                            <div class="row-actions agent-actions">
+                              <Button variant={activeSession?.agentPreset === preset.id ? "default" : "outline"} size="sm" disabled={!activeSessionId || activeAgentPresetLocked || activeSession?.agentPreset === preset.id || !!preset.broken || !!managementBusy} title={activeAgentPresetLocked ? t("agents.sessionStartedLocked") : undefined} onclick={() => void chooseAgentPreset(preset.id)}>
+                                {activeSession?.agentPreset === preset.id ? t("agents.currentlyActive") : t("agents.apply")}
+                              </Button>
+                              <Button variant="ghost" size="icon-sm" aria-label={t("agents.viewConfig")} title={t("agents.viewConfig")} disabled={!!managementBusy} onclick={() => void previewAgentPreset(preset.id)}><FileText size={14} /></Button>
+                              <Button variant="ghost" size="icon-sm" aria-label={t("agents.openConfigFile")} title={t("agents.openConfigFile")} disabled={!!managementBusy} onclick={() => void openAgentPresetDocument(preset.id)}><ExternalLink size={14} /></Button>
+                            </div>
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                    {#if agentPreview}
+                      <div class="agent-preview">
+                        <div class="agent-preview-heading">
+                          <strong>{agentPreview.id}</strong>
+                          <Button variant="ghost" size="icon-sm" aria-label={t("agents.closePreview")} onclick={() => agentPreview = undefined}><X size={14} /></Button>
+                        </div>
+                        <pre>{agentPreview.content}</pre>
+                      </div>
+                    {/if}
+                  </SettingsGroup>
+                  {#if agentAuthorable}
+                    <SettingsGroup title={t("agents.userPresetMaintenance")} description={t("agents.userPresetMaintenanceDesc")}>
+                      <div class="agent-preset-maintenance-card">
+                        <div class="agent-preset-maintenance-form">
+                          <select class="agent-preset-select" aria-label={t("agents.selectUserPreset")} bind:value={copyingAgentPreset}>
+                            <option value="">{t("agents.selectUserPreset")}</option>
+                            {#each agentPresets.filter((preset) => preset.trust === "user") as preset (preset.id)}
+                              <option value={preset.id}>{agentPresetLabel(preset)}</option>
+                            {/each}
+                          </select>
+                          <Input aria-label={t("agents.copyNameLabel")} bind:value={copyAgentNameDraft} placeholder={t("agents.copyNamePlaceholder")} />
+                          <Button size="sm" disabled={!copyingAgentPreset || !!managementBusy} onclick={() => { const preset = agentPresets.find((item) => item.id === copyingAgentPreset); if (preset) void copyAgentPreset(preset); }}>
+                            <Copy size={13} />
+                            {t("agents.createCopy")}
+                          </Button>
+                          {#if copyingAgentPreset && agentPresets.find((item) => item.id === copyingAgentPreset)?.isDefault !== true}
+                            {#if confirmingAgentPreset === copyingAgentPreset}
+                              <Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => { const preset = agentPresets.find((item) => item.id === copyingAgentPreset); if (preset) void removeAgentPreset(preset); }}>
+                                <Trash2 size={13} />
+                                {t("agents.confirmDelete")}
+                              </Button>
+                              <Button variant="ghost" size="sm" onclick={() => confirmingAgentPreset = ""}>{t("common.cancel")}</Button>
+                            {:else}
+                              <Button variant="outline" size="sm" onclick={() => confirmingAgentPreset = copyingAgentPreset}>
+                                <Trash2 size={13} />
+                                {t("agents.deletePreset")}
+                              </Button>
+                            {/if}
+                          {/if}
+                        </div>
+                      </div>
+                    </SettingsGroup>
+                  {/if}
                 {:else if managementTab === "goals"}
-                  <SettingsGroup title="目标控制" description="目标状态来自当前会话 projection，写操作使用官方 DSH 的 revision。"><div class="management-actions"><Button size="sm" onclick={() => { if (currentGoal) beginGoalEdit(); else { editingGoal = true; goalObjectiveDraft = ""; goalRoundsDraft = "256"; } }}><Target size={14} />{currentGoal ? "编辑目标" : "创建目标"}</Button>{#if currentGoal && currentGoal.goal.phase === "active"}<Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("pause")}><Pause size={14} />暂停</Button>{:else if currentGoal && (currentGoal.goal.phase === "paused" || currentGoal.goal.phase === "blocked")}<Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("resume")}><Play size={14} />恢复</Button>{/if}{#if currentGoal && currentGoal.goal.phase !== "complete"}<Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("complete")}><Check size={14} />完成</Button>{/if}{#if currentGoal}{#if confirmingGoalClear}<Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("clear")}><Trash2 size={13} />确认清除</Button><Button variant="ghost" size="sm" onclick={() => confirmingGoalClear = false}>取消</Button>{:else}<Button variant="ghost" size="icon-sm" aria-label="清除目标" title="清除目标" onclick={() => confirmingGoalClear = true}><Trash2 size={14} /></Button>{/if}{/if}</div>{#if editingGoal}<div class="goal-editor"><label>目标内容<Input aria-label="目标内容" bind:value={goalObjectiveDraft} placeholder="描述需要持续推进的目标" /></label><label>最大轮次<Input aria-label="最大轮次" type="number" min="1" bind:value={goalRoundsDraft} /></label><div class="row-actions"><Button size="sm" disabled={!!managementBusy} onclick={() => void saveGoal()}><Save size={13} />保存</Button><Button variant="ghost" size="sm" onclick={() => editingGoal = false}>取消</Button></div></div>{/if}{#if currentGoal}<div class="goal-status-grid"><div><span>状态</span><strong>{goalPhaseLabel(currentGoal.goal.phase)}</strong></div><div><span>轮次</span><strong>{currentGoal.roundsStarted} / {currentGoal.goal.maxGoalRounds}</strong></div><div><span>版本</span><strong>{currentGoal.goal.revision}</strong></div></div><div class="goal-objective">{currentGoal.goal.objective}</div>{#if currentGoal.goal.blockedReason}<div class="knowledge-note"><CircleAlert size={14} /><span>{String(currentGoal.goal.blockedReason)}</span></div>{/if}{:else}<DataState state="empty" title="当前会话暂无目标" description="创建一个目标后，官方 DSH 会持续记录状态与轮次。" />{/if}</SettingsGroup>
+                  <SettingsGroup title={t("goals.title")} description={t("goals.description")}>
+                    <div class="management-actions">
+                      <Button size="sm" onclick={() => { if (currentGoal) beginGoalEdit(); else { editingGoal = true; goalObjectiveDraft = ""; goalRoundsDraft = "256"; } }}>
+                        <Target size={14} />
+                        {currentGoal ? t("goals.editGoal") : t("goals.createGoal")}
+                      </Button>
+                      {#if currentGoal && currentGoal.goal.phase === "active"}
+                        <Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("pause")}><Pause size={14} />{t("goals.pause")}</Button>
+                      {:else if currentGoal && (currentGoal.goal.phase === "paused" || currentGoal.goal.phase === "blocked")}
+                        <Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("resume")}><Play size={14} />{t("goals.resume")}</Button>
+                      {/if}
+                      {#if currentGoal && currentGoal.goal.phase !== "complete"}
+                        <Button variant="outline" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("complete")}><Check size={14} />{t("common.complete")}</Button>
+                      {/if}
+                      {#if currentGoal}
+                        {#if confirmingGoalClear}
+                          <Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => void mutateGoal("clear")}><Trash2 size={13} />{t("goals.confirmClear")}</Button>
+                          <Button variant="ghost" size="sm" onclick={() => confirmingGoalClear = false}>{t("common.cancel")}</Button>
+                        {:else}
+                          <Button variant="outline" size="sm" aria-label={t("goals.clear")} title={t("goals.clear")} onclick={() => confirmingGoalClear = true}><Trash2 size={13} />{t("goals.clear")}</Button>
+                        {/if}
+                      {/if}
+                    </div>
+                    {#if editingGoal}
+                      <div class="goal-editor">
+                        <label>{t("goals.objective")}<Input aria-label={t("goals.objective")} bind:value={goalObjectiveDraft} placeholder={t("goals.objectivePlaceholder")} /></label>
+                        <label>{t("goals.rounds")}<Input aria-label={t("goals.rounds")} type="number" min="1" bind:value={goalRoundsDraft} /></label>
+                        <div class="row-actions">
+                          <Button size="sm" disabled={!!managementBusy} onclick={() => void saveGoal()}><Save size={13} />{t("common.save")}</Button>
+                          <Button variant="ghost" size="sm" onclick={() => editingGoal = false}>{t("common.cancel")}</Button>
+                        </div>
+                      </div>
+                    {/if}
+                    {#if currentGoal}
+                      <div class="goal-status-grid">
+                        <div class="goal-status-card"><span>{t("common.status")}</span><strong>{goalPhaseLabel(currentGoal.goal.phase)}</strong></div>
+                        <div class="goal-status-card"><span>{t("goals.roundsCount")}</span><strong>{currentGoal.roundsStarted} / {currentGoal.goal.maxGoalRounds}</strong></div>
+                        <div class="goal-status-card"><span>{t("goals.version")}</span><strong>{currentGoal.goal.revision}</strong></div>
+                      </div>
+                      <div class="goal-objective-card">
+                        <div class="goal-objective-header"><span>{t("goals.currentGoalSettings")}</span></div>
+                        <div class="goal-objective-body">{currentGoal.goal.objective}</div>
+                      </div>
+                      {#if currentGoal.goal.blockedReason}
+                        <div class="management-feedback error" style="margin-top: 10px;">
+                          <CircleAlert size={14} />
+                          <span>{String(currentGoal.goal.blockedReason)}</span>
+                        </div>
+                      {/if}
+                    {:else}
+                      <DataState state="empty" title={t("goals.noGoal")} description={t("goals.noGoalDesc")} />
+                    {/if}
+                  </SettingsGroup>
                 {:else if managementTab === "subagents"}
-                  <SettingsGroup title="子 Agent" description="查看直接子 Agent 的历史，并向可继续的子 Agent 发送后续指令。"><div class="management-actions"><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />刷新子 Agent</Button><span class="management-capability">{subagentParentAvailable ? "父会话可用" : "父会话不可用"}</span></div>{#if subagents.length === 0}<DataState state="empty" title="暂无子 Agent" description="当前会话尚未产生直接子 Agent。" />{:else}<div class="management-list">{#each subagents as entry (entry.id)}<div class:chosen={entry.id === selectedSubagentId} class="management-list-row subagent-management-row"><span class="row-icon"><Network size={15} /></span><div><strong>{subagentLabel(entry)}</strong><small>{subagentStatusLabel(entry)}</small></div>{#if entry.kind === "child"}<div class="row-actions"><Button variant="ghost" size="sm" onclick={() => void selectSubagent(entry)}>查看历史</Button>{#if entry.mode === "continuable" && entry.activity === "running"}<Button variant="ghost" size="icon-sm" aria-label="停止子 Agent" title="停止子 Agent" disabled={!!managementBusy} onclick={() => { selectedSubagentId = entry.id; void interruptSelectedSubagent(); }}><Square size={14} /></Button>{/if}</div>{/if}</div>{/each}</div>{/if}{#if selectedSubagent && selectedSubagent.kind === "child"}<div class="subagent-history"><div class="agent-preview-heading"><strong>{subagentLabel(selectedSubagent)} 的历史</strong><span class="management-capability">{selectedSubagent.mode === "continuable" ? "可继续" : "一次性"}</span></div>{#if subagentMessages.length === 0}<DataState state="empty" title="暂无历史消息" description="子 Agent 尚未产生可展示的消息。" />{:else}{#each subagentMessages as message (message.id)}<article class="subagent-message"><div class="message-meta"><strong>{message.role === "assistant" ? "Agent" : message.role === "user" ? "用户" : "工具"}</strong></div><div class="message-text">{message.text}</div></article>{/each}{/if}{#if selectedSubagent.mode === "continuable"}<div class="subagent-composer"><Input aria-label="继续指令" bind:value={subagentPromptDraft} placeholder="向子 Agent 发送后续指令" onkeydown={(event) => { if (event.key === "Enter") void promptSelectedSubagent(); }} /><Button size="sm" disabled={!subagentPromptDraft.trim() || !!managementBusy} onclick={() => void promptSelectedSubagent()}><Send size={13} />发送</Button></div>{/if}</div>{/if}</SettingsGroup>
+                  <SettingsGroup title={t("subagents.title")} description={t("subagents.description")}><div class="management-actions"><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />{t("subagents.refresh")}</Button><span class="management-capability">{subagentParentAvailable ? t("subagents.parentAvailable") : t("subagents.parentUnavailable")}</span></div>{#if subagents.length === 0}<DataState state="empty" title={t("subagents.empty")} description={t("subagents.emptyDesc")} />{:else}<div class="management-list">{#each subagents as entry (entry.id)}<div class:chosen={entry.id === selectedSubagentId} class="management-list-row subagent-management-row"><span class="row-icon"><Network size={15} /></span><div><strong>{subagentLabel(entry)}</strong><small>{subagentStatusLabel(entry)}</small></div>{#if entry.kind === "child"}<div class="row-actions"><Button variant="ghost" size="sm" onclick={() => void selectSubagent(entry)}>{t("subagents.viewHistory")}</Button>{#if entry.mode === "continuable" && entry.activity === "running"}<Button variant="ghost" size="icon-sm" aria-label={t("subagents.stopSubagent")} title={t("subagents.stopSubagent")} disabled={!!managementBusy} onclick={() => { selectedSubagentId = entry.id; void interruptSelectedSubagent(); }}><Square size={14} /></Button>{/if}</div>{/if}</div>{/each}</div>{/if}{#if selectedSubagent && selectedSubagent.kind === "child"}<div class="subagent-history"><div class="agent-preview-heading"><strong>{t("subagents.historyOf", { label: subagentLabel(selectedSubagent) })}</strong><span class="management-capability">{selectedSubagent.mode === "continuable" ? t("subagents.continuable") : t("subagents.oneOff")}</span></div>{#if subagentMessages.length === 0}<DataState state="empty" title={t("subagents.noHistory")} description={t("subagents.noHistoryDesc")} />{:else}{#each subagentMessages as message (message.id)}<article class="subagent-message"><div class="message-meta"><strong>{message.role === "assistant" ? t("common.agent") : message.role === "user" ? t("common.user") : t("common.tool")}</strong></div><div class="message-text">{message.text}</div></article>{/each}{/if}{#if selectedSubagent.mode === "continuable"}<div class="subagent-composer"><Input aria-label={t("subagents.instructionAria")} bind:value={subagentPromptDraft} placeholder={t("subagents.sendInstruction")} onkeydown={(event) => { if (event.key === "Enter") void promptSelectedSubagent(); }} /><Button size="sm" disabled={!subagentPromptDraft.trim() || !!managementBusy} onclick={() => void promptSelectedSubagent()}><Send size={13} />{t("subagents.send")}</Button></div>{/if}</div>{/if}</SettingsGroup>
                 {:else if managementTab === "models"}
-                  <SettingsGroup title="模型目录" description="会话模型和全局 Provider 目录均由官方 DSH 提供。"><div class="management-actions"><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><RefreshCw size={13} />刷新目录</Button>{#if hostInfo}<span class="management-capability">默认 {hostInfo.provider || "自动"}/{hostInfo.model || "自动"}</span>{/if}</div>{#if modelGroups.length === 0}<DataState state="empty" title="尚未加载会话模型" description="先选择或新建一个会话。" />{:else}{#each modelGroups as group (group.id)}<div class="model-group"><strong>{group.name}</strong>{#each group.models as model (model.id)}<button class:chosen={`${group.id}/${model.id}` === selectedModel} class="model-option" disabled={modelBusy} onclick={() => void chooseModel(group.id, model.id)}><span>{model.name}</span>{#if model.description}<small>{model.description}</small>{/if}{#if `${group.id}/${model.id}` === selectedModel}<Check size={14} />{/if}</button>{/each}</div>{/each}{/if}{#if catalogGroups.length > 0}<div class="catalog-divider"><span>全局 Provider 目录</span></div>{#each catalogGroups as group (group.id)}<div class="model-group catalog-group"><strong>{group.name}</strong><small>{group.models.length} 个可用模型</small><div class="catalog-models">{#each group.models as model (model.id)}<span>{model.name}</span>{/each}</div></div>{/each}{/if}{#if catalogFailures.length > 0}<div class="knowledge-note"><CircleAlert size={14} /><span>{catalogFailures.length} 个 Provider 目录读取失败：{catalogFailures.map((item) => item.name).join("、")}</span></div>{/if}</SettingsGroup>
+                  <SettingsGroup title={t("models.title")} description={t("models.description")}>
+                    <div class="management-actions models-toolbar">
+                      <div class="models-toolbar-buttons">
+                        <Button size="sm" disabled={!!managementBusy || !xgGatewayCredentialReady} title={xgGatewayCredentialReady ? t("models.refreshFromService") : t("models.requireKeyNotice", { ref: "XG_GOMODEL_API_KEY" })} onclick={() => void refreshXgGatewayModels()}>
+                          <RefreshCw size={13} />
+                          {t("models.refreshFromService")}
+                        </Button>
+                        {#if !xgGatewayCredentialReady}
+                          <Button variant="outline" size="sm" onclick={() => openCredentialSettings("XG_GOMODEL_API_KEY")}>
+                            <KeyRound size={13} />
+                            {t("models.goToSaveKey")}
+                          </Button>
+                        {/if}
+                        <Button variant="outline" size="sm" onclick={() => void refreshManagement()}>{t("models.refreshCatalog")}</Button>
+                      </div>
+                      {#if hostInfo}
+                        <span class="management-capability">{t("models.defaultModelPrefix")}{hostInfo.provider || t("models.auto")}/{hostInfo.model || t("models.auto")}</span>
+                      {/if}
+                    </div>
+                    {#if modelGroups.length === 0}
+                      <DataState state="empty" title={t("models.emptySessionModels")} description={t("models.emptySessionModelsDesc")} />
+                    {:else}
+                      {#each modelGroups as group (group.id)}
+                        <div class="model-group">
+                          <div class="model-group-header">
+                            <strong>{group.name}</strong>
+                            {#if !modelCredentialConfigured(group.id)}
+                              <span class="model-group-unconfigured-badge">{t("models.unconfiguredKeyBadge")}</span>
+                            {/if}
+                          </div>
+                          {#each group.models as model (model.id)}
+                            <button class:chosen={modelSelectionKey(group.id, model.id) === selectedModel} class="model-option" disabled={modelBusy || !modelCredentialConfigured(group.id)} title={modelCredentialConfigured(group.id) ? undefined : t("models.missingProviderKey")} onclick={() => void chooseModel(group.id, model.id)}>
+                              <span>
+                                <strong>{model.name}</strong>
+                                <small>
+                                  {modelCredentialConfigured(group.id) ? modelCapabilityLabel(model, group.id === "xg-gomodel" && unknownModelCapabilities.has(model.id)) : t("models.needApiKey")}
+                                  {#if model.contextWindow} · {t("models.contextWindow", { count: model.contextWindow.toLocaleString() })}{/if}
+                                  {#if model.maxTokens} · {t("models.maxTokens", { count: model.maxTokens.toLocaleString() })}{/if}
+                                </small>
+                              </span>
+                              {#if modelSelectionKey(group.id, model.id) === selectedModel}
+                                <Check size={14} class="model-selected-check" />
+                              {/if}
+                            </button>
+                          {/each}
+                        </div>
+                      {/each}
+                    {/if}
+                    {#if catalogGroups.length > 0}
+                      <div class="catalog-divider"><span>{t("models.globalProviderCatalog")}</span></div>
+                      <div class="catalog-group-container">
+                        {#each catalogGroups as group (group.id)}
+                          <div class="model-group catalog-group">
+                            <div class="model-group-header">
+                              <strong>{group.name}</strong>
+                              <small>{t("models.availableModelsCount", { count: group.models.length })}</small>
+                            </div>
+                            <div class="catalog-models-list">
+                              {#each group.models as model (model.id)}
+                                <div class="catalog-model-row">
+                                  <strong>{model.name}</strong>
+                                  <small>{model.id}{#if model.contextWindow} · {t("models.contextWindow", { count: model.contextWindow.toLocaleString() })}{/if}{#if model.maxTokens} · {t("models.maxTokens", { count: model.maxTokens.toLocaleString() })}{/if}</small>
+                                </div>
+                              {/each}
+                            </div>
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                    {#if catalogFailures.length > 0}
+                      <div class="knowledge-note">
+                        <CircleAlert size={14} />
+                        <span>{t("models.catalogFailures", { count: catalogFailures.length, names: catalogFailures.map((item) => item.name).join("、") })}</span>
+                      </div>
+                    {/if}
+                  </SettingsGroup>
                 {:else if managementTab === "workspaces"}
-                  <SettingsGroup title="工作区注册" description="工作区和会话由官方 DSH 维护，暗涌只提供选择与呈现。"><div class="management-actions"><Button size="sm" onclick={() => void pickWorkspace()}><FolderOpen size={14} />选择工作区</Button><Button variant="outline" size="sm" onclick={() => void refresh()}><History size={14} />刷新</Button></div>{#if filteredWorkspaces.length === 0}<DataState state="empty" title="没有注册工作区" description="选择一个目录后，官方 DSH 会建立工作区记录。" />{:else}<div class="management-list">{#each filteredWorkspaces as item (item.workspaceId)}<div class="management-list-row workspace-management-row"><span class="row-icon"><FolderOpen size={15} /></span><div>{#if editingWorkspaceId === item.workspaceId}<Input class="inline-edit-input" aria-label="工作区名称" bind:value={workspaceTitleDraft} onkeydown={(event) => { if (event.key === "Enter") void saveWorkspaceRename(item.workspaceId); if (event.key === "Escape") editingWorkspaceId = ""; }} />{:else}<strong>{item.title}</strong><small>{item.path}</small>{/if}</div>{#if editingWorkspaceId === item.workspaceId}<div class="row-actions"><Button size="sm" disabled={!!managementBusy} onclick={() => void saveWorkspaceRename(item.workspaceId)}><Check size={13} />保存</Button><Button variant="ghost" size="sm" onclick={() => editingWorkspaceId = ""}>取消</Button></div>{:else}<em>{item.sessionIds.length} 个会话</em><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="进入工作区" title="进入工作区" onclick={() => void enterWorkspace(item)}><ExternalLink size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="在资源管理器打开" title="在资源管理器打开" disabled={!!managementBusy} onclick={() => void openWorkspacePath(item)}><FolderOpen size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="重命名工作区" title="重命名工作区" onclick={() => beginWorkspaceRename(item)}><Pencil size={14} /></Button>{#if confirmingWorkspaceId === item.workspaceId}<Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => void removeWorkspace(item.workspaceId)}><Trash2 size={13} />确认移除</Button><Button variant="ghost" size="sm" onclick={() => confirmingWorkspaceId = ""}>取消</Button>{:else}<Button variant="ghost" size="icon-sm" aria-label="移除工作区注册" title="移除工作区注册" onclick={() => confirmingWorkspaceId = item.workspaceId}><Trash2 size={14} /></Button>{/if}</div>{/if}</div>{/each}</div>{/if}<div class="workspace-browser-divider"><span>目录浏览</span></div>{#if client}<WorkspaceBrowser client={client} onRegistered={() => { void refresh(); void refreshManagement(); }} />{/if}</SettingsGroup>
-                  <SettingsGroup title="官方顺序" description="使用 DSH 的持久排序 API 调整工作区和会话顺序。"><div class="management-list">{#each filteredWorkspaces as workspace, index (workspace.workspaceId)}<div class="management-list-row"><span class="row-icon"><FolderOpen size={15} /></span><div><strong>{workspace.title}</strong><small>{workspace.sessionIds.length} 个会话</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="工作区上移" title="工作区上移" disabled={index === 0 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, -1)}><ChevronDown class="rotate-180" size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label="工作区下移" title="工作区下移" disabled={index === filteredWorkspaces.length - 1 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, 1)}><ChevronDown size={14} /></Button></div></div>{#each workspace.sessionIds as sessionId, sessionIndex (sessionId)}<div class="management-list-row nested-order-row"><span class="row-icon"><MessageSquare size={13} /></span><div><strong>{sessionTitle(sessions.find((item) => item.sessionId === sessionId) || { sessionId, updatedAt: 0, running: false, blank: false })}</strong><small>{sessionId}</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label="会话上移" title="会话上移" disabled={sessionIndex === 0 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, -1)}><ChevronDown class="rotate-180" size={13} /></Button><Button variant="ghost" size="icon-sm" aria-label="会话下移" title="会话下移" disabled={sessionIndex === workspace.sessionIds.length - 1 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, 1)}><ChevronDown size={13} /></Button></div></div>{/each}{/each}</div></SettingsGroup>
+                  <SettingsGroup title={t("workspaces.title")} description={t("workspaces.description")}>
+                    <div class="management-actions">
+                      <Button size="sm" onclick={() => void pickWorkspace()}><FolderOpen size={14} />{t("workspaces.pickWorkspace")}</Button>
+                      <Button variant="outline" size="sm" onclick={() => void refresh()}><History size={14} />{t("common.refresh")}</Button>
+                    </div>
+                    {#if filteredWorkspaces.length === 0}
+                      <div class="workspace-empty-banner">
+                        <FolderOpen size={20} />
+                        <div>
+                          <strong>{t("workspaces.emptyBannerTitle")}</strong>
+                          <small>{t("workspaces.emptyBannerDesc")}</small>
+                        </div>
+                      </div>
+                    {:else}
+                      <div class="management-list">
+                        {#each filteredWorkspaces as item (item.workspaceId)}
+                          <div class="management-list-row workspace-management-row">
+                            <span class="row-icon"><FolderOpen size={15} /></span>
+                            <div>
+                              {#if editingWorkspaceId === item.workspaceId}
+                                <Input class="inline-edit-input" aria-label={t("workspaces.nameLabel")} bind:value={workspaceTitleDraft} onkeydown={(event) => { if (event.key === "Enter") void saveWorkspaceRename(item.workspaceId); if (event.key === "Escape") editingWorkspaceId = ""; }} />
+                              {:else}
+                                <strong>{item.title}</strong>
+                                <small>{item.path}</small>
+                              {/if}
+                            </div>
+                            {#if editingWorkspaceId === item.workspaceId}
+                              <div class="row-actions">
+                                <Button size="sm" disabled={!!managementBusy} onclick={() => void saveWorkspaceRename(item.workspaceId)}><Check size={13} />{t("common.save")}</Button>
+                                <Button variant="ghost" size="sm" onclick={() => editingWorkspaceId = ""}>{t("common.cancel")}</Button>
+                              </div>
+                            {:else}
+                              <em>{t("workspaces.sessionsCount", { count: item.sessionIds.length })}</em>
+                              <div class="row-actions">
+                                <Button variant="ghost" size="icon-sm" aria-label={t("workspaces.enterWorkspace")} title={t("workspaces.enterWorkspace")} onclick={() => void enterWorkspace(item)}><ExternalLink size={14} /></Button>
+                                <Button variant="ghost" size="icon-sm" aria-label={t("workspaces.openInExplorer")} title={t("workspaces.openInExplorer")} disabled={!!managementBusy} onclick={() => void openWorkspacePath(item)}><FolderOpen size={14} /></Button>
+                                <Button variant="ghost" size="icon-sm" aria-label={t("workspaces.renameWorkspace")} title={t("workspaces.renameWorkspace")} onclick={() => beginWorkspaceRename(item)}><Pencil size={14} /></Button>
+                                {#if confirmingWorkspaceId === item.workspaceId}
+                                  <Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => void removeWorkspace(item.workspaceId)}><Trash2 size={13} />{t("workspaces.confirmRemove")}</Button>
+                                  <Button variant="ghost" size="sm" onclick={() => confirmingWorkspaceId = ""}>{t("common.cancel")}</Button>
+                                {:else}
+                                  <Button variant="ghost" size="icon-sm" aria-label={t("workspaces.removeRegistration")} title={t("workspaces.removeRegistration")} onclick={() => confirmingWorkspaceId = item.workspaceId}><Trash2 size={14} /></Button>
+                                {/if}
+                              </div>
+                            {/if}
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                    <div class="workspace-browser-divider"><span>{t("workspaces.directoryBrowsing")}</span></div>
+                    {#if client}
+                      <WorkspaceBrowser client={client} onRegistered={() => { void refresh(); void refreshManagement(); }} />
+                    {/if}
+                  </SettingsGroup>
+                  <SettingsGroup title={t("workspaces.officialOrder")} description={t("workspaces.officialOrderDesc")}><div class="management-list">{#each filteredWorkspaces as workspace, index (workspace.workspaceId)}<div class="management-list-row"><span class="row-icon"><FolderOpen size={15} /></span><div><strong>{workspace.title}</strong><small>{t("workspaces.sessionsCount", { count: workspace.sessionIds.length })}</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label={t("workspaces.moveWorkspaceUp")} title={t("workspaces.moveWorkspaceUp")} disabled={index === 0 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, -1)}><ChevronDown class="rotate-180" size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label={t("workspaces.moveWorkspaceDown")} title={t("workspaces.moveWorkspaceDown")} disabled={index === filteredWorkspaces.length - 1 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, 1)}><ChevronDown size={14} /></Button></div></div>{#each workspace.sessionIds as sessionId, sessionIndex (sessionId)}<div class="management-list-row nested-order-row"><span class="row-icon"><MessageSquare size={13} /></span><div><strong>{sessionTitle(sessions.find((item) => item.sessionId === sessionId) || { sessionId, updatedAt: 0, running: false, blank: false })}</strong><small>{sessionId}</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label={t("workspaces.moveSessionUp")} title={t("workspaces.moveSessionUp")} disabled={sessionIndex === 0 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, -1)}><ChevronDown class="rotate-180" size={13} /></Button><Button variant="ghost" size="icon-sm" aria-label={t("workspaces.moveSessionDown")} title={t("workspaces.moveSessionDown")} disabled={sessionIndex === workspace.sessionIds.length - 1 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, 1)}><ChevronDown size={13} /></Button></div></div>{/each}{/each}</div></SettingsGroup>
                 {:else if managementTab === "mounts"}
                   <SmbMounts />
                 {:else if managementTab === "plugins"}
-                  <SettingsGroup title="插件与 MCP" description="只读显示官方 DSH Loader 的实时插件清单，不伪造连接或启用状态。"><div class="management-actions"><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><RefreshCw size={13} />刷新清单</Button><span class="management-capability">{pluginInventory.length} 个条目</span></div>{#if pluginInventory.length === 0}<DataState state="empty" title="暂无插件清单" description="官方 DSH 尚未返回 Host Loader 条目。" />{:else}<div class="management-list">{#each pluginInventory.filter((item) => !settingsQuery || `${item.moduleName} ${item.entryId}`.toLowerCase().includes(settingsQuery.toLowerCase())) as plugin (plugin.entryId)}<div class="management-list-row"><span class="row-icon"><PlugZap size={15} /></span><div><strong>{plugin.moduleName}</strong><small>{plugin.entryId}</small></div><StatusBadge status={plugin.enabled ? "success" : "neutral"} label={plugin.enabled ? "已启用" : "未启用"} /><span class={`plugin-phase plugin-phase--${plugin.fiberPhase || "none"}`}>{plugin.fiberPhase || "无运行 Fiber"}</span></div>{/each}</div>{/if}<div class="knowledge-note"><ShieldAlert size={14} /><span>插件启停、安装和 MCP 配置必须通过官方 DSH Profile/设置完成，本界面不维护第二套状态。</span></div></SettingsGroup>
+                  <PluginInventoryView entries={pluginInventory} onRefresh={() => void refreshManagement()} />
+                {:else if managementTab === "mcp"}
+                  <McpInventoryView entries={pluginInventory} onRefresh={() => void refreshManagement()} onNavigateToSettings={() => openManagement("settings")} />
                 {:else if managementTab === "knowledge"}
-                  <SettingsGroup title="知识库与资料" description="知识入口接入官方 DSH Skill、工作区文件和会话附件。"><div class="knowledge-health-grid"><div><span>官方 Skill</span><strong>{skills.length}</strong><small>{skills.length ? "已加载" : "未加载"}</small></div><div><span>工作区文件</span><strong>{workspacePath ? "可用" : "未选择"}</strong><small>由 DSH 工具读取</small></div><div><span>会话资料</span><strong>{activeSession ? "可用" : "需会话"}</strong><small>由官方会话管理</small></div><div><span>持久知识库</span><strong>未接入</strong><small>等待官方插件 RPC</small></div></div><div class="knowledge-toolbar"><Button size="sm" onclick={() => void pickWorkspace()}><FolderOpen size={14} />选择知识工作区</Button><Button variant="outline" size="sm" onclick={() => void createSession()}><MessageSquarePlus size={14} />新建资料会话</Button><Button variant="outline" size="sm" onclick={() => openKnowledgePrompt("扫描当前工作区的文档与资料，按目录、类型和用途整理一份知识清单。") }><ClipboardList size={14} />扫描工作区资料</Button><Button variant="outline" size="sm" onclick={() => openKnowledgePrompt("检索当前工作区资料，找出与我的问题最相关的文件、段落和依据，并给出引用路径。") }><Search size={14} />检索工作区</Button><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />刷新知识源</Button></div>{#if skills.length === 0}<DataState state="empty" title="暂无官方知识源" description="选择会话与工作区后，可让 DSH 读取项目资料；持久索引需要官方知识插件。" />{:else}<div class="knowledge-skill-list">{#each skills.filter((skill) => !settingsQuery || `${skill.name} ${skill.description}`.toLowerCase().includes(settingsQuery.toLowerCase())) as skill (skill.name)}<article><div class="skill-heading"><span class="row-icon"><BookOpen size={15} /></span><div><strong>{skill.name}</strong><small>{skill.modelInvocable ? "模型可调用" : "仅用户可调用"}</small></div></div><p>{skill.description}</p>{#if skill.whenToUse}<em>{skill.whenToUse}</em>{/if}</article>{/each}</div>{/if}<div class="knowledge-note"><ShieldAlert size={14} /><span>旧版 SQLite、FTS5 和向量知识库属于已删除的私有 Wails 后端。当前页面只显示官方 DSH 的真实能力，不伪造本地索引状态。</span></div></SettingsGroup>
+                  <SettingsGroup title={t("knowledge.title")} description={t("knowledge.description")}>
+                    <div class="knowledge-health-grid">
+                      <div class="knowledge-health-card">
+                        <span>{t("knowledge.statSkill")}</span>
+                        <strong>{skills.length ? t("knowledge.statSkillLoaded", { count: skills.length }) : t("knowledge.statSkillEmpty")}</strong>
+                        <small>{skills.length ? t("knowledge.statSkillDescLoaded") : t("knowledge.statSkillDescEmpty")}</small>
+                      </div>
+                      <div class="knowledge-health-card">
+                        <span>{t("knowledge.statWorkspace")}</span>
+                        <strong>{workspacePath ? t("knowledge.statWorkspaceReady") : t("knowledge.statWorkspaceEmpty")}</strong>
+                        <small>{workspacePath ? t("knowledge.statWorkspaceDescReady") : t("knowledge.statWorkspaceDescEmpty")}</small>
+                      </div>
+                      <div class="knowledge-health-card">
+                        <span>{t("knowledge.statSession")}</span>
+                        <strong>{activeSession ? t("knowledge.statSessionReady") : t("knowledge.statSessionEmpty")}</strong>
+                        <small>{activeSession ? t("knowledge.statSessionDescReady") : t("knowledge.statSessionDescEmpty")}</small>
+                      </div>
+                      <div class="knowledge-health-card">
+                        <span>{t("knowledge.statPersistent")}</span>
+                        <strong>{t("knowledge.statPersistentStatus")}</strong>
+                        <small>{t("knowledge.statPersistentDesc")}</small>
+                      </div>
+                      <div class="knowledge-health-card">
+                        <span>{t("knowledge.statIndex")}</span>
+                        <strong>{knowledgeIndex.files || 0} {t("knowledge.filesUnit")} · {knowledgeIndex.chunks || 0} {t("knowledge.chunksUnit")}</strong>
+                        <small>{knowledgeStatusLabel()}</small>
+                      </div>
+                    </div>
+                    <div class="knowledge-toolbar">
+                      <Button size="sm" onclick={() => void pickWorkspace()}><FolderOpen size={14} />{t("knowledge.selectWorkspaceBtn")}</Button>
+                      <Button variant="outline" size="sm" onclick={() => void createSession()}><MessageSquarePlus size={14} />{t("knowledge.newKnowledgeSessionBtn")}</Button>
+                      <Button variant="outline" size="sm" disabled={!workspacePath || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("build")}><Database size={14} />{t("knowledge.buildIndexBtn")}</Button>
+                      <Button variant="outline" size="sm" disabled={!workspacePath || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("refresh")}><RefreshCw size={14} />{t("knowledge.refreshIndexBtn")}</Button>
+                      <Button variant="outline" size="sm" onclick={() => openKnowledgePrompt(t("knowledge.createInventoryPrompt"))}><ClipboardList size={14} />{t("knowledge.scanWorkspaceBtn")}</Button>
+                      <Button variant="outline" size="sm" disabled={!workspacePath || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("query", t("knowledge.searchWorkspacePrompt"))}><Search size={14} />{t("knowledge.searchWorkspaceBtn")}</Button>
+                      <Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />{t("knowledge.refreshKnowledgeBtn")}</Button>
+                    </div>
+                    {#if knowledgeIndex.failures && knowledgeIndex.failures.length > 0}<div class="knowledge-note"><CircleAlert size={14} /><span>{t("knowledge.indexFailures", { count: knowledgeIndex.failures.length, names: knowledgeIndex.failures.join("、") })}</span></div>{/if}
+                    {#if skills.length === 0}
+                      <DataState state="empty" title={t("knowledge.emptyKnowledgeTitle")} description={t("knowledge.emptyKnowledgeDesc")} />
+                    {:else}
+                      <div class="knowledge-skill-list">
+                        {#each skills.filter((skill) => !settingsQuery || `${skill.name} ${skill.description}`.toLowerCase().includes(settingsQuery.toLowerCase())) as skill (skill.name)}
+                          <article>
+                            <div class="skill-heading"><span class="row-icon"><BookOpen size={15} /></span><div><strong>{skill.name}</strong><small>{skill.modelInvocable ? t("knowledge.skillInvocableModel") : t("knowledge.skillInvocableUser")}</small></div></div>
+                            <p>{skill.description}</p>
+                            {#if skill.whenToUse}<em>{skill.whenToUse}</em>{/if}
+                          </article>
+                        {/each}
+                      </div>
+                    {/if}
+                    <div class="knowledge-note"><ShieldAlert size={14} /><span>{t("knowledge.noteDesc")}</span></div>
+                  </SettingsGroup>
                 {:else if managementTab === "settings"}
-                  <SettingsGroup title="模型 Provider" description="Provider 目录、模型发现与配置地址来自官方 DSH。">{#if client}<ProviderWorkbench {client} providers={filteredProviders} onSelectNamespace={(ns) => selectSettingsNamespace(ns)} />{/if}</SettingsGroup>
-                  <SettingsGroup title="凭据" description="官方接口不会返回凭据值，只显示配置状态并接受单向写入。"><div class="credential-form"><Input aria-label="凭据引用名" bind:value={credentialRefDraft} placeholder="例如 DEEPSEEK_API_KEY" /><Input aria-label="凭据值" type="password" bind:value={credentialValueDraft} placeholder="输入后只用于本次写入" /><Button size="sm" disabled={!credentialRefDraft.trim() || !credentialValueDraft || !!managementBusy} onclick={() => void saveCredential()}><KeyRound size={13} />保存凭据</Button></div>{#if credentialRefs.length === 0}<DataState state="empty" title="暂无凭据引用" description="Provider 设置中尚未声明 apiKeyEnv；也可在上方手动输入引用名。" />{:else}<div class="management-list">{#each credentialRefs as ref (ref)}<div class="management-list-row credential-row"><span class="row-icon"><KeyRound size={15} /></span><div><strong>{ref}</strong><small>{credentialSummary(ref)}</small></div><StatusBadge status={credentials[ref]?.configured ? "success" : "neutral"} label={credentials[ref]?.writable === false ? "只读" : "可写"} />{#if credentials[ref]?.configured && credentials[ref]?.writable}{#if confirmingCredentialRef === ref}<Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => void unsetCredential(ref)}><Trash2 size={13} />确认移除</Button><Button variant="ghost" size="sm" onclick={() => confirmingCredentialRef = ""}>取消</Button>{:else}<Button variant="ghost" size="icon-sm" aria-label="移除凭据" title="移除凭据" onclick={() => confirmingCredentialRef = ref}><Trash2 size={14} /></Button>{/if}{/if}</div>{/each}</div>{/if}</SettingsGroup>
-                  <SettingsGroup title="设置命名空间" description="以 JSON 对象合并更新用户层；secret 字段保持写入专用，不会显示在这里。"><div class="management-actions"><Button variant="outline" size="sm" disabled={!settingsHasDocument || !!managementBusy} onclick={() => void openSettingsDocument()}><ExternalLink size={14} />打开设置文件</Button><span class="management-capability">{settingsWritable ? "可写" : "只读"}</span></div>{#if settingsNamespaces.length === 0}<DataState state="empty" title="暂无设置命名空间" description="官方 DSH 尚未注册设置项。" />{:else}<div class="settings-editor-grid"><nav class="settings-namespace-list" aria-label="设置命名空间">{#each filteredSettingsNamespaces as namespace (namespace.ns)}<button class:active={namespace.ns === selectedSettingsNamespace()?.ns} onclick={() => selectSettingsNamespace(namespace.ns)}><strong>{namespace.ns}</strong><small>{namespace.applies === "restart" ? "重启生效" : "即时生效"} · r{namespace.revision}</small></button>{/each}</nav><div class="settings-json-editor">{#if selectedSettingsNamespace()}<div class="agent-preview-heading"><strong>{selectedSettingsNamespace()?.ns}</strong><span>{selectedSettingsNamespace()?.secrets.filter((item) => item.set).length} 个 secret 已配置</span></div><Textarea aria-label="设置 JSON" rows={14} bind:value={settingsDraft} spellcheck={false} /><div class="row-actions"><Button size="sm" disabled={!settingsWritable || !!managementBusy} onclick={() => void saveSettingsNamespace()}><Save size={13} />合并更新</Button><Button variant="ghost" size="sm" onclick={() => selectSettingsNamespace(selectedSettingsNamespace()?.ns || "")}>重置编辑</Button></div>{/if}</div></div>{/if}</SettingsGroup>
+                  <SettingsGroup title={t("app.language")} description={t("app.switchLanguage")}>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                      {#each AVAILABLE_LOCALES as opt (opt.code)}
+                        <Button
+                          variant={i18n.locale === opt.code ? "default" : "outline"}
+                          size="sm"
+                          onclick={() => setLocale(opt.code)}
+                        >
+                          <Globe size={14} />
+                          <span>{opt.label}</span>
+                        </Button>
+                      {/each}
+                    </div>
+                  </SettingsGroup>
+                  <SettingsGroup title={t("settings.modelProviderTitle")} description={t("settings.modelProviderDesc")}>
+                    {#if client}
+                      <ProviderWorkbench
+                        {client}
+                        providers={filteredProviders}
+                        namespaces={settingsNamespaces}
+                        {credentials}
+                        onSelectNamespace={(ns) => selectSettingsNamespace(ns)}
+                        onCredentialSaved={async (ref) => {
+                          credentials = { ...credentials, ...(await client!.describeCredentials([ref])).credentials };
+                          if (!credentialRefs.includes(ref)) credentialRefs = [...credentialRefs, ref].sort();
+                          if (ref === "XG_GOMODEL_API_KEY" && credentials[ref]?.configured) await refreshXgGatewayModels();
+                        }}
+                      />
+                    {/if}
+                  </SettingsGroup>
+                  <SettingsGroup title={t("settings.modelProviderSecurity")} description={t("settings.modelProviderSecurityDesc")}>
+                    <div class="credential-chips">
+                      <span class="credential-chips-label">{t("settings.quickPresets")}</span>
+                      <button type="button" class="credential-chip" class:chosen={credentialRefDraft === "XG_GOMODEL_API_KEY"} onclick={() => pickCredentialQuickChip("XG_GOMODEL_API_KEY")}>
+                        <strong>XG_GOMODEL_API_KEY</strong>
+                        <small>{t("settings.presetXg")}</small>
+                      </button>
+                      <button type="button" class="credential-chip" class:chosen={credentialRefDraft === "DEEPSEEK_API_KEY"} onclick={() => pickCredentialQuickChip("DEEPSEEK_API_KEY")}>
+                        <strong>DEEPSEEK_API_KEY</strong>
+                        <small>{t("settings.presetDeepseek")}</small>
+                      </button>
+                    </div>
+                    <div class="credential-form">
+                      <Input aria-label={t("settings.credentialRef")} bind:value={credentialRefDraft} placeholder={t("settings.refPlaceholderExample")} />
+                      <Input
+                        aria-label={t("settings.credentialValue")}
+                        type="password"
+                        bind:value={credentialValueDraft}
+                        placeholder={t("settings.credentialValuePlaceholder")}
+                        onkeydown={(event) => { if (event.key === "Enter") void saveCredential(); }}
+                      />
+                      <Button size="sm" disabled={!credentialRefDraft.trim() || !credentialValueDraft || !!managementBusy} onclick={() => void saveCredential()}>
+                        <KeyRound size={13} />
+                        {t("settings.saveCredential")}
+                      </Button>
+                    </div>
+                    {#if credentialRefs.length === 0}
+                      <DataState state="empty" title={t("settings.emptyCredentials")} description={t("settings.emptyCredentialsDesc")} />
+                    {:else}
+                      <div class="management-list">
+                        {#each credentialRefs as ref (ref)}
+                          <div class="management-list-row credential-row">
+                            <span class="row-icon"><KeyRound size={15} /></span>
+                            <div>
+                              <strong>{credentialRefTitle(ref)}</strong>
+                              <small>{ref} · {credentialSummary(ref)} · {credentialRefHint(ref)}</small>
+                            </div>
+                            <StatusBadge status={credentials[ref]?.configured ? "success" : "neutral"} label={credentials[ref]?.configured ? (credentials[ref]?.writable === false ? t("settings.configuredReadonly") : t("settings.configured")) : t("settings.notConfigured")} />
+                            {#if !credentials[ref]?.configured}
+                              <Button variant="outline" size="sm" onclick={() => pickCredentialQuickChip(ref)}>
+                                <KeyRound size={12} />
+                                {t("settings.fillKey")}
+                              </Button>
+                            {:else if credentials[ref]?.writable}
+                              {#if confirmingCredentialRef === ref}
+                                <Button variant="destructive" size="sm" disabled={!!managementBusy} onclick={() => void unsetCredential(ref)}>
+                                  <Trash2 size={13} />
+                                  {t("settings.confirmRemove")}
+                                </Button>
+                                <Button variant="ghost" size="sm" onclick={() => confirmingCredentialRef = ""}>{t("common.cancel")}</Button>
+                              {:else}
+                                <Button variant="ghost" size="icon-sm" aria-label={t("settings.removeCredential")} title={t("settings.removeCredential")} onclick={() => confirmingCredentialRef = ref}>
+                                  <Trash2 size={14} />
+                                </Button>
+                              {/if}
+                            {/if}
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                  </SettingsGroup>
+                  <SettingsGroup title={t("settings.namespacesSectionTitle")} description={t("settings.namespacesSectionDesc")}>
+                    <div class="management-actions">
+                      <Button variant="outline" size="sm" disabled={!settingsHasDocument || !!managementBusy} onclick={() => void openSettingsDocument()}>
+                        <ExternalLink size={14} />
+                        {t("settings.openSettingsFile")}
+                      </Button>
+                      <span class="management-capability">{settingsWritable ? t("common.writable") : t("common.readonly")}</span>
+                    </div>
+                    {#if settingsNamespaces.length === 0}
+                      <DataState state="empty" title={t("settings.emptyNamespaces")} description={t("settings.emptyNamespacesDesc")} />
+                    {:else}
+                      <div class="settings-editor-grid">
+                        <nav class="settings-namespace-list" aria-label={t("settings.namespacesSectionTitle")}>
+                          {#each filteredSettingsNamespaces as namespace (namespace.ns)}
+                            <button class:active={namespace.ns === selectedSettingsNamespace()?.ns} onclick={() => selectSettingsNamespace(namespace.ns)}>
+                              <strong>{namespace.ns}</strong>
+                              <small>{namespace.applies === "restart" ? t("common.restartEffect") : t("common.instantEffect")} · r{namespace.revision}</small>
+                            </button>
+                          {/each}
+                        </nav>
+                        <div class="settings-json-editor">
+                          {#if selectedSettingsNamespace()}
+                            <div class="agent-preview-heading">
+                              <div>
+                                <strong>{selectedSettingsNamespace()?.ns}</strong>
+                                <small style="margin-left: 8px; color: var(--muted-foreground);">{t("settings.secretsCount", { count: selectedSettingsNamespace()?.secrets.filter((item) => item.set).length || 0 })}</small>
+                              </div>
+                              <div class="settings-view-tabs">
+                                <button type="button" class:active={settingsViewMode === "user"} onclick={() => settingsViewMode = "user"}>{t("settings.userLayer")}</button>
+                                <button type="button" class:active={settingsViewMode === "merged"} onclick={() => settingsViewMode = "merged"}>{t("settings.mergedConfig")}</button>
+                              </div>
+                            </div>
+                            {#if settingsViewMode === "user"}
+                              <Textarea aria-label={t("settings.jsonAria")} rows={14} bind:value={settingsDraft} spellcheck={false} />
+                              <div class="row-actions">
+                                <Button size="sm" disabled={!settingsWritable || !!managementBusy} onclick={() => void saveSettingsNamespace()}>
+                                  <Save size={13} />
+                                  {t("settings.mergeUpdate")}
+                                </Button>
+                                <Button variant="ghost" size="sm" onclick={() => selectSettingsNamespace(selectedSettingsNamespace()?.ns || "")}>{t("settings.resetEdit")}</Button>
+                              </div>
+                            {:else}
+                              <div class="merged-settings-viewer">
+                                <pre><code>{JSON.stringify(selectedSettingsNamespace()?.value || {}, null, 2)}</code></pre>
+                                <div class="knowledge-note" style="margin-top: 8px;">
+                                  <ShieldAlert size={14} />
+                                  <span>{t("settings.mergedSettingsNote")}</span>
+                                </div>
+                              </div>
+                            {/if}
+                          {/if}
+                        </div>
+                      </div>
+                    {/if}
+                  </SettingsGroup>
                 {:else}
-                  <SettingsGroup title="运行状态与诊断" description="桌面 shell、官方 DSH 事件流和设置命名空间。"><div class="status-line"><StatusBadge status={runtimeError ? "danger" : "success"} label={runtimeError ? "连接异常" : "连接正常"} /><span>{runtimeError || "事件流已建立，状态由官方 DSH 提供。"}</span></div><div class="diagnostic-row"><span>活跃会话</span><strong>{activeSession ? sessionTitle(activeSession) : "无"}</strong></div><div class="diagnostic-row"><span>活动工具</span><strong>{runningTools.length}</strong></div><div class="diagnostic-row"><span>设置命名空间</span><strong>{settingsNamespaces.length}</strong></div><div class="diagnostic-row"><span>Provider</span><strong>{providers.length}</strong></div><div class="diagnostic-row"><span>子 Agent</span><strong>{subagents.length}</strong></div><div class="management-list settings-namespaces">{#each settingsNamespaces as namespace (namespace.ns)}<div class="management-list-row"><span class="row-icon"><Settings2 size={15} /></span><div><strong>{namespace.ns}</strong><small>{namespace.applies === "restart" ? "重启生效" : "即时生效"} · revision {namespace.revision}</small></div><code>{namespace.secrets.length} secrets</code></div>{/each}</div></SettingsGroup>
+                  <SettingsGroup title={t("runtime.title")} description={t("runtime.description")}>
+                    <div class={`status-alert-banner ${runtimeConnectionError ? "status-alert-banner--error" : "status-alert-banner--success"}`}>
+                      {#if runtimeConnectionError}
+                        <ShieldAlert size={16} />
+                        <div>
+                          <strong>{t("overview.runtimeError")}</strong>
+                          <span>{runtimeConnectionError}</span>
+                        </div>
+                      {:else}
+                        <CircleCheck size={16} />
+                        <div>
+                          <strong>{t("overview.runtimeNormal")}</strong>
+                          <span>{t("runtime.eventStreamEstablished")}</span>
+                        </div>
+                      {/if}
+                    </div>
+                    <div class="diagnostics-metrics-grid">
+                      <div class="diagnostic-metric-card"><span>{t("runtime.activeSessions")}</span><strong>{sessions.length}</strong><small>{activeSession ? sessionTitle(activeSession) : t("runtime.unselectedSession")}</small></div>
+                      <div class="diagnostic-metric-card"><span>{t("runtime.activeTools")}</span><strong>{runningTools.length}</strong><small>{t("runtime.runningNow")}</small></div>
+                      <div class="diagnostic-metric-card"><span>{t("runtime.settingsNamespaces")}</span><strong>{settingsNamespaces.length}</strong><small>{t("runtime.registeredNamespaces")}</small></div>
+                      <div class="diagnostic-metric-card"><span>{t("runtime.providers")}</span><strong>{providers.length}</strong><small>{t("runtime.registeredProviders")}</small></div>
+                      <div class="diagnostic-metric-card"><span>{t("runtime.subagents")}</span><strong>{subagents.length}</strong><small>{t("runtime.directSubagents")}</small></div>
+                    </div>
+                    <div class="management-list settings-namespaces">
+                      {#each settingsNamespaces as namespace (namespace.ns)}
+                        <div class="management-list-row">
+                          <span class="row-icon"><Settings2 size={15} /></span>
+                          <div><strong>{namespace.ns}</strong><small>{namespace.applies === "restart" ? t("common.restartEffect") : t("common.instantEffect")} · {t("runtime.revision", { revision: namespace.revision })}</small></div>
+                          <code>{t("runtime.secretsCount", { count: namespace.secrets.length })}</code>
+                        </div>
+                      {/each}
+                    </div>
+                  </SettingsGroup>
                 {/if}
               </section>
             </div>
           </div>
         {:else if view === "knowledge"}
           <div class="knowledge-page">
-            <header class="knowledge-hero"><div><div class="eyebrow">暗涌知识工作区</div><h1>知识库</h1><p>从官方 DSH Skill、当前工作区和会话资料中查找可引用的上下文。</p></div><div class="header-actions"><Button variant="outline" size="sm" onclick={() => view = "conversation"}><ChevronRight class="rotate-180" size={14} />返回会话</Button><Button size="sm" onclick={() => openKnowledgePrompt("扫描当前工作区的文档与资料，按目录、类型和用途整理一份知识清单。") }><ClipboardList size={14} />扫描工作区</Button></div></header>
+            <header class="knowledge-hero"><div><div class="eyebrow">{t("knowledge.eyebrow")}</div><h1>{t("knowledge.title")}</h1><p>{t("knowledge.heroDesc")}</p></div><div class="header-actions"><Button variant="outline" size="sm" onclick={() => view = "conversation"}><ChevronRight class="rotate-180" size={14} />{t("app.backToConversation")}</Button><Button size="sm" disabled={!workspacePath || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("build")}><Database size={14} />{t("knowledge.buildIndexBtn")}</Button></div></header>
             <div class="knowledge-page-body">
-              <section class="knowledge-search-panel"><div class="knowledge-search-heading"><div><span class="section-label">资料检索</span><h2>问问你的工作区</h2><p>检索结果由官方 DSH 在当前会话中生成，不建立并行索引。</p></div><span class="knowledge-source-count"><BookOpen size={15} />{skills.length} 个官方知识源</span></div><div class="knowledge-search-row"><Input aria-label="知识库问题" bind:value={input} placeholder="例如：这个项目的启动流程和关键配置在哪里？" /><Button size="sm" disabled={!activeSessionId || !input.trim()} onclick={() => void submit()}><Search size={14} />检索</Button></div><div class="knowledge-shortcuts"><button onclick={() => openKnowledgePrompt("检索当前工作区资料，找出与我的问题最相关的文件、段落和依据，并给出引用路径。")}><Search size={14} /><span><strong>检索工作区</strong><small>按文件、段落和依据回答</small></span></button><button onclick={() => openKnowledgePrompt("扫描当前工作区的文档与资料，按目录、类型和用途整理一份知识清单。")}><ClipboardList size={14} /><span><strong>建立资料清单</strong><small>先梳理目录与文档用途</small></span></button><button onclick={() => void createSession()}><MessageSquarePlus size={14} /><span><strong>新建资料会话</strong><small>保留一条独立的研究上下文</small></span></button></div></section>
-              <div class="knowledge-columns"><section class="knowledge-source-section"><div class="section-row"><div><span class="section-label">官方知识源</span><h2>可调用能力</h2></div><Button variant="ghost" size="sm" onclick={() => void refreshManagement()}><History size={14} />刷新</Button></div>{#if skills.length === 0}<DataState state="empty" title="暂无官方知识源" description="选择工作区和会话后，官方 DSH Skill 会在这里出现。" />{:else}<div class="knowledge-skill-list">{#each skills.filter((skill) => !settingsQuery || `${skill.name} ${skill.description}`.toLowerCase().includes(settingsQuery.toLowerCase())) as skill (skill.name)}<article><div class="skill-heading"><span class="row-icon"><BookOpen size={15} /></span><div><strong>{skill.name}</strong><small>{skill.modelInvocable ? "模型可调用" : "仅用户可调用"}</small></div></div><p>{skill.description}</p>{#if skill.whenToUse}<em>{skill.whenToUse}</em>{/if}</article>{/each}</div>{/if}</section><aside class="knowledge-context"><div class="section-label">当前上下文</div><div class="context-stat"><span>工作区</span><strong title={workspacePath}>{workspaceName}</strong></div><div class="context-stat"><span>会话</span><strong>{activeSession ? sessionTitle(activeSession) : "未选择"}</strong></div><div class="context-stat"><span>会话资料</span><strong>{activeSession ? `${messages.length} 条消息` : "需先选择会话"}</strong></div><div class="knowledge-note"><ShieldAlert size={14} /><span>知识库展示的是官方 DSH 的真实能力；旧版私有 SQLite、FTS5 和向量索引不会在本地伪造。</span></div></aside></div>
+              <section class="knowledge-search-panel"><div class="knowledge-search-heading"><div><span class="section-label">{t("knowledge.searchTitle")}</span><h2>{t("knowledge.searchHeading")}</h2><p>{t("knowledge.searchSub")}</p></div><span class="knowledge-source-count"><Database size={15} />{knowledgeStatusLabel()}</span></div><div class="knowledge-search-row"><Input aria-label={t("knowledge.questionAria")} bind:value={input} placeholder={t("knowledge.searchPlaceholder")} /><Button size="sm" disabled={!workspacePath || !input.trim() || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("query", input)}><Search size={14} />{t("knowledge.searchBtn")}</Button></div><div class="knowledge-shortcuts"><button disabled={!workspacePath || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("refresh")}><RefreshCw size={14} /><span><strong>{t("knowledge.refreshIndexCard")}</strong><small>{t("knowledge.refreshIndexSub")}</small></span></button><button onclick={() => openKnowledgePrompt(t("knowledge.createInventoryPrompt"))}><ClipboardList size={14} /><span><strong>{t("knowledge.createInventoryCard")}</strong><small>{t("knowledge.createInventorySub")}</small></span></button><button onclick={() => void createSession()}><MessageSquarePlus size={14} /><span><strong>{t("knowledge.createSessionCard")}</strong><small>{t("knowledge.createSessionSub")}</small></span></button></div>{#if knowledgeIndex.failures && knowledgeIndex.failures.length > 0}<div class="knowledge-note"><CircleAlert size={14} /><span>{t("knowledge.indexFailures", { count: knowledgeIndex.failures.length, names: knowledgeIndex.failures.join("、") })}</span></div>{/if}</section>
+              <div class="knowledge-columns"><section class="knowledge-source-section"><div class="section-row"><div><span class="section-label">{t("knowledge.skillsSectionTitle")}</span><h2>{t("knowledge.callableCapabilities")}</h2></div><Button variant="ghost" size="sm" onclick={() => void refreshManagement()}><History size={14} />{t("common.refresh")}</Button></div>{#if skills.length === 0}<DataState state="empty" title={t("knowledge.emptySkillsTitle")} description={t("knowledge.emptySkillsDesc")} />{:else}<div class="knowledge-skill-list">{#each skills.filter((skill) => !settingsQuery || `${skill.name} ${skill.description}`.toLowerCase().includes(settingsQuery.toLowerCase())) as skill (skill.name)}<article><div class="skill-heading"><span class="row-icon"><BookOpen size={15} /></span><div><strong>{skill.name}</strong><small>{skill.modelInvocable ? t("knowledge.skillInvocableModel") : t("knowledge.skillInvocableUser")}</small></div></div><p>{skill.description}</p>{#if skill.whenToUse}<em>{skill.whenToUse}</em>{/if}</article>{/each}</div>{/if}</section><aside class="knowledge-context"><div class="section-label">{t("knowledge.currentContext")}</div><div class="context-stat"><span>{t("overview.workspaceLabel")}</span><strong title={workspacePath}>{workspaceName}</strong></div><div class="context-stat"><span>{t("overview.sessionLabel")}</span><strong>{activeSession ? sessionTitle(activeSession) : t("knowledge.unselected")}</strong></div><div class="context-stat"><span>{t("knowledge.statSession")}</span><strong>{activeSession ? t("knowledge.sessionMessagesCount", { count: messages.length }) : t("knowledge.needSelectSession")}</strong></div><div class="knowledge-note"><ShieldAlert size={14} /><span>{t("knowledge.noteDesc")}</span></div></aside></div>
             </div>
           </div>
         {:else}
           <div class="conversation-shell">
-            <header class="conversation-header"><div class="conversation-title"><div class="eyebrow">{activeSession ? "会话工作台" : "暗涌"}</div><h1>{customization.title || (activeSession ? sessionTitle(activeSession) : "开始一个新会话")}</h1><p>{customization.subtitle || workspacePath || "选择一个工作区开始"}</p></div><div class="header-actions">{#if activeSession}<span class="model-pill"><Bot size={13} />{selectedModel || "默认模型"}</span>{/if}<Button variant="outline" size="sm" aria-pressed={customizationOpen} onclick={() => customizationOpen = !customizationOpen}><SlidersHorizontal size={14} />界面</Button><Button variant="outline" size="sm" onclick={() => openManagement("overview")}><Settings2 size={14} />管理</Button></div></header>
-            {#if runtimeError}<div class="error-banner"><CircleAlert size={15} /><span>{runtimeError}</span><button aria-label="关闭错误" onclick={() => { runtimeError = ""; }}><X size={14} /></button></div>{/if}
-            {#if customizationOpen}<section class="customization-panel" aria-label="界面定制"><div class="customization-panel__header"><div><div class="section-label">对话式界面定制</div><strong>用自然语言改变工作台</strong><p>例如：收起活动面板、使用紧凑密度、把输入框改成四行。</p></div><Button variant="ghost" size="icon-sm" aria-label="关闭界面定制" onclick={() => customizationOpen = false}><X size={14} /></Button></div>{#if customizationNotice}<div class="customization-feedback"><CircleCheck size={14} /><span>{customizationNotice}</span></div>{/if}{#if customizationDraft}<div class="customization-preview"><div><strong>待应用方案</strong><span>来自当前会话的结构化 patch</span></div><code>{JSON.stringify(customizationDraft)}</code><div class="customization-actions"><Button variant="outline" size="sm" onclick={() => customizationDraft = undefined}>忽略</Button><Button size="sm" onclick={() => applyCustomizationPatch(customizationDraft!)}><Check size={13} />应用方案</Button></div></div>{/if}<div class="customization-summary"><span class="mode-chip">{customization.density === "compact" ? "紧凑密度" : "舒适密度"}</span><span>{customization.sidebar === "collapsed" ? "侧栏已收起" : "侧栏已展开"}</span><span>{customization.activity === "visible" ? "活动面板可见" : "活动面板隐藏"}</span><span>{customization.composerRows} 行输入框</span></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={customizationHistory.length === 0} onclick={undoCustomization}>撤销上次</Button><Button variant="ghost" size="sm" onclick={() => { customization = DEFAULT_UI_CUSTOMIZATION; customizationHistory = []; persistUiCustomization(customization); applyRuntimeCustomization(customization); customizationNotice = "已恢复默认界面。"; }}>恢复默认</Button></div></section>{/if}
-            {#if surfaceDraft}<section class="surface-proposal" aria-label="待确认操作界面"><div><div class="section-label">AI 操作界面提案</div><strong>{surfaceDraft.spec.title}</strong><p>{surfaceDraft.summary || `包含 ${surfaceDraft.spec.widgets.length} 个只读组件，确认后才会查询 DSH 数据。`}</p></div><div class="surface-proposal__meta"><span>{surfaceDraft.spec.widgets.length} 个组件</span><span>{surfaceDraft.spec.dataSources.length} 个数据源</span></div><div class="customization-actions"><Button variant="ghost" size="sm" onclick={() => { surfaceDraft = undefined; surfaceNotice = "已忽略操作界面提案。"; }}>忽略</Button><Button size="sm" onclick={applySurfaceProposal}><Check size={13} />确认渲染</Button></div></section>{/if}
-            {#if generatedSurface && client}<section class="generated-surface" aria-label="AI 生成操作界面"><header><div><div class="section-label">AI 生成操作界面</div><strong>{generatedSurface.title}</strong><p>{surfaceNotice || "只读视图，数据来自官方 DSH API。"}</p></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={surfaceHistory.length === 0} onclick={undoGeneratedSurface}>撤销</Button><Button variant="ghost" size="sm" onclick={removeGeneratedSurface}><Trash2 size={13} />移除</Button></div></header><GeneratedSurface spec={generatedSurface} {client} {activeSessionId} onError={(message) => { surfaceNotice = message; }} /></section>{/if}
+            <header class="conversation-header"><div class="conversation-title"><div class="eyebrow">{activeSession ? t("app.sessionWorkbench") : t("app.eyebrow")}</div><h1>{customization.title || (activeSession ? sessionTitle(activeSession) : t("app.startNewSession"))}</h1><p>{customization.subtitle || workspacePath || t("app.selectWorkspaceToStart")}</p></div><div class="header-actions"><Button variant="outline" size="sm" aria-pressed={customizationOpen} onclick={() => customizationOpen = !customizationOpen}><SlidersHorizontal size={14} />{t("app.uiCustomization")}</Button><Button variant="outline" size="sm" onclick={() => openManagement("overview")}><Settings2 size={14} />{t("app.management")}</Button></div></header>
+            {#if runtimeError}<div class="error-banner"><CircleAlert size={15} /><span>{runtimeError}</span>{#if lastFailedPrompt?.sessionId === activeSessionId && !sending}<Button variant="outline" size="sm" onclick={() => void retryLastPrompt()}><RotateCcw size={13} />{t("common.retry")}</Button>{/if}{#if canSwitchToBuiltinModel}<Button variant="outline" size="sm" onclick={() => void switchToBuiltinModel()}><PlugZap size={13} />{t("app.switchToBuiltinModel")}</Button>{/if}{#if isCredentialSettingsError(runtimeError) || !selectedProviderCredentialReady}<Button variant="ghost" size="sm" onclick={() => openCredentialSettings(selectedProviderCredentialRef())}><KeyRound size={13} />{t("app.goToConfigure")}</Button>{/if}<button aria-label={t("app.closeError")} onclick={() => { runtimeError = ""; }}><X size={14} /></button></div>{/if}
+            {#if customizationOpen}<section class="customization-panel" aria-label={t("customization.title")}><div class="customization-panel__header"><div><div class="section-label">{t("customization.title")}</div><strong>{t("customization.subtitle")}</strong><p>{t("customization.example")}</p></div><Button variant="ghost" size="icon-sm" aria-label={t("customization.close")} onclick={() => customizationOpen = false}><X size={14} /></Button></div>{#if customizationNotice}<div class="customization-feedback"><CircleCheck size={14} /><span>{customizationNotice}</span></div>{/if}{#if customizationDraft}<div class="customization-preview"><div><strong>{t("customization.pendingPatch")}</strong><span>{t("customization.patchFromSession")}</span></div><code>{JSON.stringify(customizationDraft)}</code><div class="customization-actions"><Button variant="outline" size="sm" onclick={() => customizationDraft = undefined}>{t("common.ignore")}</Button><Button size="sm" onclick={() => applyCustomizationPatch(customizationDraft!)}><Check size={13} />{t("customization.applyPatch")}</Button></div></div>{/if}<div class="customization-summary"><span class="mode-chip">{customization.density === "compact" ? t("customization.compactDensity") : t("customization.comfortableDensity")}</span><span>{customization.sidebar === "collapsed" ? t("customization.sidebarCollapsed") : t("customization.sidebarExpanded")}</span><span>{customization.activity === "visible" ? t("customization.activityVisible") : t("customization.activityHidden")}</span><span>{t("customization.composerRows", { count: customization.composerRows })}</span></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={customizationHistory.length === 0} onclick={undoCustomization}>{t("customization.undoLast")}</Button><Button variant="ghost" size="sm" onclick={() => { customization = DEFAULT_UI_CUSTOMIZATION; customizationHistory = []; persistUiCustomization(customization); applyRuntimeCustomization(customization); customizationNotice = t("customization.restoredNotice"); }}>{t("customization.restoreDefaults")}</Button></div></section>{/if}
+            {#if surfaceDraft}<section class="surface-proposal" aria-label={t("surface.proposalTitle")}><div><div class="section-label">{t("surface.proposalTitle")}</div><strong>{surfaceDraft.spec.title}</strong><p>{surfaceDraft.summary || t("surface.proposalDefaultSummary", { count: surfaceDraft.spec.widgets.length })}</p></div><div class="surface-proposal__meta"><span>{t("surface.proposalWidgetsCount", { count: surfaceDraft.spec.widgets.length })}</span><span>{t("surface.proposalDataSourcesCount", { count: surfaceDraft.spec.dataSources.length })}</span></div><div class="customization-actions"><Button variant="ghost" size="sm" onclick={() => { surfaceDraft = undefined; surfaceNotice = t("surface.proposalIgnored"); }}>{t("common.ignore")}</Button><Button size="sm" onclick={applySurfaceProposal}><Check size={13} />{t("surface.confirmRender")}</Button></div></section>{/if}
+            {#if generatedSurface && client}<section class="generated-surface" aria-label={t("surface.generatedTitle")}><header><div><div class="section-label">{t("surface.generatedTitle")}</div><strong>{generatedSurface.title}</strong><p>{surfaceNotice || t("surface.readOnlyDesc")}</p></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={surfaceHistory.length === 0} onclick={undoGeneratedSurface}>{t("common.undo")}</Button><Button variant="ghost" size="sm" onclick={removeGeneratedSurface}><Trash2 size={13} />{t("common.remove")}</Button></div></header>{#if GeneratedSurface}<GeneratedSurface spec={generatedSurface} {client} {activeSessionId} onError={(message) => { surfaceNotice = userFacingError(message); }} />{:else if generatedSurfaceLoadFailed}<div class="surface-load-error" role="alert"><span>{surfaceNotice}</span><Button variant="outline" size="sm" onclick={() => void ensureGeneratedSurfaceComponent()}>{t("common.retry")}</Button></div>{:else}<Loader size={16} />{/if}</section>{/if}
             <div class="main-grid">
-              <div class="message-scroll" aria-busy={sending}>{#if messages.length === 0}<div class="empty-state"><span class="empty-mark"><Bot size={22} /></span><h2>准备好开始工作</h2><p>官方 DSH 运行时已连接。描述目标，暗涌会在这里呈现计划、工具和结果。</p><div class="quick-actions">{#each (customization.quickActions.length ? customization.quickActions : [{ label: "检查当前项目", prompt: "检查当前项目状态并给出最值得先处理的问题。" }, { label: "理解代码结构", prompt: "梳理当前项目的主要模块和启动流程。" }, { label: "运行测试", prompt: "运行测试并汇总失败项。" }]) as action (action.label)}<button onclick={() => input = action.prompt}><ClipboardList size={14} />{action.label}</button>{/each}</div></div>{:else}{#each messages as message (message.id)}<article class:user={message.role === "user"} class:assistant={message.role === "assistant"} class:tool={message.role === "tool"} class:pending={message.pending} class="message"><div class="message-avatar">{#if message.role === "user"}你{:else if message.role === "tool"}<Wrench size={13} />{:else if message.role === "system"}<CircleAlert size={13} />{:else}<Bot size={13} />{/if}</div><div class="message-body"><div class="message-meta"><span>{message.role === "user" ? "你" : message.role === "tool" ? (message.tool?.name || "工具") : productName}</span>{#if message.seq}<time>#{message.seq}</time>{/if}{#if message.pending}<span class="live-label">等待处理</span>{/if}</div>{#if message.role === "tool" && message.tool}<div class="tool-card"><div class="tool-card-head"><div class="tool-title"><span class:tool-running={message.tool.state === "running"} class="tool-dot"></span><strong>{message.tool.name}</strong><span class="tool-state">{message.tool.state === "running" ? "运行中" : message.tool.state === "error" ? "失败" : "已完成"}</span></div>{#if message.tool.state === "success"}<CircleCheck size={15} class="success-icon" />{:else if message.tool.state === "error"}<CircleAlert size={15} class="error-icon" />{:else}<LoaderCircle class="animate-spin" size={14} />{/if}</div>{#if message.tool.args}<details><summary>查看参数</summary><pre>{message.tool.args}</pre></details>{/if}{#if message.tool.result}<details class="tool-result"><summary>查看输出</summary><pre>{message.tool.result}</pre></details>{/if}</div>{:else}{#if message.reasoning}<details class="reasoning"><summary>显示推理过程</summary><p>{message.reasoning}</p></details>{/if}<div class="message-text">{message.text || "…"}</div>{#if message.usage}<div class="usage-line">输入 {String(message.usage.inputTokens || "-")} · 输出 {String(message.usage.outputTokens || "-")}</div>{/if}{/if}</div></article>{/each}{#if sending}<div class="typing" role="status" aria-atomic="true"><LoaderCircle class="animate-spin" size={14} />DSH 正在执行任务，活动记录会持续更新</div>{/if}{/if}</div>
-              <aside class:open={activityOpen} class="activity-panel"><div class="panel-heading"><div><div class="section-label">活动记录</div><strong>{runningTools.length ? `${runningTools.length} 个工具运行中` : "当前会话轨迹"}</strong></div><Button variant="ghost" size="icon-sm" aria-label="关闭活动面板" onclick={() => setActivityOpen(false)}><X size={14} /></Button></div><div class="activity-summary" aria-label="活动摘要"><div><strong>{runningTools.length}</strong><span>运行中</span></div><div><strong>{completedTools}</strong><span>已完成</span></div><div><strong>{todos.filter((todo) => todo.status === "completed").length}/{todos.length}</strong><span>待办</span></div></div><div class="activity-content">{#if todos.length > 0}<section class="todo-section"><div class="panel-subheading"><ClipboardList size={14} />任务计划</div>{#each todos as todo (todo.content)}<div class="todo-row"><span class:todo-done={todo.status === "completed"} class:todo-active={todo.status === "in_progress"} class="todo-check">{#if todo.status === "completed"}<Check size={12} />{:else if todo.status === "in_progress"}<LoaderCircle class="animate-spin" size={10} />{/if}</span><span>{todo.content}</span><small>{todo.status === "completed" ? "完成" : todo.status === "in_progress" ? "进行中" : "待处理"}</small></div>{/each}</section>{/if}<section class="activity-list"><div class="panel-subheading"><History size={14} />最近活动</div>{#if activityItems.length === 0}<div class="panel-empty"><History size={18} /><p>任务开始后，工具调用和执行状态会显示在这里。</p></div>{:else}{#each activityItems as item (item.id)}<div class:error={item.tool?.state === "error"} class="activity-row"><span class="tool-dot" class:tool-running={item.tool?.state === "running"}></span><span title={item.tool?.name}>{item.tool?.name}</span><small>{item.tool?.state === "running" ? "运行中" : item.tool?.state === "error" ? "失败" : "完成"}</small></div>{/each}{/if}</section></div></aside>
+              {#if ConversationTranscript}<ConversationTranscript
+                messages={messages}
+                {sending}
+                {productName}
+                quickActions={customization.quickActions.length ? customization.quickActions : [
+                  { label: t("transcript.checkProject"), prompt: t("transcript.checkProjectPrompt") },
+                  { label: t("transcript.understandCode"), prompt: t("transcript.understandCodePrompt") },
+                  { label: t("transcript.runTests"), prompt: t("transcript.runTestsPrompt") },
+                ]}
+                onPromptSelect={(prompt) => input = prompt}
+              />{:else}<Loader size={16} />{/if}
+              {#if ActivityPanel}<ActivityPanel {messages} {todos} {sending} open={activityOpen} onClose={() => setActivityOpen(false)} />{/if}
             </div>
-            {#if pendingApproval}<div class="interaction-card approval-card"><div class="interaction-icon"><ShieldAlert size={17} /></div><div class="interaction-content"><strong>需要批准工具操作</strong><p>{pendingApproval.reason || `${pendingApproval.toolName} 请求访问工作区资源。`}</p><div class="interaction-actions"><Button variant="outline" size="sm" onclick={() => void respondApproval("rejected")}>拒绝</Button><Button size="sm" onclick={() => void respondApproval("allowed-once")}><Check size={14} />允许一次</Button></div></div></div>{/if}
-            {#if pendingQuestion}<div class="interaction-card question-card"><div class="interaction-icon"><CircleAlert size={17} /></div><div class="interaction-content"><strong>DSH 需要你的选择</strong>{#each pendingQuestion.questions as question (String(question.id))}<div class="question-block"><label for={`question-${String(question.id)}`}>{String(question.question || question.header || "请选择")}</label>{#if Array.isArray(question.options) && question.options.length > 0}<select id={`question-${String(question.id)}`} aria-label={String(question.question || question.id)} value={questionAnswers[String(question.id)] || ""} onchange={(event) => questionAnswers[String(question.id)] = (event.currentTarget as HTMLSelectElement).value}><option value="">请选择…</option>{#each question.options as option (String(option.label))}<option value={String(option.label)}>{String(option.label)}</option>{/each}</select>{:else}<Input id={`question-${String(question.id)}`} aria-label={String(question.question || question.id)} placeholder="输入回答" value={questionAnswers[`${String(question.id)}:custom`] || ""} oninput={(event) => questionAnswers[`${String(question.id)}:custom`] = (event.currentTarget as HTMLInputElement).value} />{/if}</div>{/each}<div class="interaction-actions"><Button size="sm" onclick={() => void respondQuestion()}><Send size={14} />提交回答</Button></div></div></div>{/if}
-            <div class="composer"><div class="composer-shell"><ReferencePicker bind:value={input} rows={customization.composerRows} {client} sessionId={activeSessionId} placeholder={activeSessionId ? "描述任务，或输入 @ 查找官方文件/会话引用…" : "先新建一个会话…"} disabled={!activeSessionId || !!pendingApproval || !!pendingQuestion} onSubmit={() => void submit()} /><div class="composer-footer"><div class="composer-context"><span class="mode-chip">队列模式</span><span class="composer-hint">Ctrl / ⌘ + Enter 发送</span>{#if activeSessionId && client}<PermissionSelector {client} sessionId={activeSessionId} permissions={activeSession?.projections?.values?.permissions} onNotice={permissionNotice} />{/if}</div><div class="composer-actions"><ImageAttachments bind:attachments />{#if !activityOpen}<Button variant="ghost" size="sm" onclick={() => setActivityOpen(true)}><History size={14} />活动</Button>{/if}{#if sending}<Button variant="outline" size="sm" onclick={() => void cancel()}><Square size={13} />停止</Button>{:else}<Button size="sm" disabled={!activeSessionId || (!input.trim() && attachments.length === 0) || !!pendingApproval || !!pendingQuestion} onclick={() => void submit()}><Send size={13} />发送</Button>{/if}</div></div></div></div>
+            <PendingInteractions
+              approval={pendingApproval}
+              question={pendingQuestion}
+              answers={questionAnswers}
+              onAnswer={(id, value, custom = false) => { pendingInteractionsBySession = setQuestionAnswer(pendingInteractionsBySession, activeSessionId, id, value, custom); }}
+              onApproval={(outcome) => void respondApproval(outcome)}
+              onQuestion={() => void respondQuestion()}
+            />
+            <div class="composer"><div class="composer-shell"><DshPromptComposer
+              bind:value={input}
+              {client}
+              sessionId={activeSessionId}
+              {skills}
+              rows={customization.composerRows}
+              disabled={!activeSessionId || !!pendingApproval || !!pendingQuestion}
+              loading={sending}
+              {selectedModel}
+              {modelGroups}
+              imageInputSupported={modelSupportsImages(selectedModelInfo())}
+              {modelBusy}
+              contextPermissions={activeSession?.projections?.values?.permissions}
+              {activityOpen}
+              onModelSelect={(provider, model) => void chooseModel(provider, model)}
+              onPermissionNotice={permissionNotice}
+              onActivityOpen={() => setActivityOpen(true)}
+              onSubmit={(text, images) => submit(text, images)}
+              onStop={() => void cancel()}
+            /></div></div>
           </div>
         {/if}
       </section>

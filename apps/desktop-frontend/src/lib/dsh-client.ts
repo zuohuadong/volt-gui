@@ -1,3 +1,5 @@
+import { t } from "./i18n";
+
 export type RpcResult<T> = { ok: true; value: T } | { ok: false; error: { message: string; code?: string } };
 export type PermissionSelect = {
   options: Array<{ value: string; label?: string; description?: string }>;
@@ -12,10 +14,13 @@ export type SessionSummary = {
   agentPreset?: string;
   projections?: { values?: Record<string, unknown> & { permissions?: PermissionSelect } };
 };
+export type SessionProjection = { asOfSeq: number; values: Record<string, unknown> & { permissions?: PermissionSelect } };
+export type SessionHistory = { events: HistoryEntry[]; hasMore: boolean; projections?: SessionProjection };
 export type Workspace = { workspaceId: string; path: string; title: string; sessionIds: string[] };
 export type SessionSearchItem = { sessionId: string; snippet: string };
 export type HistoryEntry = { event: { type: string; seq: number; time: number; data: Record<string, unknown> }; view?: unknown };
-export type ModelGroup = { id: string; name: string; models: { id: string; name: string; description?: string }[] };
+export type ModelInfo = { id: string; name: string; description?: string; input?: string[]; contextWindow?: number; maxTokens?: number; reasoning?: { efforts: Array<{ id: string; name: string }>; defaultEffort?: string } };
+export type ModelGroup = { id: string; name: string; models: ModelInfo[] };
 export type ModelCatalogFailure = { id: string; name: string; message: string };
 export type DirectoryEntry = { name: string; path: string; hidden: boolean };
 export type DirectoryListing = {
@@ -33,7 +38,7 @@ export type PluginInventoryEntry = {
   enabled: boolean;
   fiberPhase: "pending" | "loading" | "active" | "failed" | "unloading" | null;
 };
-export type DiscoveredModel = { id: string; name?: string; contextWindow?: number; maxTokens?: number };
+export type DiscoveredModel = { id: string; name?: string; contextWindow?: number; maxTokens?: number; input?: string[] };
 export type PromptContentPart =
   | { type: "text"; text: string }
   | { type: "image"; mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif"; data: string; name?: string };
@@ -114,7 +119,7 @@ type DshTransport = {
 
 function unwrap<T>(body: { result?: RpcResult<T> }): T {
   const result = body.result;
-  if (!result || !result.ok) throw new Error(result?.error.message || "DSH 请求失败");
+  if (!result || !result.ok) throw new Error(result?.error?.message || t("errors.dshRequestFailed"));
   return result.value;
 }
 
@@ -126,7 +131,7 @@ export class DshClient {
   }
 
   async request<T>(method: string, payload: unknown): Promise<T> {
-    return unwrap<T>(await this.transport.dshRequest(method, payload) as { result?: RpcResult<T> });
+    return unwrap<T>(await this.transport.dshRequest(method, snapshotRpcValue(payload)) as { result?: RpcResult<T> });
   }
 
   listSessions(): Promise<{ items: SessionSummary[] }> { return this.request("session.list", {}); }
@@ -136,11 +141,11 @@ export class DshClient {
   createSession(cwd?: string): Promise<{ sessionId: string; agentPreset?: string }> {
     return this.request("session.create", cwd ? { cwd } : {});
   }
-  history(sessionId: string): Promise<{ events: HistoryEntry[]; hasMore: boolean }> {
+  history(sessionId: string): Promise<SessionHistory> {
     return this.request("session.history", { sessionId, maxMessages: 80 });
   }
   prompt(sessionId: string, content: string | PromptContentPart[], mode: "queue" | "steer" = "queue"): Promise<{ accepted: true; command?: { kind: "success"; text?: string } }> {
-    const parts = typeof content === "string" ? [{ type: "text", text: content } satisfies PromptContentPart] : content;
+    const parts = typeof content === "string" ? [{ type: "text", text: content } satisfies PromptContentPart] : snapshotPromptContent(content);
     return this.request("session.prompt", { sessionId, mode, content: parts, clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
   }
   cancel(sessionId: string): Promise<{ accepted: true }> { return this.request("session.cancel", { sessionId }); }
@@ -248,5 +253,30 @@ export class DshClient {
       onError(error instanceof Error ? error : new Error(String(error)));
       return () => undefined;
     }
+  }
+}
+
+function snapshotPromptContent(content: PromptContentPart[]): PromptContentPart[] {
+  return content.map((part) => part.type === "text"
+    ? { type: "text", text: part.text }
+    : { type: "image", mediaType: part.mediaType, data: part.data, ...(part.name ? { name: part.name } : {}) });
+}
+
+// Svelte 5 state values are proxies; Electron IPC only accepts structured-cloneable
+// plain data. Snapshot every RPC payload at this boundary so reactive arrays and
+// objects cannot fail silently before reaching the official DSH runtime.
+function snapshotRpcValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) throw new Error(t("errors.circularRpcPayload"));
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) return value.map((item) => snapshotRpcValue(item, seen));
+    const result: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      result[key] = snapshotRpcValue(child, seen);
+    }
+    return result;
+  } finally {
+    seen.delete(value);
   }
 }

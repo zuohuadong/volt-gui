@@ -2,9 +2,11 @@ import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("voltDesktop", {
   bootstrap: () => ipcRenderer.invoke("desktop:bootstrap"),
+  retryRuntime: () => ipcRenderer.invoke("desktop:retry-runtime"),
   minimize: () => ipcRenderer.invoke("desktop:minimize"),
   maximize: () => ipcRenderer.invoke("desktop:maximize"),
   close: () => ipcRenderer.invoke("desktop:close"),
+  openExternal: (url: string) => ipcRenderer.invoke("desktop:open-external", url),
   pickWorkspace: () => ipcRenderer.invoke("desktop:pick-workspace"),
   exportSession: (sessionId: string) => ipcRenderer.invoke("desktop:export-session", sessionId),
   smbList: () => ipcRenderer.invoke("desktop:smb-list"),
@@ -23,5 +25,10 @@ contextBridge.exposeInMainWorld("voltDesktop", {
     const handler = (_event: Electron.IpcRendererEvent, message: string) => listener(message);
     ipcRenderer.on("desktop:runtime-error", handler);
     return () => ipcRenderer.removeListener("desktop:runtime-error", handler);
+  },
+  onRuntimeReady: (listener: () => void) => {
+    const handler = () => listener();
+    ipcRenderer.on("desktop:runtime-ready", handler);
+    return () => ipcRenderer.removeListener("desktop:runtime-ready", handler);
   },
 });

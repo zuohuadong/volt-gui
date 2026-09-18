@@ -1,7 +1,7 @@
 {
   "source": "agent-team-config/references/skills",
   "skillRoot": "references/skills",
-  "count": 35,
+  "count": 36,
   "skills": [
     {
       "id": "agent-team-automation",
@@ -202,16 +202,22 @@
       "description": "Use when mapping operational task-lifecycle UX onto the official DeepSeek Harness surface or reviewing whether an Electron change violates the shell-only boundary."
     },
     {
+      "id": "volt-ops",
+      "frontmatterName": "volt-ops",
+      "path": "references/skills/volt-ops/SKILL.md",
+      "description": "Use for Volt product strategy, Volt distribution scope, Chinese enterprise constraints, and decisions about official DeepSeek Harness integration."
+    },
+    {
       "id": "vue-frontend",
       "frontmatterName": "vue-frontend",
       "path": "references/skills/vue-frontend/SKILL.md",
       "description": "Use when building, reviewing, or maintaining Vue frontends, including Vue Single-File Components, Composition API, TypeScript, Vite integration, component state, and Vue ecosystem alignment."
     },
     {
-      "id": "volt-ops",
-      "frontmatterName": "volt-ops",
-      "path": "references/skills/volt-ops/SKILL.md",
-      "description": "Use for Volt product strategy, Volt distribution scope, Chinese enterprise constraints, and decisions about official DeepSeek Harness integration."
+      "id": "xigu-ai-ops",
+      "frontmatterName": "xigu-ai-ops",
+      "path": "references/skills/xigu-ai-ops/SKILL.md",
+      "description": "Use for Xigu AI product strategy, Anyong distribution scope, Chinese enterprise constraints, and decisions about official DeepSeek Harness integration."
     }
   ]
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { DshClient } from "./dsh-client";
+import { DshClient, type PromptContentPart } from "./dsh-client";
+import { setLocale, t } from "./i18n";
 
 function createClient() {
   const calls: Array<{ method: string; payload: unknown }> = [];
@@ -78,6 +79,25 @@ describe("DshClient management RPC", () => {
     ]);
   });
 
+  it("snapshots reactive prompt content before crossing the transport boundary", async () => {
+    const { calls, client } = createClient();
+    const reactiveContent = new Proxy([{ type: "image", mediaType: "image/png", data: "AA==", name: "x.png" } satisfies PromptContentPart], {});
+    await client.prompt("session-1", reactiveContent);
+    const payload = calls[0].payload as { content: unknown[] };
+    expect(payload.content).toEqual([{ type: "image", mediaType: "image/png", data: "AA==", name: "x.png" }]);
+    expect(Object.getPrototypeOf(payload.content)).toBe(Array.prototype);
+  });
+
+  it("snapshots reactive credential references before Electron IPC", async () => {
+    const { calls, client } = createClient();
+    const reactiveRefs = new Proxy(["XG_GOMODEL_API_KEY"], {});
+    await client.describeCredentials(reactiveRefs);
+    const payload = calls[0].payload as { refs: string[] };
+    expect(payload).toEqual({ refs: ["XG_GOMODEL_API_KEY"] });
+    expect(Object.getPrototypeOf(payload)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(payload.refs)).toBe(Array.prototype);
+  });
+
   it("maps goals, subagents, settings, credentials and providers", async () => {
     const { calls, client } = createClient();
     const ref = { id: "goal-1", revision: 2 };
@@ -121,5 +141,22 @@ describe("DshClient management RPC", () => {
       { method: "sessionReferenceResolver/candidates", payload: { args: { agentId: "session-1", query: "迁移" } } },
       { method: "pluginInventory/list", payload: { args: {} } },
     ]);
+  });
+
+  it("localizes transport unwrap and circular payload failures", async () => {
+    setLocale("en-US");
+    const failed = new DshClient({
+      async dshRequest() {
+        return { result: { ok: false } };
+      },
+      async dshRespond() { return {}; },
+      onDshFrame() { return () => undefined; },
+    });
+    await expect(failed.listSessions()).rejects.toThrow(t("errors.dshRequestFailed"));
+
+    const { client } = createClient();
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    await expect(client.request("session.list", cyclic)).rejects.toThrow(t("errors.circularRpcPayload"));
   });
 });

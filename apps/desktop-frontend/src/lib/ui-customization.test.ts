@@ -7,6 +7,7 @@ import {
   parseUiCustomization,
   UI_CUSTOMIZATION_SCHEMA,
 } from "./ui-customization";
+import { setLocale } from "./i18n";
 
 describe("Volt UI customization protocol", () => {
   it("parses a fenced patch and ignores surrounding prose", () => {
@@ -56,9 +57,14 @@ describe("Volt UI customization protocol", () => {
     expect(isUiCustomizationIntent("把侧栏收起并改成紧凑布局")).toBe(true);
     expect(isUiCustomizationIntent("运行单元测试")).toBe(false);
     expect(isUiCustomizationIntent("显示测试失败日志")).toBe(false);
+    expect(isUiCustomizationIntent("collapse the sidebar and use compact density")).toBe(true);
+    expect(isUiCustomizationIntent("show test failure logs")).toBe(false);
+    setLocale("zh-CN");
     const prompt = buildUiCustomizationPrompt("把输入框改成四行");
     expect(prompt).toContain("Volt UI customization protocol");
     expect(prompt).toContain(UI_CUSTOMIZATION_SCHEMA);
     expect(prompt).toContain("不要输出 HTML、CSS、JavaScript");
+    setLocale("en-US");
+    expect(buildUiCustomizationPrompt("collapse the sidebar")).toContain("Do not output HTML, CSS, JavaScript");
   });
 });

@@ -191,8 +191,8 @@ importers:
         specifier: 2.1.1
         version: 2.1.1
       lucide-svelte:
-        specifier: 0.544.0
-        version: 0.544.0(svelte@5.56.10)
+        specifier: 1.0.1
+        version: 1.0.1(svelte@5.56.10)
       mode-watcher:
         specifier: 1.1.0
         version: 1.1.0(svelte@5.56.10)
@@ -5257,8 +5257,8 @@ packages:
     resolution: {integrity: sha512-Jo6dJ04CmSjuznwJSS3pUeWmd/H0ffTlkXXgwZi+eq1UCmqQwCh+eLsYOYCwY991i2Fah4h1BEMCx4qThGbsiA==}
     engines: {node: '>=10'}
 
-  lucide-svelte@0.544.0:
-    resolution: {integrity: sha512-8kBxSivf8SJdEUJRHBpu9bRw0S/qfVK+Yfb92KQnRRBdP425RzT6aQfrIfZctG1oucPVTBQe1ZXgmth/3qVICg==}
+  lucide-svelte@1.0.1:
+    resolution: {integrity: sha512-WvzZgk0pqzgda+AErLvgWxHkfg/+GgUwqKMRHvzt0IqyMdmyEDzDCk3Z+Wo/3y753oIgx8u9Q4eUbWkghFa8Jg==}
     deprecated: Package deprecated. Please use @lucide/svelte instead.
     peerDependencies:
       svelte: ^3 || ^4 || ^5.0.0-next.42
@@ -12082,7 +12082,7 @@ snapshots:
     dependencies:
       yallist: 4.0.0
 
-  lucide-svelte@0.544.0(svelte@5.56.10):
+  lucide-svelte@1.0.1(svelte@5.56.10):
     dependencies:
       svelte: 5.56.10
 

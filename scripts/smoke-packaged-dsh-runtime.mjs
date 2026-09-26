@@ -18,7 +18,7 @@ const electronBuilderRequire = createRequire(desktopRequire.resolve("electron-bu
 const { listPackage } = electronBuilderRequire("@electron/asar");
 const packageOutput = path.join(root, "apps", "desktop-electron", "dist-package");
 const expectedNodeVersion = "v26.8.1";
-const expectedDshVersion = "0.1.5-rc.1";
+const expectedDshVersion = "0.1.5-rc.2";
 const startupTimeoutMs = STARTUP_TIMEOUT_MS;
 const requiredRuntimeFiles = [
   "dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js",
@@ -31,6 +31,7 @@ const requiredRuntimeFiles = [
   "dsh-runtime/node_modules/@officecli/officecli/officecli.js",
   "dsh-runtime/node_modules/@wxg-prc-cpg/browser-skill-dsh-plugin/package.json",
   "dsh-runtime/node_modules/@wxg-prc-cpg/dsh-weknora/package.json",
+  "dsh-runtime/node_modules/@voltui/dsh-intranet-auth/package.json",
   "dsh-runtime/node_modules/zod/package.json",
   "dsh-runtime/scripts/anyong-integrations-mcp.mjs",
 ];
@@ -117,6 +118,7 @@ export function inspectPackagedResources(resourcesDir, platform = process.platfo
       "/node_modules/@officecli/officecli/",
       "/node_modules/@wxg-prc-cpg/browser-skill-dsh-plugin/",
       "/node_modules/@wxg-prc-cpg/dsh-weknora/",
+      "/node_modules/@voltui/dsh-intranet-auth/",
     ];
     const duplicate = bundledModules.find((entry) => duplicatePrefixes.some((prefix) => entry.startsWith(prefix)));
     if (duplicate) throw new Error(`runtime dependency was duplicated inside app.asar: ${duplicate}`);
@@ -142,6 +144,7 @@ export function packagedRuntimeLayout(resourcesDir, platform = process.platform)
     browserSkillCli: path.join(resourcesDir, "browser-skill-runtime", platform === "win32" ? "bsk.exe" : "bsk"),
     browserSkillPlugin: path.join(runtimeRoot, "node_modules", "@wxg-prc-cpg", "browser-skill-dsh-plugin"),
     weknoraPlugin: path.join(runtimeRoot, "node_modules", "@wxg-prc-cpg", "dsh-weknora"),
+    intranetAuthPlugin: path.join(runtimeRoot, "node_modules", "@voltui", "dsh-intranet-auth"),
     bundledEnv: path.join(resourcesDir, "bundled.env"),
   };
 }
@@ -214,6 +217,9 @@ function createPackagedDsh(runtime, temporaryRoot, platform = process.platform) 
     bundledProfilePlugins: [{
       packageName: "@wxg-prc-cpg/dsh-weknora",
       packageDir: layout.weknoraPlugin,
+    }, {
+      packageName: "@voltui/dsh-intranet-auth",
+      packageDir: layout.intranetAuthPlugin,
     }],
     environment: {
       ...bundledDshModelEnvironment(layout.bundledEnv),
@@ -243,7 +249,7 @@ async function verifyDshRuntime(runtime) {
   const inventory = await client.call("pluginInventory/list", {});
   const entries = inventory?.entries;
   if (!Array.isArray(entries)) throw new Error("packaged DSH plugin inventory response is invalid");
-  for (const moduleName of ["@wxg-prc-cpg/browser-skill-dsh-plugin", "@wxg-prc-cpg/dsh-weknora", "@deepseek-ai/dsh-mcp-client"]) {
+  for (const moduleName of ["@wxg-prc-cpg/browser-skill-dsh-plugin", "@wxg-prc-cpg/dsh-weknora", "@voltui/dsh-intranet-auth", "@deepseek-ai/dsh-mcp-client"]) {
     const entry = entries.find((candidate) => candidate?.moduleName === moduleName);
     if (!entry?.enabled || entry.fiberPhase !== "active") throw new Error(`packaged DSH plugin is not active: ${moduleName}`);
   }

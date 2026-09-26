@@ -31,6 +31,7 @@ function createResources(platform = "win32") {
     path.join(resources, "dsh-runtime", "node_modules", "@officecli", "officecli", "officecli.js"),
     path.join(resources, "dsh-runtime", "node_modules", "@wxg-prc-cpg", "browser-skill-dsh-plugin", "package.json"),
     path.join(resources, "dsh-runtime", "node_modules", "@wxg-prc-cpg", "dsh-weknora", "package.json"),
+    path.join(resources, "dsh-runtime", "node_modules", "@voltui", "dsh-intranet-auth", "package.json"),
     path.join(resources, "dsh-runtime", "node_modules", "zod", "package.json"),
     path.join(resources, "dsh-runtime", "scripts", "anyong-integrations-mcp.mjs"),
     path.join(resources, "dsh-runtime", "node_modules", "@officecli", "officecli", "vendor", platform === "win32" ? "officecli.exe" : "officecli"),
@@ -134,4 +135,5 @@ test("packaged plugin paths are derived from the resources root", () => {
   assert.equal(layout.browserSkillCli, path.join(fixture.resources, "browser-skill-runtime", "bsk.exe"));
   assert.equal(layout.integrationsScript, path.join(fixture.resources, "dsh-runtime", "scripts", "anyong-integrations-mcp.mjs"));
   assert.equal(layout.browserSkillPlugin, path.join(fixture.resources, "dsh-runtime", "node_modules", "@wxg-prc-cpg", "browser-skill-dsh-plugin"));
+  assert.equal(layout.intranetAuthPlugin, path.join(fixture.resources, "dsh-runtime", "node_modules", "@voltui", "dsh-intranet-auth"));
 });

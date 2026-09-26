@@ -8,6 +8,7 @@ on:
       - ".github/workflows/release-desktop.yml"
       - "apps/desktop-electron/**"
       - "apps/desktop-frontend/**"
+      - "plugins/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"

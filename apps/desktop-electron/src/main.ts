@@ -161,6 +161,13 @@ function weknoraPluginPackagePath(): string {
   return path.join(runtimeRoot, "node_modules", "@wxg-prc-cpg", "dsh-weknora");
 }
 
+function intranetAuthPluginPackagePath(): string {
+  const runtimeRoot = app.isPackaged
+    ? path.join(process.resourcesPath, "dsh-runtime")
+    : path.join(desktopRoot, ".dsh-runtime");
+  return path.join(runtimeRoot, "node_modules", "@voltui", "dsh-intranet-auth");
+}
+
 function frontendIndexPath(): string {
   return app.isPackaged
     ? path.join(process.resourcesPath, "frontend", "index.html")
@@ -274,6 +281,9 @@ async function startDesktop(signal: AbortSignal): Promise<void> {
     bundledProfilePlugins: [{
       packageName: "@wxg-prc-cpg/dsh-weknora",
       packageDir: weknoraPluginPackagePath(),
+    }, {
+      packageName: "@voltui/dsh-intranet-auth",
+      packageDir: intranetAuthPluginPackagePath(),
     }],
     executable: nodeRuntimePath(),
     executableArgs: ["--expose-internals"],

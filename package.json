@@ -17,7 +17,7 @@
     "pretest": "node ./scripts/ensure-pnpm.mjs",
     "predist:desktop": "node ./scripts/ensure-pnpm.mjs",
     "build": "node ./scripts/bundle.mjs && pnpm run build:desktop",
-    "test": "pnpm --dir apps/desktop-electron run test && pnpm --dir apps/desktop-frontend test && node --test ./scripts/anyong-integrations-mcp.test.mjs ./scripts/third-party-office-tools.test.mjs ./scripts/check-migration-boundary.test.mjs ./scripts/provision-dsh-profile.test.mjs ./scripts/native-executable.test.mjs ./scripts/smoke-packaged-dsh-runtime.test.mjs ./scripts/smoke-staged-dsh-runtime.test.mjs && pnpm run check:dsh-plugins",
+    "test": "pnpm --dir apps/desktop-electron run test && pnpm --dir apps/desktop-frontend test && node --test ./plugins/dsh-intranet-auth/test/index.test.mjs ./scripts/anyong-integrations-mcp.test.mjs ./scripts/third-party-office-tools.test.mjs ./scripts/check-migration-boundary.test.mjs ./scripts/provision-dsh-profile.test.mjs ./scripts/native-executable.test.mjs ./scripts/smoke-packaged-dsh-runtime.test.mjs ./scripts/smoke-staged-dsh-runtime.test.mjs && pnpm run check:dsh-plugins",
     "test:dsh-integration": "node --test --test-concurrency=1 ./scripts/dsh-integration.test.mjs ./scripts/desktop-credentials.integration.test.mjs",
     "test:dsh-upgrade": "node --test ./scripts/dsh-upgrade.test.mjs",
     "start": "node ./scripts/anyong.mjs",
@@ -38,10 +38,11 @@
   },
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.2",
-    "@deepseek-ai/dsh": "0.1.5-rc.1",
-    "@deepseek-ai/dsh-tools": "0.1.5-rc.1",
+    "@deepseek-ai/dsh": "0.1.5-rc.3",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.3",
     "@deepseek-ai/schemastery": "3.18.2",
     "@officecli/officecli": "1.0.149",
+    "@voltui/dsh-intranet-auth": "file:plugins/dsh-intranet-auth",
     "@wxg-prc-cpg/dsh-weknora": "0.1.0",
     "yaml": "2.9.0",
     "zod": "4.4.3"

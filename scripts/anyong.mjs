@@ -37,6 +37,14 @@ try {
   weknoraPackageJson = desktopRequire.resolve('@wxg-prc-cpg/dsh-weknora/package.json');
 }
 const weknoraPackageDir = path.dirname(weknoraPackageJson);
+let intranetAuthPackageJson;
+try {
+  intranetAuthPackageJson = require.resolve('@voltui/dsh-intranet-auth/package.json');
+} catch (error) {
+  if (error?.code !== 'MODULE_NOT_FOUND') throw error;
+  intranetAuthPackageJson = desktopRequire.resolve('@voltui/dsh-intranet-auth/package.json');
+}
+const intranetAuthPackageDir = path.dirname(intranetAuthPackageJson);
 
 const isWeb = userArgs[0] === 'web' || userArgs[0] === '--web';
 const isHeadless = userArgs[0] === 'headless' || userArgs[0] === '--headless';
@@ -50,6 +58,9 @@ function runDsh(args, profileName) {
       additionalPlugins: [{
         packageName: '@wxg-prc-cpg/dsh-weknora',
         packageDir: weknoraPackageDir,
+      }, {
+        packageName: '@voltui/dsh-intranet-auth',
+        packageDir: intranetAuthPackageDir,
       }],
     });
   }

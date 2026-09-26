@@ -13,6 +13,11 @@ import {
 const profile = resolveElectronProfile();
 const desktopDir = path.dirname(fileURLToPath(import.meta.url));
 const bundledEnvPath = path.join(desktopDir, "build", "bundled.env");
+const requestedTarget = process.env.ELECTRON_BUILDER_TARGET?.trim();
+const outputDirectory = process.env.ELECTRON_BUILDER_OUTPUT_DIR?.trim() || "dist-package";
+if (requestedTarget && !["nsis", "zip"].includes(requestedTarget)) {
+  throw new Error(`Unsupported Electron Builder target: ${requestedTarget}`);
+}
 const packaging = process.argv.some((arg) => arg.includes("electron-builder"));
 const packagingWindows = packaging && (process.argv.includes("--win") || process.platform === "win32");
 if (process.env.REQUIRE_XG_MODEL_BUNDLE === "1" && !fs.existsSync(bundledEnvPath) && packaging) {
@@ -52,7 +57,7 @@ export default {
   appId: profile.appId,
   productName: profile.productName,
   executableName: profile.executableName,
-  directories: { output: "dist-package" },
+  directories: { output: outputDirectory },
   // pnpm deploy stages the complete DSH graph, including peer and optional
   // packages. electron-builder must not reconstruct that graph itself.
   beforeBuild: () => false,
@@ -77,7 +82,9 @@ export default {
   ],
   win: {
     icon: "icon.ico",
-    target: [{ target: "nsis", arch: ["x64"] }, { target: "zip", arch: ["x64"] }],
+    target: requestedTarget
+      ? [{ target: requestedTarget, arch: ["x64"] }]
+      : [{ target: "nsis", arch: ["x64"] }, { target: "zip", arch: ["x64"] }],
   },
   nsis: {
     oneClick: false,

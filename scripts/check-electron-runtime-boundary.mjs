@@ -92,7 +92,7 @@ export async function scanElectronRuntimeBoundary({ root = repositoryRoot } = {}
   }
 
   const packageJson = JSON.parse(sources.package);
-  if (packageJson.dependencies?.["@deepseek-ai/dsh"] !== "0.1.5-rc.1") {
+  if (packageJson.dependencies?.["@deepseek-ai/dsh"] !== "0.1.5-rc.2") {
     findings.push({
       file: boundaryFiles.package,
       rule: "official-dsh-version",

@@ -13,6 +13,7 @@ const distDir = path.join(rootDir, 'dist', 'anyong-dsh');
 const dshVersion = rootPackage.dependencies['@deepseek-ai/dsh'];
 const officeCliVersion = rootPackage.dependencies['@officecli/officecli'];
 const browserSkillVersion = browserSkill.version;
+const intranetAuthVersion = rootPackage.dependencies['@voltui/dsh-intranet-auth'];
 
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(dshVersion)) {
   throw new Error(`@deepseek-ai/dsh must use an exact version, got ${JSON.stringify(dshVersion)}`);
@@ -27,6 +28,7 @@ async function main() {
 
   // 1. Copy profiles and default patch
   await fs.cp(path.join(rootDir, 'profiles'), path.join(distDir, 'profiles'), { recursive: true });
+  await fs.cp(path.join(rootDir, 'plugins', 'dsh-intranet-auth'), path.join(distDir, 'plugins', 'dsh-intranet-auth'), { recursive: true });
 
   // 2. Copy launcher
   await fs.mkdir(path.join(distDir, 'scripts'), { recursive: true });
@@ -53,6 +55,7 @@ async function main() {
     dependencies: {
       '@deepseek-ai/dsh': dshVersion,
       '@officecli/officecli': officeCliVersion,
+      '@voltui/dsh-intranet-auth': intranetAuthVersion,
       '@wxg-prc-cpg/browser-skill-dsh-plugin': browserSkillVersion,
       '@wxg-prc-cpg/dsh-weknora': rootPackage.dependencies['@wxg-prc-cpg/dsh-weknora'],
       'zod': rootPackage.dependencies.zod,

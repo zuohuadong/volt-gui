@@ -13,7 +13,7 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const rootPackage = JSON.parse(readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'));
 const lockfile = readFileSync(path.join(repositoryRoot, 'pnpm-lock.yaml'), 'utf8');
 const workspaceConfig = readFileSync(path.join(repositoryRoot, 'pnpm-workspace.yaml'), 'utf8');
-const expectedSupportedVersion = '0.1.5-rc.1';
+const expectedSupportedVersion = '0.1.5-rc.2';
 const expectedVersion = rootPackage.dependencies['@deepseek-ai/dsh'];
 const launcherPath = path.join(repositoryRoot, 'scripts', 'anyong.mjs');
 

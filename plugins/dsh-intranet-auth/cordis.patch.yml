@@ -1,0 +1,3 @@
+- insert:
+    - id: xg-intranet-auth
+      name: "@voltui/dsh-intranet-auth"

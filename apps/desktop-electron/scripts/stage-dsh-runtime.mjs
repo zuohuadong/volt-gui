@@ -58,6 +58,7 @@ const required = [
   `node_modules/@officecli/officecli/vendor/${process.platform === "win32" ? "officecli.exe" : "officecli"}`,
   "node_modules/@wxg-prc-cpg/browser-skill-dsh-plugin/package.json",
   "node_modules/@wxg-prc-cpg/dsh-weknora/package.json",
+  "node_modules/@voltui/dsh-intranet-auth/package.json",
   "node_modules/zod/package.json",
   "scripts/anyong-integrations-mcp.mjs",
   "node_modules/js-yaml/package.json",
@@ -121,7 +122,7 @@ const version = spawnSync(process.execPath, [path.join(target, required[0]), "--
   env: process.env,
 });
 if (version.error) throw version.error;
-if (version.status !== 0 || version.stdout.trim() !== "0.1.5-rc.1") {
+if (version.status !== 0 || version.stdout.trim() !== "0.1.5-rc.2") {
   throw new Error(`staged DSH runtime version check failed: ${version.stdout}${version.stderr}`);
 }
 

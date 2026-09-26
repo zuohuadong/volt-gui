@@ -82,7 +82,7 @@ test("packages only explicit production Electron files", () => {
   assert.equal(packageJson.scripts.typecheck, "tsc --noEmit");
   assert.equal(packageJson.scripts["test:security"], "node --test ../../scripts/check-electron-runtime-boundary.test.mjs");
   assert.equal(packageJson.scripts["stage:runtime"], "node ./scripts/stage-dsh-runtime.mjs");
-  assert.equal(packageJson.dependencies["@deepseek-ai/dsh"], "0.1.5-rc.1");
+  assert.equal(packageJson.dependencies["@deepseek-ai/dsh"], "0.1.5-rc.2");
   assert.equal(packageJson.optionalDependencies["@koromix/koffi-win32-x64"], "3.1.6");
   assert.equal(packageJson.dependencies["@officecli/officecli"], "1.0.149");
   assert.equal(packageJson.dependencies["@wxg-prc-cpg/browser-skill-dsh-plugin"], "0.2.1");

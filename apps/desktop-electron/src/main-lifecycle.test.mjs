@@ -148,7 +148,7 @@ async function createFixture(options = {}) {
         return { provisioned: false };
       };
       export const resolveOfficialDshBin = () => "fixture-dsh";
-      export const resolveOfficialDshVersion = () => "0.1.5-rc.1";
+      export const resolveOfficialDshVersion = () => "0.1.5-rc.2";
       export const rethrowUnlessBrokenPipe = (error) => { if (error.code !== "EPIPE") throw error; };`,
     client: `${shared} export const DshRemoteClient = fixture.Client;`,
     smb: `export class SmbMountManager { async mountAuto() {} }`,

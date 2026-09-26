@@ -15,6 +15,8 @@ const desktopRequire = createRequire(path.join(desktopDir, 'package.json'));
 const bundledPackageDir = path.dirname(desktopRequire.resolve(`${browserSkill.packageName}/package.json`));
 const weknoraPackage = '@wxg-prc-cpg/dsh-weknora';
 const weknoraPackageDir = path.dirname(desktopRequire.resolve(`${weknoraPackage}/package.json`));
+const intranetAuthPackage = '@voltui/dsh-intranet-auth';
+const intranetAuthPackageDir = path.dirname(desktopRequire.resolve(`${intranetAuthPackage}/package.json`));
 const stagedBsk = path.join(desktopDir, '.browser-skill-runtime', process.platform === 'win32' ? 'bsk.exe' : 'bsk');
 const dshHome = process.env.DSH_HOME?.trim()
   || (process.platform === 'win32' && process.env.APPDATA
@@ -49,7 +51,10 @@ function provisionProfiles() {
       dshHome,
       profileName,
       bundledPackageDir,
-      additionalPlugins: [{ packageName: weknoraPackage, packageDir: weknoraPackageDir }],
+      additionalPlugins: [
+        { packageName: weknoraPackage, packageDir: weknoraPackageDir },
+        { packageName: intranetAuthPackage, packageDir: intranetAuthPackageDir },
+      ],
     });
   }
 }
@@ -60,7 +65,9 @@ function verifyProfile(profileName) {
   if (manifest.dependencies?.[browserSkill.packageName] !== browserSkill.version
     || !manifest.dsh?.profile?.bundles?.includes(browserSkill.packageName)
     || manifest.dependencies?.[weknoraPackage] !== JSON.parse(readFileSync(path.join(weknoraPackageDir, 'package.json'), 'utf8')).version
-    || !manifest.dsh?.profile?.bundles?.includes(weknoraPackage)) {
+    || !manifest.dsh?.profile?.bundles?.includes(weknoraPackage)
+    || manifest.dependencies?.[intranetAuthPackage] !== JSON.parse(readFileSync(path.join(intranetAuthPackageDir, 'package.json'), 'utf8')).version
+    || !manifest.dsh?.profile?.bundles?.includes(intranetAuthPackage)) {
     throw new Error(`${profileName} Profile 未内置 ${browserSkill.packageName}@${browserSkill.version}`);
   }
 }

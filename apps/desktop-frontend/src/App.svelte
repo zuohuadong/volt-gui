@@ -350,6 +350,27 @@
    return undefined;
  });
 
+  function handleGlobalKeydown(event: KeyboardEvent): void {
+    const target = event.target as HTMLElement | null;
+    const editing = target?.matches("input, textarea, select, [contenteditable='true']");
+    const modifier = event.metaKey || event.ctrlKey;
+
+    if (modifier && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      document.querySelector<HTMLInputElement>(".sidebar-search input")?.focus();
+      return;
+    }
+    if (!editing && event.key === "/") {
+      event.preventDefault();
+      document.querySelector<HTMLInputElement>(".sidebar-search input")?.focus();
+      return;
+    }
+    if (event.key === "Escape") {
+      if (customizationOpen) customizationOpen = false;
+      else if (activityOpen) setActivityOpen(false);
+    }
+  }
+
   $effect(() => {
     setResources([
       { name: "sessions", label: t("nav.sessions"), fields: [{ key: "title", label: t("common.name"), type: "text" }], showInMenu: true },
@@ -369,6 +390,7 @@
     if (generatedSurface) void ensureGeneratedSurfaceComponent();
     void ensureConversationComponents();
     applyRuntimeCustomization(customization);
+    window.addEventListener("keydown", handleGlobalKeydown);
     armStartupTimers();
     unsubscribeRuntimeReady = window.voltDesktop?.onRuntimeReady(() => void bootstrap());
     void bootstrap();
@@ -379,6 +401,7 @@
       unsubscribeRuntimeError?.();
       unsubscribeRuntimeReady?.();
       unsubscribeDshFrames?.();
+      window.removeEventListener("keydown", handleGlobalKeydown);
     };
   });
 

@@ -109,7 +109,8 @@ export class DshRemoteClient {
   async authenticate(signal?: AbortSignal): Promise<void> {
     const response = await fetch(this.startupUrl, { redirect: "manual", signal: requestSignal(signal, 10_000) });
     if (response.status !== 303) throw desktopError(DesktopErrorCode.DSH_AUTH_FAILED, `官方 DSH 认证失败（HTTP ${response.status}）`);
-    if (response.headers.get("location") !== "/") throw desktopError(DesktopErrorCode.DSH_AUTH_FAILED, "官方 DSH 认证重定向目标无效");
+    const location = response.headers.get("location");
+    if (location !== "/" && location !== "./") throw desktopError(DesktopErrorCode.DSH_AUTH_FAILED, "官方 DSH 认证重定向目标无效");
     const cookies = getSetCookies(response.headers)
       .map((item) => item.split(";", 1)[0]?.trim())
       .filter((item): item is string => Boolean(item && /^dsh-auth-[^=]+=.+$/u.test(item)));

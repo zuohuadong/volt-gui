@@ -10,7 +10,7 @@ import { DshRemoteClient, type DshRemoteEvent } from "./dsh-remote-client.ts";
 
 const TOKEN = "A".repeat(43);
 
-async function createFixture(options: { rpcResult?: unknown; failFirstExport?: boolean; stall?: "auth" | "rpc" | "body" } = {}) {
+async function createFixture(options: { rpcResult?: unknown; failFirstExport?: boolean; stall?: "auth" | "rpc" | "body"; authLocation?: string } = {}) {
   const requests: Array<{ endpoint: string; args: unknown; cookie?: string }> = [];
   let connectionCount = 0;
   let exports = 0;
@@ -24,7 +24,7 @@ async function createFixture(options: { rpcResult?: unknown; failFirstExport?: b
         markBlocked();
         return;
       }
-      response.writeHead(303, { Location: "/", "Set-Cookie": "dsh-auth-fixture=session-value; HttpOnly; SameSite=Strict; Path=/" });
+      response.writeHead(303, { Location: options.authLocation ?? "/", "Set-Cookie": "dsh-auth-fixture=session-value; HttpOnly; SameSite=Strict; Path=/" });
       response.end();
       return;
     }
@@ -93,6 +93,30 @@ async function createFixture(options: { rpcResult?: unknown; failFirstExport?: b
     },
   };
 }
+
+test("accepts both official DSH root redirect forms", async () => {
+  for (const authLocation of ["/", "./"]) {
+    const fixture = await createFixture({ authLocation });
+    const client = new DshRemoteClient(fixture.startupUrl);
+    try {
+      await client.authenticate();
+    } finally {
+      await fixture.close();
+    }
+  }
+});
+
+test("rejects authentication redirects outside the official DSH root", async () => {
+  for (const authLocation of ["https://example.com/", "//example.com/", "/other", "../", "/?token=other"]) {
+    const fixture = await createFixture({ authLocation });
+    const client = new DshRemoteClient(fixture.startupUrl);
+    try {
+      await assert.rejects(client.authenticate(), /DSH_AUTH_FAILED/);
+    } finally {
+      await fixture.close();
+    }
+  }
+});
 
 test("rejects startup URLs that could escape the managed loopback runtime", () => {
   for (const value of [

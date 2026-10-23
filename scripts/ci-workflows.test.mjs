@@ -43,7 +43,7 @@ test("desktop CI packages only the official DSH Electron shell on Windows x64", 
   assert.match(desktop, /check-skills-sync/);
   assert.match(packageJson.scripts["dist:desktop"], /smoke:package/);
   assert.match(electronPackageJson.scripts.dist, /install:electron/);
-  assert.equal(electronPackageJson.scripts["install:electron"], "install-electron");
+  assert.equal(electronPackageJson.scripts["install:electron"], "node ../../scripts/install-electron-runtime.mjs");
   assert.match(desktop, /windows-x64-portable-\*\.zip/);
   assert.match(desktop, /Get-AuthenticodeSignature/);
   assert.match(desktop, /NotSigned/);

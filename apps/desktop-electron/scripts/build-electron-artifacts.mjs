@@ -25,7 +25,6 @@ function artifactNames(target) {
 
 function runTarget(target) {
   const targetOutput = path.join(appDir, `.electron-builder-${target}`);
-  fs.rmSync(targetOutput, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   fs.mkdirSync(targetOutput, { recursive: true });
   const result = spawnSync(
     pnpm.command,
@@ -71,7 +70,9 @@ function runTarget(target) {
   fs.rmSync(targetOutput, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
 
-fs.rmSync(outputDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+for (const directory of [outputDir, ...targets.map((target) => path.join(appDir, `.electron-builder-${target}`))]) {
+  fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+}
 fs.mkdirSync(outputDir, { recursive: true });
 for (const target of targets) runTarget(target);
 console.log(`Built Windows x64 Electron artifacts sequentially for ${version}.`);

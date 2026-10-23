@@ -21,6 +21,8 @@ Windows x64 packaging runs with:
 pnpm run dist:desktop
 ```
 
+Electron runtime installation reuses a complete installed runtime (binary, matching `dist/version`, and matching `path.txt`) and otherwise retries up to three times, with a 180-second timeout per attempt. `ELECTRON_INSTALL_ATTEMPTS` and `ELECTRON_INSTALL_TIMEOUT_MS` accept positive integers. Cache selection prefers `electron_config_cache`, then `ELECTRON_CACHE`, then the ignored repository directory `.cache/electron`; the selected path is passed to both cache variable spellings. An explicitly configured `ELECTRON_MIRROR` is preserved. No mirror is forced by this repository. A zero exit code without the complete platform runtime is a failed installation. Packaging removes both stale target directories before the first build, then builds and collects NSIS and ZIP sequentially.
+
 On a machine that already staged the desktop runtime, the official DSH packaged graph can be smoked without Windows electron-builder:
 
 ```sh
@@ -68,6 +70,26 @@ Use the product line as a source of reviewed fixes, not as release authority:
 6. Feed generic fixes back through a separately authorized PR on the product line or official DSH. Keep brand defaults, provider endpoints, secrets, and publishing jobs outside the shared patch scope.
 
 Do not automate external merges or releases. A future monitor may generate a delta report or review PR only after explicit authorization; it must not promote unverified source changes to `main`.
+
+### Selective continuation receipt: October 24, 2026
+
+Reference `main` was fetched at `93c131b74ad7c4623ab1aab989997160b8c8522d`. The previous reviewed source was `32b034fafb1270150a6f44243bdd176e84dbbd20`, not a fully accepted synchronization baseline. The intervening 140 commits were inventoried by subject and path; the complete runtime/UI delta has not been ported or accepted.
+
+| Source change | Disposition | Evidence or remaining boundary |
+| --- | --- | --- |
+| `38d6f5ca`: bounded Electron runtime installation | Ported with positive-integer validation, forced timeout termination, and the existing mirror policy | Nine local behavior tests cover retries, cache/mirror propagation, incomplete/stale installation repair, invalid bounds, platform paths, and a genuinely stalled child |
+| `986ddaba`: bounded packaging disk use | Ported the cleanup-before-first-target behavior; kept the existing sequential builder | Two fixture-process tests cover stale target cleanup, collection order, and fail-fast behavior; no Windows artifact was built |
+| `a1525b2`: sequential Windows artifacts | Already present locally | The new regression tests exercise both artifact targets without downloading or publishing |
+| `6748e24`: OfficeCLI checksum correction | Not applicable to local OfficeCLI `1.0.149`; its manifest and ignored installer already agree | Do not substitute the hash for another version or import the excluded CNB installer |
+| `6f8e6c3`, `0826125`, `2b84a39`, `6169ce0`: CNB runner/cache/publication changes | Excluded | These operate the reference line's Windows release runner; this repository's CNB role remains source-only |
+| `e5aabe1`: BrowserSkill vendor fallback | Excluded | No `vendor/bsk` lookup or binary is imported; local staging already supports a verified `BSK_PATH` and staged binary |
+| DSH `0.2.1-rc.2`, Node/pnpm upgrades, RPC/session/UI changes, extensions, Office/OCR integrations and dependency security upgrades | Pending | Require a separate dependency-compatible migration and real DSH/desktop validation; this patch does not establish those capabilities or security fixes |
+
+The workflow contract suite also passed 13 tests using the existing cached `yaml@2.9.0` via `NODE_PATH`, because this checkout's workspace dependency links are incomplete. This is targeted source verification, not a successful frozen install, full build, dependency audit, or Windows packaged-runtime acceptance. The source synchronization remains `PARTIAL`.
+
+The expanded run passed 29 of 30 tests (including four pnpm invocation tests and four Electron boundary rejection cases). The remaining boundary assertion expects DSH `0.1.5-rc.2` while the existing desktop manifest pins `0.1.5-rc.3`. Scanning files exported from the unchanged `c5e417ca7` baseline reproduced the same `official-dsh-version` finding. This pre-existing version-policy mismatch is left for the dependency migration; the complete suite is not green.
+
+An independent review found that the initial reference-style binary-only readiness check missed incomplete extraction, and that Electron 44 consumes `electron_config_cache`. Both findings were addressed using the installed Electron 44 installer as the contract: version/path metadata must match, and the cache path is mapped to the consumed variable. The final focused suites passed 28 tests (9 installer, 2 packaging, 13 workflow, 4 pnpm); these do not include the known failing version-policy assertion.
 
 ### Source review receipt: September 16, 2026
 

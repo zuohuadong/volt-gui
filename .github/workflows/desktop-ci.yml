@@ -30,6 +30,7 @@ on:
       - "scripts/native-executable*.mjs"
       - "scripts/pnpm-invocation*.mjs"
       - "scripts/ensure-pnpm.mjs"
+      - "scripts/install-electron-runtime*.mjs"
       - "scripts/verify-bundled-model-credentials*.mjs"
       - "scripts/smoke-packaged-dsh-runtime*.mjs"
       - "scripts/smoke-staged-dsh-runtime*.mjs"

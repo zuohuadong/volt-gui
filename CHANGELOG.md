@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- 参考 CNB `38d6f5c` 与 `986ddaba`，为 Electron 运行时安装增加缓存、镜像、超时和有限重试，并在打包前清理上次中断遗留的目标目录；未引入 CNB 发布脚本、密钥或 vendor 二进制。
+
 ## 0.31.56 - 2026-09-16
 
 ### Changed

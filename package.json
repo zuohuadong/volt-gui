@@ -17,7 +17,7 @@
     "pretest": "node ./scripts/ensure-pnpm.mjs",
     "predist:desktop": "node ./scripts/ensure-pnpm.mjs",
     "build": "node ./scripts/bundle.mjs && pnpm run build:desktop",
-    "test": "pnpm --dir apps/desktop-electron run test && pnpm --dir apps/desktop-frontend test && node --test ./plugins/dsh-intranet-auth/test/index.test.mjs ./scripts/anyong-integrations-mcp.test.mjs ./scripts/third-party-office-tools.test.mjs ./scripts/check-migration-boundary.test.mjs ./scripts/provision-dsh-profile.test.mjs ./scripts/native-executable.test.mjs ./scripts/smoke-packaged-dsh-runtime.test.mjs ./scripts/smoke-staged-dsh-runtime.test.mjs && pnpm run check:dsh-plugins",
+    "test": "pnpm --dir apps/desktop-electron run test && pnpm --dir apps/desktop-frontend test && node --test ./plugins/dsh-intranet-auth/test/index.test.mjs ./scripts/anyong-integrations-mcp.test.mjs ./scripts/third-party-office-tools.test.mjs ./scripts/check-migration-boundary.test.mjs ./scripts/install-electron-runtime.test.mjs ./scripts/provision-dsh-profile.test.mjs ./scripts/native-executable.test.mjs ./scripts/smoke-packaged-dsh-runtime.test.mjs ./scripts/smoke-staged-dsh-runtime.test.mjs && pnpm run check:dsh-plugins",
     "test:dsh-integration": "node --test --test-concurrency=1 ./scripts/dsh-integration.test.mjs ./scripts/desktop-credentials.integration.test.mjs",
     "test:dsh-upgrade": "node --test ./scripts/dsh-upgrade.test.mjs",
     "start": "node ./scripts/anyong.mjs",

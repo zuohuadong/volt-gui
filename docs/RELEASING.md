@@ -2,7 +2,7 @@
 
 ## Candidate
 
-Release candidates are immutable commits verified with Node `26.8.1`, pnpm `12.1.0`, the frozen lockfile and the current official DSH package.
+Release candidates are immutable commits verified with Node `26.13.0`, pnpm `12.16.1`, the frozen lockfile and the current official DSH package.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -106,6 +106,40 @@ Live source `main` resolves to `29ab4d236cae03250e81982bdcfa08afe4e58867` (tag `
 | CLI/distribution, dependency and Windows packaging controls | Local exact overrides, production audit and PE/resource checks remain authoritative | No Windows installer/ZIP or unsigned-review release receipt for this dirty candidate |
 
 Keep two-way collaboration at the behavioral-patch level: shared DSH/RPC, lifecycle, transcript and packaging fixes should carry source attribution and tests; branding, private provider defaults and publishing credentials stay product-line specific. Do not create a shared core package or another Harness merely to simplify Git synchronization. A source group remains pending until its local adaptation and required tests are accepted on one immutable candidate.
+
+### Selective sync receipt: October 29, 2026
+
+The live CNB `anyong-agent` source `main` resolves to `a8a664cd1752494d75f79f62c2d4783672393c6d` (`v0.31.169`). The delta from the previous reviewed source `93c131b74ad7c4623ab1aab989997160b8c8522d` contains 32 commits and 102 changed paths. This repository keeps its own GitHub metadata, DSH `0.1.5-rc.3` contract, and Electron architecture; no CNB merge or release commit was applied.
+
+| Source group | Disposition | Evidence or remaining boundary |
+| --- | --- | --- |
+| `45ff971e`: internal gateway image capability declarations | Ported | `profiles/anyong.yml` now declares `text,image` with validated `ANYONG_MODEL_INPUT_OVERRIDES_JSON` fallback; `scripts/model-modalities.test.mjs` and profile assertions cover defaults, valid overrides, and malformed values |
+| `705f380e`: credential context for 401 failures | Ported with local adaptation | The Svelte workbench shows model/provider/reference context without secret values; the built-in gateway action opens Model Services and other providers open matching credential settings |
+| `6e825652`: inactive Provider credential references | Ported independently of voice input | Namespaces with only inactive providers no longer contribute default credential references; unknown namespaces and namespaces shared with an active provider remain visible |
+| `09ad2125`: Windows integration cleanup | Ported with local adaptation | Shared cleanup helper retries Windows directory-lock errors while propagating unexpected or non-Windows failures; deterministic unit tests cover all branches |
+| `3f4be902`: integration-policy timeout increase | Not directly applicable | The local policy test has no corresponding 180-second test timeout; its existing child startup bounds remain unchanged |
+| `6abc70ba`, `164087cb`: runtime staging link-boundary fixes | Pending / not applicable | This checkout has no corresponding `runtime-staging-cache` module; no unrelated staging subsystem was introduced merely to copy the reference patch |
+| `3e82d693`, `6e825652`: official voice input | Pending | Requires the DSH voice bundle and RPC contract from the `0.2.x` product line; local `0.1.5-rc.3` must not receive guessed endpoints |
+| `16f7c6cc`, `85510810`, `198cff67`, `dc0b5b37`: generated Surface widgets | Pending | Requires the reference `@svadmin/surface` contract and newer integration behavior; current renderer already has a separate read-only Surface protocol |
+| `9d4113e9`, `372035f4`, `faddc0a9`: bounded spreadsheet engine | Pending separate compatibility migration | Requires new Python/runtime binaries, DuckDB extension staging, Office isolation, and Windows packaging evidence; no partial engine was introduced |
+| `0c50851d`: offline failure-analysis DOCX | Pending separate compatibility migration | Requires `python-docx`, new local report MCP scope, path policy, and packaging/test acceptance; it is not a safe one-file port |
+| DSH/dependency upgrades, CNB workflow/publication changes, vendor binaries, release metadata | Pending or product-line-specific | Runtime upgrades need a separate exact-version migration; CNB release authority, secrets, vendor artifacts, and source repository metadata remain outside this selective behavioral sync |
+
+This receipt is a partial behavioral sync, not a fully accepted CNB baseline. A complete DSH `0.2.x` migration requires a separate authorized scope with frozen installation, integration, build, boundary, dependency-audit, and packaged-runtime evidence.
+
+Execution status: `PARTIAL`. Full source acceptance is blocked on the separately scoped DSH/dependency migration and the pending source groups above; real gateway, Electron UI and Windows packaged-runtime acceptance also remain outstanding. The reviewed source SHA must not become an accepted baseline merely because these focused fixes pass.
+
+Observed local evidence on October 29, 2026:
+
+- Frozen offline installation with pnpm `12.1.0` and `--ignore-scripts` completed successfully; `pnpm-lock.yaml` is unchanged. The earlier online attempt was interrupted during linking. This is not a successful lifecycle-script or native-binary installation receipt.
+- Official DSH profile-loader modality tests and cleanup tests passed 6/6. The override accepts only `text` and `image`; malformed JSON, unknown modalities and mixed invalid arrays fall back to the default. An independent read-only verifier found the missing enum validation, which was fixed and retested.
+- Focused frontend tests passed 27/27. `svelte-check` reported zero errors and warnings; the Svelte autofixer reported no issues. The Vite production build passed with large-chunk warnings.
+- Full frontend tests passed 105/106. The failing responsive-layout test reads the final mobile CSS block; comparison with `HEAD` confirms that block is unchanged by this patch. This is a pre-existing failure, not a green full suite.
+- Workflow tests passed 13/13; migration boundary and skills-sync checks passed. Final diff hygiene passed.
+- Electron profile tests passed 4/5 and Electron boundary tests passed 4/5. Both failures, plus the plugin compatibility gate, still expect DSH `0.1.5-rc.2` while the existing manifests pin `0.1.5-rc.3`; this patch does not weaken or rewrite that historical approval policy.
+- The DSH integration attempt failed its version assertion, then was interrupted while the launcher waited for the required OfficeCLI binary. No real DSH loopback, image completion, credential recovery UI, complete root build or Windows package was accepted. The package-manager frontend-test attempt also waited in OfficeCLI postinstall and was stopped; frontend tests/build were run directly with the installed workspace executables instead.
+
+No commit, push, workflow dispatch, release, CNB vendor import, or production write was performed.
 
 ## Local hardening evidence
 

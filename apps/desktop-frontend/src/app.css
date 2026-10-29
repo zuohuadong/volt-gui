@@ -987,6 +987,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-preview { max-height: min(52vh, 460px); overflow: hidden; }
 .agent-preview pre { max-height: min(46vh, 400px); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .error-banner span, .management-feedback span { white-space: normal; overflow-wrap: anywhere; }
+.error-banner-message { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.error-banner-message small { overflow-wrap: anywhere; }
+.error-banner-hint { color: var(--foreground); }
 
 /* 共享工作台主题：统一顶栏、会话、管理和设置页面的节奏。 */
 :root {

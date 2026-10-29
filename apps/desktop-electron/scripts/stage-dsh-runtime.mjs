@@ -15,7 +15,7 @@ const nodeTargetDir = path.join(appDir, ".node-runtime");
 const nodeTarget = path.join(nodeTargetDir, process.platform === "win32" ? "node.exe" : "node");
 const pnpmEntrypoint = process.env.npm_execpath;
 
-if (process.version !== "v26.8.1") throw new Error(`Node 26.8.1 is required to stage the desktop runtime; received ${process.version}`);
+if (process.version !== "v26.13.0") throw new Error(`Node 26.13.0 is required to stage the desktop runtime; received ${process.version}`);
 const pnpm = resolvePnpmInvocation(pnpmEntrypoint);
 
 await stageBrowserSkillCli();
@@ -122,7 +122,7 @@ const version = spawnSync(process.execPath, [path.join(target, required[0]), "--
   env: process.env,
 });
 if (version.error) throw version.error;
-if (version.status !== 0 || version.stdout.trim() !== "0.1.5-rc.2") {
+if (version.status !== 0 || version.stdout.trim() !== "0.2.1-rc.5") {
   throw new Error(`staged DSH runtime version check failed: ${version.stdout}${version.stderr}`);
 }
 

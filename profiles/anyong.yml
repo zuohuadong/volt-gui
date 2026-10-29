@@ -23,17 +23,41 @@
         models:
           - id: vlm
             name: VLM (Qwen Text Alias)
-            input: [text]
+            input: !!js |
+              (() => {
+                try {
+                  const overrides = JSON.parse(process.env.ANYONG_MODEL_INPUT_OVERRIDES_JSON ?? '{}');
+                  const declared = overrides['vlm'];
+                  if (Array.isArray(declared) && declared.length > 0 && declared.every((item) => item === 'text' || item === 'image')) return declared;
+                } catch { /* Invalid deployment overrides must not prevent DSH startup. */ }
+                return ['text', 'image'];
+              })()
             contextWindow: 65536
             maxTokens: 32768
           - id: deepseek-v4-flash
             name: DeepSeek V4 Flash
-            input: [text]
+            input: !!js |
+              (() => {
+                try {
+                  const overrides = JSON.parse(process.env.ANYONG_MODEL_INPUT_OVERRIDES_JSON ?? '{}');
+                  const declared = overrides['deepseek-v4-flash'];
+                  if (Array.isArray(declared) && declared.length > 0 && declared.every((item) => item === 'text' || item === 'image')) return declared;
+                } catch { /* Invalid deployment overrides must not prevent DSH startup. */ }
+                return ['text', 'image'];
+              })()
             contextWindow: 1048576
             maxTokens: 32768
           - id: qwen3.8-flash-next
             name: Qwen 3.8 Flash Next
-            input: [text]
+            input: !!js |
+              (() => {
+                try {
+                  const overrides = JSON.parse(process.env.ANYONG_MODEL_INPUT_OVERRIDES_JSON ?? '{}');
+                  const declared = overrides['qwen3.8-flash-next'];
+                  if (Array.isArray(declared) && declared.length > 0 && declared.every((item) => item === 'text' || item === 'image')) return declared;
+                } catch { /* Invalid deployment overrides must not prevent DSH startup. */ }
+                return ['text', 'image'];
+              })()
             contextWindow: 1048576
             maxTokens: 32768
 

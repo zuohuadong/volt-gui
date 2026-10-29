@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AlertTriangle, Check, ChevronDown, Lock, ShieldAlert, ShieldCheck } from "lucide-svelte";
+  import { TriangleAlert as AlertTriangle, Check, ChevronDown, Lock, ShieldAlert, ShieldCheck } from "@lucide/svelte";
   import { Button } from "$components/ui/button";
   import type { DshClient, PermissionSelect } from "$lib/dsh-client";
   import { t } from "$lib/i18n";

@@ -9,7 +9,7 @@ import test from 'node:test';
 
 import { provisionBundledBrowserSkillProfile } from './provision-dsh-profile.mjs';
 
-async function createBundledPackage(root, version = '0.2.1') {
+async function createBundledPackage(root, version = '0.3.3') {
   const packageDir = path.join(root, 'bundled-browser-skill');
   await mkdir(path.join(packageDir, 'lib'), { recursive: true });
   await mkdir(path.join(packageDir, 'node_modules', 'ignored'), { recursive: true });
@@ -51,7 +51,7 @@ test('provisions BrowserSkill while preserving the user profile', async () => {
     assert.equal(manifest.name, 'custom-web-profile');
     assert.deepEqual(manifest.scripts, { inspect: 'echo preserved' });
     assert.equal(manifest.dependencies['@example/custom-plugin'], '1.2.3');
-    assert.equal(manifest.dependencies['@wxg-prc-cpg/browser-skill-dsh-plugin'], '0.2.1');
+    assert.equal(manifest.dependencies['@wxg-prc-cpg/browser-skill-dsh-plugin'], '0.3.3');
     assert.equal(manifest.dsh.custom, true);
     assert.equal(manifest.dsh.profile.custom, true);
     assert.deepEqual(manifest.dsh.profile.bundles, [
@@ -120,7 +120,7 @@ for (const profileName of ['web', 'headless']) {
     const fixture = await legacyProfileFixture(t, profileName);
     provisionBundledBrowserSkillProfile(fixture);
     const upgraded = JSON.parse(await readFile(fixture.manifestPath, 'utf8'));
-    assert.equal(upgraded.dependencies['@wxg-prc-cpg/browser-skill-dsh-plugin'], '0.2.1');
+    assert.equal(upgraded.dependencies['@wxg-prc-cpg/browser-skill-dsh-plugin'], '0.3.3');
     assert.equal(upgraded.dependencies['@example/custom-plugin'], '3.2.1');
     assert.deepEqual(upgraded.dsh.profile.custom, { preserve: true });
     assert.equal(upgraded.dsh.profile.bundles.filter((name) => name === '@wxg-prc-cpg/browser-skill-dsh-plugin').length, 1);
@@ -131,16 +131,19 @@ for (const profileName of ['web', 'headless']) {
     const first = await readFile(fixture.manifestPath, 'utf8');
     provisionBundledBrowserSkillProfile(fixture);
     assert.equal(await readFile(fixture.manifestPath, 'utf8'), first);
-    assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.2.1');
+    assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.3.3');
   });
 }
 
-test('upgrades the immediately previous BrowserSkill release without overwriting its backup', async (t) => {
-  const fixture = await legacyProfileFixture(t, 'web', '0.2.0');
-  provisionBundledBrowserSkillProfile(fixture);
-  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.2.1');
-  assert.equal(JSON.parse(await readFile(path.join(`${fixture.targetDir}.backup-0.2.0`, 'package.json'), 'utf8')).version, '0.2.0');
-});
+for (const installedVersion of ['0.2.0', '0.2.1']) {
+  test(`upgrades BrowserSkill ${installedVersion} without overwriting its backup`, async (t) => {
+    const fixture = await legacyProfileFixture(t, 'web', installedVersion);
+    provisionBundledBrowserSkillProfile(fixture);
+    assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.3.3');
+    assert.equal(JSON.parse(await readFile(path.join(`${fixture.targetDir}.backup-${installedVersion}`, 'package.json'), 'utf8')).version, installedVersion);
+    assert.equal(await readFile(`${fixture.targetDir}.backup-${installedVersion}.profile.json`, 'utf8'), fixture.legacyManifest);
+  });
+}
 
 test('an incomplete update leaves the old plugin and manifest intact', async (t) => {
   const fixture = await legacyProfileFixture(t, 'web');
@@ -156,7 +159,7 @@ test('recovers an interrupted directory swap before retrying migration', async (
   await cp(fixture.manifestPath, `${backupDir}.profile.json`);
   await rename(fixture.targetDir, backupDir);
   provisionBundledBrowserSkillProfile(fixture);
-  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.2.1');
+  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.3.3');
   assert.equal(await readFile(`${backupDir}.profile.json`, 'utf8'), fixture.legacyManifest);
 });
 
@@ -177,7 +180,7 @@ test('rolls back the plugin when the manifest commit fails, then permits retry',
     syncBuiltinESMExports();
   }
   provisionBundledBrowserSkillProfile(fixture);
-  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.2.1');
+  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.3.3');
 });
 
 test('repairs a partial manifest backup before committing an upgrade', async (t) => {
@@ -244,7 +247,7 @@ for (const failurePoint of ['restore', 'cleanup']) {
       syncBuiltinESMExports();
     }
     provisionBundledBrowserSkillProfile(fixture);
-    assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.2.1');
+    assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.3.3');
   });
 }
 
@@ -274,7 +277,7 @@ test('excludes a second process until the first transaction has rolled back', as
     syncBuiltinESMExports();
   }
   provisionBundledBrowserSkillProfile(fixture);
-  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.2.1');
+  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.3.3');
 });
 
 test('never takes over an abandoned lock without explicit operator recovery', async (t) => {
@@ -286,7 +289,7 @@ test('never takes over an abandoned lock without explicit operator recovery', as
   assert.equal(await readFile(lockPath, 'utf8'), '0\n');
   await rm(lockPath);
   provisionBundledBrowserSkillProfile(fixture);
-  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.2.1');
+  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.3.3');
 });
 
 test('does not downgrade an unfamiliar user-managed version', async (t) => {

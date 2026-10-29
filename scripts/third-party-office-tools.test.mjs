@@ -14,7 +14,7 @@ import {
 
 test("OfficeCLI metadata stays pinned to the audited npm package", () => {
   assert.equal(officeCli.packageName, "@officecli/officecli");
-  assert.equal(officeCli.version, "1.0.149");
+  assert.equal(officeCli.version, "1.0.159");
   assert.match(officeCli.windowsX64Sha256, /^[a-f0-9]{64}$/u);
 });
 

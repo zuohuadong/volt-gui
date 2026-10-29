@@ -918,6 +918,9 @@ export const enUS: TranslationDict = {
   errors: {
     authFailed: "API Key authentication failed or expired (401). Open Management > Settings & Credentials to update it.",
     providerAuthFailed: "The {provider} API Key failed authentication or expired (401). Open Management > Settings & Credentials to update it.",
+    authFailureContext: "Model: {model} · Provider: {provider} · Credential: {credential}",
+    authFailureBuiltinHint: "The built-in intranet gateway credential is in use. Restore it in Model Services or save a valid key, then retry.",
+    authFailureCustomHint: "Update the matching credential and retry; saved credential values are never echoed.",
     noApiKey: "No API Key configured for current model. Open Management > Settings & Credentials to configure it.",
     reasoningEffortUnsupported: "The current model does not support the selected reasoning effort. Reverted to default.",
     presetFixed: "Current session has started and agent preset is locked. Create a new session to apply another preset.",

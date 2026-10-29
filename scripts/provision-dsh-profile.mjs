@@ -2,8 +2,8 @@ import { closeSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readFile
 import path from 'node:path';
 
 const BROWSER_SKILL_PACKAGE = '@wxg-prc-cpg/browser-skill-dsh-plugin';
-const PREVIOUS_BUNDLED_VERSIONS = new Set(['0.1.2', '0.2.0']);
-const CURRENT_BUNDLED_VERSION = '0.2.1';
+const PREVIOUS_BUNDLED_VERSIONS = new Set(['0.1.2', '0.2.0', '0.2.1']);
+const CURRENT_BUNDLED_VERSION = '0.3.3';
 
 function canUpgradeBundledVersion(version, bundledVersion) {
   return PREVIOUS_BUNDLED_VERSIONS.has(version) && bundledVersion === CURRENT_BUNDLED_VERSION;

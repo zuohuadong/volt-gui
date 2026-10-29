@@ -152,4 +152,21 @@ describe("userFacingError", () => {
     expect(surface).toContain("userFacingError(error.error)");
     expect(surface).not.toMatch(/onError\?\(error\.error\.message\)/);
   });
+
+  it("shows authentication context and matching credential action in both locales", async () => {
+    const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../App.svelte", import.meta.url), "utf8"));
+    expect(source).toContain('t("errors.authFailureContext"');
+    expect(source).toContain("credentialSummary(ref)");
+    expect(source).toContain("onclick={openCredentialSettingsForCurrentModel}");
+    expect(source).toMatch(/if \(ref === "XG_GOMODEL_API_KEY"\) \{\s+openManagement\("models"\)/u);
+    for (const locale of ["zh-CN", "en-US"] as const) {
+      setLocale(locale);
+      const context = t("errors.authFailureContext", { model: "test-model", provider: "test-provider", credential: "TEST_KEY" });
+      expect(context).toContain("test-model");
+      expect(context).toContain("test-provider");
+      expect(context).toContain("TEST_KEY");
+      expect(t("errors.authFailureBuiltinHint")).not.toBe("errors.authFailureBuiltinHint");
+      expect(t("errors.authFailureCustomHint")).not.toBe("errors.authFailureCustomHint");
+    }
+  });
 });

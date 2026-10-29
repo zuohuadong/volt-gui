@@ -4,6 +4,7 @@ import { setLocale, t } from "./i18n";
 import {
   credentialRefHint,
   credentialRefTitle,
+  collectCredentialRefs,
   enrichModelGroups,
   filterUsableDiscoveredModels,
   findProviderSettings,
@@ -37,6 +38,40 @@ const namespace: SettingsNamespace = {
   secrets: [],
   revision: 2,
 };
+
+describe("凭据引用收集", () => {
+  const namespaces: SettingsNamespace[] = [
+    { ...namespace, ns: "llm-deepseek", value: { apiKeyEnv: "DEEPSEEK_API_KEY" } },
+    { ...namespace, value: { providers: { xg: { apiKeyEnv: "XG_GOMODEL_API_KEY" } } } },
+    { ...namespace, ns: "weknora", value: { apiKeyEnv: "WEKNORA_API_KEY" } },
+  ];
+  const providers = [
+    { provider: "deepseek-official", displayName: "DeepSeek", settingsNs: "llm-deepseek", settingsPath: [], active: false },
+    { provider: "xg-gomodel", displayName: "XG", settingsNs: "llm-pi-ai", settingsPath: [], active: true },
+  ];
+
+  it("隐藏全部 Provider 停用命名空间的引用，但保留非 Provider 命名空间", () => {
+    expect(collectCredentialRefs(namespaces, providers)).toEqual(["WEKNORA_API_KEY", "XG_GOMODEL_API_KEY"]);
+  });
+
+  it("Provider 列表不可用时保留所有命名空间引用", () => {
+    expect(collectCredentialRefs(namespaces)).toEqual(["DEEPSEEK_API_KEY", "WEKNORA_API_KEY", "XG_GOMODEL_API_KEY"]);
+  });
+
+  it("同一命名空间至少有一个 Provider 启用时保留引用，无关停用顺序不影响结果", () => {
+    const active = { ...providers[0], provider: "another-deepseek", active: true };
+    expect(collectCredentialRefs(namespaces, [...providers, active])).toContain("DEEPSEEK_API_KEY");
+    expect(collectCredentialRefs(namespaces, [active, ...providers])).toContain("DEEPSEEK_API_KEY");
+  });
+
+  it("遍历数组与嵌套对象，去重排序且忽略空值或非字符串", () => {
+    expect(collectCredentialRefs([{ ...namespace, value: {
+      nested: [{ apiKeyEnv: "B_KEY" }, null, { apiKeyEnv: "A_KEY" }, { apiKeyEnv: "B_KEY" }],
+      empty: { apiKeyEnv: "" },
+      invalid: { apiKeyEnv: 123 },
+    } }])).toEqual(["A_KEY", "B_KEY"]);
+  });
+});
 
 describe("XG 网关模型目录", () => {
   it("从官方设置命名空间定位 Provider 并补全能力", () => {

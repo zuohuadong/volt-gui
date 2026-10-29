@@ -1,19 +1,23 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { parse, parseAllDocuments } from 'yaml';
 import { DshRemoteClient } from '../apps/desktop-electron/src/dsh-remote-client.ts';
 import { extractTrustedDshUrl } from '../apps/desktop-electron/src/official-dsh-runtime.ts';
+import { removeIntegrationTree } from './integration-temp-directory.mjs';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const rootPackage = JSON.parse(readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'));
 const lockfile = readFileSync(path.join(repositoryRoot, 'pnpm-lock.yaml'), 'utf8');
+const lockedPackageNames = parseAllDocuments(lockfile)
+  .flatMap((document) => Object.keys(document.toJS().packages ?? {}));
 const workspaceConfig = readFileSync(path.join(repositoryRoot, 'pnpm-workspace.yaml'), 'utf8');
-const expectedSupportedVersion = '0.1.5-rc.2';
+const expectedSupportedVersion = '0.2.1-rc.5';
 const expectedVersion = rootPackage.dependencies['@deepseek-ai/dsh'];
 const launcherPath = path.join(repositoryRoot, 'scripts', 'anyong.mjs');
 
@@ -132,15 +136,19 @@ test('supply-chain policy covers every locked official DSH package', () => {
 
 test('security patch overrides keep vulnerable transitive versions out of the lockfile', () => {
   assert.match(workspaceConfig, /^overrides:$/m);
-  assert.match(workspaceConfig, /^  sharp: '0\.35\.4'$/m);
+  assert.match(workspaceConfig, /^  sharp: '0\.35\.5'$/m);
   assert.match(workspaceConfig, /^  js-yaml: '4\.3\.2'$/m);
-  assert.match(workspaceConfig, /^  hono: '4\.13\.5'$/m);
-  assert.match(lockfile, /^  sharp@0\.35\.4:$/m);
-  assert.match(lockfile, /^  js-yaml@4\.3\.2:$/m);
-  assert.match(lockfile, /^  hono@4\.13\.5:$/m);
-  assert.doesNotMatch(lockfile, /^  sharp@0\.35\.3:$/m);
-  assert.doesNotMatch(lockfile, /^  js-yaml@4\.3\.1:$/m);
-  assert.doesNotMatch(lockfile, /^  hono@4\.13\.3:$/m);
+  assert.match(workspaceConfig, /^  hono: '4\.13\.14'$/m);
+  for (const required of ['sharp@0.35.5', 'js-yaml@4.3.2', 'undici@8.12.3', 'zod@4.6.7', '@modelcontextprotocol/client@2.4.0']) {
+    assert.ok(lockedPackageNames.includes(required), `${required} must be locked`);
+  }
+  const vulnerablePackages = new Set([
+    'sharp@0.35.3', 'js-yaml@4.3.1', 'hono@4.13.3',
+    'fflate@0.8.2', 'katex@0.16.47', 'undici@8.11.2',
+    'zod@4.4.3', '@modelcontextprotocol/client@2.2.0',
+  ]);
+  assert.deepEqual(lockedPackageNames.filter((name) => vulnerablePackages.has(name)), []);
+  assert.deepEqual(lockedPackageNames.filter((name) => name.startsWith('hono@') && name !== 'hono@4.13.14'), []);
 });
 
 test('Anyong override composes with the supported official web and headless profiles', async () => {
@@ -155,7 +163,7 @@ test('Anyong override composes with the supported official web and headless prof
       assert.doesNotMatch(config, /id: anyong-ui/);
     }
   } finally {
-    await rm(dshHome, { recursive: true, force: true });
+    await removeIntegrationTree(dshHome);
   }
 });
 
@@ -200,9 +208,9 @@ test('project integration defaults match the approved policy', async () => {
     if (runtime) await stopWebRuntime(runtime.child);
     if (enabledRuntime) await stopWebRuntime(enabledRuntime.child);
     if (githubRuntime) await stopWebRuntime(githubRuntime.child);
-    await rm(dshHome, { recursive: true, force: true });
-    await rm(enabledHome, { recursive: true, force: true });
-    await rm(githubHome, { recursive: true, force: true });
+    await removeIntegrationTree(dshHome);
+    await removeIntegrationTree(enabledHome);
+    await removeIntegrationTree(githubHome);
   }
 });
 
@@ -232,7 +240,7 @@ test('official DSH credentials remain configured after a web runtime restart', a
     await client.call('credentials/unset', { ref });
   } finally {
     if (runtime) await stopWebRuntime(runtime.child);
-    await rm(dshHome, { recursive: true, force: true });
+    await removeIntegrationTree(dshHome);
   }
 });
 
@@ -255,10 +263,10 @@ test('distribution bundle pins the same official DSH version', async () => {
   );
   assert.equal(distributionPackage.dependencies['@deepseek-ai/dsh'], expectedVersion);
   assert.equal(distributionPackage.engines.node, rootPackage.engines.node);
-  assert.deepEqual(distributionPackage.overrides, { sharp: '0.35.4', 'js-yaml': '4.3.2', hono: '4.13.5' });
+  assert.deepEqual(distributionPackage.overrides, parse(workspaceConfig).overrides);
 });
 
 test('Node 26 is the supported script runtime', () => {
   assert.equal(Number(process.versions.node.split('.')[0]), 26);
-  assert.equal(rootPackage.engines.node, '>=26.8.1 <27');
+  assert.equal(rootPackage.engines.node, '>=26.13.0 <27');
 });

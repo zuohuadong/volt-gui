@@ -918,6 +918,9 @@ export const zhCN: TranslationDict = {
   errors: {
     authFailed: "API Key 认证失败或已失效（401），请前往“管理 > 设置与凭据”检查并更新对应凭据。",
     providerAuthFailed: "{provider} 的 API Key 认证失败或已失效（401），请前往“管理 > 设置与凭据”检查并更新对应凭据。",
+    authFailureContext: "模型：{model} · Provider：{provider} · 凭据：{credential}",
+    authFailureBuiltinHint: "当前使用内置内网网关凭据。可在“模型服务”中恢复内置凭据，或填入可用密钥后重试。",
+    authFailureCustomHint: "请更新对应凭据后重试；已保存的凭据值不会回显。",
     noApiKey: "当前模型尚未配置 API Key，请前往“管理 > 设置与凭据”保存对应凭据。",
     reasoningEffortUnsupported: "当前模型不支持所选推理强度，已改用默认设置，请重试。",
     presetFixed: "当前会话已启动，Agent 预设已锁定，请新建会话后再应用其他预设。",

@@ -11,8 +11,8 @@ const workflow = (name) => readFileSync(path.join(root, ".github", "workflows", 
 
 test("CI is Node 26 only and verifies the official DSH migration boundary", () => {
   const ci = workflow("ci.yml");
-  assert.match(ci, /node-version:\s*26\.8\.1/g);
-  assert.match(ci, /version:\s*12\.1\.0/);
+  assert.match(ci, /node-version:\s*26\.13\.0/g);
+  assert.match(ci, /version:\s*12\.16\.1/);
   assert.match(ci, /pnpm run test:dsh-integration/);
   assert.match(ci, /node scripts\/check-migration-boundary\.mjs/);
   assert.match(ci, /node scripts\/check-skills-sync\.mjs/);
@@ -36,8 +36,8 @@ test("desktop CI packages only the official DSH Electron shell on Windows x64", 
   const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
   const electronPackageJson = JSON.parse(readFileSync(path.join(root, "apps", "desktop-electron", "package.json"), "utf8"));
   assert.match(desktop, /runs-on:\s*windows-latest/);
-  assert.match(desktop, /node-version:\s*26\.8\.1/);
-  assert.match(desktop, /version:\s*12\.1\.0/);
+  assert.match(desktop, /node-version:\s*26\.13\.0/);
+  assert.match(desktop, /version:\s*12\.16\.1/);
   assert.match(desktop, /pnpm run dist:desktop/);
   assert.match(desktop, /pnpm run test:dsh-integration/);
   assert.match(desktop, /check-skills-sync/);
@@ -157,8 +157,8 @@ test("repository governance files match the current runtime", () => {
 
 test("CNB validates the same Node 26 source contract", () => {
   const cnb = readFileSync(path.join(root, ".cnb.yml"), "utf8");
-  assert.match(cnb, /node:26\.8\.1/);
-  assert.match(cnb, /pnpm@12\.1\.0/);
+  assert.match(cnb, /node:26\.13\.0/);
+  assert.match(cnb, /pnpm@12\.16\.1/);
   assert.match(cnb, /pnpm run test:dsh-integration/);
   assert.match(cnb, /check-migration-boundary/);
   assert.match(cnb, /check-skills-sync/);
@@ -187,7 +187,7 @@ test("tracked OEM files never contain live credentials or vendored BrowserSkill 
 
 test("repository enforces the pinned pnpm version", () => {
   const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
-  assert.equal(packageJson.packageManager, "pnpm@12.1.0");
+  assert.equal(packageJson.packageManager, "pnpm@12.16.1");
   assert.equal(packageJson.scripts.preinstall, "node ./scripts/ensure-pnpm.mjs");
   assert.equal(packageJson.license, "MIT");
   assert.equal(packageJson.repository?.url, "https://github.com/zuohuadong/volt-gui.git");
@@ -201,7 +201,7 @@ test("repository enforces the pinned pnpm version", () => {
 
 test("Pages builds the site with the exact repository Node version", () => {
   const pages = workflow("pages.yml");
-  assert.match(pages, /node-version:\s*26\.8\.1/);
+  assert.match(pages, /node-version:\s*26\.13\.0/);
   assert.match(pages, /npm ci/);
   assert.match(pages, /npm test/);
   assert.match(pages, /npm run build/);

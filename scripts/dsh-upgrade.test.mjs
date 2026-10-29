@@ -235,7 +235,7 @@ test('real existing DSH data survives the bundled-plugin upgrade and restarts', 
       }
       assert.equal(await readFile(settingsPath, 'utf8'), originalSettings);
       const upgraded = JSON.parse(await readFile(manifestPath, 'utf8'));
-      assert.equal(upgraded.dependencies[browserPackage], '0.2.1');
+      assert.equal(upgraded.dependencies[browserPackage], '0.3.3');
       assert.deepEqual(upgraded.dsh.profile.custom, { preserved: true });
       assert.equal(await readFile(userPatch, 'utf8'), '# Preserve user-owned profile overrides\n[]\n');
     }

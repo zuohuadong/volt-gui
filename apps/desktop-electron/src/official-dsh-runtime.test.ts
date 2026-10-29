@@ -67,7 +67,7 @@ test("drops inherited provider credentials from the official DSH child environme
 
 test("resolves the installed official DSH launcher", () => {
   assert.match(resolveOfficialDshBin(), /@deepseek-ai[\\/]dsh[\\/]lib[\\/]bin\.js$/);
-  assert.equal(resolveOfficialDshVersion(), "0.1.5-rc.2");
+  assert.equal(resolveOfficialDshVersion(), "0.2.1-rc.5");
 });
 
 test("resolves the staged official DSH launcher in packaged resources", () => {

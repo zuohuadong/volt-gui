@@ -37,8 +37,11 @@ function verifyStagedBinary() {
 export async function stageBrowserSkillCli() {
   if (!asset) throw new Error(`BrowserSkill CLI has no audited asset for ${assetKey}`);
   if (fs.existsSync(targetBinary) && (!asset.binarySha256 || sha256(targetBinary) === asset.binarySha256)) {
-    verifyStagedBinary();
-    return targetBinary;
+    const version = spawnSync(targetBinary, ["--version"], { encoding: "utf8", windowsHide: true });
+    if (!version.error && version.status === 0 && version.stdout.trim() === `bsk ${browserSkillCli.version}`) {
+      verifyStagedBinary();
+      return targetBinary;
+    }
   }
 
   resetTarget();

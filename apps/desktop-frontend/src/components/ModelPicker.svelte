@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Bot, Check, ChevronDown, Eye, Search, Sparkles, X } from "lucide-svelte";
+  import { Bot, Check, ChevronDown, Eye, Search, Sparkles, X } from "@lucide/svelte";
   import type { ModelGroup } from "$lib/dsh-client";
   import { t } from "$lib/i18n";
   import { modelSelectionKey, parseModelSelectionKey } from "$lib/model-catalog";

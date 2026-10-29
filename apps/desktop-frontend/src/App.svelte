@@ -34,6 +34,7 @@
   import {
     credentialRefHint,
     credentialRefTitle,
+    collectCredentialRefs,
     enrichModelGroups,
     isProviderCredentialOptional,
     mergeDiscoveredModels,
@@ -331,6 +332,26 @@
     const { provider } = parseModelSelectionKey(selectedModel);
     return provider ? modelCredentialConfigured(provider) : true;
   });
+  const authFailure = $derived(/401|认证失败|authentication failed|unauthorized/iu.test(runtimeError));
+  const authFailureDetail = $derived.by(() => {
+    if (!authFailure) return "";
+    const { provider, model } = parseModelSelectionKey(selectedModel);
+    const providerName = modelGroups.find((group) => group.id === provider)?.name || provider;
+    const ref = selectedProviderCredentialRef();
+    const credential = ref ? `${ref} (${credentialSummary(ref)})` : t("settings.notConfigured");
+    return t("errors.authFailureContext", {
+      model: model || t("overview.noModelSelected"),
+      provider: providerName || t("overview.noModelSelected"),
+      credential,
+    });
+  });
+  const authFailureHint = $derived(
+    authFailure
+      ? selectedProviderCredentialRef() === "XG_GOMODEL_API_KEY"
+        ? t("errors.authFailureBuiltinHint")
+        : t("errors.authFailureCustomHint")
+      : "",
+  );
   const builtinFallbackModel = $derived.by(() => {
     const group = modelGroups.find((item) => item.id === "xg-gomodel");
     return group?.models.find((item) => item.id === "vlm") || group?.models[0];
@@ -713,7 +734,7 @@
     subagents = subagentResult.entries;
     subagentParentAvailable = subagentResult.parentAvailable;
     if (!selectedSubagentId || !subagents.some((item) => item.id === selectedSubagentId)) selectedSubagentId = subagents.find((item) => item.kind === "child")?.id || "";
-    credentialRefs = collectCredentialRefs(settingsNamespaces);
+    credentialRefs = collectCredentialRefs(settingsNamespaces, providers);
     credentials = credentialRefs.length
       ? (await client.describeCredentials(credentialRefs).catch(() => ({ credentials: {} }))).credentials
       : {};
@@ -771,7 +792,7 @@
       settingsHasDocument = settingsResult.hasDocument;
       settingsNamespaces = settingsResult.namespaces;
       providers = providerResult.providers;
-      credentialRefs = collectCredentialRefs(settingsNamespaces);
+      credentialRefs = collectCredentialRefs(settingsNamespaces, providers);
       credentials = credentialRefs.length
         ? (await client.describeCredentials(credentialRefs).catch(() => ({ credentials: {} }))).credentials
         : {};
@@ -816,20 +837,6 @@
     return projection as GoalProjection;
   }
 
-  function collectCredentialRefs(namespaces: SettingsNamespace[]): string[] {
-    const refs: string[] = [];
-    const visit = (value: unknown): void => {
-      if (Array.isArray(value)) { value.forEach(visit); return; }
-      if (!value || typeof value !== "object") return;
-      for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-        if (key === "apiKeyEnv" && typeof child === "string" && child && !refs.includes(child)) refs.push(child);
-        else visit(child);
-      }
-    };
-    namespaces.forEach((namespace) => visit(namespace.value));
-    return refs.sort();
-  }
-
   function selectedModelInfo(): ModelGroup["models"][number] | undefined {
     const { provider, model } = parseModelSelectionKey(selectedModel);
     return modelGroups.find((group) => group.id === provider)?.models.find((item) => item.id === model);
@@ -863,6 +870,15 @@
       const input = document.querySelector<HTMLInputElement>('.credential-form input[type="password"]');
       input?.focus();
     }, 100);
+  }
+
+  function openCredentialSettingsForCurrentModel(): void {
+    const ref = selectedProviderCredentialRef();
+    if (ref === "XG_GOMODEL_API_KEY") {
+      openManagement("models");
+      return;
+    }
+    openCredentialSettings(ref);
   }
 
   async function xgProviderSettings() {
@@ -2311,7 +2327,7 @@
         {:else}
           <div class="conversation-shell">
             <header class="conversation-header"><div class="conversation-title"><div class="eyebrow">{activeSession ? t("app.sessionWorkbench") : t("app.eyebrow")}</div><h1>{customization.title || (activeSession ? sessionTitle(activeSession) : t("app.startNewSession"))}</h1><p>{customization.subtitle || workspacePath || t("app.selectWorkspaceToStart")}</p></div><div class="header-actions"><Button variant="outline" size="sm" aria-pressed={customizationOpen} onclick={() => customizationOpen = !customizationOpen}><SlidersHorizontal size={14} />{t("app.uiCustomization")}</Button><Button variant="outline" size="sm" onclick={() => openManagement("overview")}><Settings2 size={14} />{t("app.management")}</Button></div></header>
-            {#if runtimeError}<div class="error-banner"><CircleAlert size={15} /><span>{runtimeError}</span>{#if lastFailedPrompt?.sessionId === activeSessionId && !sending}<Button variant="outline" size="sm" onclick={() => void retryLastPrompt()}><RotateCcw size={13} />{t("common.retry")}</Button>{/if}{#if canSwitchToBuiltinModel}<Button variant="outline" size="sm" onclick={() => void switchToBuiltinModel()}><PlugZap size={13} />{t("app.switchToBuiltinModel")}</Button>{/if}{#if isCredentialSettingsError(runtimeError) || !selectedProviderCredentialReady}<Button variant="ghost" size="sm" onclick={() => openCredentialSettings(selectedProviderCredentialRef())}><KeyRound size={13} />{t("app.goToConfigure")}</Button>{/if}<button aria-label={t("app.closeError")} onclick={() => { runtimeError = ""; }}><X size={14} /></button></div>{/if}
+            {#if runtimeError}<div class="error-banner" role="alert"><CircleAlert size={15} /><div class="error-banner-message"><span>{runtimeError}</span>{#if authFailureDetail}<small>{authFailureDetail}</small>{/if}{#if authFailureHint}<small class="error-banner-hint">{authFailureHint}</small>{/if}</div>{#if lastFailedPrompt?.sessionId === activeSessionId && !sending}<Button variant="outline" size="sm" onclick={() => void retryLastPrompt()}><RotateCcw size={13} />{t("common.retry")}</Button>{/if}{#if canSwitchToBuiltinModel}<Button variant="outline" size="sm" onclick={() => void switchToBuiltinModel()}><PlugZap size={13} />{t("app.switchToBuiltinModel")}</Button>{/if}{#if authFailure || isCredentialSettingsError(runtimeError) || !selectedProviderCredentialReady}<Button variant="ghost" size="sm" onclick={openCredentialSettingsForCurrentModel}><KeyRound size={13} />{t("app.goToConfigure")}</Button>{/if}<button aria-label={t("app.closeError")} onclick={() => { runtimeError = ""; }}><X size={14} /></button></div>{/if}
             {#if customizationOpen}<section class="customization-panel" aria-label={t("customization.title")}><div class="customization-panel__header"><div><div class="section-label">{t("customization.title")}</div><strong>{t("customization.subtitle")}</strong><p>{t("customization.example")}</p></div><Button variant="ghost" size="icon-sm" aria-label={t("customization.close")} onclick={() => customizationOpen = false}><X size={14} /></Button></div>{#if customizationNotice}<div class="customization-feedback"><CircleCheck size={14} /><span>{customizationNotice}</span></div>{/if}{#if customizationDraft}<div class="customization-preview"><div><strong>{t("customization.pendingPatch")}</strong><span>{t("customization.patchFromSession")}</span></div><code>{JSON.stringify(customizationDraft)}</code><div class="customization-actions"><Button variant="outline" size="sm" onclick={() => customizationDraft = undefined}>{t("common.ignore")}</Button><Button size="sm" onclick={() => applyCustomizationPatch(customizationDraft!)}><Check size={13} />{t("customization.applyPatch")}</Button></div></div>{/if}<div class="customization-summary"><span class="mode-chip">{customization.density === "compact" ? t("customization.compactDensity") : t("customization.comfortableDensity")}</span><span>{customization.sidebar === "collapsed" ? t("customization.sidebarCollapsed") : t("customization.sidebarExpanded")}</span><span>{customization.activity === "visible" ? t("customization.activityVisible") : t("customization.activityHidden")}</span><span>{t("customization.composerRows", { count: customization.composerRows })}</span></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={customizationHistory.length === 0} onclick={undoCustomization}>{t("customization.undoLast")}</Button><Button variant="ghost" size="sm" onclick={() => { customization = DEFAULT_UI_CUSTOMIZATION; customizationHistory = []; persistUiCustomization(customization); applyRuntimeCustomization(customization); customizationNotice = t("customization.restoredNotice"); }}>{t("customization.restoreDefaults")}</Button></div></section>{/if}
             {#if surfaceDraft}<section class="surface-proposal" aria-label={t("surface.proposalTitle")}><div><div class="section-label">{t("surface.proposalTitle")}</div><strong>{surfaceDraft.spec.title}</strong><p>{surfaceDraft.summary || t("surface.proposalDefaultSummary", { count: surfaceDraft.spec.widgets.length })}</p></div><div class="surface-proposal__meta"><span>{t("surface.proposalWidgetsCount", { count: surfaceDraft.spec.widgets.length })}</span><span>{t("surface.proposalDataSourcesCount", { count: surfaceDraft.spec.dataSources.length })}</span></div><div class="customization-actions"><Button variant="ghost" size="sm" onclick={() => { surfaceDraft = undefined; surfaceNotice = t("surface.proposalIgnored"); }}>{t("common.ignore")}</Button><Button size="sm" onclick={applySurfaceProposal}><Check size={13} />{t("surface.confirmRender")}</Button></div></section>{/if}
             {#if generatedSurface && client}<section class="generated-surface" aria-label={t("surface.generatedTitle")}><header><div><div class="section-label">{t("surface.generatedTitle")}</div><strong>{generatedSurface.title}</strong><p>{surfaceNotice || t("surface.readOnlyDesc")}</p></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={surfaceHistory.length === 0} onclick={undoGeneratedSurface}>{t("common.undo")}</Button><Button variant="ghost" size="sm" onclick={removeGeneratedSurface}><Trash2 size={13} />{t("common.remove")}</Button></div></header>{#if GeneratedSurface}<GeneratedSurface spec={generatedSurface} {client} {activeSessionId} onError={(message) => { surfaceNotice = userFacingError(message); }} />{:else if generatedSurfaceLoadFailed}<div class="surface-load-error" role="alert"><span>{surfaceNotice}</span><Button variant="outline" size="sm" onclick={() => void ensureGeneratedSurfaceComponent()}>{t("common.retry")}</Button></div>{:else}<Loader size={16} />{/if}</section>{/if}

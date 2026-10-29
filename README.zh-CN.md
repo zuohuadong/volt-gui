@@ -4,10 +4,10 @@ VoltUI 是围绕官方 DeepSeek Harness（DSH）Web Profile 的本地 Electron �
 
 ## 运行时契约
 
-- Node.js `26.8.1`（Node 26 支持直接执行可擦除类型的 `.ts` 脚本）。
-- pnpm `12.1.0`，使用冻结 lockfile。
-- Electron `44.0.0` 与 electron-builder `26.15.3`。
-- 官方 `@deepseek-ai/dsh@0.1.5-rc.1`，根包和 Electron 包均精确锁定。
+- Node.js `26.13.0`（Node 26 支持直接执行可擦除类型的 `.ts` 脚本）。
+- pnpm `12.16.1`，使用冻结 lockfile。
+- Electron `45.1.0` 与 electron-builder `26.18.0`。
+- 官方 `@deepseek-ai/dsh@0.2.1-rc.5`，根包和 Electron 包均精确锁定。
 - 已验证打包目标为 Windows x64。签名和更新器契约审批完成前，发布物只作为 unsigned-review 制品。
 
 Electron 负责窗口、导航策略、进程生命周期和制品身份；官方 DSH 负责会话、工具、权限、凭据、工作区状态和存储。仓库不再维护第二套 Agent 引擎。
@@ -16,7 +16,7 @@ Electron 负责窗口、导航策略、进程生命周期和制品身份；官�
 
 ```sh
 corepack enable
-corepack prepare pnpm@12.1.0 --activate
+corepack prepare pnpm@12.16.1 --activate
 pnpm install --frozen-lockfile
 pnpm run desktop
 ```

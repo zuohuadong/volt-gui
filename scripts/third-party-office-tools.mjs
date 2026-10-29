@@ -7,11 +7,11 @@ import { fileURLToPath } from "node:url";
 
 export const officeCli = Object.freeze({
   packageName: "@officecli/officecli",
-  version: "1.0.149",
+  version: "1.0.159",
   license: "Apache-2.0",
-  integrity: "sha512-NddDky2Kb/xsrmYVP0Qgpxfu4DOTiiPXp5my/Pvf+z1ddpF4/RAkeBKyGjPdZP0XvRv8bSjxR4bFre7QtZDP2w==",
+  integrity: "sha512-k6S2PbPRVNwcRKaKpRwAcqPqzjZsqI2iOylW2foGAviQYP8GCbHnsylduTM+pL57uZGs5f+EKpLqecrODIxpCw==",
   repository: "https://github.com/iOfficeAI/OfficeCLI",
-  windowsX64Sha256: "abd82dae417b66aae62d1ec8edbf88ba9d5be7442b55be470b34b764f10731e2",
+  windowsX64Sha256: "572c0a4da35333cf866fa5a2fb8259a4a2a8c9922be031d6b7a86936282ef94e",
   role: "officecli-mcp-server",
 });
 

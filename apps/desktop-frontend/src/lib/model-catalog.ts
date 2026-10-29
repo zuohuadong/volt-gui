@@ -57,6 +57,33 @@ export function providerCredentialRef(
   return typeof ref === "string" && ref ? ref : undefined;
 }
 
+// 停用 Provider 的默认引用不是可用凭据；未知或非 Provider 命名空间仍须保留。
+export function collectCredentialRefs(
+  namespaces: SettingsNamespace[],
+  providers: ConfigurableProvider[] = [],
+): string[] {
+  const namespaceActive = new Map<string, boolean>();
+  for (const provider of providers) {
+    namespaceActive.set(
+      provider.settingsNs,
+      namespaceActive.get(provider.settingsNs) === true || provider.active === true,
+    );
+  }
+  return [...new Set(namespaces
+    .filter((namespace) => namespaceActive.get(namespace.ns) !== false)
+    .flatMap((namespace) => credentialRefsIn(namespace.value)))].sort();
+}
+
+function credentialRefsIn(candidate: unknown): string[] {
+  if (Array.isArray(candidate)) return candidate.flatMap(credentialRefsIn);
+  if (!candidate || typeof candidate !== "object") return [];
+  return Object.entries(candidate).flatMap(([key, child]) =>
+    key === "apiKeyEnv" && typeof child === "string" && child
+      ? [child]
+      : credentialRefsIn(child)
+  );
+}
+
 export function providerDefaultBaseURL(
   namespaces: SettingsNamespace[],
   providers: ConfigurableProvider[],

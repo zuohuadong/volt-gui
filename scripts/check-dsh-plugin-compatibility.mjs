@@ -12,8 +12,8 @@ const desktopPackageJson = JSON.parse(readFileSync(resolve(root, "apps", "deskto
 const intranetAuthPackageJson = JSON.parse(readFileSync(resolve(root, "plugins", "dsh-intranet-auth", "package.json"), "utf8"));
 const profileSource = readFileSync(resolve(root, "profiles", "anyong.yml"), "utf8");
 const dshVersion = packageJson.dependencies?.["@deepseek-ai/dsh"];
-if (dshVersion !== "0.1.5-rc.2") {
-  throw new Error(`Volt requires the audited official DSH version 0.1.5-rc.2, got ${JSON.stringify(dshVersion)}`);
+if (dshVersion !== "0.2.1-rc.5") {
+  throw new Error(`Volt requires the audited official DSH version 0.2.1-rc.5, got ${JSON.stringify(dshVersion)}`);
 }
 
 const disallowedPackages = [
@@ -37,14 +37,14 @@ if (browserSkill.packageName !== "@wxg-prc-cpg/browser-skill-dsh-plugin"
   || browserSkill.repository !== "https://github.com/Tencent/BrowserSkill") {
   throw new Error(`Unexpected BrowserSkill package name: ${browserSkill.packageName}`);
 }
-if (browserSkill.version !== "0.2.1" || browserSkill.license !== "MIT") {
-  throw new Error("BrowserSkill must remain pinned to the audited MIT 0.2.1 release");
+if (browserSkill.version !== "0.3.3" || browserSkill.license !== "MIT") {
+  throw new Error("BrowserSkill must remain pinned to the audited MIT 0.3.3 release");
 }
 if (!browserSkill.integrity.startsWith("sha512-")) {
   throw new Error("BrowserSkill integrity must be recorded as an npm sha512 value");
 }
-if (officeCli.packageName !== "@officecli/officecli" || officeCli.version !== "1.0.149" || officeCli.license !== "Apache-2.0") {
-  throw new Error("OfficeCLI must remain pinned to the audited Apache-2.0 1.0.149 release");
+if (officeCli.packageName !== "@officecli/officecli" || officeCli.version !== "1.0.159" || officeCli.license !== "Apache-2.0") {
+  throw new Error("OfficeCLI must remain pinned to the audited Apache-2.0 1.0.159 release");
 }
 if (!officeCli.integrity.startsWith("sha512-") || !/^[a-f0-9]{64}$/i.test(officeCli.windowsX64Sha256)) {
   throw new Error("OfficeCLI integrity metadata is incomplete");
@@ -73,8 +73,8 @@ if (packageJson.dependencies?.[intranetAuthPackageJson.name] !== "file:plugins/d
   throw new Error("内网认证 DSH Bundle must be pinned to the repository plugin in root and Electron manifests");
 }
 for (const manifest of [packageJson, desktopPackageJson]) {
-  if (manifest.dependencies?.zod !== "4.4.3") {
-    throw new Error("Anyong integrations MCP runtime must pin zod 4.4.3");
+  if (manifest.dependencies?.zod !== "4.6.7") {
+    throw new Error("Anyong integrations MCP runtime must pin zod 4.6.7");
   }
 }
 if (!profileSource.includes("id: weknora")

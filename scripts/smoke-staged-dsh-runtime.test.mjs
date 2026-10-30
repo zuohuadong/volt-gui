@@ -28,6 +28,20 @@ function stagedFixture() {
   return { source, desktop };
 }
 
+test("assembly carries optional desktop runtime directories", () => {
+  const { source, desktop } = stagedFixture();
+  for (const directory of [".browser-extension-runtime", ".speech-runtime", ".tool-runtime"]) {
+    mkdirSync(path.join(desktop, directory), { recursive: true });
+    writeFileSync(path.join(desktop, directory, "marker"), "fixture");
+  }
+  const target = path.join(tempFixture(), "resources");
+  assembleStagedPackagedResources(target, source);
+  for (const directory of ["browser-extension-runtime", "speech-runtime", "tool-runtime"]) {
+    assert.equal(readFileSync(path.join(target, directory, "marker"), "utf8"), "fixture");
+  }
+  rmSync(target, { recursive: true, force: true });
+});
+
 test("staged resource assembly stays inside the temp directory", () => {
   const dest = assertTempStagedResourcesDestination(path.join(os.tmpdir(), "voltui-staged-resources-test"));
   assert.equal(path.dirname(dest), os.tmpdir());

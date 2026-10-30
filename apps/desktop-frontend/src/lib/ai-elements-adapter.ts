@@ -1,41 +1,7 @@
 import type { ToolInfo } from "./transcript";
+import { parseDshNativeUiView, type DshNativeUiView } from "./dsh-native-ui";
+import { browserSkillErrorMessage } from "./browser-skill-error";
 import { t } from "./i18n";
-
-type ToolKind = "browser" | "computer" | "skill" | "document" | "command" | "file" | "generic";
-
-const TOOL_LABEL_KEYS: Record<ToolKind, string> = {
-  browser: "transcript.toolBrowser",
-  computer: "transcript.toolComputer",
-  skill: "transcript.toolSkill",
-  document: "transcript.toolDocument",
-  command: "transcript.toolCommand",
-  file: "transcript.toolFile",
-  generic: "transcript.toolGeneric",
-};
-
-const TOOL_ACTION_KEYS: Record<string, string> = {
-  start: "transcript.actionOpenPage",
-  navigate: "transcript.actionOpenPage",
-  open: "transcript.actionOpenPage",
-  search: "transcript.actionSearch",
-  fetch: "transcript.actionFetch",
-  click: "transcript.actionClick",
-  type: "transcript.actionType",
-  screenshot: "transcript.actionScreenshot",
-  scroll: "transcript.actionScroll",
-  keypress: "transcript.actionKeypress",
-};
-
-function classifyTool(name: string): ToolKind {
-  const normalized = name.trim().toLowerCase();
-  if (normalized.includes("browser") || normalized.includes("web")) return "browser";
-  if (normalized.includes("computer") || normalized.includes("screenshot")) return "computer";
-  if (normalized.includes("skill")) return "skill";
-  if (normalized.includes("office") || normalized.includes("document")) return "document";
-  if (normalized.includes("shell") || normalized.includes("bash") || normalized.includes("powershell") || normalized.includes("command") || normalized.includes("exec")) return "command";
-  if (normalized.includes("file") || normalized.includes("read") || normalized.includes("write")) return "file";
-  return "generic";
-}
 
 export type TranscriptSource = {
   id: string;
@@ -65,6 +31,8 @@ export type StructuredFileNode = {
 };
 
 export type ToolPresentation = {
+  nativeUi?: DshNativeUiView;
+  mcpApp?: McpAppDescriptor;
   artifact?: { title: string; description?: string; content: string; kind: "text" | "code" | "json"; language?: string };
   code?: { code: string; language: string };
   terminal?: { output: string; title: string; cwd?: string };
@@ -72,6 +40,16 @@ export type ToolPresentation = {
   images: Array<{ id: string; src: string; alt?: string }>;
   tests: StructuredTestResult[];
   files: StructuredFileNode[];
+};
+
+export type McpAppDescriptor = {
+  viewId: string;
+  resourceUri: string;
+  connectionGeneration: string;
+  sandboxOrigin: string;
+  sessionId?: string;
+  title?: string;
+  result?: Record<string, unknown>;
 };
 
 export type ToolDisplay = {
@@ -82,35 +60,74 @@ export type ToolDisplay = {
 export function toolResultSummary(result: string | undefined): string | undefined {
   const value = result?.trim();
   if (!value) return undefined;
-  if (/tool[-_]call|tool[-_]use|tool[-_]result/iu.test(value)) return t("transcript.toolCompleted");
-  const firstLine = value.split(/\r?\n/u).map((line) => line.trim()).find(Boolean) || t("transcript.toolCompleted");
+  if (/tool[-_]call|tool[-_]use|tool[-_]result/iu.test(value)) return "操作已完成";
+  const firstLine = value.split(/\r?\n/u).map((line) => line.trim()).find(Boolean) || "操作已完成";
   return firstLine.length > 180 ? `${firstLine.slice(0, 180)}…` : firstLine;
 }
 
 export function toolErrorSummary(result: string | undefined): string {
   const value = result?.trim() || "";
-  if (/interrupted|connection closed|unknown outcome/iu.test(value)) return t("transcript.toolInterrupted");
-  if (/timeout|timed out/iu.test(value)) return t("transcript.toolTimeout");
-  if (/permission|approval|denied/iu.test(value)) return t("transcript.toolNeedsApproval");
-  return toolResultSummary(value) || t("transcript.toolFailedRetry");
+  const parsed = asRecord(parseJson(value));
+  const parsedError = asRecord(parsed?.error);
+  const structured = text(parsedError?.message || parsed?.message || parsedError?.code || parsed?.code);
+  const normalized = structured || value;
+  const browserSkillMessage = browserSkillErrorMessage(normalized, t);
+  if (browserSkillMessage) return browserSkillMessage;
+  if (/windows acl temp root|aclsandbox private temp directory/iu.test(normalized)) return "工作区与系统临时目录冲突，请选择具体项目文件夹并新建会话。";
+  if (/enoent|no such file or directory/iu.test(normalized)) {
+    const missing = normalized.match(/['"`]([^'"`\r\n]+)['"`]/u)?.[1]?.trim();
+    return missing ? `找不到文件：${missing}。请确认文件仍在当前工作区。` : "找不到目标文件，请确认路径仍在当前工作区。";
+  }
+  if (/weknora_disabled/iu.test(normalized)) return "知识库检索服务未启用，本次未使用知识库；请在“管理 > 设置”启用后重试。";
+  if (/glob search failed|io error for operation on/iu.test(normalized)) return "部分路径不存在或无法读取，请缩小搜索范围；结果可能不完整。";
+  if (/interrupted|connection closed|unknown outcome/iu.test(normalized)) return "操作未完成，工具连接已中断。";
+  if (/timeout|timed out/iu.test(normalized)) return "操作超时，请重试。";
+  if (/permission|approval|denied/iu.test(normalized)) return "操作需要授权后才能继续。";
+  return toolResultSummary(normalized) || "工具执行失败，请重试。";
 }
 
+const toolActionLabels: Record<string, string> = {
+  start: "打开页面",
+  navigate: "打开页面",
+  open: "打开页面",
+  search: "搜索内容",
+  fetch: "读取页面",
+  click: "点击页面",
+  type: "输入内容",
+  screenshot: "截取画面",
+  scroll: "滚动页面",
+  keypress: "发送按键",
+};
+
 export function toolDisplay(tool: Pick<ToolInfo, "name" | "args" | "view">): ToolDisplay {
-  const kind = classifyTool(tool.name);
-  const label = t(TOOL_LABEL_KEYS[kind]);
-  const record = toolArgumentRecord(tool.args) || asRecord(tool.view) || asRecord(tool.view?.view);
+  const name = tool.name.trim().toLowerCase();
+  const label = name.includes("browser") || name.includes("web")
+    ? "浏览器操作"
+    : name.includes("computer") || name.includes("screenshot")
+      ? "电脑操作"
+      : name.includes("skill")
+        ? "加载能力"
+        : name.includes("office") || name.includes("document")
+          ? "文档处理"
+          : name.includes("shell") || name.includes("bash") || name.includes("pwsh") || name.includes("command") || name.includes("exec")
+            ? "执行命令"
+            : name.includes("file") || name.includes("read") || name.includes("write")
+              ? "文件操作"
+              : "工具调用";
+
+  const record = toolArgumentRecord(tool.args) || asRecord(tool.view?.view) || asRecord(tool.view);
   const action = text(record?.action || record?.operation || record?.kind).toLowerCase();
   const target = text(record?.url || record?.query || record?.path || record?.file || record?.command || record?.skill || record?.name);
-  if (kind === "browser" || kind === "computer") {
-    const actionKey = TOOL_ACTION_KEYS[action];
-    const actionText = actionKey ? t(actionKey) : (action || undefined);
+  if (label === "浏览器操作" || label === "电脑操作") {
+    const actionText = toolActionLabels[action] || (action ? action : undefined);
     if (actionText && target) return { label, detail: `${actionText} · ${shortenToolDetail(target)}` };
     if (actionText) return { label, detail: actionText };
     if (target) return { label, detail: shortenToolDetail(target) };
   }
-  if (kind === "skill" && target) return { label, detail: t("transcript.toolLoadSkill", { name: shortenToolDetail(target) }) };
-  if ((kind === "command" || kind === "file") && target) return { label, detail: shortenToolDetail(target) };
-  return { label };
+  if (label === "加载能力" && target) return { label, detail: `加载 ${shortenToolDetail(target)}` };
+  if (label === "执行命令" && target) return { label, detail: target };
+  if (label === "文件操作" && target) return { label, detail: shortenToolDetail(target) };
+  return { label, ...(target ? { detail: shortenToolDetail(target) } : label === "工具调用" ? { detail: tool.name } : {}) };
 }
 
 function shortenToolDetail(value: string): string {
@@ -133,7 +150,7 @@ function toolArgumentRecord(value?: string): Record<string, unknown> | undefined
 }
 
 export function hasStructuredToolOutput(presentation: ToolPresentation): boolean {
-  return Boolean(presentation.artifact || presentation.code || presentation.terminal || presentation.web || presentation.images.length || presentation.tests.length || presentation.files.length);
+  return Boolean(presentation.nativeUi || presentation.mcpApp || presentation.artifact || presentation.code || presentation.terminal || presentation.web || presentation.images.length || presentation.tests.length || presentation.files.length);
 }
 
 export type QuestionAnswer = {
@@ -153,7 +170,7 @@ export function questionOptionLabels(question: Record<string, unknown>): string[
 export function questionsAnswered(questions: Array<Record<string, unknown>>, answers: Record<string, string>): boolean {
   return questions.every((question) => {
     const id = text(question.id);
-    const answer = questionOptionLabels(question).length ? answers[id] : answers[`${id}:custom`];
+    const answer = answers[id] || answers[`${id}:custom`];
     return Boolean(answer?.trim());
   });
 }
@@ -173,7 +190,7 @@ export function extractSources(value: unknown): TranscriptSource[] {
     const type = text(record.type).toLowerCase();
     if (!type.includes("source") && !type.includes("citation") && !record.url && !record.uri) return;
     const url = text(record.url || record.uri || record.href) || undefined;
-    const title = text(record.title || record.name || record.label) || url || t("transcript.sources");
+    const title = text(record.title || record.name || record.label) || url || "来源";
     const key = text(record.id) || url || title;
     if (sources.some((source) => (url && source.url === url) || source.id === key || (source.title === title && !source.url && !url))) return;
     sources.push({
@@ -208,7 +225,37 @@ export function toolPresentation(tool: ToolInfo): ToolPresentation {
   const artifact = explicitArtifact;
   const web = parseWeb(roots, name);
   const images = parseImages(roots);
-  return { artifact, code, terminal, web, images, tests, files };
+  return { nativeUi: parseNativeUi(roots), mcpApp: parseMcpApp(roots), artifact, code, terminal, web, images, tests, files };
+}
+
+function parseNativeUi(roots: Record<string, unknown>[]): DshNativeUiView | undefined {
+  for (const root of roots) {
+    const view = parseDshNativeUiView(root);
+    if (view) return view;
+  }
+  return undefined;
+}
+
+function parseMcpApp(roots: Record<string, unknown>[]): McpAppDescriptor | undefined {
+  const root = roots.find((candidate) => candidate.kind === "dsh/mcp-app" && candidate.version === 1);
+  if (!root) return undefined;
+  const viewId = text(root.viewId);
+  const resourceUri = text(root.resourceUri);
+  const connectionGeneration = text(root.connectionGeneration);
+  const sandboxOrigin = text(root.sandboxOrigin);
+  if (!viewId || viewId.length > 256 || !resourceUri.startsWith("ui://") || resourceUri.length > 2048
+    || !connectionGeneration || connectionGeneration.length > 128
+    || !sandboxOrigin || !/^http:\/\/127\.0\.0\.1:\d+$/u.test(sandboxOrigin)) return undefined;
+  const result = asRecord(root.result);
+  return {
+    viewId,
+    resourceUri,
+    connectionGeneration,
+    sandboxOrigin,
+    sessionId: text(root.sessionId) || undefined,
+    title: text(root.publicToolName) || undefined,
+    result,
+  };
 }
 
 export function toolErrorTrace(tool: ToolInfo): string | undefined {
@@ -227,7 +274,7 @@ function parseArtifact(value?: Record<string, unknown>): ToolPresentation["artif
   const rawKind = text(value.kind).toLowerCase();
   const kind = rawKind === "code" || rawKind === "json" ? rawKind : "text";
   return {
-    title: text(value.title || value.name) || t("transcript.toolArtifact"),
+    title: text(value.title || value.name) || "工具产物",
     description: text(value.description) || undefined,
     content,
     kind,
@@ -244,7 +291,7 @@ function parseCode(value?: Record<string, unknown>): ToolPresentation["code"] {
 function parseTerminal(value?: Record<string, unknown>): ToolPresentation["terminal"] {
   if (!value) return undefined;
   const output = text(value.output || value.content || value.text);
-  return output ? { output, title: text(value.title || value.command) || t("transcript.toolTerminal"), cwd: text(value.cwd) || undefined } : undefined;
+  return output ? { output, title: text(value.title || value.command) || "终端输出", cwd: text(value.cwd) || undefined } : undefined;
 }
 
 function parseTests(value: unknown): StructuredTestResult[] {
@@ -299,7 +346,7 @@ function parseWeb(roots: Record<string, unknown>[], toolName: string): ToolPrese
   const statusCode = finiteNumber(root.statusCode);
   return {
     kind,
-    title: text(root.title) || (kind === "fetch" ? t("structured.webFetch") : kind === "computer" ? t("structured.computerUse") : t("structured.webSearch")),
+    title: text(root.title) || (kind === "fetch" ? "网页抓取" : kind === "computer" ? "电脑操作" : "网页搜索"),
     answer: text(root.answer) || undefined,
     url: text(root.url) || undefined,
     statusCode,

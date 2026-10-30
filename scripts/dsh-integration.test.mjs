@@ -80,7 +80,7 @@ function waitForRuntimeUrl(child) {
 function startWebRuntime(dshHome, environment = {}) {
   const child = spawn(process.execPath, [launcherPath, 'web', '--host', '127.0.0.1', '--port', '0', '--no-open'], {
     cwd: repositoryRoot,
-    env: { ...process.env, ...environment, DSH_HOME: dshHome },
+    env: { ...process.env, ANYONG_MEMORY_ENABLED: '0', ...environment, DSH_HOME: dshHome },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
@@ -193,7 +193,7 @@ test('project integration defaults match the approved policy', async () => {
     assert.match(profile, /ANYONG_SENTRY_ENABLED === '0'/);
     assert.match(profile, /ANYONG_DOCUMENT_IMPORT_ENABLED === '0'/);
 
-    enabledRuntime = startWebRuntime(enabledHome, { ANYONG_WEB_RETRIEVAL_ENABLED: '1' });
+    enabledRuntime = startWebRuntime(enabledHome, { ANYONG_NETWORK_MODE: 'external', ANYONG_WEB_RETRIEVAL_ENABLED: '1' });
     const enabledClient = await connectRuntime(enabledRuntime);
     const enabledInventory = await enabledClient.call('pluginInventory/list', {});
     const enabledEntry = (enabledInventory.entries ?? []).find((candidate) => candidate.moduleName === '@deepseek-ai/dsh-tool-web');
@@ -215,10 +215,12 @@ test('project integration defaults match the approved policy', async () => {
 });
 
 test('WeKnora remote endpoints require HTTPS and an explicit host allowlist', () => {
-  const profile = readFileSync(path.join(repositoryRoot, 'profiles', 'anyong.yml'), 'utf8');
-  assert.match(profile, /WEKNORA_ALLOWED_HOSTS/);
-  assert.match(profile, /WEKNORA_BASE_URL must use HTTPS and an approved host/);
-  assert.match(profile, /\[::1\]/);
+  const patch = readFileSync(path.join(repositoryRoot, 'patches', '@wxg-prc-cpg__dsh-weknora@0.1.0.patch'), 'utf8');
+  assert.match(patch, /baseUrl must use HTTPS; HTTP is only allowed for loopback/);
+  assert.match(patch, /allowedOrigins/);
+  assert.match(patch, /resolveDestination/);
+  assert.match(patch, /WEKNORA_ORIGIN_BLOCKED/);
+  assert.match(patch, /resolveApiKey/);
 });
 
 test('official DSH credentials remain configured after a web runtime restart', async () => {

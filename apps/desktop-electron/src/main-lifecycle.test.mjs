@@ -40,6 +40,7 @@ async function createFixture(options = {}) {
       this.destroyed = false;
       this.webContents = {
         mainFrame: { url: "" },
+        getURL: () => this.webContents.mainFrame.url,
         send: (...args) => fixture.frames.push(args),
         on() {}, once() {}, setWindowOpenHandler() {},
       };
@@ -110,8 +111,9 @@ async function createFixture(options = {}) {
       quit: () => { fixture.quitCount += 1; },
     },
     BrowserWindow: Window, dialog: {}, shell: {}, Menu: { setApplicationMenu() {} },
+    clipboard: {}, desktopCapturer: {}, nativeImage: {}, screen: {}, systemPreferences: {},
     ipcMain: { handle: (channel, handler) => fixture.handlers.set(channel, handler) },
-    session: { defaultSession: { setPermissionCheckHandler() {}, setPermissionRequestHandler() {} } },
+    session: { defaultSession: { setPermissionCheckHandler() {}, setPermissionRequestHandler() {}, setDisplayMediaRequestHandler() {} } },
   };
   fixture.Runtime = Runtime;
   fixture.Client = Client;
@@ -136,7 +138,7 @@ async function createFixture(options = {}) {
   };
   const shared = `const fixture = globalThis[${JSON.stringify(fixtureKey)}];`;
   const stubs = {
-    electron: `${shared} export const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = fixture.electron;`,
+    electron: `${shared} export const { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences } = fixture.electron;`,
     runtime: `${shared}
       export const OfficialDshRuntime = fixture.Runtime;
       export const startOfficialDshWithRetry = (runtime) => runtime.start();
@@ -152,17 +154,26 @@ async function createFixture(options = {}) {
       export const rethrowUnlessBrokenPipe = (error) => { if (error.code !== "EPIPE") throw error; };`,
     client: `${shared} export const DshRemoteClient = fixture.Client;`,
     smb: `export class SmbMountManager { async mountAuto() {} }`,
+    methodMap: `${shared}
+      export const allowedDshMethods = new Set(["session.history"]);
+      export const recordValue = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {};
+      export const mapLegacyDshRequest = (method, payload) => ({
+        endpoint: method === "session.history" ? "session/follow" : "session/follow",
+        args: { request: { address: { kind: "session", sessionId: String(recordValue(payload).sessionId ?? "") }, maxMessages: 80, assistantStream: true } },
+      });`,
   };
   const output = path.join(root, "main.mjs");
   try {
     const bundled = await build({
       entryPoints: [source], bundle: true, write: false, platform: "node", format: "esm", outfile: output,
+      banner: { js: "import { createRequire as __fixtureRequire } from 'node:module'; const require = __fixtureRequire(import.meta.url);" },
       plugins: [{
         name: "main-lifecycle-fixtures",
         setup(builder) {
-          builder.onResolve({ filter: /^(electron|\.\/official-dsh-runtime\.js|\.\/dsh-remote-client\.js|\.\/smb-mounts\.js)$/ }, ({ path: imported }) => ({
+          builder.onResolve({ filter: /^(electron|\.\/official-dsh-runtime\.js|\.\/dsh-remote-client\.js|\.\/smb-mounts\.js|\.\/dsh-method-map\.js)$/ }, ({ path: imported }) => ({
             namespace: "fixture", path: imported === "electron" ? "electron"
-              : imported.includes("official-dsh") ? "runtime" : imported.includes("remote-client") ? "client" : "smb",
+              : imported.includes("official-dsh") ? "runtime" : imported.includes("remote-client") ? "client"
+                : imported.includes("dsh-method-map") ? "methodMap" : "smb",
           }));
           builder.onLoad({ filter: /.*/, namespace: "fixture" }, ({ path: imported }) => ({ contents: stubs[imported], loader: "js" }));
         },

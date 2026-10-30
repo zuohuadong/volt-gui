@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { DshClient, type PromptContentPart } from "./dsh-client";
-import { setLocale, t } from "./i18n";
+import { DshClient, MAX_UPLOAD_FILE_BYTES, type PromptContentPart } from "./dsh-client";
 
-function createClient() {
+function createClient(value: unknown = {}) {
   const calls: Array<{ method: string; payload: unknown }> = [];
   const client = new DshClient({
     async dshRequest(method, payload) {
       calls.push({ method, payload });
-      return { result: { ok: true, value: {} } };
+      return { result: { ok: true, value } };
     },
     async dshRespond() { return {}; },
     onDshFrame() { return () => undefined; },
@@ -16,18 +15,117 @@ function createClient() {
   return { calls, client };
 }
 
+describe("DshClient session creation", () => {
+  it("supports both explicit cwd and registered workspace requests", async () => {
+    const { client, calls } = createClient();
+    await client.createSession("/workspace/project");
+    await client.createSession({ workspaceId: "workspace-1" });
+    await client.createSession();
+    expect(calls).toEqual([
+      { method: "session.create", payload: { cwd: "/workspace/project" } },
+      { method: "session.create", payload: { workspaceId: "workspace-1" } },
+      { method: "session.create", payload: {} },
+    ]);
+  });
+});
+
 describe("DshClient management RPC", () => {
+  it.each(["success", "command-error", "missing-command", "stale-projection", "unknown-preset"])("verifies permission changes: %s", async (scenario) => {
+    const calls: string[] = [];
+    const client = new DshClient({
+      async dshRequest(method) {
+        calls.push(method);
+        const value = method === "permissionPresets.catalog"
+          ? { options: scenario === "unknown-preset" ? [] : [{ value: "danger-full-access" }] }
+          : method === "commands.execute"
+            ? scenario === "missing-command" ? undefined : { result: { kind: scenario === "command-error" ? "error" : "success", text: "test-result" } }
+            : { items: [{ sessionId: "s1", projections: { values: { permissions: { currentValue: scenario === "stale-projection" ? "workspace-write" : "danger-full-access" } } } }] };
+        return { result: { ok: true, value } };
+      },
+      async dshRespond() {},
+      onDshFrame() { return () => {}; },
+    });
+    const result = client.selectPermission("s1", "danger-full-access");
+    if (scenario === "success") await expect(result).resolves.toMatchObject({ currentValue: "danger-full-access" });
+    else await expect(result).rejects.toThrow();
+    expect(calls).not.toContain("session.prompt");
+    if (scenario === "unknown-preset") expect(calls).toEqual(["permissionPresets.catalog"]);
+  });
+  it("uploads document bytes and submits only the session-scoped receipt", async () => {
+    const calls: Array<{ method: string; payload: unknown }> = [];
+    const client = new DshClient({
+      async dshRequest(method, payload) {
+        calls.push({ method, payload });
+        return { result: { ok: true, value: { receiptId: "receipt-1" } } };
+      },
+      async dshRespond() {},
+      onDshFrame() { return () => {}; },
+    });
+    const file = new File(["%PDF-1.4\n"], "资料.pdf", { type: "application/pdf" });
+    const uploaded = await client.uploadFile("s1", file);
+    await client.prompt("s1", [{ type: "file", receiptId: uploaded.receiptId }]);
+    expect(calls[0]).toEqual({
+      method: "fileUploads.upload",
+      payload: { agentId: "s1", request: { data: btoa("%PDF-1.4\n"), name: "资料.pdf" } },
+    });
+    expect(calls[1].payload).toMatchObject({ sessionId: "s1", content: [{ type: "file", receiptId: "receipt-1" }] });
+  });
+
+  it("does not turn failed uploads into empty successful prompts", async () => {
+    const { client } = createClient();
+    await expect(client.uploadFile("s1", new File([], "empty.txt"))).rejects.toThrow("回执");
+  });
+  it("does not upload a file after cancellation during reading", async () => {
+    const { client, calls } = createClient();
+    let current = true;
+    const file = new File(["document"], "note.txt");
+    file.arrayBuffer = async () => {
+      current = false;
+      return new ArrayBuffer(0);
+    };
+    await expect(client.uploadFile("s1", file, () => current)).rejects.toMatchObject({ name: "AbortError" });
+    expect(calls).toEqual([]);
+  });
+
+  it("accepts files up to the configured upload limit", async () => {
+    const { client, calls } = createClient({ receiptId: "receipt-large" });
+    const file = new File(["small payload"], "large.bin");
+    Object.defineProperty(file, "size", { value: MAX_UPLOAD_FILE_BYTES });
+
+    await client.uploadFile("s1", file);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe("fileUploads.upload");
+  });
+
+  it("rejects files above the configured upload limit", async () => {
+    const { client, calls } = createClient();
+    const file = new File([new Uint8Array(MAX_UPLOAD_FILE_BYTES + 1)], "too-large.bin");
+
+    await expect(client.uploadFile("s1", file)).rejects.toThrow("32 MB");
+    expect(calls).toEqual([]);
+  });
+
+  it("does not read a file when its submission is already cancelled", async () => {
+    const { client, calls } = createClient();
+    const file = new File([], "note.txt");
+    file.arrayBuffer = async () => { throw new Error("must not read"); };
+    await expect(client.uploadFile("s1", file, () => false)).rejects.toMatchObject({ name: "AbortError" });
+    expect(calls).toEqual([]);
+  });
   it("maps session management actions to official DSH methods", async () => {
     const { calls, client } = createClient();
 
     await client.rename("session-1", "新标题");
     await client.fork("session-1");
     await client.archiveSession("session-1");
+    await client.cancel("session-1");
 
     expect(calls).toEqual([
       { method: "session.rename", payload: { sessionId: "session-1", title: "新标题" } },
       { method: "session.fork", payload: { sessionId: "session-1" } },
       { method: "workspace.archiveSession", payload: { sessionId: "session-1" } },
+      { method: "session.cancel", payload: { sessionId: "session-1" } },
     ]);
   });
 
@@ -143,20 +241,15 @@ describe("DshClient management RPC", () => {
     ]);
   });
 
-  it("localizes transport unwrap and circular payload failures", async () => {
-    setLocale("en-US");
-    const failed = new DshClient({
-      async dshRequest() {
-        return { result: { ok: false } };
-      },
-      async dshRespond() { return {}; },
-      onDshFrame() { return () => undefined; },
-    });
-    await expect(failed.listSessions()).rejects.toThrow(t("errors.dshRequestFailed"));
+  it("passes history pagination cursors to the official session history RPC", async () => {
+    const { calls, client } = createClient();
 
-    const { client } = createClient();
-    const cyclic: Record<string, unknown> = {};
-    cyclic.self = cyclic;
-    await expect(client.request("session.list", cyclic)).rejects.toThrow(t("errors.circularRpcPayload"));
+    await client.history("session-1");
+    await client.history("session-1", { beforeSeq: 42, throughSeq: 120 });
+
+    expect(calls).toEqual([
+      { method: "session.history", payload: { sessionId: "session-1", maxMessages: 80 } },
+      { method: "session.history", payload: { sessionId: "session-1", maxMessages: 80, beforeSeq: 42, throughSeq: 120 } },
+    ]);
   });
 });

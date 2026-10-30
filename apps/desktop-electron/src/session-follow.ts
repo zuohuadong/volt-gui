@@ -1,7 +1,10 @@
+import { createRequire } from "node:module";
+import { resolveOfficialDshBin } from "./official-dsh-runtime.ts";
+
 type JsonRecord = Record<string, unknown>;
 
 export type HistoryEntry = { event: JsonRecord };
-export type SessionHistory = { events: HistoryEntry[]; hasMore: boolean };
+export type SessionHistory = { events: HistoryEntry[]; hasMore: boolean; cursor: number; projections?: unknown };
 export type AssistantAttempt = {
   attemptId: string;
   startedAfterSeq: number;
@@ -13,26 +16,37 @@ function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
 }
 
-function compactAssistantEntries(attempt: AssistantAttempt, stream: unknown): HistoryEntry[] {
+export function sessionHistoryRequest(request: JsonRecord): { endpoint: string; args: JsonRecord } {
+  const address = { kind: "session", sessionId: String(request.sessionId ?? "") };
+  const maxMessages = Number(request.maxMessages ?? 80);
+  if (request.beforeSeq === undefined) {
+    return { endpoint: "session/follow", args: { request: { address, maxMessages, assistantStream: true } } };
+  }
+  if (!Number.isSafeInteger(request.beforeSeq) || Number(request.beforeSeq) < 0
+    || !Number.isSafeInteger(request.throughSeq) || Number(request.throughSeq) < -1) {
+    throw new Error("DSH 历史分页游标无效");
+  }
+  return {
+    endpoint: "session/page",
+    args: { request: { address, maxMessages, beforeSeq: request.beforeSeq, throughSeq: request.throughSeq } },
+  };
+}
+
+function compactAssistantEntries(attempt: AssistantAttempt, stream: unknown, resourcesPath?: string): HistoryEntry[] {
   if (!Array.isArray(stream)) return [];
-  return stream.flatMap((candidate, ordinal): HistoryEntry[] => {
-    const item = record(candidate);
-    const seq = attempt.startedAfterSeq + ordinal + 1;
-    if (item.type === "text-chunks" || item.type === "reasoning-chunks") {
-      return [{
-        event: {
-          type: `chunkrow/${item.type}`,
-          seq,
-          time: item.time0,
-          data: { turn: attempt.turn, step: attempt.step, index: item.index, dt: item.dt, texts: item.texts },
-        },
-      }];
-    }
-    if (item.type === "chunk") {
-      return [{ event: { type: "assistant/chunk", seq, time: item.time, data: { turn: attempt.turn, step: attempt.step, chunk: item.chunk } } }];
-    }
-    return [];
-  });
+  const dshRequire = createRequire(resolveOfficialDshBin(resourcesPath));
+  const { expandAssistantStream } = dshRequire("@deepseek-ai/dsh-llm") as {
+    expandAssistantStream(stream: unknown[]): Array<{ time: number; chunk: unknown }>;
+  };
+  // packed.index 标识内容块，不是 live frame 序号；使用官方展开顺序。
+  return expandAssistantStream(stream).map((item, index) => ({
+    event: {
+      type: "assistant/chunk",
+      seq: attempt.startedAfterSeq + index + 1,
+      time: item.time,
+      data: { attemptId: attempt.attemptId, startedAfterSeq: attempt.startedAfterSeq, index, turn: attempt.turn, step: attempt.step, chunk: item.chunk },
+    },
+  }));
 }
 
 function assistantAttempt(value: unknown): AssistantAttempt | undefined {
@@ -42,7 +56,7 @@ function assistantAttempt(value: unknown): AssistantAttempt | undefined {
   return { attemptId: item.attemptId, startedAfterSeq: item.startedAfterSeq, turn: item.turn, step: item.step };
 }
 
-export function normalizeSessionSnapshot(snapshot: unknown): {
+export function normalizeSessionSnapshot(snapshot: unknown, resourcesPath?: string): {
   history: SessionHistory;
   cursor: number;
   activeAttempt?: AssistantAttempt;
@@ -58,9 +72,14 @@ export function normalizeSessionSnapshot(snapshot: unknown): {
     : [];
   const baseline = record(value.assistantStream);
   const activeAttempt = assistantAttempt(baseline.activeAttempt);
-  const transient = activeAttempt ? compactAssistantEntries(activeAttempt, record(baseline.activeAttempt).stream) : [];
+  const transient = activeAttempt ? compactAssistantEntries(activeAttempt, record(baseline.activeAttempt).stream, resourcesPath) : [];
   return {
-    history: { events: [...durable, ...transient], hasMore: value.hasMore === true },
+    history: {
+      events: [...durable, ...transient],
+      hasMore: value.hasMore === true,
+      cursor: typeof value.cursor === "number" ? value.cursor : -1,
+      ...(value.projections === undefined ? {} : { projections: value.projections }),
+    },
     cursor: typeof value.cursor === "number" ? value.cursor : -1,
     activeAttempt,
   };
@@ -83,7 +102,7 @@ export function applyAssistantStreamFrame(frameValue: unknown, current?: Assista
         type: "assistant/chunk",
         seq: current.startedAfterSeq + frame.index + 1,
         time: frame.time,
-        data: { turn: current.turn, step: current.step, chunk: frame.chunk },
+        data: { attemptId: current.attemptId, startedAfterSeq: current.startedAfterSeq, index: frame.index, turn: current.turn, step: current.step, chunk: frame.chunk },
       },
     },
   };

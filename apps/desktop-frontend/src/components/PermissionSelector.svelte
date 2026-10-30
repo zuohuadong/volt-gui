@@ -1,9 +1,8 @@
 <script lang="ts">
-  import { TriangleAlert as AlertTriangle, Check, ChevronDown, Lock, ShieldAlert, ShieldCheck } from "@lucide/svelte";
+  import { AlertTriangle, Check, ChevronDown, LoaderCircle, Lock, ShieldAlert, ShieldCheck } from "@lucide/svelte";
   import { Button } from "$components/ui/button";
-  import type { DshClient, PermissionSelect } from "$lib/dsh-client";
+  import type { DshClient, PermissionCatalog, PermissionSelect } from "$lib/dsh-client";
   import { t } from "$lib/i18n";
-  import { userFacingError } from "$lib/user-error";
   import { onMount } from "svelte";
 
   interface Props {
@@ -18,12 +17,15 @@
   let open = $state(false);
   let containerRef = $state<HTMLDivElement | null>(null);
   let preset = $derived(
-    permissions?.currentValue === "custom" ? "custom" : permissions?.currentValue || "workspace-write"
+    permissions?.currentValue || "custom"
   );
-  let selectedPreset = $state("");
   let busy = $state(false);
   let confirmFull = $state(false);
   let confirmSessionId = $state("");
+  let catalog = $state<PermissionCatalog>({ options: [] });
+  let confirmationPreset = $state("");
+  let errorMessage = $state("");
+  let verified = $state<{ sessionId: string; value: string }>();
 
   const standardOptions = [
     {
@@ -48,10 +50,17 @@
       tag: t("composer.permissionSafe"),
     },
   ];
+  const options = $derived(catalog.options.map((option) => ({
+      value: option.value,
+      label: standardOptions.find((item) => item.value === option.value)?.label || option.name || option.value,
+      desc: standardOptions.find((item) => item.value === option.value)?.desc || option.description || "",
+      icon: option.value === "read-only" ? Lock : option.value === "danger-full-access" ? ShieldAlert : ShieldCheck,
+      tag: option.value === "danger-full-access" ? t("composer.permissionHighRisk") : option.value === "workspace-write" ? t("composer.permissionRecommended") : "",
+    })));
 
-  const activePreset = $derived(selectedPreset || preset);
+  const activePreset = $derived(verified?.sessionId === sessionId ? verified.value : preset);
   const currentOption = $derived(
-    standardOptions.find((o) => o.value === activePreset) || {
+    options.find((o) => o.value === activePreset) || {
       value: activePreset,
       label: permissions?.options?.find((o) => o.value === activePreset)?.label || activePreset,
       desc: "",
@@ -59,41 +68,60 @@
       tag: "",
     }
   );
+  const CurrentIcon = $derived(currentOption.icon);
 
   $effect(() => {
-    sessionId;
-    selectedPreset = "";
+    const sourceSession = sessionId;
+    verified = undefined;
     confirmFull = false;
     confirmSessionId = "";
     open = false;
+    confirmationPreset = "";
+    errorMessage = "";
+    catalog = { options: [] };
+    let current = true;
+    if (sourceSession) void client.permissionCatalog().then((next) => {
+      if (current) catalog = next;
+    }).catch((error: unknown) => {
+      if (current) errorMessage = error instanceof Error ? error.message : String(error);
+    });
+    return () => { current = false; };
+  });
+
+  $effect(() => {
+    permissions?.currentValue;
+    verified = undefined;
   });
 
   async function apply(nextPreset: string): Promise<void> {
-    if (!nextPreset || nextPreset === "custom" || nextPreset === preset) {
+    if (busy || !sessionId || !options.some((option) => option.value === nextPreset)) return;
+    if (!nextPreset || nextPreset === "custom" || nextPreset === activePreset) {
       open = false;
       return;
     }
-    if (nextPreset === "danger-full-access" && !confirmFull) {
+    if (nextPreset !== "read-only" && nextPreset !== "workspace-write"
+      && (!confirmFull || confirmSessionId !== sessionId || confirmationPreset !== nextPreset)) {
       confirmFull = true;
       confirmSessionId = sessionId;
+      confirmationPreset = nextPreset;
       return;
     }
+    const sourceSession = sessionId;
     busy = true;
+    errorMessage = "";
     try {
-      const result = await client.prompt(sessionId, `/permission ${nextPreset}`);
-      onNotice?.(
-        result.command?.text ||
-          t("composer.permissionChanged", { preset: nextPreset })
-      );
-      selectedPreset = "";
+      const result = await client.selectPermission(sourceSession, nextPreset);
+      if (sourceSession !== sessionId) return;
+      verified = { sessionId: sourceSession, value: result.currentValue };
+      onNotice?.(t("composer.permissionChanged", { preset: nextPreset }));
       confirmFull = false;
       confirmSessionId = "";
       open = false;
     } catch (error) {
-      selectedPreset = "";
+      if (sourceSession !== sessionId) return;
       confirmFull = false;
       confirmSessionId = "";
-      onNotice?.(userFacingError(error));
+      errorMessage = error instanceof Error ? error.message : String(error);
     } finally {
       busy = false;
     }
@@ -145,7 +173,7 @@
       if (!busy && sessionId) open = !open;
     }}
   >
-    <ShieldCheck size={14} class="permission-picker-icon" aria-hidden="true" />
+    {#if busy}<LoaderCircle size={14} class="spin" aria-hidden="true" />{:else}<CurrentIcon size={14} class="permission-picker-icon" aria-hidden="true" />{/if}
     <span class="permission-picker-label">{currentOption.label}</span>
     <ChevronDown
       size={13}
@@ -167,7 +195,7 @@
       </div>
 
       <div class="permission-options-list">
-        {#each standardOptions as option (option.value)}
+        {#each options as option (option.value)}
           {@const isSelected = activePreset === option.value}
           {@const IconComp = option.icon}
           <button
@@ -176,6 +204,7 @@
             class="permission-option-item"
             class:selected={isSelected}
             class:danger={option.value === "danger-full-access"}
+            disabled={busy || option.value === "custom"}
             onclick={() => void apply(option.value)}
           >
             <div class="permission-item-icon">
@@ -213,7 +242,7 @@
               variant="destructive"
               size="xs"
               disabled={busy}
-              onclick={() => void apply("danger-full-access")}
+              onclick={() => void apply(confirmationPreset)}
             >
               {t("composer.permissionConfirmSwitch")}
             </Button>
@@ -223,7 +252,7 @@
               disabled={busy}
               onclick={() => {
                 confirmFull = false;
-                selectedPreset = "";
+                confirmationPreset = "";
               }}
             >
               {t("common.cancel")}
@@ -233,9 +262,11 @@
       {/if}
     </div>
   {/if}
+  {#if errorMessage}<p class="permission-error" role="alert">{errorMessage}</p>{/if}
 </div>
 
 <style>
+  .permission-error { max-width: 300px; margin: 0 8px; font-size: 12px; color: var(--destructive); overflow-wrap: anywhere; }
   .permission-selector-dropdown {
     position: relative;
     display: inline-flex;

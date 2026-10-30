@@ -1,8 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { isCredentialSettingsError, shouldOfferCredentialSettingsAction, userFacingError } from "./user-error";
-import { setLocale, t } from "./i18n";
+import { userFacingError } from "./user-error";
+import { setLocale } from "./i18n";
 
 describe("userFacingError", () => {
+  it.each(["Subagent Sessions require their durable parent address.",
+    'Error invoking desktop:dsh-request: session "secret-id" is owned by subagent routing'])(
+    "explains child ownership without internal identifiers: %s", (raw) => {
+      setLocale("zh-CN");
+      const message = userFacingError(raw);
+      expect(message).toContain("所属主会话");
+      expect(message).not.toMatch(/secret-id|desktop:dsh-request|routing/);
+    });
+  it("redacts stopped-runtime and unavailable-parent implementation details", () => {
+    setLocale("zh-CN");
+    expect(userFacingError("官方 DSH 已停止：code=1 signal=null")).not.toMatch(/code|signal|DSH/);
+    expect(userFacingError('parent session "internal-parent-id" is not live')).not.toContain("internal-parent-id");
+  });
+  it("explains unsafe workspaces and partial searches without exposing local paths", () => {
+    setLocale("zh-CN");
+    expect(userFacingError("Windows ACL temp root must be outside the workspace: workspace=C:\\Users\\demo")).toContain("具体项目文件夹");
+    expect(userFacingError("[WORKSPACE_UNAVAILABLE] internal")).toContain("不存在或无法访问");
+    expect(userFacingError("glob search failed (exit 2): IO error for operation on secret")).toContain("可能不完整");
+    expect(userFacingError("glob search failed (exit 2): secret")).not.toContain("secret");
+    setLocale("en-US");
+    expect(userFacingError("[WORKSPACE_UNSAFE]")).toContain("specific project folder");
+  });
   it("maps provider credential failures without exposing runtime details", () => {
     setLocale("zh-CN");
     expect(userFacingError(new Error("llm-deepseek: no API key for provider route 'deepseek-official'")))
@@ -50,7 +72,7 @@ describe("userFacingError", () => {
   it("maps locked preset and unsupported reasoning errors", () => {
     setLocale("zh-CN");
     expect(userFacingError("session \"session-1\" has already started; its agent preset is fixed"))
-      .toContain("Agent 预设已锁定");
+      .toContain("智能体预设已锁定");
     expect(userFacingError("provider x model vlm does not support reasoning effort high"))
       .toContain("不支持所选推理强度");
     expect(userFacingError("needs the browse capability to explore directories"))
@@ -63,6 +85,27 @@ describe("userFacingError", () => {
     setLocale("en-US");
     expect(userFacingError("ETIMEDOUT while waiting for response")).toBe("The service took too long to respond. Please try again.");
   });
+  it("maps renderer fetch failures to a retryable runtime message", () => {
+    setLocale("zh-CN");
+    expect(userFacingError("Error invoking remote method 'desktop:dsh-request': TypeError: fetch failed"))
+      .toBe("无法连接到桌面运行服务，请重试；如果问题持续，请重启应用。");
+    expect(userFacingError(new Error("[DSH_CONNECTION_LOST] internal")))
+      .toBe("无法连接到桌面运行服务，请重试；如果问题持续，请重启应用。");
+    expect(userFacingError("llm-provider: fetch failed")).toBe("llm-provider: fetch failed");
+  });
+
+  it("explains disabled knowledge retrieval and missing documents with the requested path", () => {
+    setLocale("zh-CN");
+    expect(userFacingError("Error: WEKNORA_DISABLED")).toContain("知识库检索服务未启用");
+    expect(userFacingError("WEKNORA_DISABLED")).not.toContain("WEKNORA");
+    const missing = userFacingError("ENOENT: no such file or directory, realpath 'D:\\27852\\Anyong Workspace\\FA-26-00491 委托单.pdf'");
+    expect(missing).toContain("找不到文件");
+    expect(missing).toContain("FA-26-00491 委托单.pdf");
+    expect(userFacingError("no such file or directory, open '/tmp/missing.pdf'")).toContain("/tmp/missing.pdf");
+    setLocale("en-US");
+    expect(userFacingError("WEKNORA_DISABLED")).toContain("Knowledge base retrieval is not enabled");
+    expect(userFacingError("ENOENT: no such file or directory, open '/tmp/missing.pdf'")).toContain("File not found");
+  });
 
   it("returns localized error messages in English when en-US is active", () => {
     setLocale("en-US");
@@ -70,103 +113,5 @@ describe("userFacingError", () => {
       .toContain("Settings & Credentials");
     expect(userFacingError("agent preset is fixed"))
       .toContain("preset is locked");
-  });
-
-  it("classifies localized credential errors without hardcoded language fragments", () => {
-    setLocale("zh-CN");
-    expect(isCredentialSettingsError(userFacingError("no API key"))).toBe(true);
-    expect(isCredentialSettingsError(userFacingError("401 Unauthorized"))).toBe(true);
-    expect(isCredentialSettingsError(t("models.missingApiKeyRuntime", { credentialRef: "XG_GOMODEL_API_KEY" }))).toBe(true);
-    expect(isCredentialSettingsError(t("models.requireKeyNotice", { ref: "XG_GOMODEL_API_KEY" }))).toBe(true);
-    expect(isCredentialSettingsError(t("errors.providerAuthFailed", { provider: "DeepSeek" }))).toBe(true);
-    expect(isCredentialSettingsError(t("errors.requestTimeout"))).toBe(false);
-
-    setLocale("en-US");
-    expect(isCredentialSettingsError(userFacingError("no API key"))).toBe(true);
-    expect(isCredentialSettingsError(userFacingError("authentication failed"))).toBe(true);
-    expect(isCredentialSettingsError(t("models.missingApiKeyRuntime", { credentialRef: "XG_GOMODEL_API_KEY" }))).toBe(true);
-    expect(isCredentialSettingsError(t("models.requireKeyNotice", { ref: "XG_GOMODEL_API_KEY" }))).toBe(true);
-    expect(isCredentialSettingsError(t("errors.providerAuthFailed", { provider: "DeepSeek" }))).toBe(true);
-    expect(isCredentialSettingsError(t("errors.requestTimeout"))).toBe(false);
-    expect(isCredentialSettingsError("random failure")).toBe(false);
-  });
-
-  it("offers a credential-settings action outside the settings tab", () => {
-    setLocale("zh-CN");
-    const notice = t("models.requireKeyNotice", { ref: "XG_GOMODEL_API_KEY" });
-    expect(shouldOfferCredentialSettingsAction(notice, "models")).toBe(true);
-    expect(shouldOfferCredentialSettingsAction(notice, "mcp")).toBe(true);
-    expect(shouldOfferCredentialSettingsAction(notice, "settings")).toBe(false);
-    expect(shouldOfferCredentialSettingsAction(t("errors.requestTimeout"), "models")).toBe(false);
-
-    setLocale("en-US");
-    const authFailed = userFacingError("401 Unauthorized");
-    expect(shouldOfferCredentialSettingsAction(authFailed, "overview")).toBe(true);
-    expect(shouldOfferCredentialSettingsAction(authFailed, "settings")).toBe(false);
-  });
-
-  it("maps desktop runtime and IPC failures without leaking Chinese internals", () => {
-    setLocale("en-US");
-    expect(userFacingError("官方 DSH 尚未启动")).toBe(t("errors.dshNotStarted"));
-    expect(userFacingError("官方 DSH 已停止：code=1 signal=null")).toBe(t("errors.dshStopped"));
-    expect(userFacingError("不允许的 DSH 方法：settings.mutate")).toBe(t("errors.dshMethodDenied"));
-    expect(userFacingError("拒绝来自非受信任前端入口的桌面 IPC 请求")).toBe(t("errors.untrustedIpc"));
-    expect(userFacingError("DSH 请求参数不能包含循环引用")).toBe(t("errors.circularRpcPayload"));
-    expect(userFacingError("DSH 请求失败")).toBe(t("errors.dshRequestFailed"));
-
-    setLocale("zh-CN");
-    expect(userFacingError("Official DSH has not started")).toBe(t("errors.dshNotStarted"));
-    expect(userFacingError("The DSH request failed")).toBe(t("errors.dshRequestFailed"));
-  });
-
-  it("maps stable desktop error codes without leaking Chinese internals", () => {
-    setLocale("en-US");
-    expect(userFacingError("VOLT_DSH_NOT_STARTED: 官方 DSH 尚未启动")).toBe(t("errors.dshNotStarted"));
-    expect(userFacingError("VOLT_DSH_STARTUP_FAILED: Official DSH exited before startup: code=1 signal=null")).toBe(t("errors.dshStartupFailed"));
-    expect(userFacingError("VOLT_BUNDLED_CREDENTIAL_OVERRIDDEN: 内置模型凭据被启动环境覆盖")).toBe(t("errors.bundledCredentialOverride"));
-    expect(userFacingError("VOLT_UNTRUSTED_IPC")).toBe(t("errors.untrustedIpc"));
-    expect(userFacingError("VOLT_SESSION_ID_INVALID: 会话 ID 无效")).toBe(t("errors.invalidSessionId"));
-    expect(userFacingError("VOLT_DSH_REQUEST_FAILED: DSH 业务响应失败")).toBe(t("errors.dshRequestFailed"));
-    expect(isCredentialSettingsError(userFacingError("VOLT_BUNDLED_CREDENTIAL_OVERRIDDEN"))).toBe(true);
-  });
-
-  it("maps English official DSH startup failures for the Chinese UI", () => {
-    setLocale("zh-CN");
-    expect(userFacingError("Official DSH did not publish its loopback URL within 180000ms.")).toBe(t("errors.dshStartupFailed"));
-    expect(userFacingError("Official DSH launcher is missing: /tmp/dsh")).toBe(t("errors.dshStartupFailed"));
-  });
-
-  it("normalizes Electron runtime errors before displaying them", async () => {
-    const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../App.svelte", import.meta.url), "utf8"));
-    expect(source).toContain("applyRuntimeConnectionError(message)");
-    expect(source).toContain("applyRuntimeConnectionError(info.startupError");
-    expect(source).toContain("surfaceNotice = userFacingError(message)");
-    expect(source).not.toMatch(/onRuntimeError\(\(message\) => \{\s*runtimeConnectionError = message;/);
-  });
-
-  it("localizes permission and generated-surface failures before display", async () => {
-    const permission = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../components/PermissionSelector.svelte", import.meta.url), "utf8"));
-    const surface = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../components/GeneratedSurface.svelte", import.meta.url), "utf8"));
-    expect(permission).toContain("userFacingError(error)");
-    expect(permission).not.toMatch(/error instanceof Error \? error\.message/);
-    expect(surface).toContain("userFacingError(error.error)");
-    expect(surface).not.toMatch(/onError\?\(error\.error\.message\)/);
-  });
-
-  it("shows authentication context and matching credential action in both locales", async () => {
-    const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../App.svelte", import.meta.url), "utf8"));
-    expect(source).toContain('t("errors.authFailureContext"');
-    expect(source).toContain("credentialSummary(ref)");
-    expect(source).toContain("onclick={openCredentialSettingsForCurrentModel}");
-    expect(source).toMatch(/if \(ref === "XG_GOMODEL_API_KEY"\) \{\s+openManagement\("models"\)/u);
-    for (const locale of ["zh-CN", "en-US"] as const) {
-      setLocale(locale);
-      const context = t("errors.authFailureContext", { model: "test-model", provider: "test-provider", credential: "TEST_KEY" });
-      expect(context).toContain("test-model");
-      expect(context).toContain("test-provider");
-      expect(context).toContain("TEST_KEY");
-      expect(t("errors.authFailureBuiltinHint")).not.toBe("errors.authFailureBuiltinHint");
-      expect(t("errors.authFailureCustomHint")).not.toBe("errors.authFailureCustomHint");
-    }
   });
 });

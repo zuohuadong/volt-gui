@@ -40,6 +40,7 @@ test("desktop CI packages only the official DSH Electron shell on Windows x64", 
   assert.match(desktop, /version:\s*12\.16\.1/);
   assert.match(desktop, /pnpm run dist:desktop/);
   assert.match(desktop, /pnpm run test:dsh-integration/);
+  assert.match(desktop, /pnpm test/);
   assert.match(desktop, /check-skills-sync/);
   assert.match(packageJson.scripts["dist:desktop"], /smoke:package/);
   assert.match(electronPackageJson.scripts.dist, /install:electron/);

@@ -6,6 +6,11 @@ import { fileURLToPath } from "node:url";
 
 import { resolvePnpmInvocation } from "./pnpm-invocation.mjs";
 import { stageBrowserSkillCli } from "./stage-browser-skill-cli.mjs";
+import { stageBrowserExtension } from "./stage-browser-extension.mjs";
+import { stageDesktopTools } from "./stage-desktop-tools.mjs";
+import { pruneStagedRuntime } from "./runtime-pruning.mjs";
+import { stageDuckdbExtension } from "../../../scripts/stage-duckdb-extension.mjs";
+import duckdbExtensionLock from "../../../scripts/duckdb-extension.lock.json" with { type: "json" };
 import { assertWindowsX64PeExecutable, ensureWindowsKoffiPackage, ensureWindowsNodePtyPrebuild } from "../../../scripts/native-executable.mjs";
 import { ensureOfficeCliBinary, officeCli } from "../../../scripts/third-party-office-tools.mjs";
 
@@ -19,6 +24,7 @@ if (process.version !== "v26.13.0") throw new Error(`Node 26.13.0 is required to
 const pnpm = resolvePnpmInvocation(pnpmEntrypoint);
 
 await stageBrowserSkillCli();
+await stageBrowserExtension();
 
 fs.rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 fs.rmSync(nodeTargetDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
@@ -29,6 +35,10 @@ const sourceHash = createHash("sha256").update(nodeBytes).digest("hex");
 const targetHash = createHash("sha256").update(fs.readFileSync(nodeTarget)).digest("hex");
 if (targetHash !== sourceHash) throw new Error("staged Node runtime checksum mismatch");
 if (process.platform === "win32") assertWindowsX64PeExecutable(nodeTarget, "staged Node");
+if (process.platform === "win32") {
+  await stageDesktopTools();
+  await stageDuckdbExtension(path.join(appDir, ".duckdb-extensions"));
+}
 const result = spawnSync(pnpm.command, [
   ...pnpm.args,
   "--config.node-linker=hoisted",
@@ -49,6 +59,16 @@ if (result.status !== 0) process.exit(result.status ?? 1);
 const integrationsScriptTarget = path.join(target, "scripts", "anyong-integrations-mcp.mjs");
 fs.mkdirSync(path.dirname(integrationsScriptTarget), { recursive: true });
 fs.copyFileSync(path.resolve(appDir, "..", "..", "scripts", "anyong-integrations-mcp.mjs"), integrationsScriptTarget);
+fs.copyFileSync(path.resolve(appDir, "..", "..", "scripts", "network-policy.mjs"), path.join(target, "scripts", "network-policy.mjs"));
+for (const script of ["sheet-engine.py", "report-docx.py", "office-control.ps1"]) {
+  fs.copyFileSync(path.resolve(appDir, "../../scripts", script), path.join(target, "scripts", script));
+}
+fs.cpSync(path.resolve(appDir, "../../scripts/altium"), path.join(target, "scripts", "altium"), { recursive: true });
+if (process.platform === "win32") {
+  fs.cpSync(path.join(appDir, ".duckdb-extensions"), path.join(target, "scripts", "duckdb-extensions"), { recursive: true });
+}
+const pruned = pruneStagedRuntime(target);
+if (pruned.length) console.log(`Pruned unused runtime payloads: ${pruned.join(", ")}`);
 
 const required = [
   "node_modules/@deepseek-ai/dsh/lib/bin.js",
@@ -61,10 +81,31 @@ const required = [
   "node_modules/@voltui/dsh-intranet-auth/package.json",
   "node_modules/zod/package.json",
   "scripts/anyong-integrations-mcp.mjs",
+  "scripts/network-policy.mjs",
   "node_modules/js-yaml/package.json",
   "node_modules/node-pty/package.json",
   "node_modules/koffi/package.json",
+  "node_modules/@voltui/dsh-office/package.json",
+  "node_modules/@voltui/dsh-mcp-apps/package.json",
+  "node_modules/@voltui/dsh-native-ui/package.json",
+  "node_modules/@deepseek-ai/dsh-experimental-voice-input-bundle/package.json",
+  "node_modules/@deepseek-ai/dsh-experimental-voice-input-bundle/cordis.patch.yml",
+  "node_modules/@voltui/dsh-office/cordis.patch.yml",
+  "node_modules/@voltui/dsh-office/lib/index.mjs",
+  "node_modules/@voltui/dsh-mcp-apps/cordis.patch.yml",
+  "node_modules/@voltui/dsh-mcp-apps/lib/index.js",
+  "node_modules/@voltui/dsh-native-ui/cordis.patch.yml",
+  "node_modules/@voltui/dsh-native-ui/lib/index.js",
+  "node_modules/memorix/dist/cli/index.js",
+  "scripts/sheet-engine.py",
+  "scripts/report-docx.py",
+  "scripts/office-control.ps1",
+  "scripts/altium/AltiumScript/Altium_API.PrjScr",
 ];
+if (process.platform === "win32") {
+  required.push("node_modules/dsh-ab-ocr/python/ocr_worker.py",
+    `scripts/duckdb-extensions/v${duckdbExtensionLock.duckdbVersion}/${duckdbExtensionLock.platform}/excel.duckdb_extension`);
+}
 
 const officeBinaryName = process.platform === "win32" ? "officecli.exe" : "officecli";
 const officeBinary = path.join(target, "node_modules", "@officecli", "officecli", "vendor", officeBinaryName);

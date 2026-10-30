@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "duckdbVersion": "2.0.0",
+  "platform": "windows_amd64",
+  "name": "excel",
+  "license": "MIT",
+  "repository": "https://github.com/duckdb/duckdb-excel",
+  "source": "https://extensions.duckdb.org/v2.0.0/windows_amd64/excel.duckdb_extension.gz",
+  "archiveSha256": "e524d6f66e8d7b546c1038bf402241dc18bd556462f3de677c94f05ceb3a61ec",
+  "binarySha256": "b1429d9d10d5f7ad21b21828110143a846863bcb25fa002ab0f10b3b86e26527",
+  "archiveBytes": 14797292,
+  "binaryBytes": 46694934
+}

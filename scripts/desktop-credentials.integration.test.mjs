@@ -63,7 +63,12 @@ for (const source of ["project-env", "user-env"]) {
       patchFile: path.join(root, "profiles", "anyong.yml"),
       workspace,
       bundledBrowserSkillPackageDir: browserPlugin,
-      bundledProfilePlugins: [{ packageName: "@wxg-prc-cpg/dsh-weknora", packageDir: weknoraPlugin }],
+      bundledProfilePlugins: [
+        { packageName: "@wxg-prc-cpg/dsh-weknora", packageDir: weknoraPlugin },
+        ...["@voltui/dsh-intranet-auth", "@voltui/dsh-office", "@voltui/dsh-mcp-apps", "@voltui/dsh-native-ui", "@deepseek-ai/dsh-experimental-voice-input-bundle"].map(packageName => ({
+          packageName, packageDir: path.dirname(desktopRequire.resolve(`${packageName}/package.json`)),
+        })),
+      ],
       environment: {
         ...bundledDshModelEnvironment(bundledPath),
         XG_GOMODEL_API_KEY: "",
@@ -74,6 +79,7 @@ for (const source of ["project-env", "user-env"]) {
         ANYONG_OFFICECLI_ARGS_JSON: JSON.stringify([officeEntry, "mcp"]),
         ANYONG_INTEGRATIONS_MCP_COMMAND: process.execPath,
         ANYONG_INTEGRATIONS_MCP_SCRIPT: integrationsMcpScript,
+        ANYONG_MEMORY_ENABLED: "0",
       },
     });
     try {

@@ -36,6 +36,22 @@ export function resolveElectronProfile(
   return profiles[profileName];
 }
 
+/**
+ * Startup must not fail because a stale shell environment carries an unknown
+ * profile name. Packaging always ships the Anyong profile, so an invalid
+ * override falls back to it instead of aborting before a window exists.
+ */
+export function resolveElectronProfileForStartup(
+  name = process.env.ELECTRON_DESKTOP_PROFILE || "anyong",
+): Readonly<ElectronDesktopProfile> {
+  try {
+    return resolveElectronProfile(name);
+  } catch (error) {
+    console.warn(`[Electron] Ignoring invalid desktop profile ${JSON.stringify(name)}; using Anyong.`, error);
+    return profiles.anyong;
+  }
+}
+
 const currentFile = fileURLToPath(import.meta.url);
 if (process.argv[1] && path.resolve(process.argv[1]) === currentFile) {
   console.log(JSON.stringify(resolveElectronProfile(), null, 2));

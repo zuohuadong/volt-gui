@@ -1,32 +1,59 @@
 import { describe, expect, it } from "vitest";
-import { assistantMessageForEvent, applyTranscriptEvent, foldHistory, hasMessageContent, isVisibleMessageText, isVisibleReasoning, stripInternalPromptSuffix, visibleText, type TranscriptState } from "./transcript";
-import { setLocale, t } from "./i18n";
+import { assistantMessageForEvent, applyTranscriptEvent, extractAttachments, foldHistory, interruptRunningTools, isVisibleMessageText, isVisibleReasoning, mergeHistoryEntries, stripInternalPromptSuffix, type TranscriptState } from "./transcript";
 
 const event = (type: string, seq: number, data: Record<string, unknown>) => ({ type, seq, time: seq, data });
 
 describe("transcript folding", () => {
+  it("merges overlapping durable and live history by event identity", () => {
+    const durable = { event: event("assistant/chunk", 10, {
+      attemptId: "a1", index: 2, turn: 1, step: 1, chunk: { type: "text-delta", text: "same" },
+    }) };
+    const live = { event: event("assistant/chunk", 11, {
+      attemptId: "a1", index: 2, turn: 1, step: 1, chunk: { type: "text-delta", text: "same" },
+    }) };
+    expect(mergeHistoryEntries([durable], [live])).toEqual([durable]);
+  });
+
+  it("deduplicates unordered durable records without losing transient sequence collisions", () => {
+    const user = { event: event("user/message", 8, { text: "task" }) };
+    const final = { event: event("assistant/message", 9, { turn: 1, step: 1, message: "done" }) };
+    const stream = { event: event("assistant/chunk", 9, {
+      attemptId: "a1", startedAfterSeq: 8, index: 0, turn: 1, step: 1,
+      chunk: { type: "text-delta", text: "done" },
+    }) };
+    const merged = mergeHistoryEntries([user, final], [stream, user, final]);
+    expect(merged).toHaveLength(3);
+    expect(merged.map((entry) => entry.event.type)).toEqual(["user/message", "assistant/chunk", "assistant/message"]);
+    expect(foldHistory(merged).messages.map((message) => message.text)).toEqual(["task", "done"]);
+  });
+
+  it("keeps uploaded attachment metadata separate from visible message text", () => {
+    expect(extractAttachments([{ type: "file", attachment: { attachmentId: "a1", name: "说明.md", bytes: 12 } }]))
+      .toEqual([{ attachmentId: "a1", name: "说明.md", bytes: 12, kind: "file" }]);
+    const result = applyTranscriptEvent({ messages: [], todos: [] }, event("user/message", 1, {
+      message: { content: [{ type: "text", text: "请查看" }, { type: "file", attachment: { attachmentId: "a1", name: "说明.md", bytes: 12 } }] },
+    }));
+    expect(result.messages[0].attachments).toHaveLength(1);
+    expect(result.messages[0].displayText).toBe("请查看");
+    expect(result.messages[0].text).toContain("说明.md");
+    const imageOnly = foldHistory([{ event: event("user/message", 2, {
+      message: { content: [{ type: "image", attachment: { attachmentId: "i1", name: "图片.png", mediaType: "image/png", bytes: 32 } }] },
+    }) }]);
+    expect(imageOnly.messages).toHaveLength(1);
+    expect(imageOnly.messages[0].displayText).toBe("");
+    expect(imageOnly.messages[0].attachments?.[0].mediaType).toBe("image/png");
+    expect(extractAttachments([{ type: "text", text: "[文件：说明.md]" }])).toEqual([]);
+  });
   it("hides serialized tool calls from the reasoning presentation", () => {
     expect(isVisibleReasoning('{ "type": "tool-call", "name": "browser_session" }')).toBe(false);
     expect(isVisibleReasoning('```json\n{"type":"tool-use","name":"skill"}\n```')).toBe(false);
     expect(isVisibleReasoning('{ "type": "tool-call", "arguments": "{action:start,url: https://example.com\\\"}" }')).toBe(false);
     expect(isVisibleReasoning("先检查页面结构，再决定如何操作。")).toBe(true);
-    expect(isVisibleReasoning("这里解释 tool-call 和 tool-result 的区别。")).toBe(true);
   });
 
   it("hides serialized tool calls from the assistant message body", () => {
     expect(isVisibleMessageText('{ "type": "tool-call", "name": "browser_session" }')).toBe(false);
-    expect(isVisibleMessageText('解释 {"type":"tool-call"} 的结构')).toBe(true);
-    expect(isVisibleMessageText("请检查 tool-call 和 tool-result 的区别")).toBe(true);
     expect(isVisibleMessageText("页面已打开并读取到结果。")).toBe(true);
-  });
-
-  it("keeps user-authored tool JSON visible while filtering assistant payloads", () => {
-    const toolJson = '{ "type": "tool-call", "name": "browser_session" }';
-    expect(hasMessageContent({ id: "user-1", role: "user", text: toolJson })).toBe(true);
-    expect(hasMessageContent({ id: "assistant-1", role: "assistant", text: toolJson })).toBe(false);
-
-    const next = applyTranscriptEvent({ messages: [], todos: [] }, event("user/message", 1, { message: toolJson }));
-    expect(next.messages).toMatchObject([{ role: "user", text: toolJson }]);
   });
 
   it("reconciles optimistic user messages instead of duplicating them", () => {
@@ -47,6 +74,23 @@ describe("transcript folding", () => {
     expect(next.messages[0]).toMatchObject({ text: "你好，世界", reasoning: "先判断", pending: true });
   });
 
+  it("shares unchanged transcript messages across streaming updates", () => {
+    const initial: TranscriptState = {
+      messages: [
+        { id: "user-1", role: "user", text: "问题" },
+        { id: "stream-1-1", role: "assistant", text: "第一段", reasoning: "", pending: true },
+      ],
+      todos: [],
+    };
+    const next = applyTranscriptEvent(initial, event("assistant/chunk", 3, {
+      turn: 1, step: 1, chunk: { type: "text-delta", text: "第二段" },
+    }));
+
+    expect(next.messages[0]).toBe(initial.messages[0]);
+    expect(next.messages[1]).not.toBe(initial.messages[1]);
+    expect(next.messages[1].text).toBe("第一段第二段");
+  });
+
   it("folds official packed history chunks without losing token boundaries", () => {
     const next = foldHistory([
       { event: event("chunkrow/text-chunks", 1, { turn: 1, step: 1, index: 0, dt: [1], texts: ["你好", "，世界"] }) },
@@ -56,6 +100,86 @@ describe("transcript folding", () => {
     expect(next.messages[0]).toMatchObject({ text: "你好，世界", reasoning: "先判断", pending: false });
   });
 
+  it("keeps reasoning from an interrupted assistant attempt", () => {
+    const next = foldHistory([{
+      event: event("assistant/attempt", 4, {
+        turn: 1,
+        step: 2,
+        stream: [{
+          type: "reasoning-chunks",
+          texts: ["中断前的思考"],
+        }],
+      }),
+    }]);
+    expect(next.messages).toMatchObject([{ role: "assistant", reasoning: "中断前的思考", pending: false }]);
+  });
+
+  it("replaces live chunks with the durable attempt without repeating text or merging a retry", () => {
+    const next = foldHistory([
+      { event: event("assistant/chunk", 1, { turn: 1, step: 2, chunk: { type: "reasoning-delta", text: "first" } }) },
+      { event: event("assistant/attempt", 2, { turn: 1, step: 2, stream: [
+        { type: "reasoning-chunks", texts: ["first"] },
+        { type: "chunk", chunk: { type: "text-delta", text: "partial" } },
+      ] }) },
+      { event: event("assistant/chunk", 3, { turn: 1, step: 2, chunk: { type: "reasoning-delta", text: "retry" } }) },
+      { event: event("turn/end", 4, {}) },
+    ]);
+    expect(next.messages).toMatchObject([
+      { text: "partial", reasoning: "first", pending: false },
+      { text: "", reasoning: "retry", pending: false },
+    ]);
+  });
+
+  it("keeps reasoning-only messages after completion and in durable history", () => {
+    const live = foldHistory([
+      { event: event("assistant/chunk", 1, { turn: 1, step: 1, chunk: { type: "reasoning-delta", text: "analysis" } }) },
+      { event: event("assistant/message", 2, { turn: 1, step: 1, message: {
+        content: [{ type: "reasoning", text: "analysis" }],
+      } }) },
+    ]);
+    const restored = foldHistory([{ event: event("assistant/message", 2, { message: {
+      content: [{ type: "reasoning", text: "analysis" }],
+    } }) }]);
+    expect(live.messages).toHaveLength(1);
+    expect(live.messages[0]).toMatchObject({ text: "", reasoning: "analysis", pending: false });
+    expect(restored.messages[0]).toMatchObject({ text: "", reasoning: "analysis", pending: false });
+  });
+
+  it("keeps top-level reasoning when the final message carries text separately", () => {
+    const live = applyTranscriptEvent({ messages: [], todos: [] }, event("assistant/chunk", 1, {
+      turn: 1, step: 1, reasoning: "先分析问题",
+    }));
+    const final = applyTranscriptEvent(live, event("assistant/message", 2, {
+      turn: 1, step: 1, message: { content: [{ type: "text", text: "结论" }] }, reasoning: "先分析问题",
+    }));
+    expect(live.messages[0]).toMatchObject({ text: "", reasoning: "先分析问题", pending: true });
+    expect(final.messages[0]).toMatchObject({ text: "结论", reasoning: "先分析问题", pending: false });
+  });
+
+  it("accepts string reasoning in the final assistant event", () => {
+    const next = applyTranscriptEvent({ messages: [], todos: [] }, event("assistant/message", 1, {
+      message: "结论", reasoning: "思考过程",
+    }));
+    expect(next.messages[0]).toMatchObject({ text: "结论", reasoning: "思考过程", pending: false });
+  });
+
+  it("keeps text and reasoning when one chunk carries both fields", () => {
+    const next = applyTranscriptEvent({ messages: [], todos: [] }, event("assistant/chunk", 1, {
+      turn: 1, step: 1,
+      chunk: { type: "text-delta", text: "正文" },
+      reasoning: "思考",
+    }));
+    expect(next.messages[0]).toMatchObject({ text: "正文", reasoning: "思考", pending: true });
+  });
+
+  it("reads structured reasoning content and merges final reasoning sources", () => {
+    const next = applyTranscriptEvent({ messages: [], todos: [] }, event("assistant/message", 1, {
+      message: { content: [{ type: "reasoning", content: "先判断" }] },
+      reasoning: "再验证",
+    }));
+    expect(next.messages[0]).toMatchObject({ reasoning: "先判断再验证", pending: false });
+  });
+
   it("joins a tool result to its call card and keeps error state", () => {
     const next = foldHistory([
       { event: event("tool/call", 1, { callId: "c1", name: "bash", arguments: "{\"command\":\"pwd\"}" }) },
@@ -63,6 +187,42 @@ describe("transcript folding", () => {
     ]);
     expect(next.messages).toHaveLength(1);
     expect(next.messages[0].tool).toMatchObject({ callId: "c1", result: "denied", state: "error" });
+  });
+
+  it("keeps a tool error visible when the result only carries an error object", () => {
+    const next = foldHistory([
+      { event: event("tool/call", 1, { callId: "c1", name: "bash", arguments: "{\"command\":\"npm test\"}" }) },
+      { event: event("tool/result", 2, { callId: "c1", error: { name: "CommandFailed", message: "process exited with code 1" } }) },
+    ]);
+    expect(next.messages[0].tool).toMatchObject({ callId: "c1", state: "error" });
+    expect(next.messages[0].tool?.result).toContain("process exited with code 1");
+  });
+
+  it("attaches a result without a call id to the running tool instead of adding an orphan card", () => {
+    const first = applyTranscriptEvent({ messages: [], todos: [] }, event("tool/call", 1, {
+      callId: "call-1",
+      turn: 3,
+      name: "bash",
+      arguments: "{\"command\":\"pwd\"}",
+    }));
+    const next = applyTranscriptEvent(first, event("tool/result", 2, {
+      turn: 3,
+      message: { content: [{ type: "text", text: "/workspace" }] },
+    }));
+    expect(next.messages).toHaveLength(1);
+    expect(next.messages[0].tool).toMatchObject({ callId: "call-1", result: "/workspace", state: "success" });
+  });
+
+  it("marks running tools interrupted as soon as a stop is confirmed", () => {
+    const state = foldHistory([
+      { event: event("tool/call", 1, { callId: "running", name: "bash", arguments: "{}" }) },
+      { event: event("tool/call", 2, { callId: "done", name: "bash", arguments: "{}" }) },
+      { event: event("tool/result", 3, { callId: "done", result: "ok" }) },
+    ]);
+    const stopped = interruptRunningTools(state);
+    expect(stopped.messages.find((message) => message.tool?.callId === "running")?.tool?.state).toBe("interrupted");
+    expect(stopped.messages.find((message) => message.tool?.callId === "done")?.tool?.state).toBe("success");
+    expect(interruptRunningTools(stopped)).toBe(stopped);
   });
 
   it("preserves structured tool arguments for user-facing summaries", () => {
@@ -162,6 +322,68 @@ describe("transcript folding", () => {
     expect(ended.messages[0].id).toBe("user-1");
   });
 
+  it("closes tools without a result when a turn ends", () => {
+    const state = applyTranscriptEvent({ messages: [], todos: [] }, event("tool/call", 1, {
+      callId: "call-1",
+      name: "write_file",
+      arguments: { path: "a.txt" },
+    }));
+    const ended = applyTranscriptEvent(state, event("turn/end", 2, {
+      reason: { kind: "completed" },
+    }));
+    expect(ended.messages[0].tool).toMatchObject({
+      callId: "call-1",
+      state: "interrupted",
+    });
+    expect(ended.messages[0].tool?.result).toBeUndefined();
+    expect(state.messages[0].tool?.state).toBe("running");
+    const lateResult = applyTranscriptEvent(ended, event("tool/result", 3, { callId: "call-1", result: "ok" }));
+    expect(lateResult.messages[0].tool).toMatchObject({ state: "success", result: "ok" });
+  });
+
+  it("replaces a replayed tool call instead of leaving a running duplicate", () => {
+    const first = applyTranscriptEvent({ messages: [], todos: [] }, event("tool/call", 1, {
+      callId: "call-1",
+      name: "write_file",
+      arguments: { path: "a.txt" },
+    }));
+    const result = applyTranscriptEvent(first, event("tool/result", 2, {
+      callId: "call-1",
+      result: "ok",
+    }));
+    const replayed = applyTranscriptEvent(result, event("tool/call", 7, {
+      callId: "call-1",
+      name: "write_file",
+      arguments: { path: "a.txt" },
+    }));
+    expect(replayed.messages).toHaveLength(1);
+    expect(replayed.messages[0].tool?.state).toBe("success");
+    expect(replayed).toBe(result);
+  });
+
+  it("deduplicates a repeated callId within the same turn even when sequence numbers differ", () => {
+    const first = applyTranscriptEvent({ messages: [], todos: [] }, event("tool/call", 1, {
+      callId: "call-1",
+      turn: 2,
+      name: "write_file",
+    }));
+    const replayed = applyTranscriptEvent(first, event("tool/call", 9, {
+      callId: "call-1",
+      turn: 2,
+      name: "write_file",
+    }));
+    expect(replayed).toBe(first);
+  });
+
+  it("does not close a later turn when an old ending is replayed", () => {
+    const first = applyTranscriptEvent({ messages: [], todos: [] }, event("tool/call", 1, { callId: "same", turn: 1 }));
+    const nextTurn = applyTranscriptEvent(first, event("tool/call", 4, { callId: "same", turn: 2 }));
+    const ended = applyTranscriptEvent(nextTurn, event("turn/end", 3, { turn: 1 }));
+    expect(ended.messages.map((message) => message.tool?.state)).toEqual(["interrupted", "running"]);
+    const result = applyTranscriptEvent(ended, event("tool/result", 5, { callId: "same", turn: 2, result: "ok" }));
+    expect(result.messages.map((message) => message.tool?.state)).toEqual(["interrupted", "success"]);
+  });
+
   it("ignores internal user messages from agent-instructions, plugin, or skill-catalog sources", () => {
     const initial: TranscriptState = { messages: [], todos: [] };
     const instructions = applyTranscriptEvent(initial, event("user/message", 1, {
@@ -210,18 +432,5 @@ describe("transcript folding", () => {
     expect(next.messages).toHaveLength(1);
     expect(next.messages[0].text).toBe("切换到紧凑模式");
     expect(next.messages[0].pending).toBeUndefined();
-  });
-
-  it("localizes unnamed tool fallbacks and image placeholders", () => {
-    setLocale("en-US");
-    const unnamed = applyTranscriptEvent({ messages: [], todos: [] }, event("tool/call", 8, { callId: "anon" }));
-    expect(unnamed.messages[0].text).toBe(t("transcript.toolCallFallback"));
-    expect(unnamed.messages[0].tool?.name).toBe(t("transcript.toolNameFallback"));
-
-    const orphanResult = applyTranscriptEvent({ messages: [], todos: [] }, event("tool/result", 9, { result: "ok" }));
-    expect(orphanResult.messages[0].text).toBe(t("transcript.toolResultFallback"));
-
-    expect(visibleText({ type: "image", attachment: { name: "shot.png" } })).toBe(t("transcript.imageNamedPlaceholder", { name: "shot.png" }));
-    expect(visibleText({ type: "image" })).toBe(t("transcript.imagePlaceholder"));
   });
 });

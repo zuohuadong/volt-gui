@@ -9,7 +9,7 @@ import test from 'node:test';
 
 import { provisionBundledBrowserSkillProfile } from './provision-dsh-profile.mjs';
 
-async function createBundledPackage(root, version = '0.3.3') {
+async function createBundledPackage(root, version = '0.4.0') {
   const packageDir = path.join(root, 'bundled-browser-skill');
   await mkdir(path.join(packageDir, 'lib'), { recursive: true });
   await mkdir(path.join(packageDir, 'node_modules', 'ignored'), { recursive: true });
@@ -51,11 +51,12 @@ test('provisions BrowserSkill while preserving the user profile', async () => {
     assert.equal(manifest.name, 'custom-web-profile');
     assert.deepEqual(manifest.scripts, { inspect: 'echo preserved' });
     assert.equal(manifest.dependencies['@example/custom-plugin'], '1.2.3');
-    assert.equal(manifest.dependencies['@wxg-prc-cpg/browser-skill-dsh-plugin'], '0.3.3');
+    assert.equal(manifest.dependencies['@wxg-prc-cpg/browser-skill-dsh-plugin'], '0.4.0');
     assert.equal(manifest.dsh.custom, true);
     assert.equal(manifest.dsh.profile.custom, true);
     assert.deepEqual(manifest.dsh.profile.bundles, [
-      '@deepseek-ai/dsh-base', '@example/custom-plugin', '@deepseek-ai/dsh-web-app', '@wxg-prc-cpg/browser-skill-dsh-plugin',
+      '@deepseek-ai/dsh-base', '@example/custom-plugin', '@deepseek-ai/dsh-web-app',
+      '@deepseek-ai/dsh-experimental-voice-input-bundle', '@wxg-prc-cpg/browser-skill-dsh-plugin',
     ]);
     assert.equal(await readFile(path.join(profileDir, 'node_modules', '@wxg-prc-cpg', 'browser-skill-dsh-plugin', 'cordis.patch.yml'), 'utf8'), '[]\n');
     await assert.rejects(readFile(path.join(profileDir, 'node_modules', '@wxg-prc-cpg', 'browser-skill-dsh-plugin', 'node_modules', 'ignored', 'marker')));
@@ -115,12 +116,53 @@ async function legacyProfileFixture(t, profileName, installedVersion = '0.1.2') 
   return { dshHome, profileName, bundledPackageDir, profileDir, manifestPath, targetDir, legacyManifest };
 }
 
+test('upgrades the shipped voice bundle without replacing custom versions', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'anyong-voice-upgrade-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const name = '@deepseek-ai/dsh-experimental-voice-input-bundle';
+  const packageDir = path.join(root, 'voice');
+  await mkdir(packageDir);
+  const writeVersion = version => writeFile(path.join(packageDir, 'package.json'), JSON.stringify({ name, version }));
+  const options = {
+    dshHome: path.join(root, 'dsh'), profileName: 'web',
+    bundledPackageDir: await createBundledPackage(root),
+    additionalPlugins: [{ packageName: name, packageDir }],
+  };
+  await writeVersion('0.2.1-rc.2');
+  provisionBundledBrowserSkillProfile(options);
+  await writeVersion('0.2.1-rc.5');
+  provisionBundledBrowserSkillProfile(options);
+  provisionBundledBrowserSkillProfile(options);
+  const profile = path.join(options.dshHome, 'profiles', 'web');
+  assert.equal(JSON.parse(await readFile(path.join(profile, 'node_modules', name, 'package.json'), 'utf8')).version, '0.2.1-rc.5');
+  const manifestPath = path.join(profile, 'package.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  assert.equal(manifest.dependencies[name], '0.2.1-rc.5');
+  manifest.dependencies[name] = 'file:custom-voice';
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  assert.throws(() => provisionBundledBrowserSkillProfile(options), /不同.*版本/u);
+});
+
+test('refreshes a patched BrowserSkill even when its upstream version is unchanged', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'anyong-browser-revision-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const options = { dshHome: path.join(root, 'dsh'), profileName: 'web', bundledPackageDir: await createBundledPackage(root) };
+  provisionBundledBrowserSkillProfile(options);
+  const sourceManifest = path.join(options.bundledPackageDir, 'package.json');
+  const manifest = JSON.parse(await readFile(sourceManifest, 'utf8'));
+  manifest.anyongPatchRevision = '1';
+  await writeFile(sourceManifest, JSON.stringify(manifest));
+  await writeFile(path.join(options.bundledPackageDir, 'lib', 'index.mjs'), 'export const patched = true;\n');
+  provisionBundledBrowserSkillProfile(options);
+  assert.match(await readFile(path.join(options.dshHome, 'profiles/web/node_modules/@wxg-prc-cpg/browser-skill-dsh-plugin/lib/index.mjs'), 'utf8'), /patched/u);
+});
+
 for (const profileName of ['web', 'headless']) {
   test(`upgrades the shipped BrowserSkill in ${profileName} without losing user configuration`, async (t) => {
     const fixture = await legacyProfileFixture(t, profileName);
     provisionBundledBrowserSkillProfile(fixture);
     const upgraded = JSON.parse(await readFile(fixture.manifestPath, 'utf8'));
-    assert.equal(upgraded.dependencies['@wxg-prc-cpg/browser-skill-dsh-plugin'], '0.3.3');
+    assert.equal(upgraded.dependencies['@wxg-prc-cpg/browser-skill-dsh-plugin'], '0.4.0');
     assert.equal(upgraded.dependencies['@example/custom-plugin'], '3.2.1');
     assert.deepEqual(upgraded.dsh.profile.custom, { preserve: true });
     assert.equal(upgraded.dsh.profile.bundles.filter((name) => name === '@wxg-prc-cpg/browser-skill-dsh-plugin').length, 1);
@@ -131,15 +173,15 @@ for (const profileName of ['web', 'headless']) {
     const first = await readFile(fixture.manifestPath, 'utf8');
     provisionBundledBrowserSkillProfile(fixture);
     assert.equal(await readFile(fixture.manifestPath, 'utf8'), first);
-    assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.3.3');
+    assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.4.0');
   });
 }
 
-for (const installedVersion of ['0.2.0', '0.2.1']) {
+for (const installedVersion of ['0.2.0', '0.2.1', '0.3.3']) {
   test(`upgrades BrowserSkill ${installedVersion} without overwriting its backup`, async (t) => {
     const fixture = await legacyProfileFixture(t, 'web', installedVersion);
     provisionBundledBrowserSkillProfile(fixture);
-    assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.3.3');
+    assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.4.0');
     assert.equal(JSON.parse(await readFile(path.join(`${fixture.targetDir}.backup-${installedVersion}`, 'package.json'), 'utf8')).version, installedVersion);
     assert.equal(await readFile(`${fixture.targetDir}.backup-${installedVersion}.profile.json`, 'utf8'), fixture.legacyManifest);
   });
@@ -159,7 +201,7 @@ test('recovers an interrupted directory swap before retrying migration', async (
   await cp(fixture.manifestPath, `${backupDir}.profile.json`);
   await rename(fixture.targetDir, backupDir);
   provisionBundledBrowserSkillProfile(fixture);
-  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.3.3');
+  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.4.0');
   assert.equal(await readFile(`${backupDir}.profile.json`, 'utf8'), fixture.legacyManifest);
 });
 
@@ -180,7 +222,7 @@ test('rolls back the plugin when the manifest commit fails, then permits retry',
     syncBuiltinESMExports();
   }
   provisionBundledBrowserSkillProfile(fixture);
-  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.3.3');
+  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.4.0');
 });
 
 test('repairs a partial manifest backup before committing an upgrade', async (t) => {
@@ -247,7 +289,7 @@ for (const failurePoint of ['restore', 'cleanup']) {
       syncBuiltinESMExports();
     }
     provisionBundledBrowserSkillProfile(fixture);
-    assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.3.3');
+    assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.4.0');
   });
 }
 
@@ -277,7 +319,7 @@ test('excludes a second process until the first transaction has rolled back', as
     syncBuiltinESMExports();
   }
   provisionBundledBrowserSkillProfile(fixture);
-  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.3.3');
+  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.4.0');
 });
 
 test('never takes over an abandoned lock without explicit operator recovery', async (t) => {
@@ -289,7 +331,7 @@ test('never takes over an abandoned lock without explicit operator recovery', as
   assert.equal(await readFile(lockPath, 'utf8'), '0\n');
   await rm(lockPath);
   provisionBundledBrowserSkillProfile(fixture);
-  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.3.3');
+  assert.equal(JSON.parse(await readFile(path.join(fixture.targetDir, 'package.json'), 'utf8')).version, '0.4.0');
 });
 
 test('does not downgrade an unfamiliar user-managed version', async (t) => {

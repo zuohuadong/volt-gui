@@ -45,9 +45,9 @@ describe("plugin-i18n metadata and classification", () => {
       moduleName: "@deepseek-ai/dsh-tool-subagent",
       entryId: "tool-subagent",
     });
-    expect(subagent.name).toBe("子 Agent 派发器");
+    expect(subagent.name).toBe("子智能体派发器");
     expect(subagent.category).toBe("subagents");
-    expect(subagent.categoryLabel).toBe("多 Agent 协作");
+    expect(subagent.categoryLabel).toBe("多智能体协作");
 
     const xgGateway = resolvePluginI18n({
       moduleName: "@deepseek-ai/dsh-llm-pi-ai",
@@ -151,25 +151,6 @@ describe("plugin-i18n metadata and classification", () => {
     expect(customUnknown.category).toBe("custom");
     expect(customUnknown.categoryLabel).toBe("扩展插件");
     expect(customUnknown.name).toBe("Custom Extension Analyzer 插件");
-
-    setLocale("en-US");
-    const customUnknownEn = resolvePluginI18n({
-      moduleName: "custom-extension-analyzer",
-      entryId: "analyzer",
-    });
-    expect(customUnknownEn.categoryLabel).toBe("Extensions");
-    expect(customUnknownEn.name).toBe("Custom Extension Analyzer Plugin");
-    expect(PLUGIN_CATEGORIES.terminal.label).toBe("Terminal & Exec");
-    expect(PLUGIN_CATEGORIES.custom.description).toContain("custom extension");
-  });
-
-  it("resolves plugin category metadata from the active locale dictionary", () => {
-    setLocale("zh-CN");
-    expect(PLUGIN_CATEGORIES.terminal.label).toBe("终端与执行");
-    expect(PLUGIN_CATEGORIES.terminal.description).toContain("PowerShell");
-    setLocale("en-US");
-    expect(PLUGIN_CATEGORIES.mcp.label).toBe("MCP Protocol");
-    expect(PLUGIN_CATEGORIES.office.description).toContain("PowerPoint");
   });
 
   it("separates mixed plugin inventory into distinct plugins and MCP entries", () => {

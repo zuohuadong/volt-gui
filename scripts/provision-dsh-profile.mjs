@@ -2,11 +2,18 @@ import { closeSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readFile
 import path from 'node:path';
 
 const BROWSER_SKILL_PACKAGE = '@wxg-prc-cpg/browser-skill-dsh-plugin';
-const PREVIOUS_BUNDLED_VERSIONS = new Set(['0.1.2', '0.2.0', '0.2.1']);
-const CURRENT_BUNDLED_VERSION = '0.3.3';
+const VOICE_INPUT_BUNDLE = '@deepseek-ai/dsh-experimental-voice-input-bundle';
+const PREVIOUS_BUNDLED_VERSIONS = new Set(['0.1.2', '0.2.0', '0.2.1', '0.3.1', '0.3.2', '0.3.3']);
+const CURRENT_BUNDLED_VERSION = '0.4.0';
 
 function canUpgradeBundledVersion(version, bundledVersion) {
   return PREVIOUS_BUNDLED_VERSIONS.has(version) && bundledVersion === CURRENT_BUNDLED_VERSION;
+}
+
+function canUpgradeProfilePlugin(packageName, version, bundledVersion) {
+  return packageName === VOICE_INPUT_BUNDLE
+    && ['0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4'].includes(version)
+    && bundledVersion === '0.2.1-rc.5';
 }
 
 function readJsonObject(filePath) {
@@ -60,14 +67,16 @@ function updatedProfileManifest(dshHome, profileName, bundledVersion, additional
     ? existing.dsh.profile
     : {};
   const bundles = Array.isArray(profile.bundles) ? profile.bundles.filter((bundle) => typeof bundle === 'string') : [];
-  const baseBundle = profileName === 'web' ? '@deepseek-ai/dsh-web-app' : '@deepseek-ai/dsh-headless';
+  const baseBundle = profileName === 'headless' ? '@deepseek-ai/dsh-headless' : '@deepseek-ai/dsh-web-app';
   if (!bundles.includes('@deepseek-ai/dsh-base')) bundles.unshift('@deepseek-ai/dsh-base');
   if (!bundles.includes(baseBundle)) bundles.push(baseBundle);
+  if (!bundles.includes(VOICE_INPUT_BUNDLE)) bundles.push(VOICE_INPUT_BUNDLE);
   dependencies[BROWSER_SKILL_PACKAGE] = bundledVersion;
   if (!bundles.includes(BROWSER_SKILL_PACKAGE)) bundles.push(BROWSER_SKILL_PACKAGE);
   for (const plugin of additionalPlugins) {
     const configuredVersion = dependencies[plugin.packageName];
-    if (configuredVersion !== undefined && configuredVersion !== plugin.version) {
+    if (configuredVersion !== undefined && configuredVersion !== plugin.version
+      && !canUpgradeProfilePlugin(plugin.packageName, configuredVersion, plugin.version)) {
       throw new Error(`DSH Profile 已配置不同 ${plugin.packageName} 版本：${configuredVersion}`);
     }
     dependencies[plugin.packageName] = plugin.version;
@@ -101,12 +110,16 @@ function installBundledProfilePlugin(profileDir, plugin) {
     if (lstatSync(targetDir).isSymbolicLink()) {
       throw new Error(`DSH Profile Bundle 不允许使用符号链接：${targetDir}`);
     }
-    verifyBundledProfilePlugin(targetDir, plugin.packageName, plugin.version);
-    return undefined;
+    const installed = readJsonObject(path.join(targetDir, 'package.json'));
+    const upgrading = canUpgradeProfilePlugin(plugin.packageName, installed.version, plugin.version);
+    verifyBundledProfilePlugin(targetDir, plugin.packageName, upgrading ? installed.version : plugin.version);
+    const sourceRevision = readJsonObject(path.join(plugin.packageDir, 'package.json')).anyongPatchRevision;
+    if (!upgrading && (!sourceRevision || installed.anyongPatchRevision === sourceRevision)) return undefined;
   }
 
   mkdirSync(path.dirname(targetDir), { recursive: true });
   const temporaryDir = `${targetDir}.${process.pid}.${Date.now()}.tmp`;
+  const backupDir = existsSync(targetDir) ? `${targetDir}.${process.pid}.${Date.now()}.backup` : undefined;
   try {
     cpSync(plugin.packageDir, temporaryDir, {
       recursive: true,
@@ -115,8 +128,15 @@ function installBundledProfilePlugin(profileDir, plugin) {
       filter: (source) => path.basename(source) !== 'node_modules',
     });
     verifyBundledProfilePlugin(temporaryDir, plugin.packageName, plugin.version);
+    if (backupDir) renameSync(targetDir, backupDir);
     renameSync(temporaryDir, targetDir);
-    return () => rmSync(targetDir, { recursive: true, force: true });
+    return () => {
+      rmSync(targetDir, { recursive: true, force: true });
+      if (backupDir) renameSync(backupDir, targetDir);
+    };
+  } catch (error) {
+    if (backupDir && existsSync(backupDir) && !existsSync(targetDir)) renameSync(backupDir, targetDir);
+    throw error;
   } finally {
     rmSync(temporaryDir, { recursive: true, force: true });
   }
@@ -153,7 +173,9 @@ function installBundledBrowserSkill(profileDir, bundledPackageDir, bundledVersio
     const installedVersion = readJsonObject(path.join(targetDir, 'package.json')).version;
     if (installedVersion === bundledVersion) {
       verifyInstalledBrowserSkill(targetDir, bundledVersion);
-      return;
+      return installBundledProfilePlugin(profileDir, {
+        packageName: BROWSER_SKILL_PACKAGE, packageDir: bundledPackageDir, version: bundledVersion,
+      });
     }
     if (!canUpgradeBundledVersion(installedVersion, bundledVersion) || lstatSync(targetDir).isSymbolicLink()) {
       throw new Error(`DSH Profile 中已有不同 BrowserSkill 版本：${targetDir}`);

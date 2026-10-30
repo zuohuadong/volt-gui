@@ -1,18 +1,21 @@
 <script lang="ts">
-  import { Bot, Check, ChevronDown, Eye, Search, Sparkles, X } from "@lucide/svelte";
+  import { Bot, Check, ChevronDown, Eye, Search, Settings2, Sparkles, X } from "@lucide/svelte";
   import type { ModelGroup } from "$lib/dsh-client";
-  import { t } from "$lib/i18n";
-  import { modelSelectionKey, parseModelSelectionKey } from "$lib/model-catalog";
+  import { i18n, t } from "$lib/i18n";
+  import { localizeModelInfo, modelSelectionKey } from "$lib/model-catalog";
   import { onMount } from "svelte";
 
   type Props = {
     groups: ModelGroup[];
     selected: string;
     disabled?: boolean;
+    loading?: boolean;
+    error?: string;
+    onSettings: () => void;
     onSelect: (provider: string, model: string) => void;
   };
 
-  let { groups, selected, disabled = false, onSelect }: Props = $props();
+  let { groups, selected, disabled = false, loading = false, error = "", onSettings, onSelect }: Props = $props();
 
   let open = $state(false);
   let query = $state("");
@@ -31,13 +34,14 @@
           model.id.includes("thinking") ||
           model.id.includes("o1") ||
           model.id.includes("o3");
+        const localized = localizeModelInfo(model, i18n.locale);
         return {
           id: fullId,
           providerId: group.id,
           providerName: group.name,
           modelId: model.id,
-          name: model.name || model.id,
-          description: model.description || "",
+          name: localized.name || localized.id,
+          description: localized.description || "",
           isVision,
           isReasoning,
           disabled: false,
@@ -59,15 +63,15 @@
   });
 
   const selectedOption = $derived(
-    flatOptions.find((opt) => opt.id === selected || opt.modelId === selected) ||
-      flatOptions[0]
+    flatOptions.find((opt) => opt.id === selected || opt.modelId === selected)
   );
 
   const selectedDisplayName = $derived(
-    selectedOption?.name || (selected ? parseModelSelectionKey(selected).model : t("composer.selectModel"))
+    selectedOption?.name || t("composer.selectModel")
   );
 
   function handleSelect(option: (typeof flatOptions)[number]) {
+    if (loading) return;
     onSelect(option.providerId, option.modelId);
     open = false;
     query = "";
@@ -185,12 +189,17 @@
       </div>
 
       <div class="model-picker-list">
-        {#if filteredOptions.length === 0}
+        {#if loading}
+          <div class="model-picker-empty" role="status">{t("models.loadingCatalog")}</div>
+        {:else if filteredOptions.length === 0}
           <div class="model-picker-empty">
-            <span>{t("common.empty")}</span>
+            <span>{error ? t("models.loadFailed") : flatOptions.length ? t("models.noSearchMatches") : t("models.noConfiguredModels")}</span>
           </div>
         {:else}
           {#each filteredOptions as option, index (option.id)}
+            {#if index === 0 || filteredOptions[index - 1].providerId !== option.providerId}
+              <div class="model-provider-heading" role="presentation">{option.providerName}</div>
+            {/if}
             {@const isSelected = option.id === selected || option.modelId === selected}
             {@const isFocused = index === activeIndex}
             <button
@@ -205,11 +214,11 @@
             >
               <div class="model-item-main">
                 <div class="model-item-title-row">
-                  <span class="model-item-name">{option.name}</span>
+                  <span class="model-item-name" title={option.modelId}>{option.name}</span>
                   <span class="model-item-provider">{option.providerName}</span>
                 </div>
                 {#if option.description}
-                  <span class="model-item-desc">{option.description}</span>
+                  <span class="model-item-desc" title={option.description}>{option.description}</span>
                 {/if}
               </div>
 
@@ -234,6 +243,10 @@
           {/each}
         {/if}
       </div>
+      {#if error && !loading && filteredOptions.length > 0}<div class="model-picker-empty" role="alert">{t("models.loadFailed")}</div>{/if}
+      <button type="button" class="model-picker-item" onclick={() => { open = false; onSettings(); }}>
+        <Settings2 size={14} />{t("models.openSettings")}
+      </button>
     </div>
   {/if}
 </div>
@@ -305,11 +318,11 @@
     z-index: 70;
     display: flex;
     flex-direction: column;
-    width: min(340px, calc(100vw - 32px));
+    width: min(420px, calc(100vw - 32px));
     max-height: min(420px, calc(100vh - 112px));
     border: 1px solid var(--border);
-    border-radius: 10px;
-    background: #ffffff;
+    border-radius: 8px;
+    background: var(--popover);
     color: var(--foreground);
     box-shadow: 0 12px 36px rgba(15, 23, 42, 0.12), 0 4px 12px rgba(15, 23, 42, 0.06);
     overflow: hidden;
@@ -341,7 +354,7 @@
     height: 30px;
     border: 1px solid var(--border);
     border-radius: 6px;
-    background: #ffffff;
+    background: var(--card);
   }
 
   .model-picker-search:focus-within {
@@ -398,6 +411,14 @@
     transition: background 100ms ease;
   }
 
+  .model-provider-heading {
+    padding: 8px 10px 4px;
+    color: var(--muted-foreground);
+    font-size: 11px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+
   .model-picker-item:hover,
   .model-picker-item.focused {
     background: var(--muted);
@@ -426,9 +447,7 @@
     font-size: 12.5px;
     font-weight: 600;
     color: var(--foreground);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
 
   .model-item-provider {
@@ -444,13 +463,9 @@
   .model-item-desc {
     font-size: 11px;
     color: var(--muted-foreground);
-    display: -webkit-box;
-    overflow: hidden;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-height: 1.35;
+    display: block;
     overflow-wrap: anywhere;
+    line-height: 1.35;
   }
 
   .model-item-badges {

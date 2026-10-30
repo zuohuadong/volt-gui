@@ -173,9 +173,6 @@ function getFiberPhaseLabel(phase?: string | null): string {
                   <strong>{plugin.info.name}</strong>
                   <span class="plugin-category-badge">{plugin.info.categoryLabel}</span>
                 </div>
-                <code class="plugin-id-tag" title={plugin.moduleName}>
-                  {plugin.moduleName} · {plugin.entryId}
-                </code>
               </div>
             </div>
 
@@ -191,18 +188,20 @@ function getFiberPhaseLabel(phase?: string | null): string {
             </div>
           </div>
 
-          <p class="plugin-card-description">{plugin.info.description}</p>
+          <div class="plugin-card-description-block">
+            <span class="plugin-card-description-label">{t("plugins.chineseDescription")}</span>
+            <p class="plugin-card-description">{plugin.info.description}</p>
+          </div>
 
-          <div class="plugin-card-footer">
-            <span class="plugin-vendor-tag">{plugin.info.vendor}</span>
-            {#if plugin.info.tags && plugin.info.tags.length > 0}
+          {#if plugin.info.tags && plugin.info.tags.length > 0}
+            <div class="plugin-card-footer">
               <div class="plugin-tag-list">
                 {#each plugin.info.tags as tag, tagIndex (`${tag}:${tagIndex}`)}
                   <span class="plugin-keyword-tag">{tag}</span>
                 {/each}
               </div>
-            {/if}
-          </div>
+            </div>
+          {/if}
         </div>
       {/each}
     </div>

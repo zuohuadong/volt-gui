@@ -5,6 +5,7 @@
 import { DataState } from "@svadmin/ui";
 import type { DirectoryListing, DshClient } from "$lib/dsh-client";
 import { t } from "$lib/i18n";
+import { userFacingError } from "$lib/user-error";
 
 let { client, onRegistered }: { client: DshClient; onRegistered?: () => void } = $props();
   let listing = $state<DirectoryListing>();
@@ -16,19 +17,19 @@ let { client, onRegistered }: { client: DshClient; onRegistered?: () => void } =
   async function browse(path?: string): Promise<void> {
     loading = true; error = "";
     try { listing = await client.listDirectory(path); }
-    catch (e) { const message = e instanceof Error ? e.message : String(e); error = message.includes("needs the browse capability") ? t("errors.browseCapabilityNeeded") : message; }
+    catch (e) { error = userFacingError(e); }
     finally { loading = false; }
   }
   async function createFolder(): Promise<void> {
     const name = newFolder.trim();
     if (!listing || !name) return;
     try { await client.createDirectory(listing.path, name); newFolder = ""; await browse(listing.path); }
-    catch (e) { error = e instanceof Error ? e.message : String(e); }
+    catch (e) { error = userFacingError(e); }
   }
   async function register(path: string): Promise<void> {
     registering = path; error = "";
     try { await client.createWorkspace(path); onRegistered?.(); }
-    catch (e) { error = e instanceof Error ? e.message : String(e); }
+    catch (e) { error = userFacingError(e); }
     finally { registering = ""; }
   }
 </script>

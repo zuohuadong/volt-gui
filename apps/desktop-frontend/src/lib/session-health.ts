@@ -23,11 +23,23 @@ export function visibleSessions(
   sessions: SessionSummary[],
   archivedSessionIds: string[],
   activeSessionId = "",
+  draftSessionIds: string[] = [],
 ): SessionSummary[] {
   const archived = new Set(archivedSessionIds);
+  const drafts = new Set(draftSessionIds);
   return sessions.filter((session) =>
-    !archived.has(session.sessionId) && (!session.blank || session.sessionId === activeSessionId)
+    session.origin !== "subagent" && !archived.has(session.sessionId) && (!session.blank || session.sessionId === activeSessionId || drafts.has(session.sessionId))
   );
+}
+
+export function archivedSessionItems(
+  sessions: SessionSummary[],
+  archivedSessionIds: string[],
+): SessionSummary[] {
+  const archived = new Set(archivedSessionIds);
+  return sessions
+    .filter((session) => session.origin !== "subagent" && archived.has(session.sessionId))
+    .sort((left, right) => right.updatedAt - left.updatedAt);
 }
 
 export function clearsSessionError(event: { type: string; data?: Record<string, unknown> }): boolean {

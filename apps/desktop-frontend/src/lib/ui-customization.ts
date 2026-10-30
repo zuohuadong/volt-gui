@@ -1,9 +1,10 @@
-import { t } from "./i18n";
-
 export const UI_CUSTOMIZATION_SCHEMA = "voltui/ui-patch-v1" as const;
 
 export type UiDensity = "compact" | "comfortable";
 export type UiVisibility = "visible" | "hidden";
+export type UiFontFamily = "system" | "inter" | "yahei";
+export type UiFontSize = "small" | "medium" | "large";
+export type UiCodeFontFamily = "system-mono" | "jetbrains" | "cascadia";
 
 export interface UiQuickAction {
   readonly label: string;
@@ -15,6 +16,9 @@ export interface UiCustomizationPatch {
   readonly title?: string;
   readonly subtitle?: string;
   readonly density?: UiDensity;
+  readonly fontFamily?: UiFontFamily;
+  readonly fontSize?: UiFontSize;
+  readonly codeFontFamily?: UiCodeFontFamily;
   readonly sidebar?: "expanded" | "collapsed";
   readonly activity?: UiVisibility;
   readonly composerRows?: 2 | 3 | 4;
@@ -25,6 +29,9 @@ export interface UiCustomizationState {
   readonly title: string;
   readonly subtitle: string;
   readonly density: UiDensity;
+  readonly fontFamily: UiFontFamily;
+  readonly fontSize: UiFontSize;
+  readonly codeFontFamily: UiCodeFontFamily;
   readonly sidebar: "expanded" | "collapsed";
   readonly activity: UiVisibility;
   readonly composerRows: 2 | 3 | 4;
@@ -35,6 +42,9 @@ export const DEFAULT_UI_CUSTOMIZATION: UiCustomizationState = {
   title: "",
   subtitle: "",
   density: "comfortable",
+  fontFamily: "system",
+  fontSize: "medium",
+  codeFontFamily: "system-mono",
   sidebar: "expanded",
   activity: "hidden",
   composerRows: 3,
@@ -54,38 +64,45 @@ export type UiCustomizationParseResult =
 function boundedText(value: unknown, max: number, label: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string" || value.trim().length === 0 || value.length > max || forbiddenText.test(value)) {
-    throw new Error(t("customization.invalidField", { label }));
+    throw new Error(`${label} 无效`);
   }
   return value.trim();
 }
 
 function parsePatch(value: unknown): UiCustomizationPatch {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(t("customization.patchMustBeObject"));
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("界面 patch 必须是 JSON 对象");
   const record = value as Record<string, unknown>;
-  if (record.schemaVersion !== UI_CUSTOMIZATION_SCHEMA) throw new Error(t("customization.unsupportedPatchVersion"));
+  if (record.schemaVersion !== UI_CUSTOMIZATION_SCHEMA) throw new Error("不支持的界面 patch 版本");
   const allowed = new Set([
-    "schemaVersion", "title", "subtitle", "density", "sidebar", "activity", "composerRows", "quickActions",
+    "schemaVersion", "title", "subtitle", "density", "fontFamily", "fontSize", "codeFontFamily",
+    "sidebar", "activity", "composerRows", "quickActions",
   ]);
-  for (const key of Object.keys(record)) if (!allowed.has(key)) throw new Error(t("customization.unknownPatchField", { key }));
+  for (const key of Object.keys(record)) if (!allowed.has(key)) throw new Error(`不允许的界面字段：${key}`);
 
   const density = record.density === undefined ? undefined : record.density;
-  if (density !== undefined && density !== "compact" && density !== "comfortable") throw new Error(t("customization.invalidDensity"));
+  if (density !== undefined && density !== "compact" && density !== "comfortable") throw new Error("density 无效");
+  const fontFamily = record.fontFamily === undefined ? undefined : record.fontFamily;
+  if (fontFamily !== undefined && fontFamily !== "system" && fontFamily !== "inter" && fontFamily !== "yahei") throw new Error("fontFamily 无效");
+  const fontSize = record.fontSize === undefined ? undefined : record.fontSize;
+  if (fontSize !== undefined && fontSize !== "small" && fontSize !== "medium" && fontSize !== "large") throw new Error("fontSize 无效");
+  const codeFontFamily = record.codeFontFamily === undefined ? undefined : record.codeFontFamily;
+  if (codeFontFamily !== undefined && codeFontFamily !== "system-mono" && codeFontFamily !== "jetbrains" && codeFontFamily !== "cascadia") throw new Error("codeFontFamily 无效");
   const sidebar = record.sidebar === undefined ? undefined : record.sidebar;
-  if (sidebar !== undefined && sidebar !== "expanded" && sidebar !== "collapsed") throw new Error(t("customization.invalidSidebar"));
+  if (sidebar !== undefined && sidebar !== "expanded" && sidebar !== "collapsed") throw new Error("sidebar 无效");
   const activity = record.activity === undefined ? undefined : record.activity;
-  if (activity !== undefined && activity !== "visible" && activity !== "hidden") throw new Error(t("customization.invalidActivity"));
+  if (activity !== undefined && activity !== "visible" && activity !== "hidden") throw new Error("activity 无效");
   const composerRows = record.composerRows === undefined ? undefined : record.composerRows;
-  if (composerRows !== undefined && composerRows !== 2 && composerRows !== 3 && composerRows !== 4) throw new Error(t("customization.invalidComposerRows"));
+  if (composerRows !== undefined && composerRows !== 2 && composerRows !== 3 && composerRows !== 4) throw new Error("composerRows 无效");
 
   let quickActions: UiQuickAction[] | undefined;
   if (record.quickActions !== undefined) {
-    if (!Array.isArray(record.quickActions) || record.quickActions.length > MAX_QUICK_ACTIONS) throw new Error(t("customization.invalidQuickActionCount"));
+    if (!Array.isArray(record.quickActions) || record.quickActions.length > MAX_QUICK_ACTIONS) throw new Error("quickActions 数量无效");
     quickActions = record.quickActions.map((item) => {
-      if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error(t("customization.quickActionMustBeObject"));
+      if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("quickAction 必须是对象");
       const action = item as Record<string, unknown>;
       const label = boundedText(action.label, 32, "quickAction.label");
       const prompt = boundedText(action.prompt, MAX_PROMPT_LENGTH, "quickAction.prompt");
-      if (!label || !prompt) throw new Error(t("customization.quickActionMissingFields"));
+      if (!label || !prompt) throw new Error("quickAction 缺少 label 或 prompt");
       return { label, prompt };
     });
   }
@@ -95,6 +112,9 @@ function parsePatch(value: unknown): UiCustomizationPatch {
     title: boundedText(record.title, MAX_TITLE_LENGTH, "title"),
     subtitle: boundedText(record.subtitle, MAX_SUBTITLE_LENGTH, "subtitle"),
     density,
+    fontFamily,
+    fontSize,
+    codeFontFamily,
     sidebar,
     activity,
     composerRows,
@@ -139,7 +159,7 @@ export function parseUiCustomization(text: string): UiCustomizationParseResult {
       // Continue searching; an assistant may include an explanatory JSON block first.
     }
   }
-  return { ok: false, error: t("customization.patchNotFound") };
+  return { ok: false, error: "未找到有效的界面 patch" };
 }
 
 export function applyUiCustomization(
@@ -150,6 +170,9 @@ export function applyUiCustomization(
     title: patch.title ?? current.title,
     subtitle: patch.subtitle ?? current.subtitle,
     density: patch.density ?? current.density,
+    fontFamily: patch.fontFamily ?? current.fontFamily,
+    fontSize: patch.fontSize ?? current.fontSize,
+    codeFontFamily: patch.codeFontFamily ?? current.codeFontFamily,
     sidebar: patch.sidebar ?? current.sidebar,
     activity: patch.activity ?? current.activity,
     composerRows: patch.composerRows ?? current.composerRows,
@@ -157,12 +180,29 @@ export function applyUiCustomization(
   };
 }
 
+export function restoreUiCustomization(stored: string): UiCustomizationState {
+  try {
+    const parsed: unknown = JSON.parse(stored);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return DEFAULT_UI_CUSTOMIZATION;
+    const record = parsed as Record<string, unknown>;
+    return applyUiCustomization(DEFAULT_UI_CUSTOMIZATION, parsePatch({
+      ...record,
+      schemaVersion: UI_CUSTOMIZATION_SCHEMA,
+      title: record.title === "" ? undefined : record.title,
+      subtitle: record.subtitle === "" ? undefined : record.subtitle,
+    }));
+  } catch {
+    // 损坏或过期的展示偏好不应阻止工作台启动。
+    return DEFAULT_UI_CUSTOMIZATION;
+  }
+}
+
 export function isUiCustomizationIntent(text: string): boolean {
-  const target = /(界面|布局|侧栏|活动面板|工作台|输入框|快捷操作|标题|副标题|密度|interface|layout|sidebar|activity panel|workbench|composer|quick action|\btitle\b|\bsubtitle\b|\bdensity\b)/iu;
-  const change = /(调整|修改|改变|改成|改为|切换|收起|展开|显示|隐藏|自定义|定制|紧凑|舒适|增加|减少|collapse|expand|hide|show|switch|change|customize|compact|comfortable)/iu;
+  const target = /(界面|布局|侧栏|活动面板|工作台|输入框|快捷操作|标题|副标题|密度|字体|字号|代码字体)/u;
+  const change = /(调整|修改|改变|改成|改为|切换|收起|展开|显示|隐藏|自定义|定制|紧凑|舒适|增加|减少)/u;
   return target.test(text) && change.test(text);
 }
 
 export function buildUiCustomizationPrompt(text: string): string {
-  return `${text}\n\n[Volt UI customization protocol]\n${t("customization.protocol", { schema: UI_CUSTOMIZATION_SCHEMA })}`;
+  return `${text}\n\n[Volt UI customization protocol]\n如果请求包含界面、布局、侧栏、活动面板、密度、字体、字号、代码字体、标题、快捷操作或输入框定制，请在回答末尾追加一个 fenced JSON patch。只能使用以下字段：schemaVersion="${UI_CUSTOMIZATION_SCHEMA}"、title、subtitle、density(compact|comfortable)、fontFamily(system|inter|yahei)、fontSize(small|medium|large)、codeFontFamily(system-mono|jetbrains|cascadia)、sidebar(expanded|collapsed)、activity(visible|hidden)、composerRows(2|3|4)、quickActions([{label,prompt}])。不要输出 HTML、CSS、JavaScript、Svelte、URL、文件路径或事件处理器。只修改用户明确要求的部分。`;
 }

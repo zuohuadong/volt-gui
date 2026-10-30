@@ -3,9 +3,9 @@
 // Audited browser/computer-use integrations; DSH remains the runtime owner.
 export const browserSkill = Object.freeze({
   packageName: "@wxg-prc-cpg/browser-skill-dsh-plugin",
-  version: "0.3.3",
+  version: "0.4.0",
   license: "MIT",
-  integrity: "sha512-YleWGGDN7re7arDD8PVgcIuTeMXHne4JKilLaKmvO9L1EzvOKNKVXZ3eHq7CXbgF7uooxRjnYviMH2QMRqZv+A==",
+  integrity: "sha512-lkPMn+JbgJ95Nw1z9OK5cgZ6M4yXzzkxC6tXsDKZ2IJnTTgOUjhEVNU5HoSMqRbFg10+ZATfzhI/G5P9MKHtEg==",
   repository: "https://github.com/Tencent/BrowserSkill",
   role: "dsh-browser-plugin",
 });
@@ -20,4 +20,12 @@ export const browserSkillCli = Object.freeze({
     "darwin-x64": { name: "bsk-v0.4.0-x86_64-apple-darwin.tar.gz", sha256: "10fcb8dd7fea96f471a11e3492c4d1d7846de630d3668136bfc5c59690afa95e" },
     "darwin-arm64": { name: "bsk-v0.4.0-aarch64-apple-darwin.tar.gz", sha256: "cbe6e6e29c1e215c3e445477c4855a03f43c63973ca578337c4281e6eea29aaf" },
   },
+});
+
+export const browserSkillExtension = Object.freeze({
+  version: "0.4.0",
+  releaseUrl: "https://github.com/Tencent/BrowserSkill/releases/download/ext-v0.4.0",
+  archive: "browser-skill-extension-v0.4.0-chrome.zip",
+  sha256: "ebb28abf4d18e8983e416647145d2acdbd3aa0a3b70320bf39401e27b5d4f16e",
+  vendorPath: "vendor/browser-skill/browser-skill-extension-v0.4.0-chrome.zip",
 });

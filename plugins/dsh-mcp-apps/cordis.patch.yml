@@ -1,0 +1,3 @@
+- insert:
+    - id: mcp-apps
+      name: '@voltui/dsh-mcp-apps'

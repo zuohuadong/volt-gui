@@ -6,6 +6,8 @@ import { afterEach, test } from "node:test";
 
 import { IMAGE_FILE_MACHINE_ARM64, windowsPeStub, windowsX64PeStub } from "./native-executable.mjs";
 import { inspectPackagedResources, inspectPackagedWindowsApp, packagedRuntimeLayout, resolvePackagedResources } from "./smoke-packaged-dsh-runtime.mjs";
+import { desktopToolRequiredFiles } from "../apps/desktop-electron/src/desktop-tool-environment.ts";
+import duckdbExtensionLock from "./duckdb-extension.lock.json" with { type: "json" };
 
 const fixtures = [];
 
@@ -34,6 +36,9 @@ function createResources(platform = "win32") {
     path.join(resources, "dsh-runtime", "node_modules", "@voltui", "dsh-intranet-auth", "package.json"),
     path.join(resources, "dsh-runtime", "node_modules", "zod", "package.json"),
     path.join(resources, "dsh-runtime", "scripts", "anyong-integrations-mcp.mjs"),
+    ...["office-control.ps1", "report-docx.py", "sheet-engine.py", "network-policy.mjs"].map(file => path.join(resources, "dsh-runtime", "scripts", file)),
+    ...["@voltui/dsh-office", "@voltui/dsh-mcp-apps", "@voltui/dsh-native-ui", "@deepseek-ai/dsh-experimental-voice-input-bundle", "undici"].map(name => path.join(resources, "dsh-runtime/node_modules", name, "package.json")),
+    path.join(resources, "dsh-runtime/node_modules/memorix/dist/cli/index.js"),
     path.join(resources, "dsh-runtime", "node_modules", "@officecli", "officecli", "vendor", platform === "win32" ? "officecli.exe" : "officecli"),
     path.join(resources, "browser-skill-runtime", platform === "win32" ? "bsk.exe" : "bsk"),
     ...(platform === "win32" ? [
@@ -42,6 +47,12 @@ function createResources(platform = "win32") {
       path.join(resources, "dsh-runtime", "node_modules", "node-pty", "prebuilds", "win32-x64", "conpty", "conpty.dll"),
       path.join(resources, "dsh-runtime", "node_modules", "node-pty", "prebuilds", "win32-x64", "conpty", "OpenConsole.exe"),
       path.join(resources, "dsh-runtime", "node_modules", "@koromix", "koffi-win32-x64", "win32_x64", "koffi.node"),
+      path.join(resources, "dsh-runtime/node_modules/dsh-ab-ocr/python/ocr_worker.py"),
+      ...desktopToolRequiredFiles.map(file => path.join(resources, "tool-runtime", file)),
+      path.join(resources, `dsh-runtime/scripts/duckdb-extensions/v${duckdbExtensionLock.duckdbVersion}/${duckdbExtensionLock.platform}/excel.duckdb_extension`),
+      path.join(resources, "browser-extension-runtime/extension/manifest.json"),
+      path.join(resources, "browser-extension-runtime/extension/background.js"),
+      ...["model.int8.onnx", "tokens.txt", "silero_vad.onnx"].map(file => path.join(resources, "speech-runtime/sensevoice", file)),
     ] : []),
   ];
   for (const file of files) {
@@ -70,6 +81,24 @@ test("rejects a second DSH copy under app.asar.unpacked", () => {
   const duplicate = path.join(fixture.resources, "app.asar.unpacked", "node_modules", "@deepseek-ai", "dsh");
   mkdirSync(duplicate, { recursive: true });
   assert.throws(() => inspectPackagedResources(fixture.resources, "win32"), /duplicate DSH runtime/);
+});
+
+test("rejects missing Windows tools, offline speech, extension and spreadsheet resources", () => {
+  const fixture = createResources("win32");
+  for (const relative of [
+    "tool-runtime/powershell/pwsh.exe",
+    "tool-runtime/python/python.exe",
+    "tool-runtime/python/Lib/site-packages/rapidocr/models/PP-OCRv6_rec_small.onnx",
+    "speech-runtime/sensevoice/model.int8.onnx",
+    "speech-runtime/sensevoice/tokens.txt",
+    "browser-extension-runtime/extension/background.js",
+    `dsh-runtime/scripts/duckdb-extensions/v${duckdbExtensionLock.duckdbVersion}/${duckdbExtensionLock.platform}/excel.duckdb_extension`,
+  ]) {
+    const file = path.join(fixture.resources, relative);
+    rmSync(file);
+    assert.throws(() => inspectPackagedResources(fixture.resources, "win32"), /incomplete/u);
+    writeFileSync(file, relative.endsWith(".exe") ? windowsX64PeStub() : "fixture");
+  }
 });
 
 test("rejects Windows resources whose executables are not PE images", () => {

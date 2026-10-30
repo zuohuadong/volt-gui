@@ -1,10 +1,13 @@
 <script lang="ts">
   import { Artifact, CodeBlock, FileTree, Terminal, TestResults } from "@svadmin/ai-elements";
+  import type { DshClient } from "$lib/dsh-client";
   import type { ToolInfo } from "$lib/transcript";
+  import DshNativeUiView from "$components/DshNativeUiView.svelte";
   import { hasStructuredToolOutput, toolPresentation } from "$lib/ai-elements-adapter";
+  import McpAppView from "$components/McpAppView.svelte";
   import { t } from "$lib/i18n";
 
-  let { tool }: { readonly tool: ToolInfo } = $props();
+  let { tool, client, sessionId = "" }: { readonly tool: ToolInfo; readonly client?: DshClient; readonly sessionId?: string } = $props();
   const presentation = $derived(toolPresentation(tool));
   const hasStructuredOutput = $derived(hasStructuredToolOutput(presentation));
   const web = $derived(presentation.web);
@@ -17,6 +20,8 @@
 </script>
 
 {#if hasStructuredOutput}<div class="structured-tool-output">
+  {#if presentation.nativeUi}<DshNativeUiView view={presentation.nativeUi} />{/if}
+  {#if presentation.mcpApp && client}<McpAppView app={presentation.mcpApp} {client} {sessionId} />{/if}
   {#if presentation.images.length}
     <div class="tool-image-results">
       {#each presentation.images as image (image.id)}

@@ -15,6 +15,8 @@ const boundaryFiles = {
   builder: "apps/desktop-electron/electron-builder.mjs",
   native: "scripts/native-executable.mjs",
   client: "apps/desktop-frontend/src/lib/dsh-client.ts",
+  methodMap: "apps/desktop-electron/src/dsh-method-map.ts",
+  attachment: "apps/desktop-frontend/src/components/MessageAttachment.svelte",
 };
 
 async function loadSources(root) {
@@ -39,12 +41,12 @@ function extractQuotedMethods(block) {
 }
 
 export function extractAllowedDshMethods(source) {
-  const match = source.match(/const allowedDshMethods = new Set\(\[([\s\S]*?)\]\)/);
+  const match = source.match(/const allowedDshMethods(?:\s*:[^=]+)?\s*=\s*new Set\(\[([\s\S]*?)\]\)/);
   return match ? extractQuotedMethods(match[1]) : [];
 }
 
 export function extractRendererDshMethods(source) {
-  return [...source.matchAll(/this\.request\(\s*"([^"]+)"/g)].map((match) => match[1]);
+  return [...source.matchAll(/(?:this|client!?)\.request(?:<[\s\S]*?>)?\(\s*"([^"]+)"/g)].map((match) => match[1]);
 }
 
 export async function scanElectronRuntimeBoundary({ root = repositoryRoot } = {}) {
@@ -58,8 +60,9 @@ export async function scanElectronRuntimeBoundary({ root = repositoryRoot } = {}
     ["window-open", /setWindowOpenHandler\(\s*\([^)]*\)\s*=>\s*\{[\s\S]*?return\s*\{\s*action:\s*["']deny["']\s*\}\s*;?\s*\}\s*\)/, "New windows must be denied."],
     ["navigation-origin", /will-navigate[\s\S]*isAllowedNavigationUrl\(targetUrl/, "Local renderer navigation must stay on the trusted frontend or managed DSH origin."],
     ["ipc-sender-origin", /assertTrustedIpcSender[\s\S]*isTrustedIpcSenderUrl/, "Every privileged IPC handler must verify its renderer sender."],
-    ["permission-check", /setPermissionCheckHandler\(\(\)\s*=>\s*false\)/, "Browser permission checks must fail closed."],
-    ["permission-request", /setPermissionRequestHandler[\s\S]*callback\(false\)/, "Browser permission requests must fail closed."],
+    ["permission-check", /setPermissionCheckHandler[\s\S]*isTrustedMicrophonePermission/, "Browser permission checks must use the trusted microphone boundary."],
+    ["permission-request", /setPermissionRequestHandler[\s\S]*isTrustedMicrophonePermission/, "Browser permission requests must use the trusted microphone boundary."],
+    ["permission-trust", /return microphoneAllowed[\s\S]*webContents === mainWindow\?\.webContents[\s\S]*isTrustedIpcSenderUrl\(webContents\.getURL\(\), frontendEntryUrl\(\)\)[\s\S]*details\.isMainFrame === true[\s\S]*isTrustedIpcSenderUrl\(details\.requestingUrl \?\? "", frontendEntryUrl\(\)\)[\s\S]*isAudioOnlyMediaPermission\(permission, details\)/, "Microphone permission must fail closed outside the trusted main window."],
   ]) {
     requirePattern(findings, sources.main, boundaryFiles.main, rule, pattern, message);
   }
@@ -180,15 +183,15 @@ export async function scanElectronRuntimeBoundary({ root = repositoryRoot } = {}
     "electron-builder must not package retired renderer assets.",
   );
 
-  const allowedMethods = new Set(extractAllowedDshMethods(sources.main));
+  const allowedMethods = new Set(extractAllowedDshMethods(sources.methodMap));
   if (allowedMethods.size === 0) {
     findings.push({
-      file: boundaryFiles.main,
+      file: boundaryFiles.methodMap,
       rule: "ipc-method-allowlist-parse",
       message: "Electron DSH method allowlist must be parseable.",
     });
   }
-  const rendererMethods = [...new Set(extractRendererDshMethods(sources.client))];
+  const rendererMethods = [...new Set(extractRendererDshMethods(`${sources.client}\n${sources.attachment}`))];
   const missingRendererMethods = rendererMethods.filter((method) => !allowedMethods.has(method));
   if (missingRendererMethods.length > 0) {
     findings.push({
@@ -200,7 +203,7 @@ export async function scanElectronRuntimeBoundary({ root = repositoryRoot } = {}
   const extraAllowlistMethods = [...allowedMethods].filter((method) => !rendererMethods.includes(method));
   if (extraAllowlistMethods.length > 0) {
     findings.push({
-      file: boundaryFiles.main,
+      file: boundaryFiles.methodMap,
       rule: "ipc-allowlist-unused",
       message: `Electron DSH allowlist must not include unused methods: ${extraAllowlistMethods.join(", ")}.`,
     });

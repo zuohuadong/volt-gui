@@ -65,6 +65,8 @@ test("packages only explicit production Electron files", () => {
     { from: ".dsh-runtime/scripts", to: "dsh-runtime/scripts" },
     { from: ".node-runtime", to: "node-runtime" },
     { from: ".browser-skill-runtime", to: "browser-skill-runtime" },
+    { from: ".browser-extension-runtime", to: "browser-extension-runtime" },
+    { from: ".speech-runtime", to: "speech-runtime" },
   ]);
   assert.equal(electronBuilderConfig.beforeBuild(), false);
   assert.equal(electronBuilderConfig.asarUnpack, undefined);
@@ -85,7 +87,7 @@ test("packages only explicit production Electron files", () => {
   assert.equal(packageJson.dependencies["@deepseek-ai/dsh"], "0.2.1-rc.5");
   assert.equal(packageJson.optionalDependencies["@koromix/koffi-win32-x64"], "3.3.5");
   assert.equal(packageJson.dependencies["@officecli/officecli"], "1.0.159");
-  assert.equal(packageJson.dependencies["@wxg-prc-cpg/browser-skill-dsh-plugin"], "0.3.3");
+  assert.equal(packageJson.dependencies["@wxg-prc-cpg/browser-skill-dsh-plugin"], "0.4.0");
   assert.equal(packageJson.dependencies["@wxg-prc-cpg/dsh-weknora"], "0.1.0");
   assert.equal(packageJson.dependencies.zod, "4.6.7");
   assert.equal(packageJson.dependencies["js-yaml"], undefined);

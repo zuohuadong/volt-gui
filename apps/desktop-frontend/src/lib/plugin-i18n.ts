@@ -24,46 +24,23 @@ export type PluginCategoryMeta = {
   description: string;
 };
 
-const PLUGIN_CATEGORY_IDS: PluginCategory[] = [
-  "core",
-  "tools",
-  "terminal",
-  "filesystem",
-  "planning",
-  "subagents",
-  "compaction",
-  "skills",
-  "model",
-  "workflow",
-  "infrastructure",
-  "browser",
-  "office",
-  "mcp",
-  "custom",
-];
-
-function pluginCategoryMeta(id: PluginCategory): PluginCategoryMeta {
-  return {
-    id,
-    label: t(`plugins.categories.${id}`),
-    description: t(`plugins.categoriesDesc.${id}`),
-  };
-}
-
-export const PLUGIN_CATEGORIES: Record<PluginCategory, PluginCategoryMeta> = Object.fromEntries(
-  PLUGIN_CATEGORY_IDS.map((id) => [
-    id,
-    {
-      id,
-      get label() {
-        return t(`plugins.categories.${id}`);
-      },
-      get description() {
-        return t(`plugins.categoriesDesc.${id}`);
-      },
-    },
-  ]),
-) as Record<PluginCategory, PluginCategoryMeta>;
+export const PLUGIN_CATEGORIES: Record<PluginCategory, PluginCategoryMeta> = {
+  core: { id: "core", label: "核心配置", description: "系统人设、提示词注入与基础配置" },
+  tools: { id: "tools", label: "核心工具", description: "待办清单、用户交互与通用工具" },
+  terminal: { id: "terminal", label: "终端与执行", description: "PowerShell、Bash 命令行与进程执行" },
+  filesystem: { id: "filesystem", label: "文件与数据", description: "工作区文件读写、搜索与代码精准替换" },
+  planning: { id: "planning", label: "目标与规划", description: "长程目标控制、自主循环与规划模式" },
+  subagents: { id: "subagents", label: "多 Agent 协作", description: "多智能体派发、协同与调度控制" },
+  compaction: { id: "compaction", label: "上下文与性能", description: "Token 监控、上下文自动压缩与结果裁剪" },
+  skills: { id: "skills", label: "技能与知识", description: "技能系统加载、动态规范与文档检索" },
+  model: { id: "model", label: "模型与网关", description: "大语言模型提供商适配与推理路由" },
+  workflow: { id: "workflow", label: "工作流与自动化", description: "后台多线程工作流编排与批处理" },
+  infrastructure: { id: "infrastructure", label: "基础设施", description: "会话持久化、状态投影与框架内核" },
+  browser: { id: "browser", label: "浏览器与计算机控制", description: "浏览器会话、页面观察与受控交互" },
+  office: { id: "office", label: "Office 文档", description: "Word、Excel 与 PowerPoint 文档创建、编辑和验证" },
+  mcp: { id: "mcp", label: "MCP 协议服务", description: "Model Context Protocol 上下文协议连接" },
+  custom: { id: "custom", label: "扩展插件", description: "第三方或用户自定义扩展模块" },
+};
 
 export type PluginI18nInfo = {
   name: string;
@@ -335,7 +312,7 @@ const KNOWN_PLUGIN_REGISTRY: Record<string, BilingualPluginSpec> = {
     tags: { "zh-CN": ["Token 计量", "水位监控"], "en-US": ["Token Meter", "Watermark"] },
   },
   "@deepseek-ai/dsh-tool-subagent-control": {
-    name: { "zh-CN": "子 Agent 协同控制中心", "en-US": "Subagent Coordination Hub" },
+    name: { "zh-CN": "子智能体协同控制中心", "en-US": "Subagent Coordination Hub" },
     description: {
       "zh-CN": "管理派发给子 Agent 的协作任务生命周期、状态轮询与结果归集。",
       "en-US": "Manages subagent task lifecycle, polling, and result aggregation for multi-agent delegation.",
@@ -345,7 +322,7 @@ const KNOWN_PLUGIN_REGISTRY: Record<string, BilingualPluginSpec> = {
     tags: { "zh-CN": ["多 Agent", "协同调度", "生命周期"], "en-US": ["Multi-Agent", "Coordination", "Lifecycle"] },
   },
   "@deepseek-ai/dsh-tool-subagent": {
-    name: { "zh-CN": "子 Agent 派发器", "en-US": "Subagent Dispatcher" },
+    name: { "zh-CN": "子智能体派发器", "en-US": "Subagent Dispatcher" },
     description: {
       "zh-CN": "将独立探索、验证或子任务分发给一次性或持久运行的子 Agent 实例并行处理。",
       "en-US": "Dispatches independent exploration, verification, or subtasks to one-off or persistent subagents in parallel.",
@@ -355,7 +332,7 @@ const KNOWN_PLUGIN_REGISTRY: Record<string, BilingualPluginSpec> = {
     tags: { "zh-CN": ["子任务派发", "并行执行"], "en-US": ["Dispatch", "Parallel Execution"] },
   },
   "@deepseek-ai/dsh-subagent": {
-    name: { "zh-CN": "子 Agent 运行时核心", "en-US": "Subagent Runtime Core" },
+    name: { "zh-CN": "子智能体运行时核心", "en-US": "Subagent Runtime Core" },
     description: {
       "zh-CN": "底层提供隔离的执行环境与会话父子层级关系维护，保障多智能体协作安全性。",
       "en-US": "Provides isolated execution environments and maintains parent-child session hierarchies for multi-agent safety.",
@@ -415,7 +392,7 @@ const KNOWN_PLUGIN_REGISTRY: Record<string, BilingualPluginSpec> = {
     tags: { "zh-CN": ["网页搜索", "网络抓取", "文档检索"], "en-US": ["Web Search", "Web Fetch", "Docs"] },
   },
   "@deepseek-ai/dsh-llm": {
-    name: { "zh-CN": "LLM 推理网关核心", "en-US": "LLM Inference Gateway Core" },
+    name: { "zh-CN": "模型推理网关", "en-US": "LLM Inference Gateway Core" },
     description: {
       "zh-CN": "基础的大语言模型推理流调度、多 Provider 抽象与统一交互接口。",
       "en-US": "Unified LLM inference stream scheduler, multi-provider abstraction, and invocation interface.",
@@ -590,6 +567,34 @@ const KNOWN_PLUGIN_REGISTRY: Record<string, BilingualPluginSpec> = {
       "en-US": ["OfficeCLI", "Word", "Excel", "PowerPoint", "MCP"],
     },
   },
+  "mcp-office-control": {
+    name: { "zh-CN": "Office / WPS 应用控制", "en-US": "Office / WPS App Control" },
+    description: {
+      "zh-CN": "通过本机 COM 自动化打开、保存、关闭 Office/WPS 文档，导出 PDF，并将 doc/xls/ppt 转为 docx/xlsx/pptx；不修改系统设置，不执行宏。",
+      "en-US": "Opens, saves, closes, and exports Office/WPS documents through local COM automation, and converts doc/xls/ppt to docx/xlsx/pptx; no system changes or macros.",
+    },
+    category: "office",
+    vendor: { "zh-CN": "本机 Office / WPS", "en-US": "Local Office / WPS" },
+    isMcp: true,
+    tags: {
+      "zh-CN": ["Office", "WPS", "COM", "PDF", "MCP"],
+      "en-US": ["Office", "WPS", "COM", "PDF", "MCP"],
+    },
+  },
+  "mcp-altium": {
+    name: { "zh-CN": "Altium Designer 控制", "en-US": "Altium Designer Control" },
+    description: {
+      "zh-CN": "通过随包 DelphiScript bridge 连接 Altium Designer，读取项目、元件、网络、ERC、层与规则，并在确认后执行输出任务和设计修改。",
+      "en-US": "Connects to Altium Designer through a bundled DelphiScript bridge to inspect projects, components, nets, ERC, layers, and rules, with confirmed output and edit commands.",
+    },
+    category: "office",
+    vendor: { "zh-CN": "Altium Designer", "en-US": "Altium Designer" },
+    isMcp: true,
+    tags: {
+      "zh-CN": ["Altium", "PCB", "原理图", "ERC", "MCP"],
+      "en-US": ["Altium", "PCB", "Schematic", "ERC", "MCP"],
+    },
+  },
   "@wxg-prc-cpg/browser-skill-dsh-plugin": {
     name: { "zh-CN": "BrowserSkill 浏览器控制", "en-US": "BrowserSkill Browser Control" },
     description: {
@@ -653,16 +658,17 @@ export function resolvePluginI18n(
   const moduleName = entry.moduleName || "";
   const entryId = entry.entryId || "";
   const loc = targetLocale || getLocale();
+  const isZh = loc === "zh-CN";
 
   const match = KNOWN_PLUGIN_REGISTRY[entryId] || KNOWN_PLUGIN_REGISTRY[moduleName];
   if (match) {
-    const category = pluginCategoryMeta(match.category);
+    const categoryLabel = t(`plugins.categories.${match.category}`);
     const vendor = match.vendor ? match.vendor[loc] || match.vendor["zh-CN"] : DEFAULT_OFFICIAL_VENDOR[loc];
     return {
       name: match.name[loc] || match.name["zh-CN"],
       description: match.description[loc] || match.description["zh-CN"],
       category: match.category,
-      categoryLabel: category.label,
+      categoryLabel: categoryLabel || PLUGIN_CATEGORIES[match.category]?.label || match.category,
       vendor,
       isMcp: match.isMcp,
       tags: match.tags ? match.tags[loc] || match.tags["zh-CN"] : undefined,
@@ -670,39 +676,74 @@ export function resolvePluginI18n(
   }
 
   if (isMcpEntry(entry)) {
-    const readableName = sanitizePluginName(moduleName || entryId) || t("plugins.fallbackMcpService");
-    const category = pluginCategoryMeta("mcp");
+    const readableName = sanitizePluginName(moduleName || entryId) || (isZh ? "MCP 服务" : "MCP Service");
+    const categoryLabel = t("plugins.categories.mcp") || PLUGIN_CATEGORIES.mcp.label;
     return {
       name: `MCP ${readableName}`,
-      description: t("plugins.fallbackMcpDescription"),
+      description: isZh
+        ? "Model Context Protocol (MCP) 扩展服务，为 Agent 提供标准化外部工具调用、提示词与上下文数据资源。"
+        : "Model Context Protocol (MCP) service providing standard tool calling, prompts, and context resources.",
       category: "mcp",
-      categoryLabel: category.label,
+      categoryLabel,
       vendor: moduleName.startsWith("@deepseek-ai")
         ? DEFAULT_OFFICIAL_VENDOR[loc]
-        : t("plugins.fallbackExternalVendor"),
+        : isZh
+          ? "外部扩展"
+          : "External Extension",
       isMcp: true,
-      tags: ["MCP", "Model Context Protocol", t("plugins.fallbackMcpTag")],
+      tags: isZh ? ["MCP", "Model Context Protocol", "扩展服务"] : ["MCP", "Model Context Protocol", "Extensions"],
     };
   }
 
-  const categoryId = inferCategory(moduleName, entryId);
-  const category = pluginCategoryMeta(categoryId);
-  const readableName = sanitizePluginName(moduleName || entryId) || t("plugins.fallbackExtension");
+  const category = inferCategory(moduleName, entryId);
+  const categoryLabel = t(`plugins.categories.${category}`) || PLUGIN_CATEGORIES[category]?.label || category;
+  const readableName = sanitizePluginName(moduleName || entryId) || (isZh ? "扩展" : "Extension");
   const vendor = moduleName.startsWith("@deepseek-ai")
     ? DEFAULT_OFFICIAL_VENDOR[loc]
     : moduleName.startsWith("@")
-      ? t("plugins.fallbackOrgVendor")
-      : t("plugins.fallbackCustomVendor");
+      ? isZh
+        ? "组织扩展"
+        : "Org Extension"
+      : isZh
+        ? "自定义插件"
+        : "Custom Plugin";
 
   return {
-    name: t("plugins.fallbackPluginName", { name: readableName }),
-    description: t("plugins.fallbackDescription", { category: category.label }),
-    category: categoryId,
-    categoryLabel: category.label,
+    name: isZh ? `${readableName} 插件` : `${readableName} Plugin`,
+    description: isZh
+      ? `运行环境中的 ${categoryLabel} 模块，提供特定领域功能支持与运行时能力扩展。`
+      : `${categoryLabel} module providing domain-specific functionality and runtime extensions.`,
+    category,
+    categoryLabel,
     vendor,
     isMcp: false,
-    tags: [category.label, t("plugins.fallbackTag")],
+    tags: isZh ? [categoryLabel, "扩展插件"] : [categoryLabel, "Plugin"],
   };
+}
+
+export function settingsNamespaceName(namespace: string, locale: Locale): string {
+  if (locale === "zh-CN") {
+    const names: Record<string, string> = {
+      "session-log-deepseek": "会话日志",
+      "agent-default-model": "默认模型",
+      "pwsh-sandbox": "终端沙箱",
+      permission: "权限策略",
+      "agent-loop": "智能体循环",
+      "llm-deepseek-account": "DeepSeek 账号",
+      "subagent-model-selection-settings": "子智能体模型",
+      "ui-settings-account": "设置账号",
+      "ui-theme": "界面主题",
+      locale: "界面语言",
+      "ui-settings": "界面设置",
+      "ui-settings-general": "通用界面设置",
+      "ui-conversation": "对话界面",
+      "ui-chat": "聊天界面",
+      "agent-preset-registry": "智能体预设",
+    };
+    if (names[namespace]) return names[namespace];
+  }
+  const spec = KNOWN_PLUGIN_REGISTRY[`@deepseek-ai/dsh-${namespace}`];
+  return spec?.name[locale] ?? namespace;
 }
 
 export function enrichPluginEntry(

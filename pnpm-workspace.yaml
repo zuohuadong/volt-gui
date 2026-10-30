@@ -1,6 +1,18 @@
 packages:
   - 'apps/*'
 injectWorkspacePackages: true
+patchedDependencies:
+  dsh-ab-ocr@0.1.19: patches/dsh-ab-ocr@0.1.19.patch
+  '@wxg-prc-cpg/dsh-weknora@0.1.0': patches/@wxg-prc-cpg__dsh-weknora@0.1.0.patch
+  '@wxg-prc-cpg/browser-skill-dsh-plugin@0.4.0': patches/@wxg-prc-cpg__browser-skill-dsh-plugin@0.4.0.patch
+packageExtensions:
+  '@wxg-prc-cpg/dsh-weknora@0.1.0':
+    dependencies:
+      '@deepseek-ai/dsh-credentials': '0.2.1-rc.5'
+      '@deepseek-ai/dsh-typert-protocol': '0.2.1-rc.5'
+      '@deepseek-ai/schemastery': '3.18.5'
+      ipaddr.js: '2.5.0'
+      undici: '8.12.3'
 overrides:
   sharp: '0.35.5'
   js-yaml: '4.3.2'
@@ -12,17 +24,21 @@ overrides:
   'katex@>=0.16.0 <0.18.2': '0.18.10'
   'undici@>=8.0.0 <8.12.3': '8.12.3'
   'zod@>=4.0.0 <4.6.7': '4.6.7'
+  'zod@>=3.0.0 <4.0.0': '4.6.7'
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
   '@google/genai': true
   '@officecli/officecli': true
+  better-sqlite3: true
   electron: true
   electron-winstaller: false
   esbuild: true
   koffi: true
   node-pty: true
+  onnxruntime-node: true
   protobufjs: true
 minimumReleaseAgeExclude:
+  - '@deepseek-ai/dsh-client-ui-slots@0.2.1-rc.5'
   - '@deepseek-ai/dsh-acp-app@0.2.1-rc.5'
   - '@deepseek-ai/dsh-acp@0.2.1-rc.5'
   - '@deepseek-ai/dsh-agent-default-model@0.2.1-rc.5'
@@ -346,3 +362,4 @@ minimumReleaseAgeExclude:
   - '@lucide/svelte@1.64.0'
   - '@svadmin/devtools@0.3.11'
   - tailwind-variants@4.0.0
+  - '@wxg-prc-cpg/browser-skill-dsh-plugin@0.4.0'

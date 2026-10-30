@@ -9,7 +9,9 @@ import { fileURLToPath } from "node:url";
 import { bundledDshModelEnvironment, OfficialDshRuntime, provisionBundledDshCredential, STARTUP_TIMEOUT_MS, startOfficialDshWithRetry } from "../apps/desktop-electron/src/official-dsh-runtime.ts";
 import { DshRemoteClient } from "../apps/desktop-electron/src/dsh-remote-client.ts";
 import { resolveElectronProfile } from "../apps/desktop-electron/src/electron-profile.ts";
+import { desktopToolEnvironment, desktopToolRequiredFiles } from "../apps/desktop-electron/src/desktop-tool-environment.ts";
 import { assertWindowsX64PeExecutable, assertWindowsPackagedRuntimeNatives, windowsRuntimeNativeBinaries } from "./native-executable.mjs";
+import duckdbExtensionLock from "./duckdb-extension.lock.json" with { type: "json" };
 
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -34,6 +36,16 @@ const requiredRuntimeFiles = [
   "dsh-runtime/node_modules/@voltui/dsh-intranet-auth/package.json",
   "dsh-runtime/node_modules/zod/package.json",
   "dsh-runtime/scripts/anyong-integrations-mcp.mjs",
+  "dsh-runtime/scripts/office-control.ps1",
+  "dsh-runtime/scripts/report-docx.py",
+  "dsh-runtime/scripts/sheet-engine.py",
+  "dsh-runtime/scripts/network-policy.mjs",
+  "dsh-runtime/node_modules/undici/package.json",
+  "dsh-runtime/node_modules/@voltui/dsh-office/package.json",
+  "dsh-runtime/node_modules/@voltui/dsh-mcp-apps/package.json",
+  "dsh-runtime/node_modules/@voltui/dsh-native-ui/package.json",
+  "dsh-runtime/node_modules/@deepseek-ai/dsh-experimental-voice-input-bundle/package.json",
+  "dsh-runtime/node_modules/memorix/dist/cli/index.js",
 ];
 
 function requiredRuntimeFilesForPlatform(platform) {
@@ -50,6 +62,14 @@ function requiredRuntimeFilesForPlatform(platform) {
     files.push("dsh-runtime/node_modules/node-pty/prebuilds/win32-x64/conpty/conpty.dll");
     files.push("dsh-runtime/node_modules/node-pty/prebuilds/win32-x64/conpty/OpenConsole.exe");
     files.push("dsh-runtime/node_modules/@koromix/koffi-win32-x64/win32_x64/koffi.node");
+    files.push(...desktopToolRequiredFiles.map(file => `tool-runtime/${file}`));
+    files.push(
+      "dsh-runtime/node_modules/dsh-ab-ocr/python/ocr_worker.py",
+      `dsh-runtime/scripts/duckdb-extensions/v${duckdbExtensionLock.duckdbVersion}/${duckdbExtensionLock.platform}/excel.duckdb_extension`,
+      "browser-extension-runtime/extension/manifest.json",
+      "browser-extension-runtime/extension/background.js",
+      ...["model.int8.onnx", "tokens.txt", "silero_vad.onnx"].map(file => `speech-runtime/sensevoice/${file}`),
+    );
   }
   return files;
 }
@@ -104,6 +124,15 @@ export function inspectPackagedResources(resourcesDir, platform = process.platfo
       assertWindowsX64PeExecutable(file, `packaged ${label}`);
     }
     assertWindowsPackagedRuntimeNatives(path.join(resourcesDir, "dsh-runtime"));
+    for (const file of [
+      "dsh-runtime/node_modules/@voltui/dsh-office/package.json",
+      "dsh-runtime/node_modules/@voltui/dsh-mcp-apps/package.json",
+      "dsh-runtime/node_modules/@voltui/dsh-native-ui/package.json",
+      "dsh-runtime/node_modules/@deepseek-ai/dsh-experimental-voice-input-bundle/package.json",
+      "dsh-runtime/node_modules/dsh-ab-ocr/python/ocr_worker.py",
+    ]) {
+      if (!existsSync(path.join(resourcesDir, file))) throw new Error(`packaged integration is incomplete: ${file}`);
+    }
   }
 
   const duplicateDsh = path.join(resourcesDir, "app.asar.unpacked", "node_modules", "@deepseek-ai", "dsh");
@@ -206,6 +235,10 @@ function createPackagedDsh(runtime, temporaryRoot, platform = process.platform) 
   const localAppData = path.join(userProfile, "AppData", "Local");
   mkdirSync(appData, { recursive: true });
   mkdirSync(localAppData, { recursive: true });
+  const toolsEnvironment = platform === "win32"
+    ? desktopToolEnvironment(path.join(runtime.resourcesDir, "tool-runtime"), runtime.nodeExecutable, {})
+    : {};
+  const speechRoot = path.join(runtime.resourcesDir, "speech-runtime", "sensevoice");
   return new OfficialDshRuntime({
     executable: runtime.nodeExecutable,
     executableArgs: ["--expose-internals"],
@@ -220,16 +253,26 @@ function createPackagedDsh(runtime, temporaryRoot, platform = process.platform) 
     }, {
       packageName: "@voltui/dsh-intranet-auth",
       packageDir: layout.intranetAuthPlugin,
-    }],
+    }, ...["@voltui/dsh-office", "@voltui/dsh-mcp-apps", "@voltui/dsh-native-ui", "@deepseek-ai/dsh-experimental-voice-input-bundle"].map(packageName => ({
+      packageName, packageDir: path.join(runtime.resourcesDir, "dsh-runtime", "node_modules", packageName),
+    })), ...(platform === "win32" ? [{
+      packageName: "dsh-ab-ocr",
+      packageDir: path.join(runtime.resourcesDir, "dsh-runtime", "node_modules", "dsh-ab-ocr"),
+    }] : [])],
     environment: {
+      ...toolsEnvironment,
       ...bundledDshModelEnvironment(layout.bundledEnv),
+      ANYONG_MEMORY_ENABLED: "0",
+      ANYONG_MEMORIX_COMMAND: runtime.nodeExecutable,
+      ANYONG_MEMORIX_ARGS_JSON: JSON.stringify([path.join(runtime.resourcesDir, "dsh-runtime/node_modules/memorix/dist/cli/index.js"), "serve", "--mode", "micro", "--cwd", temporaryRoot]),
+      MEMORIX_DATA_DIR: path.join(dshHome, "memorix"),
       HOME: userProfile,
       USERPROFILE: userProfile,
       APPDATA: appData,
       LOCALAPPDATA: localAppData,
-      PATH: process.platform === "win32"
+      PATH: [toolsEnvironment.PATH, platform === "win32"
         ? `${process.env.SystemRoot}\\System32;${process.env.SystemRoot}`
-        : "/usr/bin:/bin",
+        : "/usr/bin:/bin"].filter(Boolean).join(path.delimiter),
       NODE_OPTIONS: "",
       NODE_PATH: "",
       XG_GOMODEL_API_KEY: "",
@@ -238,6 +281,12 @@ function createPackagedDsh(runtime, temporaryRoot, platform = process.platform) 
       ANYONG_OFFICECLI_ARGS_JSON: JSON.stringify([layout.officeCliEntry, "mcp"]),
       ANYONG_INTEGRATIONS_MCP_COMMAND: runtime.nodeExecutable,
       ANYONG_INTEGRATIONS_MCP_SCRIPT: layout.integrationsScript,
+      ANYONG_POWERSHELL: toolsEnvironment.ANYONG_PWSH_PATH,
+      ANYONG_DUCKDB_EXTENSION_DIR: path.join(runtime.resourcesDir, "dsh-runtime", "scripts", "duckdb-extensions"),
+      ...(existsSync(speechRoot) ? {
+        ANYONG_SPEECH_MODEL_DIR: speechRoot,
+        ANYONG_SPEECH_VAD_PATH: path.join(speechRoot, "silero_vad.onnx"),
+      } : {}),
     },
   });
 }
@@ -249,7 +298,17 @@ async function verifyDshRuntime(runtime) {
   const inventory = await client.call("pluginInventory/list", {});
   const entries = inventory?.entries;
   if (!Array.isArray(entries)) throw new Error("packaged DSH plugin inventory response is invalid");
-  for (const moduleName of ["@wxg-prc-cpg/browser-skill-dsh-plugin", "@wxg-prc-cpg/dsh-weknora", "@voltui/dsh-intranet-auth", "@deepseek-ai/dsh-mcp-client"]) {
+  for (const moduleName of [
+    "@wxg-prc-cpg/browser-skill-dsh-plugin",
+    "@wxg-prc-cpg/dsh-weknora",
+    "@voltui/dsh-intranet-auth",
+    "@voltui/dsh-office",
+    "@voltui/dsh-mcp-apps",
+    "@voltui/dsh-native-ui",
+    "@deepseek-ai/dsh-experimental-speech-to-text-sensevoice",
+    "@deepseek-ai/dsh-mcp-client",
+    ...(process.platform === "win32" ? ["dsh-ab-ocr"] : []),
+  ]) {
     const entry = entries.find((candidate) => candidate?.moduleName === moduleName);
     if (!entry?.enabled || entry.fiberPhase !== "active") throw new Error(`packaged DSH plugin is not active: ${moduleName}`);
   }

@@ -1,21 +1,27 @@
-import { t } from "./i18n";
-
 export type RpcResult<T> = { ok: true; value: T } | { ok: false; error: { message: string; code?: string } };
+export const MAX_UPLOAD_FILE_BYTES = 32 * 1024 * 1024;
 export type PermissionSelect = {
   options: Array<{ value: string; label?: string; description?: string }>;
   currentValue: string;
+};
+export type PermissionCatalog = {
+  options: Array<{ value: string; name?: string; description?: string }>;
 };
 export type SessionSummary = {
   sessionId: string;
   updatedAt: number;
   running: boolean;
   blank: boolean;
+  origin?: "user" | "subagent" | "fork";
+  parentSessionId?: string;
+  agentAvailable?: boolean;
   cwd?: string;
+  workspaceError?: string;
   agentPreset?: string;
   projections?: { values?: Record<string, unknown> & { permissions?: PermissionSelect } };
 };
 export type SessionProjection = { asOfSeq: number; values: Record<string, unknown> & { permissions?: PermissionSelect } };
-export type SessionHistory = { events: HistoryEntry[]; hasMore: boolean; projections?: SessionProjection };
+export type SessionHistory = { events: HistoryEntry[]; hasMore: boolean; cursor: number; projections?: SessionProjection };
 export type Workspace = { workspaceId: string; path: string; title: string; sessionIds: string[] };
 export type SessionSearchItem = { sessionId: string; snippet: string };
 export type HistoryEntry = { event: { type: string; seq: number; time: number; data: Record<string, unknown> }; view?: unknown };
@@ -39,9 +45,29 @@ export type PluginInventoryEntry = {
   fiberPhase: "pending" | "loading" | "active" | "failed" | "unloading" | null;
 };
 export type DiscoveredModel = { id: string; name?: string; contextWindow?: number; maxTokens?: number; input?: string[] };
+export type SpeechPreparationState =
+  | { phase: "unprepared" | "ready" | "standby" | "cancelled" }
+  | { phase: "downloading"; resource: string; completedBytes: number; totalBytes?: number }
+  | { phase: "checking" | "loading" | "waking" | "cancelling"; startedAt: number }
+  | { phase: "failed"; message: string; download?: { resource: string; source: string; reason: string; code?: string; status?: number } };
+export type SpeechProviderView = {
+  id: string;
+  name?: string;
+  location?: "host-local" | "cloud";
+  languages?: string[];
+  downloadSources?: string[];
+  preparation?: SpeechPreparationState & { step?: string; steps?: Array<{ kind: string; status: string; startedAt?: number }> };
+};
+export type SpeechCatalog = {
+  providers: SpeechProviderView[];
+  selection?: { providerId?: string; language?: string };
+  maxAudioBytes?: number;
+  maxDurationSeconds?: number;
+};
 export type PromptContentPart =
   | { type: "text"; text: string }
-  | { type: "image"; mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif"; data: string; name?: string };
+  | { type: "image"; mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif"; data: string; name?: string }
+  | { type: "file"; receiptId: string };
 export type DshSkill = { name: string; description: string; whenToUse?: string; modelInvocable: boolean };
 export type AgentPreset = {
   id: string;
@@ -119,7 +145,7 @@ type DshTransport = {
 
 function unwrap<T>(body: { result?: RpcResult<T> }): T {
   const result = body.result;
-  if (!result || !result.ok) throw new Error(result?.error?.message || t("errors.dshRequestFailed"));
+  if (!result || !result.ok) throw new Error(result?.error.message || "DSH 请求失败");
   return result.value;
 }
 
@@ -138,20 +164,62 @@ export class DshClient {
   searchSessions(query: string): Promise<{ items: SessionSearchItem[]; hasMore: boolean }> { return this.request("session.search", { query }); }
   listWorkspaces(): Promise<{ items: Workspace[]; archivedSessionIds: string[] }> { return this.request("workspace.list", {}); }
   createWorkspace(path: string): Promise<{ workspace: Workspace; created: boolean }> { return this.request("workspace.create", { path }); }
-  createSession(cwd?: string): Promise<{ sessionId: string; agentPreset?: string }> {
-    return this.request("session.create", cwd ? { cwd } : {});
+  createSession(input?: string | { cwd?: string; workspaceId?: string }): Promise<{ sessionId: string; agentPreset?: string; workspaceRedirected?: boolean; cwd?: string }> {
+    const request = typeof input === "string" ? { cwd: input } : input ?? {};
+    return this.request("session.create", request);
   }
-  history(sessionId: string): Promise<SessionHistory> {
-    return this.request("session.history", { sessionId, maxMessages: 80 });
+  history(sessionId: string, page?: { beforeSeq: number; throughSeq: number }): Promise<SessionHistory> {
+    return this.request("session.history", {
+      sessionId,
+      maxMessages: 80,
+      ...page,
+    });
   }
   prompt(sessionId: string, content: string | PromptContentPart[], mode: "queue" | "steer" = "queue"): Promise<{ accepted: true; command?: { kind: "success"; text?: string } }> {
     const parts = typeof content === "string" ? [{ type: "text", text: content } satisfies PromptContentPart] : snapshotPromptContent(content);
     return this.request("session.prompt", { sessionId, mode, content: parts, clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
   }
+  permissionCatalog(): Promise<PermissionCatalog> {
+    return this.request("permissionPresets.catalog", {});
+  }
+  executeCommand(sessionId: string, line: string): Promise<{ result?: { kind: "success" | "error"; text?: string } }> {
+    return this.request("commands.execute", { sessionId, line, attachments: [] });
+  }
+  async selectPermission(sessionId: string, preset: string): Promise<PermissionSelect> {
+    const catalog = await this.permissionCatalog();
+    if (!catalog.options.some((option) => option.value === preset)) throw new Error("Permission preset is unavailable");
+    const execution = await this.executeCommand(sessionId, `/permission ${preset}`);
+    if (execution?.result?.kind !== "success") throw new Error(execution?.result?.text || "Permission command was not executed");
+    const sessions = await this.listSessions();
+    const permission = sessions.items.find((session) => session.sessionId === sessionId)?.projections?.values?.permissions;
+    if (permission?.currentValue !== preset) throw new Error("Permission change could not be verified");
+    return permission;
+  }
+  async uploadFile(sessionId: string, file: File, isCurrent: () => boolean = () => true): Promise<{ receiptId: string; file: { attachmentId: string; name: string; bytes: number } }> {
+    if (!isCurrent()) throw new DOMException("文件上传已取消", "AbortError");
+    if (file.size > MAX_UPLOAD_FILE_BYTES) throw new Error("文件超过 32 MB");
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (!isCurrent()) throw new DOMException("文件上传已取消", "AbortError");
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(index, Math.min(index + chunkSize, bytes.length)));
+    }
+    const result = await this.request<{ receiptId: string; file: { attachmentId: string; name: string; bytes: number } }>(
+      "fileUploads.upload",
+      { agentId: sessionId, request: { data: btoa(binary), name: file.name } },
+    );
+    if (!isCurrent()) throw new DOMException("文件上传已取消", "AbortError");
+    if (!result || typeof result.receiptId !== "string" || !result.receiptId) {
+      throw new Error("文件上传未返回有效回执");
+    }
+    return result;
+  }
   cancel(sessionId: string): Promise<{ accepted: true }> { return this.request("session.cancel", { sessionId }); }
   rename(sessionId: string, title: string): Promise<{ title: string; seq: number }> { return this.request("session.rename", { sessionId, title }); }
   fork(sessionId: string, atSeq?: number): Promise<{ sessionId: string }> { return this.request("session.fork", { sessionId, ...(atSeq === undefined ? {} : { atSeq }) }); }
   archiveSession(sessionId: string): Promise<{ archivedSessionIds: string[] }> { return this.request("workspace.archiveSession", { sessionId }); }
+  unarchiveSession(sessionId: string): Promise<{ archivedSessionIds: string[] }> { return this.request("workspace.unarchiveSession", { sessionId }); }
   updateQueue(sessionId: string, itemId: string, action: unknown): Promise<{ accepted: true }> { return this.request("session.updateQueue", { sessionId, itemId, action }); }
   respond(message: unknown): Promise<unknown> { return this.transport.dshRespond(message); }
   models(sessionId: string): Promise<{ current: { provider: string; model: string; reasoningEffort?: string }; groups: ModelGroup[]; failures?: ModelCatalogFailure[]; routable: boolean }> {
@@ -161,6 +229,18 @@ export class DshClient {
     return this.request("session.selectModel", { sessionId, provider, model, ...(reasoningEffort ? { reasoningEffort } : {}) });
   }
   listSkills(sessionId: string): Promise<{ skills: DshSkill[] }> { return this.request("skill.list", { sessionId }); }
+  speechCatalog(): Promise<SpeechCatalog> {
+    return this.request("speech/catalog", {});
+  }
+  speechPrepare(providerId: string, options?: { downloadSource?: string }): Promise<void> {
+    return this.request("speech/prepare", { providerId, ...(options ? { options } : {}) });
+  }
+  speechCancelPreparation(providerId: string): Promise<void> {
+    return this.request("speech/cancelPreparation", { providerId });
+  }
+  speechTranscribe(audioBase64: string, providerId?: string, language?: string): Promise<{ text: string; audioSeconds?: number; inferenceSeconds?: number }> {
+    return this.request("speech/transcribe", { request: { audioBase64, ...(providerId ? { providerId } : {}), ...(language ? { language } : {}) } });
+  }
   listAgentPresets(): Promise<{ presets: AgentPreset[]; authorable: boolean; hasDocument: boolean }> {
     return this.request("agentPreset.list", {});
   }
@@ -245,6 +325,12 @@ export class DshClient {
   listPluginInventory(): Promise<{ entries: PluginInventoryEntry[] }> {
     return this.request("pluginInventory/list", { args: {} });
   }
+  testKnowledgeSource(): Promise<{ status: "connected" | "unauthorized" | "forbidden" | "unavailable"; knowledgeBases: Array<{ id: string; name: string }> }> {
+    return this.request("weknora/test", {});
+  }
+  mcpAppsRequest(path: string, method: "GET" | "POST", body?: Record<string, unknown>): Promise<unknown> {
+    return this.request("mcpApps.request", { path, method, ...(body === undefined ? {} : { body }) });
+  }
 
   subscribe(onFrame: (frame: DshFrame) => void, onError: (error: Error) => void): () => void {
     try {
@@ -259,7 +345,9 @@ export class DshClient {
 function snapshotPromptContent(content: PromptContentPart[]): PromptContentPart[] {
   return content.map((part) => part.type === "text"
     ? { type: "text", text: part.text }
-    : { type: "image", mediaType: part.mediaType, data: part.data, ...(part.name ? { name: part.name } : {}) });
+    : part.type === "image"
+      ? { type: "image", mediaType: part.mediaType, data: part.data, ...(part.name ? { name: part.name } : {}) }
+      : { type: "file", receiptId: part.receiptId });
 }
 
 // Svelte 5 state values are proxies; Electron IPC only accepts structured-cloneable
@@ -267,7 +355,7 @@ function snapshotPromptContent(content: PromptContentPart[]): PromptContentPart[
 // objects cannot fail silently before reaching the official DSH runtime.
 function snapshotRpcValue(value: unknown, seen = new WeakSet<object>()): unknown {
   if (value === null || typeof value !== "object") return value;
-  if (seen.has(value)) throw new Error(t("errors.circularRpcPayload"));
+  if (seen.has(value)) throw new Error("DSH 请求参数不能包含循环引用");
   seen.add(value);
   try {
     if (Array.isArray(value)) return value.map((item) => snapshotRpcValue(item, seen));

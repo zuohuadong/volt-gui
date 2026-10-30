@@ -42,4 +42,15 @@ describe("pending interactions by session", () => {
     expect(states.s1.answers).toEqual({});
     expect(clearPendingApproval(states, "s1", "other")).toBe(states);
   });
+
+  it("keeps only the active answer mode for a question", () => {
+    let states: PendingInteractionsBySession = {};
+    states = setPendingQuestion(states, "s1", question("s1", "q1"));
+    states = setQuestionAnswer(states, "s1", "choice", "自定义", true);
+    expect(states.s1.answers).toEqual({ "choice:custom": "自定义" });
+    states = setQuestionAnswer(states, "s1", "choice", "A", false);
+    expect(states.s1.answers).toEqual({ choice: "A" });
+    states = setQuestionAnswer(states, "s1", "choice", "", false);
+    expect(states.s1.answers).toEqual({});
+  });
 });

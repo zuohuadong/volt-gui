@@ -9,6 +9,7 @@ import { DataState, SettingsGroup } from "@svadmin/ui";
 import type { PluginInventoryEntry } from "$lib/dsh-client";
 import { separatePluginsAndMcp } from "$lib/plugin-i18n";
 import { t, i18n } from "$lib/i18n";
+import { writeClipboard } from "$lib/clipboard";
 
 type Props = {
   entries: PluginInventoryEntry[];
@@ -28,29 +29,29 @@ const isClientActive = $derived(mcpClientEntry?.enabled && mcpClientEntry?.fiber
 
 let copiedSnippet = $state(false);
 
-const exampleYaml = $derived(`# ${t("mcp.exampleComment")}
+const exampleYaml = `# profiles/anyong.yml 中的 MCP 挂载示例
 - id: mcp-client
   name: '@deepseek-ai/dsh-mcp-client'
   config:
     servers:
-      # 1. ${t("mcp.exampleFs")}
+      # 1. 本地文件系统 MCP Server (stdio 模式)
       filesystem:
         transport: stdio
         command: npx
         args: ["-y", "@modelcontextprotocol/server-filesystem", "D:\\\\workspace"]
-      # 2. ${t("mcp.exampleSqlite")}
+      # 2. SQLite 数据库 MCP Server
       sqlite:
         transport: stdio
         command: uvx
         args: ["mcp-server-sqlite", "--db-path", "app.db"]
-      # 3. ${t("mcp.exampleRemote")}
+      # 3. 远程 HTTP/SSE MCP Server
       remote-tools:
         transport: sse
-        url: "http://127.0.0.1:8000/sse"`);
+        url: "http://127.0.0.1:8000/sse"`;
 
 async function copyConfigExample() {
   try {
-    await navigator.clipboard.writeText(exampleYaml);
+    await writeClipboard(exampleYaml);
     copiedSnippet = true;
     setTimeout(() => (copiedSnippet = false), 2000);
   } catch {
@@ -109,7 +110,7 @@ async function copyConfigExample() {
           </span>
         </div>
         <div class="mcp-tech-meta">
-          <code>@deepseek-ai/dsh-mcp-client</code>
+          <span>{t("mcp.clientName")}</span>
           <span class="mcp-phase-badge">
             {mcpClientEntry?.fiberPhase === "active" ? t("mcp.fiberActive") : t("mcp.fiberStandby")}
           </span>
@@ -193,9 +194,6 @@ async function copyConfigExample() {
                     <strong>{mcp.info.name}</strong>
                     <span class="plugin-category-badge">{mcp.info.categoryLabel}</span>
                   </div>
-                  <code class="plugin-id-tag">
-                    {mcp.moduleName} · {mcp.entryId}
-                  </code>
                 </div>
               </div>
 
@@ -217,16 +215,15 @@ async function copyConfigExample() {
 
             <p class="plugin-card-description">{mcp.info.description}</p>
 
-            <div class="plugin-card-footer">
-              <span class="plugin-vendor-tag">{mcp.info.vendor}</span>
-              {#if mcp.info.tags && mcp.info.tags.length > 0}
+            {#if mcp.info.tags && mcp.info.tags.length > 0}
+              <div class="plugin-card-footer">
                 <div class="plugin-tag-list">
                   {#each mcp.info.tags as tag, tagIndex (`${tag}:${tagIndex}`)}
                     <span class="plugin-keyword-tag">{tag}</span>
                   {/each}
                 </div>
-              {/if}
-            </div>
+              </div>
+            {/if}
           </div>
         {/each}
       </div>

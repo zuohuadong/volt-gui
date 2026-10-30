@@ -5,16 +5,16 @@ import {
   DEFAULT_UI_CUSTOMIZATION,
   isUiCustomizationIntent,
   parseUiCustomization,
+  restoreUiCustomization,
   UI_CUSTOMIZATION_SCHEMA,
 } from "./ui-customization";
-import { setLocale } from "./i18n";
 
 describe("Volt UI customization protocol", () => {
   it("parses a fenced patch and ignores surrounding prose", () => {
-    const result = parseUiCustomization(`方案如下：\n\n\`\`\`json\n{"schemaVersion":"${UI_CUSTOMIZATION_SCHEMA}","density":"compact","composerRows":4}\n\`\`\``);
+    const result = parseUiCustomization(`方案如下：\n\n\`\`\`json\n{"schemaVersion":"${UI_CUSTOMIZATION_SCHEMA}","density":"compact","fontFamily":"inter","fontSize":"large","composerRows":4}\n\`\`\``);
     expect(result).toMatchObject({
       ok: true,
-      value: { schemaVersion: UI_CUSTOMIZATION_SCHEMA, density: "compact", composerRows: 4 },
+      value: { schemaVersion: UI_CUSTOMIZATION_SCHEMA, density: "compact", fontFamily: "inter", fontSize: "large", composerRows: 4 },
     });
   });
 
@@ -27,6 +27,7 @@ describe("Volt UI customization protocol", () => {
     expect(parseUiCustomization(JSON.stringify({ schemaVersion: UI_CUSTOMIZATION_SCHEMA, html: "<script>" })).ok).toBe(false);
     expect(parseUiCustomization(JSON.stringify({ schemaVersion: UI_CUSTOMIZATION_SCHEMA, title: "https://example.com" })).ok).toBe(false);
     expect(parseUiCustomization(JSON.stringify({ schemaVersion: UI_CUSTOMIZATION_SCHEMA, density: "spacious" })).ok).toBe(false);
+    expect(parseUiCustomization(JSON.stringify({ schemaVersion: UI_CUSTOMIZATION_SCHEMA, fontSize: "huge" })).ok).toBe(false);
   });
 
   it("limits quick actions and preserves only valid patch fields", () => {
@@ -47,24 +48,36 @@ describe("Volt UI customization protocol", () => {
     const next = applyUiCustomization(current, {
       schemaVersion: UI_CUSTOMIZATION_SCHEMA,
       title: "新标题",
+      fontSize: "large",
       sidebar: "collapsed",
     });
     expect(current).toMatchObject({ title: "旧标题", sidebar: "expanded" });
-    expect(next).toMatchObject({ title: "新标题", sidebar: "collapsed", density: "comfortable" });
+    expect(next).toMatchObject({ title: "新标题", sidebar: "collapsed", density: "comfortable", fontSize: "large" });
+  });
+
+  it("restores stored settings while filling new defaults", () => {
+    const restored = restoreUiCustomization(JSON.stringify({
+      density: "compact",
+      sidebar: "collapsed",
+      title: "",
+    }));
+    expect(restored).toMatchObject({
+      density: "compact",
+      sidebar: "collapsed",
+      fontFamily: "system",
+      fontSize: "medium",
+      codeFontFamily: "system-mono",
+    });
   });
 
   it("detects customization intent and emits a constrained protocol prompt", () => {
     expect(isUiCustomizationIntent("把侧栏收起并改成紧凑布局")).toBe(true);
     expect(isUiCustomizationIntent("运行单元测试")).toBe(false);
     expect(isUiCustomizationIntent("显示测试失败日志")).toBe(false);
-    expect(isUiCustomizationIntent("collapse the sidebar and use compact density")).toBe(true);
-    expect(isUiCustomizationIntent("show test failure logs")).toBe(false);
-    setLocale("zh-CN");
     const prompt = buildUiCustomizationPrompt("把输入框改成四行");
     expect(prompt).toContain("Volt UI customization protocol");
     expect(prompt).toContain(UI_CUSTOMIZATION_SCHEMA);
+    expect(prompt).toContain("fontFamily(system|inter|yahei)");
     expect(prompt).toContain("不要输出 HTML、CSS、JavaScript");
-    setLocale("en-US");
-    expect(buildUiCustomizationPrompt("collapse the sidebar")).toContain("Do not output HTML, CSS, JavaScript");
   });
 });

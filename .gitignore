@@ -25,6 +25,11 @@ mem.prof
 /apps/desktop-electron/.dsh-runtime/
 /apps/desktop-electron/.node-runtime/
 /apps/desktop-electron/.browser-skill-runtime/
+/apps/desktop-electron/.browser-extension-runtime/
+/apps/desktop-electron/.tool-runtime/
+/apps/desktop-electron/.tool-runtime-build-*/
+/apps/desktop-electron/.runtime-cache/
+/apps/desktop-electron/.speech-runtime/
 /apps/desktop-electron/build/bundled.env
 
 # Environment / local config (voltui.example.toml is a shared template)
@@ -97,3 +102,5 @@ test-screenshots/
 /vendor/bsk/
 /.worktrees/
 /.cache/electron/
+apps/desktop-frontend/.svelte-check/
+apps/desktop-electron/.duckdb-extensions/

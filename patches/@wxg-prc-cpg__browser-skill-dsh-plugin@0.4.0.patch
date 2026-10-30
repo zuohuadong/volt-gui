@@ -1,0 +1,32 @@
+diff --git a/lib/index.mjs b/lib/index.mjs
+index c4e6127..d17d0c4 100644
+--- a/lib/index.mjs
++++ b/lib/index.mjs
+@@ -5367,7 +5367,7 @@ function defineBrowserOperations(deps, register) {
+ 	}));
+ 	register(defineTool({
+ 		name: "inspect.screenshot",
+-		description: "Capture a PNG screenshot of the session's active tab, or crop to a snapshot ref element. Returns the image itself when the deployment supports image input, otherwise a file path.",
++		description: "Capture a PNG screenshot of the session's active tab, or crop to a snapshot ref element. Returns the image itself when the deployment supports image input; otherwise returns a path for the user and must not be read as an image.",
+ 		parameters: {
+ 			session: SESSION_PARAM,
+ 			ref: {
+@@ -5444,7 +5444,7 @@ function defineBrowserOperations(deps, register) {
+ 			render: (_args, value) => {
+ 				const blocks = [{
+ 					type: "text",
+-					text: (value.image !== void 0 ? `[session ${value.session}] screenshot of tab ${value.tabId} (${value.width}x${value.height}px)` : `[session ${value.session}] screenshot saved to ${value.path} (${value.width}x${value.height}px, ${value.byteSize} bytes) — this deployment cannot inline images; read the file to view it`) + (value.captureId ? `; captureId=${value.captureId}, single-use click with original PNG imageX/imageY` : value.captureUnavailable ? `; capture unavailable: ${value.captureUnavailable}` : "")
++					text: (value.image !== void 0 ? `[session ${value.session}] screenshot of tab ${value.tabId} (${value.width}x${value.height}px)` : `[session ${value.session}] screenshot saved to ${value.path} (${value.width}x${value.height}px, ${value.byteSize} bytes) — this deployment cannot inline images and the current model is text-only; use observe, snapshot, html, console, or network text output instead. Do not read this PNG as an image.`) + (value.captureId ? `; captureId=${value.captureId}, single-use click with original PNG imageX/imageY` : value.captureUnavailable ? `; capture unavailable: ${value.captureUnavailable}` : "")
+ 				}];
+ 				if (value.image !== void 0) blocks.push({
+ 					type: "image",
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -1,5 +1,6 @@
+ {
+   "name": "@wxg-prc-cpg/browser-skill-dsh-plugin",
++  "anyongPatchRevision": "1",
+   "description": "DeepSeek Harness tool plugin that exposes BrowserSkill browser automation (bsk_* tools) to the model",
+   "version": "0.4.0",
+   "license": "MIT",

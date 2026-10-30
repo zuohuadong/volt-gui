@@ -55,6 +55,15 @@ test("gitless snapshots reject retired Go assets", () => {
   assert.equal(result.failures.some((finding) => finding.includes("retired Go build asset")), true);
 });
 
+test("language skill labels do not reintroduce the retired runtime", () => {
+  const skills = scanSnapshot({
+    "apps/desktop-frontend/src/lib/skill-i18n.ts": '"go-service-development": ["Go 服务开发", "编程技能"]',
+  });
+  assert.deepEqual(skills.failures, []);
+  const runtime = scanSnapshot({ "scripts/build.sh": "go build ./cmd/desktop\n" });
+  assert.equal(runtime.failures.some((finding) => finding.includes("retired runtime/upstream reference")), true);
+});
+
 test("gitless snapshots ignore dependency trees", () => {
   const result = scanSnapshot({
     "README.md": "ok\n",

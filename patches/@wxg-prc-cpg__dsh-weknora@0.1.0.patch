@@ -1,0 +1,578 @@
+diff --git a/cordis.patch.yml b/cordis.patch.yml
+index 3709769ef61ea8c9bf67228962a1dd3871014111..913d1a4766bc89bf25fb80f4d1995134ce61d147 100644
+--- a/cordis.patch.yml
++++ b/cordis.patch.yml
+@@ -8,6 +8,14 @@
+       name: "@wxg-prc-cpg/dsh-weknora"
+       config:
+         baseUrl: !!js process.env.WEKNORA_BASE_URL ?? 'http://localhost:8080/api/v1'
+-        apiKey: !!js process.env.WEKNORA_API_KEY
++        apiKeyRef: WEKNORA_API_KEY
++        enabled: false
++        allowedOrigins: []
++        allowPrivateHosts: false
++        tools:
++          listKnowledgeBases: true
++          search: true
++          readDocument: true
++          ask: false
+         knowledgeBaseIds: !!js (process.env.WEKNORA_KNOWLEDGE_BASE_IDS ?? '').split(',').filter(Boolean)
+         agentId: !!js process.env.WEKNORA_AGENT_ID
+diff --git a/dist/client.js b/dist/client.js
+index 3bb3c7350889c098428bda3dc9682e8eedf9e06b..971fd50db92c46538653f74d26ed5c6ab238c430 100644
+--- a/dist/client.js
++++ b/dist/client.js
+@@ -1,4 +1,5 @@
+ /** Minimal WeKnora REST client: JSON endpoints plus the SSE chat streams. */
++import { boundedFetch } from "./network.js";
+ /** Raised for any non-2xx response or transport failure, with the key redacted. */
+ export class WeknoraApiError extends Error {
+     status;
+@@ -42,13 +43,14 @@ export class WeknoraClient {
+     constructor(config) {
+         this.config = config;
+     }
+-    headers() {
++    async headers() {
+         const headers = {
+             'Content-Type': 'application/json',
+             'Accept': 'application/json',
+         };
+-        if (this.config.apiKey !== undefined)
+-            headers['X-API-Key'] = this.config.apiKey;
++        const apiKey = this.config.resolveApiKey ? await this.config.resolveApiKey() : this.config.apiKey;
++        if (apiKey !== undefined)
++            headers['X-API-Key'] = apiKey;
+         if (this.config.tenantId !== undefined)
+             headers['X-Tenant-ID'] = this.config.tenantId;
+         return headers;
+@@ -67,34 +69,39 @@ export class WeknoraClient {
+         const url = this.url(path, init.query);
+         let response;
+         try {
+-            response = await fetch(url, {
+-                method: init.method,
+-                headers: this.headers(),
++            response = await boundedFetch(url, {
++                    method: init.method,
++                    headers: await this.headers(),
++                    redirect: 'error',
+                 ...init.body === undefined ? {} : { body: JSON.stringify(init.body) },
+                 signal: deadline(signal, this.config.requestTimeoutMs),
+-            });
++            }, this.config);
+         }
+         catch (cause) {
+             throw new WeknoraApiError(`${init.method} ${path} failed: ${describeTransportFailure(cause, signal)}`);
+         }
+         const text = await response.text();
+         if (!response.ok) {
+-            throw new WeknoraApiError(`${init.method} ${path} failed with HTTP ${response.status}: ${reasonOf(text)}`, response.status);
++            throw new WeknoraApiError(`WeKnora HTTP ${response.status}`, response.status);
+         }
+         try {
+             return JSON.parse(text);
+         }
+         catch {
+-            throw new WeknoraApiError(`${init.method} ${path} returned a non-JSON body: ${snippet(text)}`, response.status);
++            throw new WeknoraApiError("WeKnora returned invalid JSON", response.status);
+         }
+     }
+     /** List the knowledge bases this credential can retrieve from. */
+     async listKnowledgeBases(signal) {
+         const envelope = await this.fetchJson('/knowledge-bases', { method: 'GET' }, signal);
+-        return Array.isArray(envelope.data) ? envelope.data : [];
++        const bases = Array.isArray(envelope.data) ? envelope.data : [];
++        return this.config.knowledgeBaseIds.length ? bases.filter(base => this.config.knowledgeBaseIds.includes(base.id)) : bases;
+     }
+     /** Hybrid (vector + keyword) retrieval across one or more knowledge bases. */
+     async search(input, signal) {
++        if (this.config.knowledgeBaseIds.length && input.knowledgeBaseIds.some(id => !this.config.knowledgeBaseIds.includes(id)))
++            throw new Error("WEKNORA_SCOPE_REJECTED");
++        for (const id of input.knowledgeIds) await this.getDocument(id, signal);
+         const envelope = await this.fetchJson('/knowledge-search', {
+             method: 'POST',
+             body: {
+@@ -120,7 +127,10 @@ export class WeknoraClient {
+     /** A document's metadata, including the generated summary WeKnora stores as `description`. */
+     async getDocument(knowledgeId, signal) {
+         const envelope = await this.fetchJson(`/knowledge/${encodeURIComponent(knowledgeId)}`, { method: 'GET' }, signal);
+-        return envelope.data ?? {};
++        const document = envelope.data ?? {};
++        if (this.config.knowledgeBaseIds.length && !this.config.knowledgeBaseIds.includes(document.knowledge_base_id))
++            throw new Error("WEKNORA_SCOPE_REJECTED");
++        return document;
+     }
+     /** One page of a document's stored chunks, in storage order. */
+     async listChunks(input, signal) {
+@@ -166,19 +176,20 @@ export class WeknoraClient {
+         const combined = deadline(signal, this.config.chatTimeoutMs);
+         let response;
+         try {
+-            response = await fetch(this.url(path), {
++            response = await boundedFetch(this.url(path), {
+                 method: 'POST',
+-                headers: { ...this.headers(), Accept: 'text/event-stream' },
++                headers: { ...(await this.headers()), Accept: 'text/event-stream' },
++                redirect: 'error',
+                 body: JSON.stringify(body),
+                 signal: combined,
+-            });
++            }, this.config);
+         }
+         catch (cause) {
+             throw new WeknoraApiError(`POST ${path} failed: ${describeTransportFailure(cause, signal)}`);
+         }
+         if (!response.ok) {
+             const text = await response.text();
+-            throw new WeknoraApiError(`POST ${path} failed with HTTP ${response.status}: ${reasonOf(text)}`, response.status);
++            throw new WeknoraApiError(`WeKnora HTTP ${response.status}`, response.status);
+         }
+         if (response.body === null) {
+             throw new WeknoraApiError(`POST ${path} returned no response body`);
+@@ -193,7 +204,7 @@ function describeTransportFailure(cause, callerSignal) {
+     }
+     if (cause instanceof Error && cause.name === 'TimeoutError')
+         return 'the request timed out';
+-    return cause instanceof Error ? cause.message : String(cause);
++    return 'request failed or destination refused';
+ }
+ /**
+  * Consume WeKnora's `text/event-stream` and assemble the parts a tool result
+diff --git a/dist/config.d.ts b/dist/config.d.ts
+index 5ace522f50c7cb717bb743a68469ef603e3da619..957054a23c06484d33cf1eb15cde7aefae9c7446 100644
+--- a/dist/config.d.ts
++++ b/dist/config.d.ts
+@@ -12,6 +12,14 @@ export interface Config {
+     baseUrl?: string;
+     /** Tenant or platform API key, sent as `X-API-Key`. */
+     apiKey?: string;
++    /** Credential reference resolved through the official DSH credential service. */
++    apiKeyRef?: string;
++    /** Exact hostname or host:port allowlist for non-loopback deployments. */
++    allowedHosts?: string[];
++    /** Explicitly permit private/link-local DNS results for an approved host. */
++    allowPrivateHosts?: boolean;
++    /** Explicitly allow the WeKnora server to enable web search for ask calls. */
++    allowWebSearch?: boolean;
+     /** Workspace id, required only for platform-scoped API keys (`X-Tenant-ID`). */
+     tenantId?: string;
+     /** Default knowledge-base scope when a call names none. */
+@@ -37,6 +45,11 @@ export interface Config {
+ export interface ResolvedConfig {
+     baseUrl: string;
+     apiKey: string | undefined;
++    apiKeyRef: string;
++    allowedHosts: string[];
++    allowPrivateHosts: boolean;
++    allowWebSearch: boolean;
++    resolveApiKey?: () => Promise<string | undefined>;
+     tenantId: string | undefined;
+     knowledgeBaseIds: string[];
+     agentId: string | undefined;
+diff --git a/dist/config.js b/dist/config.js
+index a55f8791c2d20fb658293efd3b33a974db1c5c4f..b1a068d1932acfd1bb62e2ca3ed3a012e1cceccd 100644
+--- a/dist/config.js
++++ b/dist/config.js
+@@ -1,6 +1,10 @@
+ /** Plugin configuration: shape, defaults, and load-time validation. */
+ const DEFAULTS = {
+     baseUrl: 'http://localhost:8080/api/v1',
++    apiKeyRef: 'WEKNORA_API_KEY',
++    allowedOrigins: [],
++    allowPrivateHosts: false,
++    allowWebSearch: false,
+     maxResults: 8,
+     maxChunkChars: 1200,
+     requestTimeoutMs: 30_000,
+@@ -54,6 +58,15 @@ function optionalString(value, field, violations) {
+     const trimmed = value.trim();
+     return trimmed === '' ? undefined : trimmed;
+ }
++function stringMap(value, field, violations) {
++    if (value === undefined)
++        return undefined;
++    if (!Array.isArray(value) || value.some(entry => typeof entry !== 'string' || entry.trim() === '')) {
++        violations.push(`${field} must be an array of non-empty strings`);
++        return undefined;
++    }
++    return value.map(entry => entry.trim().toLowerCase());
++}
+ function toggle(value, field, fallback, violations) {
+     if (value === undefined)
+         return fallback;
+@@ -76,6 +89,11 @@ export function resolveConfig(raw) {
+         throw new ConfigError(['config must be an object']);
+     }
+     const baseUrlInput = optionalString(config.baseUrl, 'baseUrl', violations) ?? DEFAULTS.baseUrl;
++    const apiKeyRef = optionalString(config.apiKeyRef, 'apiKeyRef', violations) ?? DEFAULTS.apiKeyRef;
++    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(apiKeyRef))
++        violations.push('apiKeyRef must be a valid credential reference');
++    const allowedOrigins = stringList(config.allowedOrigins, 'allowedOrigins', violations) ?? DEFAULTS.allowedOrigins;
++    if (config.apiKey) violations.push('Use apiKeyRef and the official credentials service, not literal apiKey');
+     let baseUrl = DEFAULTS.baseUrl;
+     try {
+         const url = new URL(normalizeBaseUrl(baseUrlInput));
+@@ -83,6 +101,13 @@ export function resolveConfig(raw) {
+             violations.push(`baseUrl must use http or https, received ${url.protocol}`);
+         }
+         baseUrl = url.toString().replace(/\/+$/, '');
++        const local = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(url.hostname.toLowerCase());
++        if (url.username || url.password || url.search || url.hash)
++            violations.push('baseUrl must not contain credentials, query parameters, or fragments');
++        if (url.protocol !== 'https:' && !(local && url.protocol === 'http:'))
++            violations.push('baseUrl must use HTTPS; HTTP is only allowed for loopback');
++        if (config.enabled === true && !allowedOrigins.includes(url.origin))
++            violations.push('baseUrl origin must be included in allowedOrigins');
+     }
+     catch {
+         violations.push(`baseUrl must be an absolute URL, received ${JSON.stringify(baseUrlInput)}`);
+@@ -101,7 +126,11 @@ export function resolveConfig(raw) {
+     }
+     const resolved = {
+         baseUrl,
+-        apiKey: optionalString(config.apiKey, 'apiKey', violations),
++        enabled: config.enabled === true,
++        apiKeyRef,
++        allowedOrigins,
++        allowPrivateHosts: config.allowPrivateHosts === true,
++        allowWebSearch: config.allowWebSearch === true,
+         tenantId: optionalString(config.tenantId, 'tenantId', violations),
+         knowledgeBaseIds: stringList(config.knowledgeBaseIds, 'knowledgeBaseIds', violations) ?? [],
+         agentId: optionalString(config.agentId, 'agentId', violations),
+@@ -118,6 +147,8 @@ export function resolveConfig(raw) {
+             ask: toggle(toolToggles.ask, 'tools.ask', true, violations),
+         },
+     };
++    if (resolved.resourceUrls !== 'handle') violations.push('Only handle resource URLs are allowed');
++    if (resolved.tools.ask && resolved.agentId) violations.push('Custom agents are not supported by this scoped retrieval profile');
+     if (!Object.values(resolved.tools).some(Boolean)) {
+         violations.push('at least one tool must stay enabled; remove the plugin row instead of disabling all of them');
+     }
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 9a13f9b773f75844bf9475e7744a50ad5fab894e..100b1896478e535c241e60b94af8b94e030e9ce5 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -6,7 +6,8 @@
+ import type { HarnessContext } from './harness.ts';
+ export declare const name = "dsh-weknora";
+ /** Cordis waits for the tool registry before applying this plugin. */
+-export declare const inject: readonly ["tools"];
++export declare const inject: readonly ["tools", "credentials"];
++export declare const Config: unknown;
+ export type { Config } from './config.ts';
+ export { ConfigError, normalizeBaseUrl, resolveConfig } from './config.ts';
+ export { WeknoraApiError, WeknoraClient } from './client.ts';
+diff --git a/dist/index.js b/dist/index.js
+index 39049cc18fa4e6d946689a9fb546ef4c4a801c88..33b4161b7c2e8a8ba8eaa2a8b4615249db0406f6 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1,31 +1,104 @@
+-/**
+- * dsh-weknora: a DeepSeek Harness plugin that gives the agent retrieval,
+- * document reading and composed answers from a WeKnora knowledge base.
+- * @module dsh-weknora
+- */
++import Schema from "@deepseek-ai/schemastery";
++import { credentialRef } from "@deepseek-ai/dsh-credentials";
++import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
+ import { WeknoraClient } from "./client.js";
+ import { resolveConfig } from "./config.js";
+ import { createTools } from "./tools.js";
+-export const name = 'dsh-weknora';
+-/** Cordis waits for the tool registry before applying this plugin. */
+-export const inject = ['tools'];
++
++export const name = "dsh-weknora";
++export const anyongPatchRevision = "1";
++export const inject = ["tools", "credentials"];
++export const Config = Schema.object({
++    enabled: Schema.boolean().default(false).volatile(),
++    baseUrl: Schema.string().default("http://localhost:8080/api/v1").volatile(),
++    apiKeyRef: Schema.string().default("WEKNORA_API_KEY").role("credential-ref").volatile(),
++    allowedOrigins: Schema.array(Schema.string()).default([]).volatile(),
++    allowPrivateHosts: Schema.boolean().default(false).volatile(),
++    tenantId: Schema.string().default("").volatile(),
++    knowledgeBaseIds: Schema.array(Schema.string()).default([]).volatile(),
++    agentId: Schema.string().default("").volatile(),
++    resourceUrls: Schema.const("handle").default("handle"),
++    maxResults: Schema.number().min(1).max(100).default(8),
++    maxChunkChars: Schema.number().min(1).max(10000).default(1200),
++    requestTimeoutMs: Schema.number().min(1).max(30000).default(15000),
++    chatTimeoutMs: Schema.number().min(1).max(300000).default(60000),
++    toolPrefix: Schema.string().default("weknora"),
++    tools: Schema.object({
++        listKnowledgeBases: Schema.boolean().default(true),
++        search: Schema.boolean().default(true),
++        readDocument: Schema.boolean().default(true),
++        ask: Schema.boolean().default(false),
++    }),
++});
+ export { ConfigError, normalizeBaseUrl, resolveConfig } from "./config.js";
+ export { WeknoraApiError, WeknoraClient } from "./client.js";
+ export { createTools } from "./tools.js";
+-/**
+- * Register the configured tools. Each registration is an effect, so unloading
+- * or reconfiguring the plugin withdraws the tools without a restart.
+- * @param ctx - the Cordis context, with `ctx.tools` injected.
+- * @param config - the plugin's `config` row; validated here so a typo fails the load.
+- */
++
+ export function apply(ctx, config) {
+-    const resolved = resolveConfig(config);
+-    const client = new WeknoraClient(resolved);
+-    const registered = [];
+-    for (const definition of createTools(client, resolved)) {
+-        ctx.tools.register(definition);
+-        registered.push(definition.name);
++    const current = () => resolveConfig(Object.fromEntries(Object.entries(config)
++        .map(([key, value]) => [key, typeof value?.get === "function" ? value.get() : value])));
++    const makeClient = (snapshot) => new WeknoraClient({
++        ...snapshot,
++        resolveApiKey: async () => {
++            const secret = await ctx.credentials.resolve(credentialRef(snapshot.apiKeyRef));
++            if (!secret?.value) throw new Error("WEKNORA_CREDENTIAL_MISSING");
++            return secret.value;
++        },
++    });
++    const initial = current();
++    const registerTools = (snapshot) => {
++        const disposers = [];
++        for (const definition of createTools(makeClient(snapshot), snapshot)) {
++            disposers.push(ctx.tools.register({
++                ...definition,
++                execute: async (args, exec) => {
++                    const live = current();
++                    if (!live.enabled) throw new Error("WEKNORA_DISABLED");
++                    const tool = createTools(makeClient(live), live).find(candidate => candidate.name === definition.name);
++                    if (!tool) throw new Error("WEKNORA_TOOL_DISABLED");
++                    return tool.execute(args, exec);
++                },
++            }));
++        }
++        return disposers;
++    };
++    let toolDisposers = initial.enabled ? registerTools(initial) : [];
++    const syncTools = () => {
++        const snapshot = current();
++        if (snapshot.enabled && toolDisposers.length === 0) toolDisposers = registerTools(snapshot);
++        else if (!snapshot.enabled && toolDisposers.length > 0) {
++            for (const dispose of toolDisposers) dispose();
++            toolDisposers = [];
++        }
++    };
++    ctx.on?.("settings/document-updated", syncTools);
++    ctx.effect?.(() => () => {
++        for (const dispose of toolDisposers) dispose();
++        toolDisposers = [];
++    });
++    if (!initial.enabled) ctx.logger?.info?.("dsh-weknora: disabled; tools are not registered");
+-    }
+-    ctx.logger?.info(`dsh-weknora: registered ${registered.join(', ')} against ${resolved.baseUrl}`);
++    const initializers = [];
++    class WeknoraRemote extends TypertRemoteService {
++        constructor(owner) {
++            super(owner, "weknora");
++            for (const initialize of initializers) initialize.call(this);
++        }
++        async test() {
++            try {
++                const snapshot = current();
++                const bases = await makeClient(snapshot).listKnowledgeBases(AbortSignal.timeout(15000));
++                return { status: "connected", knowledgeBases: bases.map(base => ({
++                    id: typeof base.id === "string" ? base.id : "",
++                    name: typeof base.name === "string" ? base.name.slice(0, 200) : "",
++                })).filter(base => base.id).slice(0, 1000) };
++            } catch (error) {
++                return { status: error?.status === 401 ? "unauthorized" : error?.status === 403 ? "forbidden" : "unavailable", knowledgeBases: [] };
++            }
++        }
++    }
++    Remote(WeknoraRemote.prototype.test, {
++        kind: "method", name: "test", static: false, private: false,
++        addInitializer: initialize => initializers.push(initialize),
++    });
++    ctx.plugin(WeknoraRemote);
+ }
+-//# sourceMappingURL=index.js.map
+\ No newline at end of file
+diff --git a/dist/network.js b/dist/network.js
+index 0000000000000000000000000000000000000000..f8948b58ad60787b71ac01ec7cecab6b74c2fef9
+--- /dev/null
++++ b/dist/network.js
+@@ -0,0 +1,70 @@
++import { lookup } from "node:dns/promises";
++import { isIP } from "node:net";
++import { Agent, fetch } from "undici";
++import ipaddr from "ipaddr.js";
++
++const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
++
++export function permittedAddress(address, allowPrivateHosts) {
++    let parsed = ipaddr.parse(address);
++    if (parsed.kind() === "ipv6" && parsed.isIPv4MappedAddress())
++        parsed = parsed.toIPv4Address();
++    const range = parsed.range();
++    return range === "unicast" || (allowPrivateHosts && ["private", "uniqueLocal", "loopback"].includes(range));
++}
++
++export async function resolveDestination(url, signal, allowPrivateHosts, resolver = lookup) {
++    signal.throwIfAborted();
++    const hostname = url.hostname.replace(/^\[|\]$/g, "");
++    const family = isIP(hostname);
++    let abort;
++    const cancelled = new Promise((_, reject) => {
++        abort = () => reject(signal.reason);
++        signal.addEventListener("abort", abort, { once: true });
++    });
++    try {
++        const addresses = family ? [{ address: hostname, family }]
++            : await Promise.race([resolver(hostname, { all: true, order: "verbatim" }), cancelled]);
++        if (!addresses.length || addresses.some(entry => !permittedAddress(entry.address, allowPrivateHosts)))
++            throw new Error("WEKNORA_DESTINATION_BLOCKED");
++        return addresses;
++    } finally {
++        signal.removeEventListener("abort", abort);
++    }
++}
++
++export function pinnedLookup(addresses) {
++    return (_hostname, options, callback) => {
++        const matches = options.family ? addresses.filter(entry => entry.family === options.family) : addresses;
++        if (!matches.length) return callback(new Error("WEKNORA_ADDRESS_FAMILY"));
++        if (options.all) callback(null, matches);
++        else callback(null, matches[0].address, matches[0].family);
++    };
++}
++
++// Pin DNS and bound the entire response, including SSE, before exposing it to parsers.
++export async function boundedFetch(url, init, config) {
++    const destination = new URL(url);
++    if (destination.origin !== new URL(config.baseUrl).origin) throw new Error("WEKNORA_ORIGIN_BLOCKED");
++    if (!config.allowedOrigins.includes(destination.origin)) throw new Error("WEKNORA_ORIGIN_BLOCKED");
++    const addresses = await resolveDestination(destination, init.signal, config.allowPrivateHosts);
++    const dispatcher = new Agent({ connect: { lookup: pinnedLookup(addresses) } });
++    try {
++        const response = await fetch(destination, { ...init, dispatcher, redirect: "error" });
++        if (Number(response.headers.get("content-length")) > MAX_RESPONSE_BYTES) throw new Error("WEKNORA_RESPONSE_TOO_LARGE");
++        const chunks = [];
++        let bytes = 0;
++        for await (const chunk of response.body ?? []) {
++            bytes += chunk.byteLength;
++            if (bytes > MAX_RESPONSE_BYTES) throw new Error("WEKNORA_RESPONSE_TOO_LARGE");
++            chunks.push(Buffer.from(chunk));
++        }
++        const contentType = response.headers.get("content-type") ?? "";
++        if (response.ok && !contentType.includes("application/json") && !contentType.includes("text/event-stream"))
++            throw new Error("WEKNORA_INVALID_RESPONSE");
++        const body = [204, 205, 304].includes(response.status) ? null : Buffer.concat(chunks);
++        return new Response(body, { status: response.status, headers: response.headers });
++    } finally {
++        await dispatcher.destroy();
++    }
++}
+diff --git a/dist/tools.js b/dist/tools.js
+index 89f3138ee68fbd13f94719262fc16775e40c9b71..d93a72a1601ff9091bf26775b83095b8b4caad08 100644
+--- a/dist/tools.js
++++ b/dist/tools.js
+@@ -105,8 +105,15 @@ export function createTools(client, config) {
+         return await everyId;
+     };
+     const resolveScope = async (requested, knowledgeIds, signal) => {
+-        if (requested.length > 0)
++        if (requested.length > 0) {
++            if (config.knowledgeBaseIds.length > 0) {
++                const allowed = new Set(config.knowledgeBaseIds);
++                const outside = requested.find(id => !allowed.has(id));
++                if (outside !== undefined)
++                    throw new Error(`WeKnora request selected knowledge base outside the configured allowlist: ${outside}`);
++            }
+             return requested;
++        }
+         if (config.knowledgeBaseIds.length > 0)
+             return config.knowledgeBaseIds;
+         if (knowledgeIds.length > 0)
+@@ -269,7 +276,7 @@ export function createTools(client, config) {
+                     client.search({ query, knowledgeBaseIds, knowledgeIds }, exec.signal),
+                     // By-name matching is an enrichment, and older WeKnora builds may not
+                     // route it. Losing it must not cost the model its passages.
+-                    client.findDocuments({ keyword: query, limit }, exec.signal).catch(() => []),
++                    Promise.resolve([]),
+                 ]);
+                 const results = hits.slice(0, limit).map((hit, index) => projectHit(hit, index + 1, config.maxChunkChars));
+                 return {
+@@ -341,16 +348,11 @@ export function createTools(client, config) {
+                 const knowledgeId = requiredString(args, 'knowledge_id', toolName);
+                 const page = boundedIntArg(args, 'page', 1, 10_000);
+                 const pageSize = boundedIntArg(args, 'page_size', 20, 100);
+-                const [result, metadata] = await Promise.all([
+-                    client.listChunks({ knowledgeId, page, pageSize }, exec.signal),
+-                    // Only page 1 is worth the extra call and the summary's tokens: by
+-                    // page 2 the model has already seen what this document is. Metadata
+-                    // is context, not the payload, so a deployment that cannot serve it
+-                    // must still hand over the text.
+-                    page === 1
+-                        ? client.getDocument(knowledgeId, exec.signal).catch(() => ({}))
+-                        : Promise.resolve({}),
+-                ]);
++                const metadata = await client.getDocument(knowledgeId, exec.signal);
++                const metadataBaseId = typeof metadata.knowledge_base_id === 'string' ? metadata.knowledge_base_id : '';
++                if (config.knowledgeBaseIds.length > 0 && !config.knowledgeBaseIds.includes(metadataBaseId))
++                    throw new Error(`${toolName}: document is outside the configured knowledge-base allowlist`);
++                const result = await client.listChunks({ knowledgeId, page, pageSize }, exec.signal);
+                 const ordered = [...result.chunks].sort(orderByChunkIndex);
+                 const joined = ordered.map(chunk => typeof chunk.content === 'string' ? chunk.content : '').join('\n\n');
+                 const clipped = clip(joined, config.maxChunkChars * Math.max(1, Math.min(ordered.length, 10)));
+@@ -440,19 +442,23 @@ export function createTools(client, config) {
+                 const toolName = name('ask');
+                 const query = requiredString(args, 'query', toolName);
+                 const requested = stringArrayArg(args, 'knowledge_base_ids');
+-                const agentId = optionalStringArg(args, 'agent_id') ?? config.agentId;
++                const requestedAgentId = optionalStringArg(args, 'agent_id');
++                if (requestedAgentId !== undefined && requestedAgentId !== config.agentId)
++                    throw new Error(`${toolName}: agent_id cannot override the configured WeKnora agent`);
++                const agentId = config.agentId;
+                 // A custom agent resolves its own scope server-side from its
+                 // KBSelectionMode, and ids sent here would override that as an explicit
+                 // mention. The RAG pipeline has no such default: it retrieves only what
+                 // the request names, and answers from nothing when it names nothing.
+                 const knowledgeBaseIds = agentId === undefined
+                     ? await resolveScope(requested, [], exec.signal)
+-                    : requested.length > 0 ? requested : config.knowledgeBaseIds;
++                    : await resolveScope(requested, [], exec.signal);
+                 if (agentId === undefined && knowledgeBaseIds.length === 0) {
+                     throw new Error(`${toolName}: this WeKnora credential can see no knowledge base, so there is `
+                         + 'nothing to answer from. Check the deployment\'s API key scope.');
+                 }
+-                const webSearch = argRecord(args)['web_search'] === true;
++                if (argRecord(args)['web_search'] === true) throw new Error('WeKnora web search is disabled');
++                const webSearch = false;
+                 const sessionId = optionalStringArg(args, 'session_id')
+                     ?? await client.createSession(`dsh: ${clip(query, 60).text}`, exec.signal);
+                 const streamed = await client.ask({ sessionId, query, knowledgeBaseIds, agentId, webSearch }, exec.signal);
+diff --git a/package.json b/package.json
+index 3f075bcbce59a70e0f4bc30fa438517f94d42e86..5574028574b817d52585ed77d3a579fb76fe5d1f 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,7 @@
+ {
+   "name": "@wxg-prc-cpg/dsh-weknora",
+   "version": "0.1.0",
++  "anyongPatchRevision": "1",
+   "publishConfig": {
+     "access": "public",
+     "registry": "https://registry.npmjs.org/"
+@@ -46,6 +47,13 @@
+   "engines": {
+     "node": ">=20.11"
+   },
++  "dependencies": {
++    "@deepseek-ai/dsh-credentials": "0.2.1-rc.5",
++    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.5",
++    "@deepseek-ai/schemastery": "3.18.5",
++    "ipaddr.js": "2.5.0",
++    "undici": "8.12.3"
++  },
+   "scripts": {
+     "build": "tsc -p tsconfig.build.json",
+     "prepare": "npm run build",

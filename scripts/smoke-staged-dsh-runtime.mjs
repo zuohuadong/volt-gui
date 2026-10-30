@@ -50,6 +50,9 @@ export function assembleStagedPackagedResources(
     dshModules: path.join(sourceDesktop, ".dsh-runtime", "node_modules"),
     dshScripts: path.join(sourceDesktop, ".dsh-runtime", "scripts"),
     browserSkill: path.join(sourceDesktop, ".browser-skill-runtime"),
+    browserExtension: path.join(sourceDesktop, ".browser-extension-runtime"),
+    speechRuntime: path.join(sourceDesktop, ".speech-runtime"),
+    toolRuntime: path.join(sourceDesktop, ".tool-runtime"),
     profile: path.join(sourceRoot, "profiles", "anyong.yml"),
   };
   // Only clean up directories created exclusively by this invocation.
@@ -57,7 +60,7 @@ export function assembleStagedPackagedResources(
   assertTempStagedResourcesDestination(target);
   mkdirSync(target, { mode: 0o700 });
   try {
-    for (const [name, file] of Object.entries(staged)) {
+    for (const [name, file] of Object.entries(staged).filter(([name]) => !["browserExtension", "speechRuntime", "toolRuntime"].includes(name))) {
       if (!existsSync(file)) {
         throw new Error(`Staged ${name} is missing at ${file}. Run pnpm --dir apps/desktop-electron run stage:runtime first.`);
       }
@@ -69,6 +72,9 @@ export function assembleStagedPackagedResources(
     symlinkSync(staged.dshModules, path.join(target, "dsh-runtime", "node_modules"), linkType);
     symlinkSync(staged.dshScripts, path.join(target, "dsh-runtime", "scripts"), linkType);
     symlinkSync(staged.browserSkill, path.join(target, "browser-skill-runtime"), linkType);
+    for (const [name, directory] of [["browserExtension", "browser-extension-runtime"], ["speechRuntime", "speech-runtime"], ["toolRuntime", "tool-runtime"]]) {
+      if (existsSync(staged[name])) symlinkSync(staged[name], path.join(target, directory), linkType);
+    }
     writeFileSync(path.join(target, "profiles", "anyong.yml"), readFileSync(staged.profile));
     return target;
   } catch (error) {

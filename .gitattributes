@@ -23,3 +23,7 @@
 *.yml text eol=lf
 .githooks/** text eol=lf
 benchmarks/**/*.sh text eol=lf
+# Patch context and imported Altium scripts retain upstream whitespace.
+patches/*.patch -whitespace
+scripts/altium/AltiumScript/*.pas whitespace=-blank-at-eol,-blank-at-eof
+scripts/altium/AltiumScript/*.PrjScr whitespace=-blank-at-eol,-blank-at-eof

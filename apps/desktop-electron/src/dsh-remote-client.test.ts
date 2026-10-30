@@ -1,40 +1,20 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import test from "node:test";
 import { WebSocketServer } from "ws";
 
-import { DshRemoteClient, type DshRemoteEvent } from "./dsh-remote-client.ts";
+import { DshConnectionError, DshRemoteClient, DshStartupConnectionError, readMultipartFields, type DshRemoteEvent } from "./dsh-remote-client.ts";
 
 const TOKEN = "A".repeat(43);
 
-async function createFixture(options: { rpcResult?: unknown; failFirstExport?: boolean; stall?: "auth" | "rpc" | "body"; authLocation?: string } = {}) {
+async function createFixture(options: { eventValue?: unknown; closeAfterStream?: boolean } = {}) {
   const requests: Array<{ endpoint: string; args: unknown; cookie?: string }> = [];
   let connectionCount = 0;
-  let exports = 0;
-  let markBlocked!: () => void;
-  const blocked = new Promise<void>((resolve) => { markBlocked = resolve; });
-  const archive = Buffer.from("PK\u0003\u0004synthetic-complete-archive");
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (request.method === "GET" && url.pathname === "/" && url.searchParams.get("token") === TOKEN) {
-      if (options.stall === "auth") {
-        markBlocked();
-        return;
-      }
-      response.writeHead(303, { Location: options.authLocation ?? "/", "Set-Cookie": "dsh-auth-fixture=session-value; HttpOnly; SameSite=Strict; Path=/" });
+      response.writeHead(303, { Location: "/", "Set-Cookie": "dsh-auth-fixture=session-value; HttpOnly; SameSite=Strict; Path=/" });
       response.end();
-      return;
-    }
-    if (request.method === "GET" && url.pathname === "/api/session.export") {
-      exports += 1;
-      response.writeHead(200, { "Content-Type": "application/zip", "Content-Length": archive.length });
-      if (options.failFirstExport && exports === 1) {
-        response.write(archive.subarray(0, 4));
-        setTimeout(() => response.destroy(), 10);
-      } else response.end(archive);
       return;
     }
     if (request.method === "POST" && url.pathname.startsWith("/api/")) {
@@ -42,17 +22,8 @@ async function createFixture(options: { rpcResult?: unknown; failFirstExport?: b
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { rpcId: string; method: string; payload: { args: unknown } };
       requests.push({ endpoint: body.method, args: body.payload.args, cookie: request.headers.cookie });
-      if (options.stall === "rpc" || options.stall === "body") {
-        if (options.stall === "body") {
-          response.writeHead(200, { "Content-Type": "application/json" });
-          response.write("{");
-        }
-        markBlocked();
-        return;
-      }
       response.writeHead(200, { "Content-Type": "application/json" });
-      const result = options.rpcResult ?? { ok: true, value: { endpoint: body.method } };
-      response.end(JSON.stringify({ type: "server-response", rpcId: body.rpcId, result }));
+      response.end(JSON.stringify({ type: "server-response", rpcId: body.rpcId, result: { ok: true, value: { endpoint: body.method } } }));
       return;
     }
     response.writeHead(404).end();
@@ -71,9 +42,10 @@ async function createFixture(options: { rpcResult?: unknown; failFirstExport?: b
       const message = JSON.parse(raw.toString()) as { type: string; streamId: string; endpoint?: string };
       if (message.type !== "open") return;
       const value = message.endpoint === "$events"
-        ? { type: "ready", clientId: "client-fixture", host: { home: "C:\\Users\\fixture" } }
+        ? options.eventValue ?? { type: "ready", clientId: "client-fixture", host: { home: "C:\\Users\\fixture" } }
         : { type: "snapshot", records: [], hasMore: false };
       socket.send(JSON.stringify({ type: "item", streamId: message.streamId, value }));
+      if (options.closeAfterStream) setTimeout(() => socket.close(), 0);
     });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -81,42 +53,15 @@ async function createFixture(options: { rpcResult?: unknown; failFirstExport?: b
   if (!address || typeof address === "string") throw new Error("fixture address unavailable");
   return {
     requests,
-    blocked,
-    archive,
     get connectionCount() { return connectionCount; },
     startupUrl: `http://127.0.0.1:${address.port}/?token=${TOKEN}`,
     async close() {
       for (const socket of sockets.clients) socket.terminate();
       sockets.close();
-      server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     },
   };
 }
-
-test("accepts both official DSH root redirect forms", async () => {
-  for (const authLocation of ["/", "./"]) {
-    const fixture = await createFixture({ authLocation });
-    const client = new DshRemoteClient(fixture.startupUrl);
-    try {
-      await client.authenticate();
-    } finally {
-      await fixture.close();
-    }
-  }
-});
-
-test("rejects authentication redirects outside the official DSH root", async () => {
-  for (const authLocation of ["https://example.com/", "//example.com/", "/other", "../", "/?token=other"]) {
-    const fixture = await createFixture({ authLocation });
-    const client = new DshRemoteClient(fixture.startupUrl);
-    try {
-      await assert.rejects(client.authenticate(), /DSH_AUTH_FAILED/);
-    } finally {
-      await fixture.close();
-    }
-  }
-});
 
 test("rejects startup URLs that could escape the managed loopback runtime", () => {
   for (const value of [
@@ -127,23 +72,6 @@ test("rejects startup URLs that could escape the managed loopback runtime", () =
     "http://127.0.0.1:3000/",
   ]) assert.throws(() => new DshRemoteClient(value));
 });
-
-for (const phase of ["auth", "rpc", "body"] as const) {
-  test(`shutdown signal cancels a stalled ${phase} request`, { timeout: 5_000 }, async () => {
-    const fixture = await createFixture({ stall: phase });
-    try {
-      const client = new DshRemoteClient(fixture.startupUrl);
-      if (phase !== "auth") await client.authenticate();
-      const controller = new AbortController();
-      const running = phase === "auth" ? client.authenticate(controller.signal)
-        : client.call("credentials/describe", {}, controller.signal);
-      const rejected = assert.rejects(running, /synthetic shutdown/);
-      await fixture.blocked;
-      controller.abort(new Error("synthetic shutdown"));
-      await rejected;
-    } finally { await fixture.close(); }
-  });
-}
 
 test("exchanges the startup token for a main-process Cookie and uses the new RPC envelope", async () => {
   const fixture = await createFixture();
@@ -157,6 +85,220 @@ test("exchanges the startup token for a main-process Cookie and uses the new RPC
     await fixture.close();
   }
 });
+
+test("decodes official multipart unary responses into Uint8Array values", async (t) => {
+  let requestCount = 0;
+  const fetchMock = t.mock.method(globalThis, "fetch", async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    requestCount += 1;
+    if (requestCount === 1) {
+      return new Response(null, {
+        status: 303,
+        headers: { Location: "/", "Set-Cookie": "dsh-auth-fixture=session-value" },
+      });
+    }
+    const request = JSON.parse(String(init?.body)) as { rpcId: string };
+    const form = new FormData();
+    form.append("metadata", JSON.stringify({
+      type: "server-response",
+      rpcId: request.rpcId,
+      result: { ok: true, value: { attachment: null } },
+      attachments: [{ codec: "bytes", part: "part-0", path: ["attachment"] }],
+    }));
+    form.append("part-0", new Blob([Uint8Array.from([1, 2, 3])], { type: "application/octet-stream" }), "part-0.bin");
+    return new Response(form);
+  });
+  const client = new DshRemoteClient(`http://127.0.0.1:43123/?token=${TOKEN}`);
+
+  await client.authenticate();
+  const result = await client.call("session/attachment", { sessionId: "s1", attachmentId: "a1" }) as { attachment: Uint8Array };
+
+  assert.deepEqual(Array.from(result.attachment), [1, 2, 3]);
+  assert.equal(fetchMock.mock.callCount(), 2);
+});
+
+test("rejects oversized multipart responses before accepting their payload", async () => {
+  const response = new Response("ignored", {
+    headers: { "content-type": "multipart/form-data", "content-length": String(65 * 1024 * 1024) },
+  });
+  await assert.rejects(readMultipartFields(response), /超过大小限制/u);
+});
+
+test("proxies only authenticated MCP Apps host requests", async (t) => {
+  const client = new DshRemoteClient(`http://127.0.0.1:43123/?token=${TOKEN}`);
+  let requestCount = 0;
+  const fetchMock = t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    requestCount += 1;
+    const url = String(input);
+    if (requestCount === 1) {
+      return new Response(null, { status: 303, headers: { Location: "/", "Set-Cookie": "dsh-auth-fixture=session-value" } });
+    }
+    assert.equal((init?.headers as Record<string, string>).Cookie, "dsh-auth-fixture=session-value");
+    if (requestCount === 2) return new Response("not found", { status: 404 });
+    assert.equal(url, "http://127.0.0.1:43123/api/mcp-apps/catalog");
+    assert.equal(init?.method, "GET");
+    return Response.json({ items: [] });
+  });
+
+  await client.authenticate();
+  await assert.rejects(client.mcpAppsRequest("/api/mcp-apps/tool", "POST", { viewId: "view" }), /MCP Apps 请求失败|HTTP/);
+  await assert.rejects(client.mcpAppsRequest("/api/session/list", "GET"), /路径不受支持/);
+  await client.mcpAppsRequest("/api/mcp-apps/catalog", "GET");
+  assert.equal(fetchMock.mock.callCount(), 3);
+});
+
+for (const location of ["/", "./", "//example.com/", "https://example.com/", "/other", "/?token=secret", "/#fragment", "http://127.0.0.1:43123/", ""]) {
+  test(`authentication only accepts the official root redirect ${JSON.stringify(location)}`, async (t) => {
+    const fetchMock = t.mock.method(globalThis, "fetch", async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      assert.equal(init?.redirect, "manual");
+      return new Response(null, {
+        status: 303,
+        headers: { Location: location, "Set-Cookie": "dsh-auth-fixture=session-value" },
+      });
+    });
+    const client = new DshRemoteClient(`http://127.0.0.1:43123/?token=${TOKEN}`);
+    if (location === "/" || location === "./") {
+      await client.authenticate();
+      assert.equal(client.cleanOrigin, "http://127.0.0.1:43123");
+    } else {
+      await assert.rejects(client.authenticate(), /重定向目标无效/);
+      assert.throws(() => client.cleanOrigin, /尚未完成认证/);
+    }
+    assert.equal(fetchMock.mock.callCount(), 1);
+  });
+}
+
+test("retries a transient loopback authentication failure before accepting the DSH cookie", async (t) => {
+  const client = new DshRemoteClient(`http://127.0.0.1:43123/?token=${TOKEN}`);
+  let attempts = 0;
+  const fetchMock = t.mock.method(globalThis, "fetch", async () => {
+    attempts += 1;
+    if (attempts === 1) throw new TypeError("fetch failed");
+    return new Response(null, {
+      status: 303,
+      headers: { Location: "/", "Set-Cookie": "dsh-auth-fixture=session-value" },
+    });
+  });
+
+  await client.authenticate();
+
+  assert.equal(attempts, 2);
+  assert.equal(client.cleanOrigin, "http://127.0.0.1:43123");
+  assert.equal(fetchMock.mock.callCount(), 2);
+});
+
+test("does not retry a deterministic authentication response failure", async (t) => {
+  const fetchMock = t.mock.method(globalThis, "fetch", async () => new Response(null, { status: 503 }));
+  const client = new DshRemoteClient(`http://127.0.0.1:43123/?token=${TOKEN}`);
+
+  await assert.rejects(client.authenticate(), /官方 DSH 认证失败（HTTP 503）/);
+
+  assert.equal(fetchMock.mock.callCount(), 1);
+});
+
+test("reports an explicit startup connection error after bounded authentication retries", async (t) => {
+  const fetchMock = t.mock.method(globalThis, "fetch", async () => {
+    throw new TypeError("fetch failed");
+  });
+  const client = new DshRemoteClient(`http://127.0.0.1:43123/?token=${TOKEN}`);
+
+  await assert.rejects(client.authenticate(), (error: unknown) => {
+    assert.ok(error instanceof DshStartupConnectionError);
+    assert.match(error.message, /自动恢复已耗尽/);
+    return true;
+  });
+
+  assert.equal(fetchMock.mock.callCount(), 9);
+});
+
+test("classifies a response-body disconnect as a connection error without replaying the mutation", async () => {
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  let callbacks = 0;
+  globalThis.fetch = async (_input, init) => {
+    requests += 1;
+    if (init?.method === "POST") {
+      return {
+        ok: true,
+        async json(): Promise<unknown> {
+          throw new TypeError("response body stream closed");
+        },
+      } as Response;
+    }
+    return new Response(null, {
+      status: 303,
+      headers: { Location: "/", "Set-Cookie": "dsh-auth-fixture=session-value" },
+    });
+  };
+  try {
+    const client = new DshRemoteClient(`http://127.0.0.1:43123/?token=${TOKEN}`, () => { callbacks += 1; });
+    await client.authenticate();
+    await assert.rejects(client.call("session/create", { cwd: "C:\\workspace" }), (error: unknown) => {
+      assert.ok(error instanceof DshConnectionError);
+      return true;
+    });
+    assert.equal(requests, 2);
+    assert.equal(callbacks, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+for (const stage of ["fetch", "body"] as const) {
+  for (const failure of [
+    new TypeError("transport failed"),
+    new DOMException("timed out", "TimeoutError"),
+    new DOMException("aborted", "AbortError"),
+  ]) {
+    test(`${stage} ${failure.name} notifies once and never replays a mutation`, async (t) => {
+      const fixture = await createFixture();
+      t.after(() => fixture.close());
+      let callbacks = 0;
+      const client = new DshRemoteClient(fixture.startupUrl, () => { callbacks += 1; });
+      await client.authenticate();
+      const fetchMock = t.mock.method(globalThis, "fetch", async () => {
+        if (stage === "fetch") throw failure;
+        return new Response(new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"type":'));
+            controller.error(failure);
+          },
+        }));
+      });
+      await assert.rejects(client.call("session/create", {}), DshConnectionError);
+      assert.equal(callbacks, 1);
+      assert.equal(fetchMock.mock.callCount(), 1);
+    });
+  }
+}
+
+for (const kind of ["http", "json", "envelope", "business"] as const) {
+  test(`${kind} failure does not signal connection loss or replay the request`, async (t) => {
+    const fixture = await createFixture();
+    t.after(() => fixture.close());
+    let callbacks = 0;
+    const client = new DshRemoteClient(fixture.startupUrl, () => { callbacks += 1; });
+    await client.authenticate();
+    const fetchMock = t.mock.method(globalThis, "fetch", async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body));
+      if (kind === "http") return new Response("", { status: 503 });
+      if (kind === "json") return new Response("{");
+      return Response.json({
+        type: "server-response",
+        rpcId: kind === "envelope" ? "wrong-id" : request.rpcId,
+        result: { ok: false, error: { code: "DENIED", message: "not allowed", details: {} } },
+      });
+    });
+    const expected = {
+      http: /HTTP 503/,
+      json: /JSON|property name/i,
+      envelope: /关联信息/,
+      business: /not allowed/,
+    }[kind];
+    await assert.rejects(client.call("session/create", {}), expected);
+    assert.equal(callbacks, 0);
+    assert.equal(fetchMock.mock.callCount(), 1);
+  });
+}
 
 test("opens Remote streams with the authenticated mux protocol", async () => {
   const fixture = await createFixture();
@@ -177,7 +319,44 @@ test("opens Remote streams with the authenticated mux protocol", async () => {
     await running;
     assert.equal(events[0]?.type, "ready");
     assert.equal(client.currentEventClientId, "client-fixture");
+    assert.equal(client.currentEventGeneration, 1);
   } finally {
+    await fixture.close();
+  }
+});
+
+test("treats an unexpected Remote stream close as an error", async () => {
+  const fixture = await createFixture({ closeAfterStream: true });
+  try {
+    const client = new DshRemoteClient(fixture.startupUrl);
+    await client.authenticate();
+    const iterator = client.openStream("session/follow", {})[Symbol.asyncIterator]();
+    assert.deepEqual(await iterator.next(), { done: false, value: { type: "snapshot", records: [], hasMore: false } });
+    await assert.rejects(iterator.next(), /closed unexpectedly/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("does not publish event frames before a ready generation", async () => {
+  const fixture = await createFixture({
+    eventValue: { type: "emit", event: "unexpected", args: [] },
+    closeAfterStream: true,
+  });
+  const client = new DshRemoteClient(fixture.startupUrl);
+  const controller = new AbortController();
+  const events: DshRemoteEvent[] = [];
+  try {
+    await client.authenticate();
+    const running = client.runEvents((event) => events.push(event), controller.signal);
+    await new Promise<void>((resolve) => setTimeout(resolve, 650));
+    controller.abort();
+    await running;
+    assert.deepEqual(events, []);
+    assert.ok(fixture.connectionCount >= 2);
+    assert.equal(client.currentEventClientId, "");
+  } finally {
+    controller.abort();
     await fixture.close();
   }
 });
@@ -194,71 +373,5 @@ test("does not create a WebSocket for a stream that was already cancelled", asyn
     assert.equal(fixture.connectionCount, 0);
   } finally {
     await fixture.close();
-  }
-});
-
-test("surfaces DSH business errors and codes empty failure payloads", async () => {
-  const failed = await createFixture({
-    rpcResult: { ok: false, error: { code: "auth", message: "provider route missing api key" } },
-  });
-  try {
-    const client = new DshRemoteClient(failed.startupUrl);
-    await client.authenticate();
-    await assert.rejects(() => client.call("session/list"), (error: unknown) => {
-      assert.equal(error instanceof Error ? error.message : "", "provider route missing api key");
-      return true;
-    });
-  } finally {
-    await failed.close();
-  }
-
-  const empty = await createFixture({ rpcResult: { ok: false } });
-  try {
-    const client = new DshRemoteClient(empty.startupUrl);
-    await client.authenticate();
-    await assert.rejects(() => client.call("session/list"), (error: unknown) => {
-      assert.match(error instanceof Error ? error.message : "", /^VOLT_DSH_REQUEST_FAILED:/u);
-      return true;
-    });
-  } finally {
-    await empty.close();
-  }
-});
-
-for (const existing of [false, true]) {
-  test(`failed export preserves ${existing ? "the existing archive" : "an absent destination"} and permits retry`, async () => {
-    const fixture = await createFixture({ failFirstExport: true });
-    const root = await mkdtemp(path.join(os.tmpdir(), "volt-export-"));
-    const destination = path.join(root, "session.zip");
-    const original = "existing-archive";
-    try {
-      if (existing) await writeFile(destination, original);
-      const client = new DshRemoteClient(fixture.startupUrl);
-      await client.authenticate();
-      await assert.rejects(client.exportSession("s1", destination), /^Error: VOLT_DSH_EXPORT_FAILED/);
-      assert.deepEqual(await readdir(root), existing ? ["session.zip"] : []);
-      if (existing) assert.equal(await readFile(destination, "utf8"), original);
-      await client.exportSession("s1", destination);
-      assert.deepEqual(await readFile(destination), fixture.archive);
-      assert.deepEqual(await readdir(root), ["session.zip"]);
-    } finally {
-      await fixture.close();
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-}
-
-test("export write failures and directory destinations leave no partial files", async () => {
-  const fixture = await createFixture();
-  const root = await mkdtemp(path.join(os.tmpdir(), "volt-export-invalid-"));
-  try {
-    const client = new DshRemoteClient(fixture.startupUrl);
-    await client.authenticate();
-    await assert.rejects(client.exportSession("s1", path.join(root, "missing", "session.zip")), /VOLT_DSH_EXPORT_FAILED/);
-    await assert.rejects(client.exportSession("s1", root), /VOLT_DSH_EXPORT_FAILED/);
-    assert.deepEqual(await readdir(root), []);
-  } finally {
-    await fixture.close();
-    await rm(root, { recursive: true, force: true });
   }
 });

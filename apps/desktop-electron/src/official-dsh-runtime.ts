@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Readable } from "node:stream";
+import { pathToFileURL } from "node:url";
 import { isMap, parseDocument, type Document } from "yaml";
 import { provisionBundledBrowserSkillProfile } from "../../../scripts/provision-dsh-profile.mjs";
 import { ensureOfficeCliBinary, officeCliEntryFromEnvironment } from "../../../scripts/third-party-office-tools.mjs";
@@ -65,6 +66,7 @@ function parseBundledEnv(source: string): Readonly<Record<string, string>> {
 
 const INHERITED_OEM_ENDPOINT_ENV = /^(?:XG_GOMODEL_ENDPOINT|XG_MODEL_BASE_URL|XIGU_MODEL_BASE_URL|VOLT_MODEL_BASE_URL|volt_MODEL_BASE_URL)$/;
 const INHERITED_SECRET_ENV = /(?:api[_-]?key|access[_-]?token|(?:^|_)(?:secret|token)$)/i;
+const INHERITED_INTERPRETER_ENV = /^(?:NODE_OPTIONS|NODE_PATH|ELECTRON_RUN_AS_NODE|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP|PYTHONUSERBASE)$/i;
 
 export function isInheritedCredentialEnv(name: string): boolean {
   return INHERITED_SECRET_ENV.test(name) || INHERITED_OEM_ENDPOINT_ENV.test(name);
@@ -76,7 +78,7 @@ export function officialDshChildEnvironment(
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(processEnv)) {
-    if (value === undefined || isInheritedCredentialEnv(key)) continue;
+    if (value === undefined || isInheritedCredentialEnv(key) || INHERITED_INTERPRETER_ENV.test(key)) continue;
     env[key] = value;
   }
   for (const [key, value] of Object.entries(overrides)) {
@@ -132,6 +134,7 @@ export async function provisionBundledDshCredential(
   dshUrl: string | Pick<DshRemoteClient, "call">,
   bundledEnvPath: string,
   signal?: AbortSignal,
+  force = false,
 ): Promise<BundledDshCredentialProvisionResult> {
   signal?.throwIfAborted();
   if (!existsSync(bundledEnvPath)) {
@@ -152,7 +155,7 @@ export async function provisionBundledDshCredential(
     : described as Record<string, { configured?: boolean; source?: string }>;
   const credential = credentials[BUNDLED_MODEL_CREDENTIAL_REF];
   // 用户通过设置保存的凭据优先；项目/用户 .env 只是回退来源，不能挡住内置凭据导入。
-  if (credential?.configured === true && credential.source !== "project-env" && credential.source !== "user-env") {
+  if (!force && credential?.configured === true && credential.source !== "project-env" && credential.source !== "user-env") {
     if (credential.source === "env") {
       throw desktopError(DesktopErrorCode.BUNDLED_CREDENTIAL_OVERRIDDEN, "内置模型凭据被启动环境覆盖，请清除同名环境变量后重启");
     }
@@ -173,7 +176,7 @@ export interface OfficialDshRuntimeOptions {
   workspace: string;
   executable?: string;
   executableArgs?: string[];
-  environment?: Readonly<Record<string, string>>;
+  environment?: Readonly<NodeJS.ProcessEnv>;
   bundledBrowserSkillPackageDir?: string;
   bundledProfilePlugins?: ReadonlyArray<{ packageName: string; packageDir: string }>;
   startupTimeoutMs?: number;
@@ -367,6 +370,10 @@ export class OfficialDshRuntime {
       cwd: this.options.workspace,
       env: officialDshChildEnvironment(process.env, {
         ...this.options.environment,
+        ...(this.options.environment?.ANYONG_NETWORK_POLICY_PATH ? {
+          NODE_OPTIONS: `--import=${pathToFileURL(this.options.environment.ANYONG_NETWORK_POLICY_PATH).href}`,
+          ANYONG_NETWORK_POLICY_PRELOAD: "1",
+        } : {}),
         DSH_HOME: this.options.dshHome,
         DSH_CWD: this.options.workspace,
       }),

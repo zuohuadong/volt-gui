@@ -9,5 +9,5 @@ export const officeCli: {
 };
 
 export function resolveOfficeCliEntry(fromPackageRoot?: string): string;
-export function officeCliEntryFromEnvironment(environment?: Readonly<Record<string, string>>): string | undefined;
+export function officeCliEntryFromEnvironment(environment?: Readonly<NodeJS.ProcessEnv>): string | undefined;
 export function ensureOfficeCliBinary(entryPath?: string): Promise<string | null>;

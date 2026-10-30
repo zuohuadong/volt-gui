@@ -37,7 +37,12 @@ export function setQuestionAnswer(
 ): PendingInteractionsBySession {
   const state = currentState(states, sessionId);
   const answerId = custom ? `${id}:custom` : id;
-  return { ...states, [sessionId]: { ...state, answers: { ...state.answers, [answerId]: value } } };
+  const answers = { ...state.answers };
+  if (custom) delete answers[id];
+  else delete answers[`${id}:custom`];
+  if (value) answers[answerId] = value;
+  else delete answers[answerId];
+  return { ...states, [sessionId]: { ...state, answers } };
 }
 
 export function clearPendingApproval(

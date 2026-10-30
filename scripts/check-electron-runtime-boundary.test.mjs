@@ -16,6 +16,8 @@ const fixtureFiles = [
   "apps/desktop-electron/electron-builder.mjs",
   "scripts/native-executable.mjs",
   "apps/desktop-frontend/src/lib/dsh-client.ts",
+  "apps/desktop-electron/src/dsh-method-map.ts",
+  "apps/desktop-frontend/src/components/MessageAttachment.svelte",
 ];
 
 test("current Electron shell is isolated around the official DSH runtime and local Svelte renderer", async () => {
@@ -75,8 +77,8 @@ test("gate rejects unused Electron DSH allowlist methods", async () => {
       await cp(path.join(repositoryRoot, relativePath), target);
     }
 
-    const mainPath = path.join(root, "apps/desktop-electron/src/main.ts");
-    await writeFile(mainPath, (await readFile(mainPath, "utf8")).replace(
+    const methodMapPath = path.join(root, "apps/desktop-electron/src/dsh-method-map.ts");
+    await writeFile(methodMapPath, (await readFile(methodMapPath, "utf8")).replace(
       '"settings.update"',
       '"settings.update", "settings.mutate"',
     ));

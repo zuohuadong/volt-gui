@@ -32,7 +32,8 @@ test("all bundled internal gateway aliases declare text and image input", () => 
   const models = gatewayModels();
   assert.deepEqual(models.map((model) => model.id), ["vlm", "deepseek-v4-flash", "qwen3.8-flash-next"]);
   for (const model of models) assert.deepEqual(model.input, ["text", "image"]);
-  assert.equal(models[0].contextWindow, 65536);
+  assert.deepEqual(models.map((model) => model.contextWindow), [300000, 1048576, 1048576]);
+  for (const model of models) assert.equal(model.maxTokens, 32768);
 });
 
 test("a deployment can override each model without changing the others", () => {

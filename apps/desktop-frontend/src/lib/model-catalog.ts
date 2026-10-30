@@ -1,7 +1,6 @@
-import type { ConfigurableProvider, DiscoveredModel, ModelGroup, ModelInfo, SettingsNamespace } from "./dsh-client";
-import { t } from "./i18n";
-
-const DEFAULT_XG_GATEWAY_HINT = "http://192.168.1.47:9010/v1";
+import type { ConfigurableProvider, CredentialView, DiscoveredModel, ModelGroup, ModelInfo, SettingsNamespace } from "./dsh-client";
+import type { Locale } from "./i18n/types";
+import { getLocale } from "./i18n";
 
 export type ProviderSettings = {
   namespace: SettingsNamespace;
@@ -10,6 +9,35 @@ export type ProviderSettings = {
 
 export function modelSelectionKey(provider: string, model: string): string {
   return `${provider}/${model}`;
+}
+
+const chineseModelDescriptions: Array<[RegExp, string]> = [
+  [/^deepseek-v4-flash$/i, "快速、高效、经济，适用于专注型、常规或并行任务。"],
+  [/^deepseek-v4-pro$/i, "更擅长智能体编码、知识问答和复杂推理，适用于复杂或质量要求较高的任务。"],
+];
+
+function normalizeModelName(name: string, locale: Locale): string {
+  if (locale !== "zh-CN") return name;
+  return name
+    .replace(/^DeepSeek[- ](V\d+(?:\.\d+)?)[- ](Flash|Pro)$/i,
+      (_, version: string, tier: string) => `DeepSeek-${version.toUpperCase()}-${tier.toLowerCase() === "flash" ? "Flash" : "Pro"}`);
+}
+
+function localizedDescription(model: ModelInfo, locale: Locale): string {
+  const description = model.description?.trim() ?? "";
+  if (locale !== "zh-CN") return description;
+  if (/[\u3400-\u9fff]/u.test(description)) return description;
+  const knownDescription = chineseModelDescriptions.find(([pattern]) => pattern.test(model.id))?.[1];
+  if (knownDescription) return knownDescription;
+  return description;
+}
+
+export function localizeModelInfo(model: ModelInfo, locale: Locale): ModelInfo {
+  return {
+    ...model,
+    name: normalizeModelName(model.name, locale),
+    description: localizedDescription(model, locale),
+  };
 }
 
 export function parseModelSelectionKey(value: string): { provider: string; model: string } {
@@ -57,7 +85,15 @@ export function providerCredentialRef(
   return typeof ref === "string" && ref ? ref : undefined;
 }
 
-// 停用 Provider 的默认引用不是可用凭据；未知或非 Provider 命名空间仍须保留。
+/**
+ * Collect credential references shown in Settings → Advanced.
+ *
+ * Disabled providers still publish their default `apiKeyEnv` in the settings
+ * namespace. Those refs are not usable by any active model route, and an
+ * inherited `DEEPSEEK_API_KEY` (for example) would otherwise look configured
+ * next to the intranet gateway key. Keep non-provider namespaces (knowledge,
+ * integrations) and omit only namespaces whose providers are all inactive.
+ */
 export function collectCredentialRefs(
   namespaces: SettingsNamespace[],
   providers: ConfigurableProvider[] = [],
@@ -69,19 +105,20 @@ export function collectCredentialRefs(
       namespaceActive.get(provider.settingsNs) === true || provider.active === true,
     );
   }
-  return [...new Set(namespaces
-    .filter((namespace) => namespaceActive.get(namespace.ns) !== false)
-    .flatMap((namespace) => credentialRefsIn(namespace.value)))].sort();
-}
-
-function credentialRefsIn(candidate: unknown): string[] {
-  if (Array.isArray(candidate)) return candidate.flatMap(credentialRefsIn);
-  if (!candidate || typeof candidate !== "object") return [];
-  return Object.entries(candidate).flatMap(([key, child]) =>
-    key === "apiKeyEnv" && typeof child === "string" && child
-      ? [child]
-      : credentialRefsIn(child)
-  );
+  const refs: string[] = [];
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if (key === "apiKeyEnv" && typeof child === "string" && child && !refs.includes(child)) refs.push(child);
+      else visit(child);
+    }
+  };
+  for (const namespace of namespaces) {
+    if (namespaceActive.get(namespace.ns) === false) continue;
+    visit(namespace.value);
+  }
+  return refs.sort();
 }
 
 export function providerDefaultBaseURL(
@@ -95,15 +132,17 @@ export function providerDefaultBaseURL(
 
 export function isLocalOrIntranetBaseURL(url: string | undefined): boolean {
   if (!url || typeof url !== "string") return false;
-  const trimmed = url.trim().toLowerCase();
-  return (
-    trimmed.includes("localhost") ||
-    trimmed.includes("127.0.0.1") ||
-    trimmed.includes("192.168.") ||
-    trimmed.includes("10.") ||
-    /172\.(1[6-9]|2[0-9]|3[0-1])\./.test(trimmed) ||
-    trimmed.endsWith(".local")
-  );
+  try {
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) return false;
+    const host = parsed.hostname.toLowerCase();
+    return host === "localhost" || host === "[::1]" || host.endsWith(".local")
+      || /^(?:127|10)\.\d+\.\d+\.\d+$/.test(host)
+      || /^192\.168\.\d+\.\d+$/.test(host)
+      || /^172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(host);
+  } catch {
+    return false;
+  }
 }
 
 export function isProviderCredentialOptional(
@@ -111,9 +150,10 @@ export function isProviderCredentialOptional(
   providers: ConfigurableProvider[],
   provider: string,
 ): boolean {
-  if (provider === "xg-gomodel" || provider.includes("internal") || provider.includes("local")) {
-    return true;
-  }
+  const config = resolveProviderSettings(namespaces, providers, provider)?.config;
+  const credentialRef = config?.apiKeyEnv;
+  // 显式凭据引用优先于地址类型；内网路由与是否需要 Key 是两个独立维度。
+  if (typeof credentialRef === "string" && credentialRef.trim()) return false;
   const baseURL = providerDefaultBaseURL(namespaces, providers, provider);
   return isLocalOrIntranetBaseURL(baseURL);
 }
@@ -127,27 +167,51 @@ export function providerDefaultApi(
   return typeof config?.api === "string" ? config.api : "";
 }
 
+export function configuredModelGroups(
+  groups: ModelGroup[],
+  namespaces: SettingsNamespace[],
+  providers: ConfigurableProvider[],
+  credentials: Record<string, CredentialView>,
+): ModelGroup[] {
+  return groups.filter((group) => {
+    const descriptor = providers.find((item) => item.provider === group.id);
+    if (!descriptor?.active || group.models.length === 0) return false;
+    const settings = resolveProviderSettings(namespaces, providers, group.id);
+    if (!settings) return false;
+    const ref = providerCredentialRef(namespaces, providers, group.id);
+    if (ref) return credentials[ref]?.configured === true;
+    if (isProviderCredentialOptional(namespaces, providers, group.id)) return true;
+    const keyPath = [...(descriptor?.settingsPath ?? ["providers", group.id]), "apiKey"];
+    return settings.namespace.secrets.some((secret) =>
+      secret.set && JSON.stringify(secret.path) === JSON.stringify(keyPath));
+  });
+}
+
 export function credentialRefTitle(ref: string): string {
+  const isZh = getLocale() === "zh-CN";
   switch (ref) {
     case "XG_GOMODEL_API_KEY":
-      return t("settings.credentialTitleXg");
+      return isZh ? "西谷内网网关 API 密钥（内置默认）" : "Xigu Gateway API Key (Built-in)";
     case "DEEPSEEK_API_KEY":
-      return t("settings.credentialTitleDeepseek");
+      return isZh ? "DeepSeek 官方 API 密钥" : "DeepSeek Official API Key";
     case "OPENAI_API_KEY":
-      return t("settings.credentialTitleOpenai");
+      return isZh ? "OpenAI API 密钥" : "OpenAI API Key";
     case "ANTHROPIC_API_KEY":
-      return t("settings.credentialTitleAnthropic");
+      return isZh ? "Anthropic API 密钥" : "Anthropic API Key";
     case "GEMINI_API_KEY":
-      return t("settings.credentialTitleGemini");
+      return isZh ? "Gemini API 密钥" : "Gemini API Key";
+    case "WEKNORA_API_KEY":
+      return isZh ? "外部知识库 API 密钥" : "External Knowledge API Key";
     default:
       return ref;
   }
 }
 
 export function credentialRefHint(ref: string): string {
-  if (ref === "XG_GOMODEL_API_KEY") return t("settings.credentialHintXg", { endpoint: DEFAULT_XG_GATEWAY_HINT });
-  if (ref === "DEEPSEEK_API_KEY") return t("settings.credentialHintDeepseek");
-  return t("settings.credentialHintGeneric");
+  const isZh = getLocale() === "zh-CN";
+  if (ref === "XG_GOMODEL_API_KEY") return isZh ? "内置内网网关，启动时会自动同步模型列表" : "Built-in gateway; models are synchronized at startup";
+  if (ref === "DEEPSEEK_API_KEY") return isZh ? "用于 DeepSeek 官方模型服务" : "For the official DeepSeek model service";
+  return isZh ? "服务访问凭据引用" : "Service credential reference";
 }
 
 function valueAtPath(value: unknown, path: string[]): unknown {
@@ -184,6 +248,8 @@ export function enrichModelGroups(groups: ModelGroup[], namespaces: SettingsName
         : configuredModel.inputModalities;
       return {
         ...model,
+        name: typeof configuredModel.name === "string" ? configuredModel.name : model.name,
+        description: typeof configuredModel.description === "string" ? configuredModel.description : model.description,
         input: Array.isArray(configuredInput)
           ? configuredInput.filter((item): item is string => typeof item === "string")
           : model.input,
@@ -233,14 +299,22 @@ export function mergeDiscoveredModels(discovered: DiscoveredModel[], configured:
 }
 
 export function modelCapabilityLabel(model: ModelInfo, unknown = false): string {
-  if (unknown) return t("models.capabilityUnknown");
-  if (model.input?.includes("image")) return t("models.capabilityImage");
-  if (model.input?.includes("text")) return t("models.capabilityText");
-  return t("models.capabilityUndeclared");
+  if (unknown) return "能力待确认";
+  if (model.input?.includes("image")) return "支持图片";
+  if (model.input?.includes("text")) return "仅文本";
+  return "能力未声明";
 }
 
 export function modelSupportsImages(model: ModelInfo | undefined): boolean {
   return model?.input?.includes("image") ?? false;
+}
+
+export function preferredImageModel(groups: ModelGroup[], selected: string): { provider: string; model: ModelInfo } | undefined {
+  const { provider } = parseModelSelectionKey(selected);
+  const candidates = groups.flatMap((group) =>
+    group.models.filter(modelSupportsImages).map((model) => ({ provider: group.id, model })),
+  );
+  return candidates.find((candidate) => candidate.provider === provider) ?? candidates[0];
 }
 
 export function supportedReasoningEffort(

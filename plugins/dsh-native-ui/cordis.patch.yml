@@ -1,0 +1,3 @@
+- insert:
+    - id: native-ui
+      name: "@voltui/dsh-native-ui"

@@ -31,6 +31,9 @@ if (packaging) {
     path.resolve(desktopDir, ".dsh-runtime/scripts"),
     path.resolve(desktopDir, ".node-runtime"),
     path.resolve(desktopDir, ".browser-skill-runtime"),
+    path.resolve(desktopDir, ".browser-extension-runtime"),
+    path.resolve(desktopDir, ".speech-runtime"),
+    ...(packagingWindows ? [path.resolve(desktopDir, ".tool-runtime")] : []),
   ]) {
     if (!fs.existsSync(source)) throw new Error(`Packaging extraResources source is missing: ${source}`);
   }
@@ -78,6 +81,9 @@ export default {
     { from: ".dsh-runtime/scripts", to: "dsh-runtime/scripts" },
     { from: ".node-runtime", to: "node-runtime" },
     { from: ".browser-skill-runtime", to: "browser-skill-runtime" },
+    { from: ".browser-extension-runtime", to: "browser-extension-runtime" },
+    { from: ".speech-runtime", to: "speech-runtime" },
+    ...(process.platform === "win32" ? [{ from: ".tool-runtime", to: "tool-runtime" }] : []),
     ...(fs.existsSync(bundledEnvPath) ? [{ from: bundledEnvPath, to: "bundled.env" }] : []),
   ],
   win: {

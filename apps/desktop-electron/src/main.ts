@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -17,11 +17,27 @@ import {
 } from "./official-dsh-runtime.js";
 import { resolveElectronProfile } from "./electron-profile.js";
 import { DshRemoteClient, type DshRemoteEvent } from "./dsh-remote-client.js";
-import { isAllowedExternalUrl, isAllowedNavigationUrl, isTrustedIpcSenderUrl } from "./renderer-security.js";
+import { isAllowedExternalUrl, isAllowedNavigationUrl, isAudioOnlyMediaPermission, isTrustedIpcSenderUrl } from "./renderer-security.js";
 import { applyAssistantStreamFrame, normalizeSessionSnapshot, type AssistantAttempt, type HistoryEntry } from "./session-follow.js";
 import { createSingleFlight } from "./single-flight.js";
 import { SmbMountManager } from "./smb-mounts.js";
 import { DesktopErrorCode, desktopError, desktopErrorMessage } from "./desktop-error.ts";
+import { desktopToolEnvironment } from "./desktop-tool-environment.js";
+import { browserExtensionDirectory, browserExtensionSourceDirectory, ensureBrowserExtension, type BrowserExtensionState } from "./browser-extension.js";
+import { installedBrowsers, launchExtensionPage, resolveBrowserCandidate } from "./browser-extension-launch.js";
+import { describePwshProbe, selectPowerShell } from "./pwsh-probe.js";
+import { isPlatformProfilePlugin } from "./platform-plugins.js";
+import { resolveMemoryStatus, type MemoryStatus } from "./memory-policy.js";
+import { canonicalProjectDirectory, createDefaultWorkspace, workspaceSafetyError } from "./workspace-policy.js";
+import { checkWorkspaceRequest } from "./workspace-request.js";
+import { listSubagents } from "./subagent-routing.js";
+import { withProviderActivity } from "./provider-activity.js";
+import { captureScreen } from "./screen-capture.js";
+import { cropCapture } from "./screenshot-crop.js";
+import { allowedDshMethods, mapLegacyDshRequest } from "./dsh-method-map.js";
+import { createCredentialMutationQueue } from "./credential-mutations.js";
+import { DEFAULT_NETWORK_MODE, isNetworkMode, networkPolicyEnvironment, readNetworkMode, writeNetworkMode, type NetworkMode } from "./network-mode.js";
+import { assertNetworkUrlAllowed } from "../../../scripts/network-policy.mjs";
 
 const electronProfile = resolveElectronProfile();
 app.setName(electronProfile.executableName);
@@ -40,20 +56,9 @@ function desktopAppVersion(): string {
   return app.getVersion();
 }
 
-const allowedDshMethods = new Set([
-  "session.list", "session.search", "session.create", "session.history", "session.prompt",
-  "session.cancel", "session.models", "session.selectModel", "session.rename", "session.fork",
-  "session.updateQueue", "workspace.list", "workspace.create",
-  "workspace.rename", "workspace.delete", "workspace.insertBefore", "workspace.insertSessionBefore",
-  "workspace.archiveSession", "host.describe", "host.listDirectory", "host.createDirectory", "host.openPath",
-  "agentPreset.list", "agentPreset.select", "agentPreset.read", "agentPreset.copy", "agentPreset.openDocument", "agentPreset.remove",
-  "subagent.list", "subagent.history", "subagent.prompt", "subagent.interrupt",
-  "goal.create", "goal.edit", "goal.pause",
-  "goal.resume", "goal.complete", "goal.clear", "settings.describe", "settings.openDocument",
-  "settings.update", "credentials.describe",
-  "credentials.set", "credentials.unset", "llm.providers", "llm.models", "llm.discoverModels", "skill.list",
-  "fileReferences/list", "sessionReferenceResolver/candidates", "pluginInventory/list",
-]);
+const credentialMutationQueue = createCredentialMutationQueue();
+const credentialMutationMethods = new Set(["credentials.set", "credentials.unset", "settings.update", "settings.replace", "settings.mutate"]);
+const networkMutationQueue = createCredentialMutationQueue();
 
 process.stdout.on("error", rethrowUnlessBrokenPipe);
 process.stderr.on("error", rethrowUnlessBrokenPipe);
@@ -69,26 +74,51 @@ const sessionFollowControllers = new Map<string, AbortController>();
 let smbMountManager: SmbMountManager | null = null;
 let runtimeStartPromise: Promise<void> | null = null;
 let runtimeStartController: AbortController | null = null;
+let networkMode: NetworkMode = DEFAULT_NETWORK_MODE;
+let microphoneAllowed = false;
+let screenCaptureBusy = false;
+let browserExtensionState: BrowserExtensionState | undefined;
 let desktopBootstrap = {
   dshReady: false,
   productName: electronProfile.productName,
   version: desktopAppVersion(),
   workspace: os.homedir(),
   startupError: "",
+  startupDeadline: Date.now() + 600_000,
+  workspaceWarning: "",
+  networkMode: DEFAULT_NETWORK_MODE as NetworkMode,
+  memoryStatus: "disabled" as MemoryStatus,
 };
 
 app.setAppUserModelId(electronProfile.appId);
 Menu.setApplicationMenu(null);
 
 function canonicalWorkspace(candidate: string | undefined): string {
-  const requested = candidate?.trim() || os.homedir();
-  try {
-    const canonical = fs.realpathSync(path.resolve(requested));
-    if (fs.statSync(canonical).isDirectory()) return canonical;
-  } catch (error) {
-    console.warn(`[Electron] DSH workspace is unavailable: ${requested}`, error);
+  if (candidate?.trim()) {
+    try { return canonicalProjectDirectory(path.resolve(candidate.trim())); }
+    catch { desktopBootstrap.workspaceWarning = workspaceSafetyError(path.resolve(candidate.trim())); }
   }
-  return fs.realpathSync(os.homedir());
+  return createDefaultWorkspace(app.getPath("documents"), app.getPath("home"));
+}
+
+function runtimeRootPath(): string {
+  return app.isPackaged ? path.join(process.resourcesPath, "dsh-runtime") : path.join(desktopRoot, ".dsh-runtime");
+}
+
+function networkModePath(): string {
+  return path.join(app.getPath("userData"), "network-policy.json");
+}
+
+function networkPolicyPath(): string {
+  return path.join(runtimeRootPath(), "scripts", "network-policy.mjs");
+}
+
+function requireBrowserExtension(): BrowserExtensionState {
+  browserExtensionState ??= ensureBrowserExtension(
+    browserExtensionSourceDirectory(app.isPackaged ? process.resourcesPath : desktopRoot, app.isPackaged),
+    browserExtensionDirectory(app.getPath("userData")),
+  );
+  return browserExtensionState;
 }
 
 function profilePatchPath(): string {
@@ -228,7 +258,7 @@ function createWindow(): BrowserWindow {
   window.removeMenu();
   window.setMenuBarVisibility(false);
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (isAllowedExternalUrl(url)) {
+    if (networkMode === "external" && isAllowedExternalUrl(url)) {
       void shell.openExternal(url).catch((error) => console.warn("[Electron] 无法打开外部链接", error));
     }
     return { action: "deny" };
@@ -252,10 +282,26 @@ function createWindow(): BrowserWindow {
 }
 
 function configureBrowserPermissions(): void {
-  session.defaultSession.setPermissionCheckHandler(() => false);
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false);
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, _requestingOrigin, details) =>
+    isTrustedMicrophonePermission(webContents, permission, details),
+  );
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(isTrustedMicrophonePermission(webContents, permission, details));
   });
+  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => callback(null));
+}
+
+function isTrustedMicrophonePermission(
+  webContents: Electron.WebContents | null,
+  permission: string,
+  details: { isMainFrame?: boolean; requestingUrl?: string; mediaType?: string; mediaTypes?: string[] },
+): boolean {
+  return microphoneAllowed
+    && webContents !== null && webContents === mainWindow?.webContents
+    && isTrustedIpcSenderUrl(webContents.getURL(), frontendEntryUrl())
+    && details.isMainFrame === true
+    && isTrustedIpcSenderUrl(details.requestingUrl ?? "", frontendEntryUrl())
+    && isAudioOnlyMediaPermission(permission, details);
 }
 
 async function startDesktop(signal: AbortSignal): Promise<void> {
@@ -263,6 +309,23 @@ async function startDesktop(signal: AbortSignal): Promise<void> {
   if (dshRuntime) throw desktopError(DesktopErrorCode.DSH_STOPPED, "上一个官方 DSH 运行时尚未停止");
   const workspace = canonicalWorkspace(process.env.DSH_WORKSPACE || process.env.INIT_CWD);
   const dshHome = dshHomePath();
+  const memoryStatus = resolveMemoryStatus(workspace, process.env.ANYONG_MEMORY_ENABLED === "0");
+  const toolsRoot = app.isPackaged ? path.join(process.resourcesPath, "tool-runtime") : path.join(desktopRoot, ".tool-runtime");
+  const toolsEnvironment = process.platform === "win32" ? desktopToolEnvironment(toolsRoot, nodeRuntimePath()) : {};
+  if (process.platform === "win32") {
+    const windowsRoot = process.env.SystemRoot || "C:\\Windows";
+    const selection = await selectPowerShell({
+      bundled: toolsEnvironment.ANYONG_PWSH_PATH!,
+      system: path.join(windowsRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+      enabled: process.env.ANYONG_PWSH_FALLBACK !== "0",
+    });
+    console.info(describePwshProbe(selection.probe, selection.path));
+    if (!selection.probe.ok) throw desktopError(DesktopErrorCode.DSH_STARTUP_FAILED, "PowerShell 启动自检失败");
+    toolsEnvironment.ANYONG_PWSH_PATH = selection.path;
+    toolsEnvironment.ANYONG_POWERSHELL = selection.path;
+  }
+  signal.throwIfAborted();
+  const speechRoot = app.isPackaged ? path.join(process.resourcesPath, "speech-runtime", "sensevoice") : path.join(desktopRoot, ".speech-runtime", "sensevoice");
   const bundledCredentialsPath = bundledModelCredentialsPath();
   const modelEnvironment = bundledDshModelEnvironment(bundledCredentialsPath);
   const credentialMigration = migrateLegacyDshCredentials(dshHome, legacyDshHomePaths());
@@ -270,7 +333,7 @@ async function startDesktop(signal: AbortSignal): Promise<void> {
   if (credentialMigration.migratedFrom) {
     console.log(`[Electron] 已迁移旧版官方 DSH 凭据: ${credentialMigration.migratedFrom}`);
   }
-  desktopBootstrap = { ...desktopBootstrap, workspace, startupError: "" };
+  desktopBootstrap = { ...desktopBootstrap, workspace, memoryStatus, startupError: "" };
   let runtime!: OfficialDshRuntime;
   runtime = new OfficialDshRuntime({
     dshBin: resolveOfficialDshBin(app.isPackaged ? process.resourcesPath : undefined),
@@ -284,17 +347,29 @@ async function startDesktop(signal: AbortSignal): Promise<void> {
     }, {
       packageName: "@voltui/dsh-intranet-auth",
       packageDir: intranetAuthPluginPackagePath(),
-    }],
+    }, ...["@voltui/dsh-office", "@voltui/dsh-mcp-apps", "@voltui/dsh-native-ui", "@deepseek-ai/dsh-experimental-voice-input-bundle",
+      ...(isPlatformProfilePlugin("dsh-ab-ocr") ? ["dsh-ab-ocr"] : []),
+    ].map((packageName) => ({ packageName, packageDir: path.join(runtimeRootPath(), "node_modules", ...packageName.split("/")) }))],
     executable: nodeRuntimePath(),
     executableArgs: ["--expose-internals"],
     signal,
     environment: {
+      ...toolsEnvironment,
       ...modelEnvironment,
+      ...networkPolicyEnvironment(networkPolicyPath(), networkMode),
+      ANYONG_WEB_RETRIEVAL_ENABLED: networkMode === "external" ? "1" : "0",
+      ANYONG_MEMORY_ENABLED: memoryStatus === "active" ? "1" : "0",
+      ANYONG_MEMORIX_COMMAND: nodeRuntimePath(),
+      ANYONG_MEMORIX_ARGS_JSON: JSON.stringify([path.join(runtimeRootPath(), "node_modules", "memorix", "dist", "cli", "index.js"), "serve", "--mode", "micro", "--cwd", workspace]),
+      MEMORIX_DATA_DIR: path.join(dshHome, "memorix"),
+      ANYONG_SPEECH_MODEL_DIR: fs.existsSync(speechRoot) ? speechRoot : "",
+      ANYONG_SPEECH_VAD_PATH: fs.existsSync(speechRoot) ? path.join(speechRoot, "silero_vad.onnx") : "",
       ANYONG_BSK_PATH: browserSkillCliPath(),
       ANYONG_OFFICECLI_COMMAND: nodeRuntimePath(),
       ANYONG_OFFICECLI_ARGS_JSON: JSON.stringify([officeCliEntryPath(), "mcp"]),
       ANYONG_INTEGRATIONS_MCP_COMMAND: nodeRuntimePath(),
       ANYONG_INTEGRATIONS_MCP_SCRIPT: integrationsMcpScriptPath(),
+      ANYONG_DUCKDB_EXTENSION_DIR: path.join(runtimeRootPath(), "scripts", "duckdb-extensions"),
       // 内置网关凭据只允许从官方 DSH credentials service 解析，禁止继承用户系统环境变量。
       XG_GOMODEL_API_KEY: "",
     },
@@ -349,7 +424,7 @@ function beginDesktopStart(): Promise<void> {
   if (runtimeStartPromise) return runtimeStartPromise;
   const controller = new AbortController();
   runtimeStartController = controller;
-  desktopBootstrap = { ...desktopBootstrap, dshReady: false, startupError: "" };
+  desktopBootstrap = { ...desktopBootstrap, dshReady: false, startupError: "", startupDeadline: Date.now() + 600_000 };
   runtimeStartPromise = startDesktop(controller.signal)
     .catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
@@ -391,74 +466,6 @@ const restartDesktopRuntime = createSingleFlight(async (): Promise<typeof deskto
 function recordValue(payload: unknown): Record<string, unknown> {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
   return payload as Record<string, unknown>;
-}
-
-function mapLegacyDshRequest(method: string, payload: unknown): { endpoint: string; args: Record<string, unknown> } {
-  const request = recordValue(payload);
-  if (method === "session.list") return { endpoint: "session/list", args: { _request: request } };
-  if (method === "session.history") {
-    return { endpoint: "session/follow", args: { request: { address: { kind: "session", sessionId: String(request.sessionId ?? "") }, maxMessages: Number(request.maxMessages ?? 80), assistantStream: true } } };
-  }
-  if (method === "subagent.history") {
-    return {
-      endpoint: "session/follow",
-      args: {
-        request: {
-          address: { kind: "subagent", parentSessionId: String(request.parentSessionId ?? ""), childSessionId: String(request.childSessionId ?? ""), mode: request.mode === "one-shot" ? "one-shot" : "continuable" },
-          maxMessages: Number(request.maxMessages ?? 80), assistantStream: true,
-        },
-      },
-    };
-  }
-  if (method === "workspace.list") return { endpoint: "workspace/follow", args: {} };
-  if (method === "session.models") return { endpoint: "session/modelCatalog", args: {} };
-  if (method === "llm.models") return { endpoint: "session/modelCatalog", args: {} };
-  if (method === "llm.providers") return { endpoint: "llm/listConfigurableProviders", args: {} };
-  if (method === "host.listDirectory") return { endpoint: "directoryPicker/list", args: request };
-  if (method === "host.createDirectory") return { endpoint: "directoryPicker/createDirectory", args: request };
-  if (method === "host.openPath") return { endpoint: "session/openWorkspacePath", args: { request } };
-  if (method === "skill.list") return { endpoint: "skills/list", args: { request } };
-  if (method === "fileReferences/list") return { endpoint: "fileReferences/list", args: { agentId: request.args && typeof request.args === "object" ? (request.args as Record<string, unknown>).agentId : "", query: request.args && typeof request.args === "object" ? (request.args as Record<string, unknown>).query : "" } };
-  if (method === "sessionReferenceResolver/candidates") return { endpoint: "sessionReferenceResolver/candidates", args: { agentId: request.args && typeof request.args === "object" ? (request.args as Record<string, unknown>).agentId : "", query: request.args && typeof request.args === "object" ? (request.args as Record<string, unknown>).query : "" } };
-  if (method === "pluginInventory/list") return { endpoint: "pluginInventory/list", args: {} };
-  if (method.startsWith("agentPreset.")) {
-    const suffix = method.slice("agentPreset.".length);
-    if (suffix === "list") return { endpoint: "agentPresets/list", args: {} };
-    if (suffix === "select") return { endpoint: "agentPresets/select", args: { agentId: request.sessionId, agentPreset: request.agentPreset } };
-    if (suffix === "read") return { endpoint: "agentPresets/read", args: { agentPreset: request.agentPreset } };
-    if (suffix === "copy") return { endpoint: "agentPresets/copy", args: { from: request.from, id: request.agentPreset, name: request.name } };
-    if (suffix === "remove") return { endpoint: "agentPresets/deletePreset", args: { id: request.agentPreset } };
-    if (suffix === "openDocument") return { endpoint: "settings/openAgentPresetDirectory", args: { agentPreset: request.agentPreset } };
-  }
-  if (method.startsWith("goal.")) {
-    const suffix = method.slice("goal.".length);
-    const { sessionId, objective, maxGoalRounds, ref, ...rest } = request;
-    const args: Record<string, unknown> = { agentId: sessionId, ...rest };
-    if (suffix === "create" || suffix === "edit") args.request = { ...(objective === undefined ? {} : { objective }), ...(maxGoalRounds === undefined ? {} : { maxGoalRounds }) };
-    if (ref !== undefined) args.ref = ref;
-    return { endpoint: `goals/${suffix}`, args };
-  }
-  if (method.startsWith("subagent.")) {
-    const suffix = method.slice("subagent.".length);
-    if (suffix === "list") return { endpoint: "subagents/list", args: { parentSessionId: request.parentSessionId } };
-    if (suffix === "prompt") return { endpoint: "subagents/prompt", args: { request: { requestId: randomUUID(), parentSessionId: request.parentSessionId, childSessionId: request.childSessionId, mode: request.mode, content: request.content, clientTimeZone: request.clientTimeZone } } };
-    if (suffix === "interrupt") return { endpoint: "subagents/interruptByParent", args: { childSessionId: request.childSessionId, parentSessionId: request.parentSessionId, mode: request.mode } };
-  }
-  if (method === "session.prompt") return { endpoint: "session/prompt", args: { request: { ...request, requestId: randomUUID() } } };
-  if (method === "credentials.describe") return { endpoint: "credentials/describe", args: request };
-  if (method === "credentials.set") return { endpoint: "credentials/set", args: request };
-  if (method === "credentials.unset") return { endpoint: "credentials/unset", args: request };
-  if (method === "settings.openDocument") return { endpoint: "settings/openSettingsDocument", args: {} };
-  if (method.startsWith("settings.")) return { endpoint: `settings/${method.slice("settings.".length)}`, args: request };
-  if (method === "llm.discoverModels") {
-    const { settingsNs, ...discovery } = request;
-    return { endpoint: "llm/discoverModels", args: { settingsNs, request: discovery } };
-  }
-  if (method === "session.updateQueue") return { endpoint: "session/updateQueue", args: { request } };
-  if (method === "session.cancel") return { endpoint: "session/cancel", args: { request } };
-  if (method.startsWith("session.")) return { endpoint: `session/${method.slice("session.".length)}`, args: { request } };
-  if (method.startsWith("workspace.")) return { endpoint: `workspace/${method.slice("workspace.".length)}`, args: { request } };
-  throw desktopError(DesktopErrorCode.DSH_METHOD_UNSUPPORTED, `不支持的 DSH 方法：${method}`);
 }
 
 async function readSessionHistoryAndFollow(args: Record<string, unknown>): Promise<{ events: Array<{ event: unknown }>; hasMore: boolean }> {
@@ -572,12 +579,44 @@ function transformRemoteEvent(event: DshRemoteEvent): Record<string, unknown> | 
 
 handleTrustedIpc("desktop:bootstrap", () => desktopBootstrap);
 handleTrustedIpc("desktop:retry-runtime", () => restartDesktopRuntime());
+handleTrustedIpc("desktop:network-mode", (_event, value: unknown) => networkMutationQueue(async () => {
+  if (!isNetworkMode(value)) throw new Error("网络模式无效");
+  if (value === networkMode && desktopBootstrap.dshReady) return desktopBootstrap;
+  writeNetworkMode(networkModePath(), value);
+  networkMode = value;
+  desktopBootstrap = { ...desktopBootstrap, networkMode };
+  const result = await restartDesktopRuntime();
+  if (!result.dshReady) throw new Error(result.startupError || "网络模式切换后官方 DSH 未能启动");
+  return result;
+}));
+handleTrustedIpc("desktop:reset-bundled-model-credential", () => credentialMutationQueue(async () => {
+  if (!dshClient) throw desktopError(DesktopErrorCode.DSH_NOT_STARTED, "官方 DSH 尚未启动");
+  const result = await provisionBundledDshCredential(dshClient, bundledModelCredentialsPath(), undefined, true);
+  return { reset: result.provisioned, available: result.reason !== "missing-bundle" };
+}));
 handleTrustedIpc("desktop:dsh-request", async (_event, method: unknown, payload: unknown) => {
   if (!dshClient) throw desktopError(DesktopErrorCode.DSH_NOT_STARTED, "官方 DSH 尚未启动");
   if (typeof method !== "string") throw desktopError(DesktopErrorCode.DSH_METHOD_INVALID, "DSH 方法名无效");
   if (!allowedDshMethods.has(method)) {
     throw desktopError(DesktopErrorCode.DSH_METHOD_DENIED, `不允许的 DSH 方法：${method}`);
   }
+  if (method === "subagent.list") {
+    return { result: { ok: true, value: await listSubagents(dshClient, String(recordValue(payload).parentSessionId ?? "")) } };
+  }
+  if (method === "mcpApps.request") {
+    const request = recordValue(payload);
+    if (typeof request.path !== "string" || !["GET", "POST"].includes(String(request.method))
+      || request.body !== undefined && (request.body === null || typeof request.body !== "object" || Array.isArray(request.body))) {
+      throw desktopError(DesktopErrorCode.DSH_METHOD_INVALID, "MCP Apps 请求参数无效");
+    }
+    return { result: { ok: true, value: await dshClient.mcpAppsRequest(
+      request.path, request.method as "GET" | "POST", request.body as Record<string, unknown> | undefined,
+    ) } };
+  }
+  const requestedCwd = recordValue(payload).cwd;
+  payload = await checkWorkspaceRequest(dshClient, method, payload, desktopBootstrap.workspace);
+  const workspaceRedirected = method === "session.create" && typeof requestedCwd === "string"
+    && requestedCwd !== recordValue(payload).cwd && workspaceSafetyError(requestedCwd).includes("WORKSPACE_UNSAFE");
   if (method === "host.describe") {
     const listed = recordValue(await dshClient.call("session/list", { _request: {} }));
     const catalog = recordValue(await dshClient.call("session/modelCatalog", {}));
@@ -592,11 +631,23 @@ handleTrustedIpc("desktop:dsh-request", async (_event, method: unknown, payload:
       ? await readSessionHistoryAndFollow(mapped.args)
       : recordValue(await dshClient.readFirstStreamItem(mapped.endpoint, mapped.args)).value;
   } else {
-    value = await dshClient.call(mapped.endpoint, mapped.args);
+    const client = dshClient;
+    value = credentialMutationMethods.has(method)
+      ? await credentialMutationQueue(() => client.call(mapped.endpoint, mapped.args))
+      : await client.call(mapped.endpoint, mapped.args);
+    if (workspaceRedirected) value = { ...recordValue(value), workspaceRedirected: true, cwd: recordValue(payload).cwd };
+    if (method === "session.list") {
+      const result = recordValue(value);
+      value = { ...result, items: (Array.isArray(result.items) ? result.items : []).filter((entry) => recordValue(entry).origin !== "subagent").map((entry) => {
+        const item = recordValue(entry);
+        return { ...item, workspaceError: workspaceSafetyError(String(item.cwd ?? "")) };
+      }) };
+    }
     if (method === "credentials.describe") value = { credentials: value };
-    if (method === "llm.providers") value = { providers: Array.isArray(value) ? value : [] };
+    if (method === "llm.providers") value = { providers: withProviderActivity(value, await client.call("session/modelCatalog", {})) };
     if (method === "host.createDirectory") value = { path: value };
     if (method === "agentPreset.list") value = { ...recordValue(value), hasDocument: recordValue(value).authorable === true };
+    if (mapped.endpoint === "session/page") value = normalizeSessionSnapshot(value, app.isPackaged ? process.resourcesPath : undefined).history;
     if (method === "agentPreset.select") value = { agentPreset: value };
     if (method === "agentPreset.copy") value = { agentPreset: recordValue(payload).agentPreset };
     if (method === "goal.clear") value = { cleared: true };
@@ -642,6 +693,11 @@ handleTrustedIpc("desktop:maximize", () => {
   return mainWindow.isMaximized();
 });
 handleTrustedIpc("desktop:close", () => mainWindow?.close());
+handleTrustedIpc("desktop:copy-text", (_event, value: unknown) => {
+  if (typeof value !== "string" || value.length > 1_000_000) throw new Error("Invalid clipboard text");
+  clipboard.writeText(value);
+  return { copied: true };
+});
 handleTrustedIpc("desktop:open-external", async (_event, value: unknown) => {
   if (typeof value !== "string") throw desktopError(DesktopErrorCode.EXTERNAL_URL_INVALID, "外部链接格式无效");
   let url: URL;
@@ -651,13 +707,89 @@ handleTrustedIpc("desktop:open-external", async (_event, value: unknown) => {
     throw desktopError(DesktopErrorCode.EXTERNAL_URL_INVALID, "外部链接格式无效");
   }
   if (!isAllowedExternalUrl(url.toString())) throw desktopError(DesktopErrorCode.EXTERNAL_URL_DENIED, "仅允许打开不含凭据的 HTTP(S) 链接");
+  await assertNetworkUrlAllowed(url, networkMode);
   await shell.openExternal(url.toString());
   return { opened: true as const };
+});
+handleTrustedIpc("desktop:microphone-access", async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return "denied";
+  if (!microphoneAllowed) {
+    const answer = await dialog.showMessageBox(mainWindow, {
+      type: "question", title: "麦克风", message: "允许当前桌面窗口使用麦克风？",
+      buttons: ["允许", "取消"], defaultId: 1, cancelId: 1, noLink: true,
+    });
+    if (answer.response !== 0) return "denied";
+    microphoneAllowed = true;
+  }
+  if (process.platform === "darwin") {
+    const status = systemPreferences.getMediaAccessStatus("microphone");
+    if (status === "not-determined") return await systemPreferences.askForMediaAccess("microphone") ? "granted" : "denied";
+    return status;
+  }
+  return process.platform === "win32" ? systemPreferences.getMediaAccessStatus("microphone") : "unknown";
+});
+handleTrustedIpc("desktop:open-microphone-settings", async () => {
+  const target = process.platform === "darwin"
+    ? "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+    : process.platform === "win32" ? "ms-settings:privacy-microphone" : "";
+  if (!target) return { opened: false as const };
+  await shell.openExternal(target);
+  return { opened: true as const };
+});
+handleTrustedIpc("desktop:check-for-update", () => {
+  throw new Error("未签名评审构建不提供生产自动更新，请从仓库 Release 获取评审产物。");
+});
+handleTrustedIpc("desktop:capture-screen", async () => {
+  const owner = mainWindow;
+  if (!owner || owner.isDestroyed() || screenCaptureBusy) throw new Error("截图暂不可用");
+  screenCaptureBusy = true;
+  try {
+    return await captureScreen({
+      displays: screen.getAllDisplays(),
+      isAvailable: () => !owner.isDestroyed(),
+      getSources: (options) => desktopCapturer.getSources(options),
+      chooseDisplay: async (labels) => {
+        const { response } = await dialog.showMessageBox(owner, {
+          type: "question", title: "截取屏幕", message: "选择要截取的屏幕",
+          detail: "截图将加入当前会话草稿，不会自动发送。",
+          buttons: [...labels, "取消"], defaultId: 0, cancelId: labels.length, noLink: true,
+        });
+        if (response === labels.length) return null;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return response;
+      },
+    });
+  } finally { screenCaptureBusy = false; }
+});
+handleTrustedIpc("desktop:crop-screenshot", (_event, payload: unknown) => {
+  const request = recordValue(payload);
+  if (typeof request.image !== "string" || !request.image.startsWith("data:image/png;base64,")
+    || request.image.length > 44 * 1024 * 1024) throw new Error("截图数据无效或超过大小限制");
+  const image = nativeImage.createFromDataURL(request.image);
+  if (image.isEmpty()) throw new Error("截图数据无法解码");
+  return cropCapture(image, request.selection);
+});
+handleTrustedIpc("desktop:browser-extension", () => requireBrowserExtension());
+handleTrustedIpc("desktop:browser-extension-open", async () => {
+  const state = requireBrowserExtension();
+  if (!state.installed) return { opened: false as const, error: state.error ?? "BrowserSkill 扩展不可用" };
+  const error = await shell.openPath(state.directory);
+  return error ? { opened: false as const, error } : { opened: true as const };
+});
+handleTrustedIpc("desktop:browser-extension-browsers", () => installedBrowsers());
+handleTrustedIpc("desktop:browser-extension-open-page", (_event, browserId: unknown) => {
+  const state = requireBrowserExtension();
+  if (!state.installed) return { launched: false as const, error: state.error ?? "BrowserSkill 扩展不可用" };
+  const browser = resolveBrowserCandidate(installedBrowsers(), browserId);
+  return browser ? launchExtensionPage(browser) : { launched: false as const, error: "未找到可用的 Chrome/Edge 浏览器" };
 });
 handleTrustedIpc("desktop:pick-workspace", async () => {
   if (!mainWindow) return null;
   const result = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"] });
-  return result.canceled ? null : result.filePaths[0] ?? null;
+  return result.canceled || !result.filePaths[0] ? null : canonicalProjectDirectory(result.filePaths[0]);
+});
+handleTrustedIpc("desktop:delete-archived-session", () => {
+  throw new Error("当前官方 DSH 未提供安全的永久删除 API；可先导出或保留归档，桌面不会直接删除官方持久化文件。");
 });
 handleTrustedIpc("desktop:export-session", async (_event, sessionId: unknown) => {
   if (!dshClient) throw desktopError(DesktopErrorCode.DSH_NOT_STARTED, "官方 DSH 尚未启动");
@@ -763,6 +895,8 @@ if (!gotSingleInstanceLock) {
   });
 
   app.whenReady().then(() => {
+    networkMode = readNetworkMode(networkModePath());
+    desktopBootstrap = { ...desktopBootstrap, networkMode };
     configureBrowserPermissions();
     void requireSmbManager().mountAuto().catch((error) => console.warn("[Electron] SMB 自动挂载失败", error));
     mainWindow = createWindow();

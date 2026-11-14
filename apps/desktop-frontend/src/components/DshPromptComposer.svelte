@@ -14,7 +14,8 @@
   } from "@svadmin/ai-elements";
   import type { PromptInputSubmitDetail } from "@svadmin/ai-elements";
 import type { ScreenshotSelection } from "../electron";
-  import { MAX_UPLOAD_FILE_BYTES, type PromptContentPart, type DshClient, type DshSkill, type ModelGroup, type PermissionSelect, type SpeechCatalog } from "$lib/dsh-client";
+  import { MAX_INPUT_FILE_BYTES } from "$lib/file-limits";
+  import { type PromptContentPart, type DshClient, type DshSkill, type ModelGroup, type PermissionSelect, type SpeechCatalog } from "$lib/dsh-client";
   import { Eye, History, LoaderCircle, Mic, Monitor, Send, Square } from "@lucide/svelte";
   import { preferredImageModel } from "$lib/model-catalog";
   import { VoiceRecorder } from "$lib/voice-input";
@@ -400,7 +401,7 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
     bind:value
     bind:attachments
     multiple
-    maxFileSize={MAX_UPLOAD_FILE_BYTES}
+    maxFileSize={MAX_INPUT_FILE_BYTES}
     globalDrop={false}
     disabled={disabled || !sessionId}
     loading={loading}

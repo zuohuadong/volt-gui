@@ -12,8 +12,8 @@ const desktopPackageJson = JSON.parse(readFileSync(resolve(root, "apps", "deskto
 const intranetAuthPackageJson = JSON.parse(readFileSync(resolve(root, "plugins", "dsh-intranet-auth", "package.json"), "utf8"));
 const profileSource = readFileSync(resolve(root, "profiles", "anyong.yml"), "utf8");
 const dshVersion = packageJson.dependencies?.["@deepseek-ai/dsh"];
-if (dshVersion !== "0.2.1-rc.5") {
-  throw new Error(`Volt requires the audited official DSH version 0.2.1-rc.5, got ${JSON.stringify(dshVersion)}`);
+if (dshVersion !== "0.2.2-rc.1") {
+  throw new Error(`Volt requires the audited official DSH version 0.2.2-rc.1, got ${JSON.stringify(dshVersion)}`);
 }
 
 const disallowedPackages = [
@@ -37,14 +37,14 @@ if (browserSkill.packageName !== "@wxg-prc-cpg/browser-skill-dsh-plugin"
   || browserSkill.repository !== "https://github.com/Tencent/BrowserSkill") {
   throw new Error(`Unexpected BrowserSkill package name: ${browserSkill.packageName}`);
 }
-if (browserSkill.version !== "0.4.0" || browserSkill.license !== "MIT") {
-  throw new Error("BrowserSkill must remain pinned to the audited MIT 0.4.0 release");
+if (browserSkill.version !== "0.5.0" || browserSkill.license !== "MIT") {
+  throw new Error("BrowserSkill must remain pinned to the audited MIT 0.5.0 release");
 }
 if (!browserSkill.integrity.startsWith("sha512-")) {
   throw new Error("BrowserSkill integrity must be recorded as an npm sha512 value");
 }
-if (officeCli.packageName !== "@officecli/officecli" || officeCli.version !== "1.0.159" || officeCli.license !== "Apache-2.0") {
-  throw new Error("OfficeCLI must remain pinned to the audited Apache-2.0 1.0.159 release");
+if (officeCli.packageName !== "@officecli/officecli" || officeCli.version !== "1.0.161" || officeCli.license !== "Apache-2.0") {
+  throw new Error("OfficeCLI must remain pinned to the audited Apache-2.0 1.0.161 release");
 }
 if (!officeCli.integrity.startsWith("sha512-") || !/^[a-f0-9]{64}$/i.test(officeCli.windowsX64Sha256)) {
   throw new Error("OfficeCLI integrity metadata is incomplete");

@@ -37,7 +37,7 @@ test("ensureBrowserExtension copies a staged extension once and then reuses it",
   const source = path.join(root, "resources", "extension");
   mkdirSync(source, { recursive: true });
   writeFileSync(path.join(source, "manifest.json"), JSON.stringify({
-    manifest_version: 3, name: "BrowserSkill", version: "0.4.0",
+    manifest_version: 3, name: "BrowserSkill", version: "0.5.0",
     background: { service_worker: "background.js" },
   }));
   writeFileSync(path.join(source, "background.js"), "console.log('fixture')");
@@ -45,7 +45,7 @@ test("ensureBrowserExtension copies a staged extension once and then reuses it",
 
   const first = ensureBrowserExtension(source, destination);
   assert.equal(first.installed, true);
-  assert.equal(first.version, "0.4.0");
+  assert.equal(first.version, "0.5.0");
   assert.equal(first.changed, true);
   assert.equal(existsSync(path.join(destination, "manifest.json")), true);
   assert.match(readFileSync(path.join(destination, "background.js"), "utf8"), /./u);

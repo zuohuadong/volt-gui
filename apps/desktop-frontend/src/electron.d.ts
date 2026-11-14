@@ -8,7 +8,15 @@ export interface DesktopBootstrap {
   startupDeadline: number;
   networkMode: "intranet" | "external";
   memoryStatus?: "active" | "disabled" | "requiresGit";
+  capabilities?: DesktopCapabilities;
 }
+
+export type DesktopCapabilityKey =
+  | "altium" | "pcb" | "sentry" | "report"
+  | "documentImport" | "github" | "cnb" | "feishu"
+  | "computerUse";
+
+export type DesktopCapabilities = Record<DesktopCapabilityKey, boolean>;
 
 export interface DesktopBrowserExtension {
   version: string;
@@ -50,6 +58,7 @@ export interface DesktopShellApi {
   bootstrap(): Promise<DesktopBootstrap>;
   retryRuntime(): Promise<DesktopBootstrap>;
   setNetworkMode(mode: "intranet" | "external"): Promise<DesktopBootstrap>;
+  setCapabilities(patch: Partial<DesktopCapabilities>): Promise<DesktopBootstrap>;
   minimize(): Promise<void>;
   maximize(): Promise<boolean>;
   close(): Promise<void>;

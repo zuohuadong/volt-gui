@@ -8,7 +8,7 @@ const elementsRequire = createRequire(require.resolve("@svadmin/ai-elements"));
 describe("security dependency compatibility", () => {
   it("renders math but never inherits trusted rendering from options prototypes", () => {
     const katex = elementsRequire("katex");
-    expect(katex.version).toBe("0.18.10");
+    expect(katex.version).toBe("0.19.1");
     const math = katex.renderToString("\\frac{1}{2}+x^2", { throwOnError: true });
     expect(math).toContain('class="katex"');
     expect(math).toContain("<math");

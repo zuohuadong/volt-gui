@@ -1,5 +1,7 @@
 export type RpcResult<T> = { ok: true; value: T } | { ok: false; error: { message: string; code?: string } };
-export const MAX_UPLOAD_FILE_BYTES = 32 * 1024 * 1024;
+import { MAX_INPUT_FILE_BYTES } from "./file-limits";
+
+export const MAX_UPLOAD_FILE_BYTES = MAX_INPUT_FILE_BYTES;
 export type PermissionSelect = {
   options: Array<{ value: string; label?: string; description?: string }>;
   currentValue: string;
@@ -197,7 +199,7 @@ export class DshClient {
   }
   async uploadFile(sessionId: string, file: File, isCurrent: () => boolean = () => true): Promise<{ receiptId: string; file: { attachmentId: string; name: string; bytes: number } }> {
     if (!isCurrent()) throw new DOMException("文件上传已取消", "AbortError");
-    if (file.size > MAX_UPLOAD_FILE_BYTES) throw new Error("文件超过 32 MB");
+    if (file.size > MAX_UPLOAD_FILE_BYTES) throw new Error("文件超过 2 GiB");
     const bytes = new Uint8Array(await file.arrayBuffer());
     if (!isCurrent()) throw new DOMException("文件上传已取消", "AbortError");
     let binary = "";

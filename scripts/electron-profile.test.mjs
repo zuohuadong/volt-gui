@@ -84,10 +84,10 @@ test("packages only explicit production Electron files", () => {
   assert.equal(packageJson.scripts.typecheck, "tsc --noEmit");
   assert.equal(packageJson.scripts["test:security"], "node --test ../../scripts/check-electron-runtime-boundary.test.mjs");
   assert.equal(packageJson.scripts["stage:runtime"], "node ./scripts/stage-dsh-runtime.mjs");
-  assert.equal(packageJson.dependencies["@deepseek-ai/dsh"], "0.2.1-rc.5");
-  assert.equal(packageJson.optionalDependencies["@koromix/koffi-win32-x64"], "3.3.5");
-  assert.equal(packageJson.dependencies["@officecli/officecli"], "1.0.159");
-  assert.equal(packageJson.dependencies["@wxg-prc-cpg/browser-skill-dsh-plugin"], "0.4.0");
+  assert.equal(packageJson.dependencies["@deepseek-ai/dsh"], "0.2.2-rc.1");
+  assert.equal(packageJson.optionalDependencies["@koromix/koffi-win32-x64"], "3.3.7");
+  assert.equal(packageJson.dependencies["@officecli/officecli"], "1.0.161");
+  assert.equal(packageJson.dependencies["@wxg-prc-cpg/browser-skill-dsh-plugin"], "0.5.0");
   assert.equal(packageJson.dependencies["@wxg-prc-cpg/dsh-weknora"], "0.1.0");
   assert.equal(packageJson.dependencies.zod, "4.6.7");
   assert.equal(packageJson.dependencies["js-yaml"], undefined);

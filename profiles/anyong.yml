@@ -213,6 +213,7 @@
 # 未安装 Altium 时工具返回明确不可用；写操作必须显式 confirm。
 - insert:
     - id: mcp-altium
+      disabled: !!js "process.env.ANYONG_ALTIUM_ENABLED !== '1'"
       name: '@deepseek-ai/dsh-mcp-client'
       config:
         serverName: altium
@@ -227,6 +228,16 @@
         failOnStartupError: false
         reconnect:
           enabled: false
+
+# 官方 Computer Use provider 与原生 Cua Driver 成对加载，默认关闭。
+# 开启后由桌面设置写入 ANYONG_COMPUTER_USE_ENABLED=1，并重启 DSH。
+- insert:
+    - id: computer-use
+      disabled: !!js "process.env.ANYONG_COMPUTER_USE_ENABLED !== '1'"
+      name: '@deepseek-ai/dsh-computer-use'
+    - id: computer-use-cua-driver-native
+      disabled: !!js "process.env.ANYONG_COMPUTER_USE_ENABLED !== '1'"
+      name: '@deepseek-ai/dsh-experimental-computer-use-cua-driver-native'
 
 # WeKnora 配置由补丁后的 Profile Bundle 与官方 Settings 管理。
 # 此处不得覆盖 weknora 行，否则命令行 overlay 会阻止用户保存设置。

@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("voltDesktop", {
   bootstrap: () => ipcRenderer.invoke("desktop:bootstrap"),
   retryRuntime: () => ipcRenderer.invoke("desktop:retry-runtime"),
   setNetworkMode: (mode: string) => ipcRenderer.invoke("desktop:network-mode", mode),
+  setCapabilities: (patch: unknown) => ipcRenderer.invoke("desktop:capabilities", patch),
   minimize: () => ipcRenderer.invoke("desktop:minimize"),
   maximize: () => ipcRenderer.invoke("desktop:maximize"),
   close: () => ipcRenderer.invoke("desktop:close"),

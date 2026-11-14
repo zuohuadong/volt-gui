@@ -1,4 +1,11 @@
-const MAX_FILE_BYTES = 32 * 1024 * 1024;
+import { MAX_INPUT_FILE_BYTES } from "./file-limits.ts";
+
+const MAX_FILE_BYTES = MAX_INPUT_FILE_BYTES;
+export const MAX_UPLOAD_BASE64_LENGTH = Math.ceil(MAX_FILE_BYTES / 3) * 4;
+
+export function isUploadBase64LengthAllowed(dataLength: number): boolean {
+  return Number.isSafeInteger(dataLength) && dataLength >= 0 && dataLength <= MAX_UPLOAD_BASE64_LENGTH;
+}
 
 export function fileUploadRequest(payload: Record<string, unknown>): {
   endpoint: string;
@@ -7,9 +14,9 @@ export function fileUploadRequest(payload: Record<string, unknown>): {
   const request = payload.request as Record<string, unknown> | undefined;
   if (typeof payload.agentId !== "string" || !payload.agentId.trim()
     || !request || typeof request.data !== "string"
-    || request.data.length > Math.ceil(MAX_FILE_BYTES / 3) * 4
+    || !isUploadBase64LengthAllowed(request.data.length)
     || (request.name !== undefined && (typeof request.name !== "string" || request.name.length > 1024))) {
-    throw new Error("文件上传参数无效或文件超过 32 MB");
+    throw new Error("文件上传参数无效或文件超过 2 GiB");
   }
   const bytes = Buffer.from(request.data, "base64");
   if (bytes.length > MAX_FILE_BYTES || bytes.toString("base64") !== request.data) {

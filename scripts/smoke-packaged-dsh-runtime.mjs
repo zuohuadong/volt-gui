@@ -20,7 +20,7 @@ const electronBuilderRequire = createRequire(desktopRequire.resolve("electron-bu
 const { listPackage } = electronBuilderRequire("@electron/asar");
 const packageOutput = path.join(root, "apps", "desktop-electron", "dist-package");
 const expectedNodeVersion = "v26.13.0";
-const expectedDshVersion = "0.2.1-rc.5";
+const expectedDshVersion = "0.2.2-rc.1";
 const startupTimeoutMs = STARTUP_TIMEOUT_MS;
 const requiredRuntimeFiles = [
   "dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js",

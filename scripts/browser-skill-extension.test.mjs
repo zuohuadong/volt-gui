@@ -70,7 +70,7 @@ function writeZip(files, { deflate = true } = {}) {
   return Buffer.concat([...locals, directory, end]);
 }
 
-function manifest(version = "0.4.0") {
+function manifest(version = "0.5.0") {
   return JSON.stringify({
     manifest_version: 3,
     name: "BrowserSkill",
@@ -89,19 +89,19 @@ function archiveFixture(files = { "manifest.json": manifest(), "background.js": 
 test("stages the bundled extension archive and is idempotent", () => {
   const { root, archive, sha256: digest } = archiveFixture();
   const destination = path.join(root, "browser-extension");
-  const first = stageBrowserSkillExtension({ archive, destination, version: "0.4.0", sha256: digest });
+  const first = stageBrowserSkillExtension({ archive, destination, version: "0.5.0", sha256: digest });
   assert.equal(first.changed, true);
-  assert.equal(readExtensionManifest(destination).version, "0.4.0");
+  assert.equal(readExtensionManifest(destination).version, "0.5.0");
   assert.equal(readFileSync(path.join(destination, "background.js"), "utf8"), "console.log(1)");
 
-  const second = stageBrowserSkillExtension({ archive, destination, version: "0.4.0", sha256: digest });
+  const second = stageBrowserSkillExtension({ archive, destination, version: "0.5.0", sha256: digest });
   assert.equal(second.changed, false);
 });
 
 test("rejects an archive whose digest does not match the lock", () => {
   const { root, archive } = archiveFixture();
   assert.throws(
-    () => stageBrowserSkillExtension({ archive, destination: path.join(root, "out"), version: "0.4.0", sha256: "0".repeat(64) }),
+    () => stageBrowserSkillExtension({ archive, destination: path.join(root, "out"), version: "0.5.0", sha256: "0".repeat(64) }),
     /校验失败/u,
   );
 });
@@ -109,7 +109,7 @@ test("rejects an archive whose digest does not match the lock", () => {
 test("rejects a version drift between lock and extension manifest", () => {
   const { root, archive, sha256: digest } = archiveFixture({ "manifest.json": manifest("0.3.1") });
   assert.throws(
-    () => stageBrowserSkillExtension({ archive, destination: path.join(root, "out"), version: "0.4.0", sha256: digest }),
+    () => stageBrowserSkillExtension({ archive, destination: path.join(root, "out"), version: "0.5.0", sha256: digest }),
     /版本不符/u,
   );
 });
@@ -120,7 +120,7 @@ test("rejects path traversal entries before writing outside the target", () => {
     "../escape.js": "console.log('escape')",
   });
   assert.throws(
-    () => stageBrowserSkillExtension({ archive, destination: path.join(root, "out"), version: "0.4.0", sha256: digest }),
+    () => stageBrowserSkillExtension({ archive, destination: path.join(root, "out"), version: "0.4.2", sha256: digest }),
     /路径非法/u,
   );
 });
@@ -138,7 +138,7 @@ test("supports stored entries as well as deflate", () => {
     { "manifest.json": manifest(), "background.js": "stored" },
     { deflate: false },
   );
-  stageBrowserSkillExtension({ archive, destination: path.join(root, "out"), version: "0.4.0", sha256: digest });
+  stageBrowserSkillExtension({ archive, destination: path.join(root, "out"), version: "0.5.0", sha256: digest });
   assert.equal(readFileSync(path.join(root, "out", "background.js"), "utf8"), "stored");
 });
 
@@ -153,20 +153,20 @@ test("rejects a corrupted stored payload via CRC mismatch", () => {
 test("syncs a staged directory into the stable user directory", () => {
   const { root, archive, sha256: digest } = archiveFixture();
   const staged = path.join(root, "resources", "extension");
-  stageBrowserSkillExtension({ archive, destination: staged, version: "0.4.0", sha256: digest });
+  stageBrowserSkillExtension({ archive, destination: staged, version: "0.5.0", sha256: digest });
   const target = path.join(root, "userData", "browser-extension");
-  const first = syncBrowserSkillExtension({ source: staged, destination: target, version: "0.4.0" });
+  const first = syncBrowserSkillExtension({ source: staged, destination: target, version: "0.5.0" });
   assert.equal(first.changed, true);
   const marker = JSON.parse(readFileSync(path.join(target, ".browser-skill-extension.json"), "utf8"));
-  assert.equal(marker.version, "0.4.0");
-  const second = syncBrowserSkillExtension({ source: staged, destination: target, version: "0.4.0" });
+  assert.equal(marker.version, "0.5.0");
+  const second = syncBrowserSkillExtension({ source: staged, destination: target, version: "0.5.0" });
   assert.equal(second.changed, false);
 });
 
 test("sync refuses a source directory with a different manifest version", () => {
   const { root, archive, sha256: digest } = archiveFixture();
   const staged = path.join(root, "staged");
-  stageBrowserSkillExtension({ archive, destination: staged, version: "0.4.0", sha256: digest });
+  stageBrowserSkillExtension({ archive, destination: staged, version: "0.5.0", sha256: digest });
   assert.throws(
     () => syncBrowserSkillExtension({ source: staged, destination: path.join(root, "target"), version: "0.3.4" }),
     /版本不符/u,

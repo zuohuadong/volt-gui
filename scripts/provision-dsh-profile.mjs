@@ -1,10 +1,11 @@
-import { closeSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 const BROWSER_SKILL_PACKAGE = '@wxg-prc-cpg/browser-skill-dsh-plugin';
 const VOICE_INPUT_BUNDLE = '@deepseek-ai/dsh-experimental-voice-input-bundle';
-const PREVIOUS_BUNDLED_VERSIONS = new Set(['0.1.2', '0.2.0', '0.2.1', '0.3.1', '0.3.2', '0.3.3']);
-const CURRENT_BUNDLED_VERSION = '0.4.0';
+const PREVIOUS_BUNDLED_VERSIONS = new Set(['0.1.2', '0.2.0', '0.2.1', '0.3.1', '0.3.2', '0.3.3', '0.4.0', '0.4.2']);
+const CURRENT_BUNDLED_VERSION = '0.5.0';
 
 function canUpgradeBundledVersion(version, bundledVersion) {
   return PREVIOUS_BUNDLED_VERSIONS.has(version) && bundledVersion === CURRENT_BUNDLED_VERSION;
@@ -12,8 +13,10 @@ function canUpgradeBundledVersion(version, bundledVersion) {
 
 function canUpgradeProfilePlugin(packageName, version, bundledVersion) {
   return packageName === VOICE_INPUT_BUNDLE
-    && ['0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4'].includes(version)
-    && bundledVersion === '0.2.1-rc.5';
+    && (
+      (['0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4'].includes(version) && bundledVersion === '0.2.1-rc.5')
+      || (version === '0.2.1-rc.5' && bundledVersion === '0.2.2-rc.1')
+    );
 }
 
 function readJsonObject(filePath) {
@@ -49,7 +52,7 @@ function bundledBrowserSkillVersion(bundledPackageDir) {
   return sourcePackage.version;
 }
 
-function updatedProfileManifest(dshHome, profileName, bundledVersion, additionalPlugins = []) {
+function updatedProfileManifest(dshHome, profileName, bundledVersion, additionalPlugins = [], profilePlugins = []) {
   const profileDir = path.join(dshHome, 'profiles', profileName);
   mkdirSync(profileDir, { recursive: true });
   const manifestPath = path.join(profileDir, 'package.json');
@@ -82,6 +85,15 @@ function updatedProfileManifest(dshHome, profileName, bundledVersion, additional
     dependencies[plugin.packageName] = plugin.version;
     if (!bundles.includes(plugin.packageName)) bundles.push(plugin.packageName);
   }
+  // 普通插件只写进 Profile 依赖，不加入 bundles；官方 DSH 将 bundles 视为补丁入口。
+  for (const plugin of profilePlugins) {
+    const configuredVersion = dependencies[plugin.packageName];
+    if (configuredVersion !== undefined && configuredVersion !== plugin.version
+      && configuredVersion !== plugin.previousVersion) {
+      throw new Error(`DSH Profile 已配置不同 ${plugin.packageName} 版本：${configuredVersion}`);
+    }
+    dependencies[plugin.packageName] = plugin.version;
+  }
   const manifest = {
     ...existing,
     name: typeof existing.name === 'string' ? existing.name : `dsh-profile-${profileName}`,
@@ -101,6 +113,76 @@ function verifyBundledProfilePlugin(packageDir, packageName, version) {
   if (sourceManifest.name !== packageName || sourceManifest.version !== version) {
     throw new Error(`内置 DSH Profile Bundle 包无效：${packageDir}`);
   }
+}
+
+function resolvePackageDirectory(anchorFile, packageName) {
+  const anchorRequire = createRequire(anchorFile);
+  try {
+    return realpathSync(path.dirname(anchorRequire.resolve(`${packageName}/package.json`)));
+  } catch {
+    return undefined;
+  }
+}
+
+function collectProfilePluginClosure(roots) {
+  const closure = new Map();
+  const queue = roots.map(({ packageName, packageDir }) => ({
+    packageName,
+    packageDir: realpathSync(packageDir),
+  }));
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (closure.has(current.packageName)) continue;
+    closure.set(current.packageName, current.packageDir);
+    const manifest = readJsonObject(path.join(current.packageDir, "package.json"));
+    const dependencies = {
+      ...(isObject(manifest.dependencies) ? manifest.dependencies : {}),
+      ...(isObject(manifest.optionalDependencies) ? manifest.optionalDependencies : {}),
+    };
+    for (const dependency of Object.keys(dependencies)) {
+      if (closure.has(dependency)) continue;
+      const dependencyDir = resolvePackageDirectory(path.join(current.packageDir, "package.json"), dependency);
+      if (dependencyDir) queue.push({ packageName: dependency, packageDir: dependencyDir });
+    }
+  }
+  return closure;
+}
+
+function installProfilePluginClosure(profileDir, roots) {
+  const closure = collectProfilePluginClosure(roots);
+  const rollbacks = [];
+  try {
+    for (const [packageName, packageDir] of closure) {
+      const sourceManifest = readJsonObject(path.join(packageDir, "package.json"));
+      const targetDir = profilePluginTarget(profileDir, packageName);
+      const installedManifest = existsSync(path.join(targetDir, "package.json"))
+        ? readJsonObject(path.join(targetDir, "package.json"))
+        : undefined;
+      if (installedManifest?.name !== undefined && installedManifest.name !== packageName) {
+        throw new Error(`DSH Profile 中已有不同依赖：${targetDir}`);
+      }
+      if (installedManifest?.version === sourceManifest.version) continue;
+      if (installedManifest?.version !== undefined) {
+        throw new Error(`DSH Profile 已配置不同 ${packageName} 版本：${installedManifest.version}`);
+      }
+      mkdirSync(path.dirname(targetDir), { recursive: true });
+      const temporaryDir = `${targetDir}.${process.pid}.${Date.now()}.tmp`;
+      cpSync(packageDir, temporaryDir, {
+        recursive: true,
+        force: false,
+        errorOnExist: true,
+        filter: (source) => path.basename(source) !== "node_modules",
+      });
+      renameSync(temporaryDir, targetDir);
+      rollbacks.push(() => rmSync(targetDir, { recursive: true, force: true }));
+    }
+  } catch (error) {
+    for (const rollback of rollbacks.reverse()) rollback();
+    throw error;
+  }
+  return rollbacks.length > 0 ? () => {
+    for (const rollback of rollbacks.reverse()) rollback();
+  } : undefined;
 }
 
 function installBundledProfilePlugin(profileDir, plugin) {
@@ -220,7 +302,13 @@ function installBundledBrowserSkill(profileDir, bundledPackageDir, bundledVersio
   }
 }
 
-export function provisionBundledBrowserSkillProfile({ dshHome, profileName, bundledPackageDir, additionalPlugins = [] }) {
+export function provisionBundledBrowserSkillProfile({
+  dshHome,
+  profileName,
+  bundledPackageDir,
+  additionalPlugins = [],
+  profilePlugins = [],
+}) {
   if (profileName !== 'web' && profileName !== 'headless') throw new Error(`不支持的官方 DSH Profile：${JSON.stringify(profileName)}`);
   const bundledVersion = bundledBrowserSkillVersion(bundledPackageDir);
   const profileDir = path.join(dshHome, 'profiles', profileName);
@@ -248,7 +336,23 @@ export function provisionBundledBrowserSkillProfile({ dshHome, profileName, bund
         version: plugin.version ?? packageManifest.version,
       };
     });
-    const { manifest, manifestPath } = updatedProfileManifest(dshHome, profileName, bundledVersion, normalizedPlugins);
+    const normalizedProfilePlugins = profilePlugins.map((plugin) => {
+      if (!plugin.packageDir) throw new Error(`缺少 DSH Profile 依赖路径：${plugin.packageName ?? 'unknown'}`);
+      const packageManifest = readJsonObject(path.join(plugin.packageDir, 'package.json'));
+      return {
+        packageDir: plugin.packageDir,
+        packageName: plugin.packageName ?? packageManifest.name,
+        version: plugin.version ?? packageManifest.version,
+        previousVersion: plugin.previousVersion,
+      };
+    });
+    const { manifest, manifestPath } = updatedProfileManifest(
+      dshHome,
+      profileName,
+      bundledVersion,
+      normalizedPlugins,
+      normalizedProfilePlugins,
+    );
     const rollbacks = [];
     try {
       const browserRollback = installBundledBrowserSkill(profileDir, bundledPackageDir, bundledVersion);
@@ -257,6 +361,10 @@ export function provisionBundledBrowserSkillProfile({ dshHome, profileName, bund
         const pluginRollback = installBundledProfilePlugin(profileDir, plugin);
         if (pluginRollback) rollbacks.push(pluginRollback);
       }
+      const dependencyRollback = normalizedProfilePlugins.length > 0
+        ? installProfilePluginClosure(profileDir, normalizedProfilePlugins)
+        : undefined;
+      if (dependencyRollback) rollbacks.push(dependencyRollback);
       const serializedManifest = `${JSON.stringify(manifest, null, 2)}\n`;
       if (!existsSync(manifestPath) || readFileSync(manifestPath, 'utf8') !== serializedManifest) writeAtomically(manifestPath, serializedManifest);
     } catch (error) {

@@ -100,9 +100,10 @@ describe("DshClient management RPC", () => {
 
   it("rejects files above the configured upload limit", async () => {
     const { client, calls } = createClient();
-    const file = new File([new Uint8Array(MAX_UPLOAD_FILE_BYTES + 1)], "too-large.bin");
+    const file = new File(["small payload"], "too-large.bin");
+    Object.defineProperty(file, "size", { value: MAX_UPLOAD_FILE_BYTES + 1 });
 
-    await expect(client.uploadFile("s1", file)).rejects.toThrow("32 MB");
+    await expect(client.uploadFile("s1", file)).rejects.toThrow("2 GiB");
     expect(calls).toEqual([]);
   });
 

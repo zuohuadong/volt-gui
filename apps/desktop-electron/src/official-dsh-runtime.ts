@@ -179,6 +179,7 @@ export interface OfficialDshRuntimeOptions {
   environment?: Readonly<NodeJS.ProcessEnv>;
   bundledBrowserSkillPackageDir?: string;
   bundledProfilePlugins?: ReadonlyArray<{ packageName: string; packageDir: string }>;
+  bundledProfileDependencies?: ReadonlyArray<{ packageName: string; packageDir: string }>;
   startupTimeoutMs?: number;
   signal?: AbortSignal;
   onLog?: (line: string) => void;
@@ -351,6 +352,7 @@ export class OfficialDshRuntime {
         profileName: "web",
         bundledPackageDir: this.options.bundledBrowserSkillPackageDir,
         additionalPlugins: this.options.bundledProfilePlugins,
+        profilePlugins: this.options.bundledProfileDependencies,
       });
     }
 

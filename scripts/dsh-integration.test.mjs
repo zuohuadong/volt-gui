@@ -17,7 +17,7 @@ const lockfile = readFileSync(path.join(repositoryRoot, 'pnpm-lock.yaml'), 'utf8
 const lockedPackageNames = parseAllDocuments(lockfile)
   .flatMap((document) => Object.keys(document.toJS().packages ?? {}));
 const workspaceConfig = readFileSync(path.join(repositoryRoot, 'pnpm-workspace.yaml'), 'utf8');
-const expectedSupportedVersion = '0.2.1-rc.5';
+const expectedSupportedVersion = '0.2.2-rc.1';
 const expectedVersion = rootPackage.dependencies['@deepseek-ai/dsh'];
 const launcherPath = path.join(repositoryRoot, 'scripts', 'anyong.mjs');
 
@@ -139,7 +139,7 @@ test('security patch overrides keep vulnerable transitive versions out of the lo
   assert.match(workspaceConfig, /^  sharp: '0\.35\.5'$/m);
   assert.match(workspaceConfig, /^  js-yaml: '4\.3\.2'$/m);
   assert.match(workspaceConfig, /^  hono: '4\.13\.14'$/m);
-  for (const required of ['sharp@0.35.5', 'js-yaml@4.3.2', 'undici@8.12.3', 'zod@4.6.7', '@modelcontextprotocol/client@2.4.0']) {
+  for (const required of ['sharp@0.35.5', 'js-yaml@4.3.2', 'undici@8.12.4', 'zod@4.6.7', '@modelcontextprotocol/client@2.4.0']) {
     assert.ok(lockedPackageNames.includes(required), `${required} must be locked`);
   }
   const vulnerablePackages = new Set([

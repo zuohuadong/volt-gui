@@ -19,8 +19,8 @@
     "sharp": true
   },
   "devDependencies": {
-    "@astrojs/sitemap": "3.7.4",
-    "astro": "7.4.4",
+    "@astrojs/sitemap": "3.7.5",
+    "astro": "7.4.12",
     "sharp": "0.35.5"
   },
   "overrides": {

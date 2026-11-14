@@ -33,7 +33,7 @@ test("lazy management imports keep their own CSS preload branches", () => {
 });
 
 test("text-only browser screenshots never instruct the model to read an image", () => {
-  const patch = read("patches/@wxg-prc-cpg__browser-skill-dsh-plugin@0.4.0.patch");
+  const patch = read("patches/@wxg-prc-cpg__browser-skill-dsh-plugin@0.5.0.patch");
   const added = patch.split("\n").filter(line => line.startsWith("+") && !line.startsWith("+++")).join("\n");
   assert.match(added, /must not be read as an image/u);
   assert.match(added, /Do not read this PNG as an image/u);

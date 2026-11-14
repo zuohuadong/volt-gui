@@ -13,7 +13,7 @@
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
   "dependencies": {
     "@deepseek-ai/libreoffice-kit": "0.2.3",
-    "@deepseek-ai/dsh-skill-office": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-skill-filesystem": "0.2.1-rc.5"
+    "@deepseek-ai/dsh-skill-office": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-skill-filesystem": "0.2.2-rc.1"
   }
 }

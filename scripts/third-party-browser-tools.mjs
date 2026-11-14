@@ -3,29 +3,29 @@
 // Audited browser/computer-use integrations; DSH remains the runtime owner.
 export const browserSkill = Object.freeze({
   packageName: "@wxg-prc-cpg/browser-skill-dsh-plugin",
-  version: "0.4.0",
+  version: "0.5.0",
   license: "MIT",
-  integrity: "sha512-lkPMn+JbgJ95Nw1z9OK5cgZ6M4yXzzkxC6tXsDKZ2IJnTTgOUjhEVNU5HoSMqRbFg10+ZATfzhI/G5P9MKHtEg==",
+  integrity: "sha512-F9yhfiF6TZLJt/eYqxh52VBjD0t1WseRbWpJRZHl4JGlgfrJgPH9LsHarOvSIP6VSX8bwMCnhB8t/biQQnl5wg==",
   repository: "https://github.com/Tencent/BrowserSkill",
   role: "dsh-browser-plugin",
 });
 
 export const browserSkillCli = Object.freeze({
-  version: "0.4.0",
-  releaseUrl: "https://github.com/Tencent/BrowserSkill/releases/download/cli-v0.4.0",
+  version: "0.5.0",
+  releaseUrl: "https://github.com/Tencent/BrowserSkill/releases/download/cli-v0.5.0",
   assets: {
-    "win32-x64": { name: "bsk-v0.4.0-x86_64-pc-windows-msvc.zip", sha256: "6feeb22e608e63e3049b2611cf48fce73daac2420945c35174c16e784cdb2677", binarySha256: "4f95eee4f0d048f8ba213825a415217bfbca566a89fab2b7beb655bb2855c3c3" },
-    "linux-x64": { name: "bsk-v0.4.0-x86_64-unknown-linux-musl.tar.gz", sha256: "d8a37ec49505e8bbac15cf3335c832d12c77118de276f8164dcad9323cafabc5" },
-    "linux-arm64": { name: "bsk-v0.4.0-aarch64-unknown-linux-musl.tar.gz", sha256: "dcee46ef93959ed9656689803e6c013488d38c174ba201f674ca574e1f1ed99d" },
-    "darwin-x64": { name: "bsk-v0.4.0-x86_64-apple-darwin.tar.gz", sha256: "10fcb8dd7fea96f471a11e3492c4d1d7846de630d3668136bfc5c59690afa95e" },
-    "darwin-arm64": { name: "bsk-v0.4.0-aarch64-apple-darwin.tar.gz", sha256: "cbe6e6e29c1e215c3e445477c4855a03f43c63973ca578337c4281e6eea29aaf" },
+    "win32-x64": { name: "bsk-v0.5.0-x86_64-pc-windows-msvc.zip", sha256: "1bba7cd6d771df48485c396b8d5f1e06f9bc93cd648b0552013c30f90aeaaa40", binarySha256: "d6e2875707ca89cb506fa0bebc881a638d721178974c4b26d8b4bf9070bc03f2" },
+    "linux-x64": { name: "bsk-v0.5.0-x86_64-unknown-linux-musl.tar.gz", sha256: "4e4f14183511f8d03487cad93549c9db8ea10360ac01a9aa3584487f8d33e5f7" },
+    "linux-arm64": { name: "bsk-v0.5.0-aarch64-unknown-linux-musl.tar.gz", sha256: "7db0665a2bdc0c9287f8806ab572a257ffcfb849e27291b1140bd46e21a6a34a" },
+    "darwin-x64": { name: "bsk-v0.5.0-x86_64-apple-darwin.tar.gz", sha256: "9f278376741f2972a13014463bdf64504ba093877364a4c1202ceee3cbde4756" },
+    "darwin-arm64": { name: "bsk-v0.5.0-aarch64-apple-darwin.tar.gz", sha256: "a16b66ab9d3629045d663f645fd2c2b8f544116ac3cc9efb94b34867fcfe1756" },
   },
 });
 
 export const browserSkillExtension = Object.freeze({
-  version: "0.4.0",
-  releaseUrl: "https://github.com/Tencent/BrowserSkill/releases/download/ext-v0.4.0",
-  archive: "browser-skill-extension-v0.4.0-chrome.zip",
-  sha256: "ebb28abf4d18e8983e416647145d2acdbd3aa0a3b70320bf39401e27b5d4f16e",
-  vendorPath: "vendor/browser-skill/browser-skill-extension-v0.4.0-chrome.zip",
+  version: "0.5.0",
+  releaseUrl: "https://github.com/Tencent/BrowserSkill/releases/download/ext-v0.5.0",
+  archive: "browser-skill-extension-v0.5.0-chrome.zip",
+  sha256: "4de785b340e401de855448410be3b7bad5e685a9e5128c0bd4ec4edeba5c9fc9",
+  vendorPath: "vendor/browser-skill/browser-skill-extension-v0.5.0-chrome.zip",
 });

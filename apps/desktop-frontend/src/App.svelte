@@ -106,7 +106,7 @@
   import type { SurfaceSpec } from "@svadmin/surface";
   import { buildSurfaceFollowUpMessage } from "$lib/surface-interaction";
   import type { SurfaceInteractionEvent } from "@svadmin/surface";
-  import type { DesktopUpdateCheck } from "./electron";
+  import type { DesktopCapabilities, DesktopCapabilityKey, DesktopUpdateCheck } from "./electron";
   type NetworkMode = "intranet" | "external";
   type View = "conversation" | "knowledge" | "settings";
 
@@ -132,6 +132,18 @@
   let appVersion = $state("");
   let networkMode = $state<NetworkMode>("intranet");
   let networkModeBusy = $state(false);
+  const CAPABILITY_ROWS: ReadonlyArray<{ key: DesktopCapabilityKey }> = [
+    { key: "documentImport" }, { key: "report" }, { key: "sentry" },
+    { key: "github" }, { key: "cnb" }, { key: "feishu" },
+    { key: "altium" }, { key: "pcb" }, { key: "computerUse" },
+  ];
+  const DEFAULT_CAPABILITIES: DesktopCapabilities = {
+    altium: false, pcb: false, sentry: false, report: false,
+    documentImport: false, github: false, cnb: false, feishu: false,
+    computerUse: false,
+  };
+  let capabilities = $state<DesktopCapabilities>({ ...DEFAULT_CAPABILITIES });
+  let capabilitiesBusy = $state(false);
   let updateCheck = $state<DesktopUpdateCheck>();
   let updateChecking = $state(false);
   let updateError = $state("");
@@ -1068,6 +1080,7 @@
       if (info.productName) customProductName = info.productName;
       appVersion = info.version;
       networkMode = info.networkMode;
+      if (info.capabilities) capabilities = info.capabilities;
       workspacePath = info.workspace;
       bootstrapWorkspace = info.workspace;
       defaultChatDirectory = readDefaultChatDirectory() || info.workspace;
@@ -1190,6 +1203,44 @@
       loading = false;
     } finally {
       networkModeBusy = false;
+    }
+  }
+
+  async function toggleCapability(key: DesktopCapabilityKey): Promise<void> {
+    const shell = window.voltDesktop;
+    if (!shell || capabilitiesBusy || networkModeBusy || bootstrapInFlight || runtimeRetrying) return;
+    capabilitiesBusy = true;
+    managementError = "";
+    managementNotice = "";
+    runtimeConnectionError = "";
+    runtimeError = "";
+    clearStartupTimers();
+    disconnectSession();
+    unsubscribeDshFrames?.();
+    unsubscribeDshFrames = undefined;
+    clearRefreshTimer();
+    client = undefined;
+    loading = true;
+    try {
+      const info = await withTimeout(
+        shell.setCapabilities({ [key]: !capabilities[key] }),
+        480_000,
+        t("app.startupRetryTimeout"),
+      );
+      capabilities = info.capabilities ?? capabilities;
+      if (info.startupError) throw new Error(info.startupError);
+      capabilitiesBusy = false;
+      armStartupTimers();
+      await bootstrap();
+      if (!runtimeConnectionError) managementNotice = t("settings.capabilityChanged");
+    } catch (error) {
+      clearStartupTimers();
+      managementError = userFacingError(error);
+      runtimeConnectionError = managementError;
+      runtimeError = managementError;
+      loading = false;
+    } finally {
+      capabilitiesBusy = false;
     }
   }
 
@@ -3498,6 +3549,24 @@
                     </div>
                     <p class="settings-choice-hint">{t("settings.networkChoiceHint")}</p>
                     {#if networkModeBusy}<small class="settings-inline-status">{t("settings.networkModeRestarting")}</small>{/if}
+                  </SettingsGroup>
+                  <SettingsGroup title={t("settings.capabilitiesTitle")} description={t("settings.capabilitiesDesc")}>
+                    <div class="management-list">
+                      {#each CAPABILITY_ROWS as row (row.key)}
+                        <div class="management-list-row">
+                          <span class="row-icon"><Blocks size={15} /></span>
+                          <div>
+                            <strong>{t(`settings.capability.${row.key}.title`)}</strong>
+                            <small>{t(`settings.capability.${row.key}.desc`)}</small>
+                          </div>
+                          <StatusBadge status={capabilities[row.key] ? "success" : "neutral"} label={capabilities[row.key] ? t("settings.capabilityOn") : t("settings.capabilityOff")} />
+                          <Button variant="outline" size="sm" disabled={capabilitiesBusy || networkModeBusy || loading} onclick={() => void toggleCapability(row.key)}>
+                            {capabilities[row.key] ? t("settings.capabilityDisable") : t("settings.capabilityEnable")}
+                          </Button>
+                        </div>
+                      {/each}
+                    </div>
+                    <p class="settings-choice-hint">{t("settings.capabilitiesHint")}</p>
                   </SettingsGroup>
                   {/if}
                   {#if settingsSection === "models"}

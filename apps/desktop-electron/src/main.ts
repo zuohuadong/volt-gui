@@ -38,6 +38,14 @@ import { allowedDshMethods, mapLegacyDshRequest } from "./dsh-method-map.js";
 import { createCredentialMutationQueue } from "./credential-mutations.js";
 import { DEFAULT_NETWORK_MODE, isNetworkMode, networkPolicyEnvironment, readNetworkMode, writeNetworkMode, type NetworkMode } from "./network-mode.js";
 import { assertNetworkUrlAllowed } from "../../../scripts/network-policy.mjs";
+import {
+  DEFAULT_CAPABILITIES,
+  capabilityEnvironment,
+  isCapabilityKey,
+  readCapabilities,
+  writeCapabilities,
+  type Capabilities,
+} from "./capabilities.js";
 
 const electronProfile = resolveElectronProfile();
 app.setName(electronProfile.executableName);
@@ -75,6 +83,7 @@ let smbMountManager: SmbMountManager | null = null;
 let runtimeStartPromise: Promise<void> | null = null;
 let runtimeStartController: AbortController | null = null;
 let networkMode: NetworkMode = DEFAULT_NETWORK_MODE;
+let capabilities: Capabilities = { ...DEFAULT_CAPABILITIES };
 let microphoneAllowed = false;
 let screenCaptureBusy = false;
 let browserExtensionState: BrowserExtensionState | undefined;
@@ -88,6 +97,7 @@ let desktopBootstrap = {
   workspaceWarning: "",
   networkMode: DEFAULT_NETWORK_MODE as NetworkMode,
   memoryStatus: "disabled" as MemoryStatus,
+  capabilities: { ...DEFAULT_CAPABILITIES } as Capabilities,
 };
 
 app.setAppUserModelId(electronProfile.appId);
@@ -111,6 +121,10 @@ function networkModePath(): string {
 
 function networkPolicyPath(): string {
   return path.join(runtimeRootPath(), "scripts", "network-policy.mjs");
+}
+
+function capabilitiesPath(): string {
+  return path.join(app.getPath("userData"), "capabilities.json");
 }
 
 function requireBrowserExtension(): BrowserExtensionState {
@@ -196,6 +210,17 @@ function intranetAuthPluginPackagePath(): string {
     ? path.join(process.resourcesPath, "dsh-runtime")
     : path.join(desktopRoot, ".dsh-runtime");
   return path.join(runtimeRoot, "node_modules", "@voltui", "dsh-intranet-auth");
+}
+
+function computerUseProfileDependencies(): Array<{ packageName: string; packageDir: string }> {
+  if (!capabilities.computerUse) return [];
+  return [
+    "@deepseek-ai/dsh-computer-use",
+    "@deepseek-ai/dsh-experimental-computer-use-cua-driver-native",
+  ].map((packageName) => ({
+    packageName,
+    packageDir: path.join(runtimeRootPath(), "node_modules", ...packageName.split("/")),
+  }));
 }
 
 function frontendIndexPath(): string {
@@ -350,6 +375,7 @@ async function startDesktop(signal: AbortSignal): Promise<void> {
     }, ...["@voltui/dsh-office", "@voltui/dsh-mcp-apps", "@voltui/dsh-native-ui", "@deepseek-ai/dsh-experimental-voice-input-bundle",
       ...(isPlatformProfilePlugin("dsh-ab-ocr") ? ["dsh-ab-ocr"] : []),
     ].map((packageName) => ({ packageName, packageDir: path.join(runtimeRootPath(), "node_modules", ...packageName.split("/")) }))],
+    bundledProfileDependencies: computerUseProfileDependencies(),
     executable: nodeRuntimePath(),
     executableArgs: ["--expose-internals"],
     signal,
@@ -359,6 +385,7 @@ async function startDesktop(signal: AbortSignal): Promise<void> {
       ...networkPolicyEnvironment(networkPolicyPath(), networkMode),
       ANYONG_WEB_RETRIEVAL_ENABLED: networkMode === "external" ? "1" : "0",
       ANYONG_MEMORY_ENABLED: memoryStatus === "active" ? "1" : "0",
+      ...capabilityEnvironment(capabilities),
       ANYONG_MEMORIX_COMMAND: nodeRuntimePath(),
       ANYONG_MEMORIX_ARGS_JSON: JSON.stringify([path.join(runtimeRootPath(), "node_modules", "memorix", "dist", "cli", "index.js"), "serve", "--mode", "micro", "--cwd", workspace]),
       MEMORIX_DATA_DIR: path.join(dshHome, "memorix"),
@@ -587,6 +614,22 @@ handleTrustedIpc("desktop:network-mode", (_event, value: unknown) => networkMuta
   desktopBootstrap = { ...desktopBootstrap, networkMode };
   const result = await restartDesktopRuntime();
   if (!result.dshReady) throw new Error(result.startupError || "网络模式切换后官方 DSH 未能启动");
+  return result;
+}));
+handleTrustedIpc("desktop:capabilities", (_event, value: unknown) => networkMutationQueue(async () => {
+  const patch = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const next: Capabilities = { ...capabilities };
+  for (const [key, enabled] of Object.entries(patch)) {
+    if (!isCapabilityKey(key) || typeof enabled !== "boolean") throw new Error("扩展能力参数无效");
+    next[key] = enabled;
+  }
+  writeCapabilities(capabilitiesPath(), next);
+  capabilities = next;
+  desktopBootstrap = { ...desktopBootstrap, capabilities };
+  const result = await restartDesktopRuntime();
+  if (!result.dshReady) throw new Error(result.startupError || "扩展能力切换后官方 DSH 未能启动");
   return result;
 }));
 handleTrustedIpc("desktop:reset-bundled-model-credential", () => credentialMutationQueue(async () => {
@@ -896,7 +939,8 @@ if (!gotSingleInstanceLock) {
 
   app.whenReady().then(() => {
     networkMode = readNetworkMode(networkModePath());
-    desktopBootstrap = { ...desktopBootstrap, networkMode };
+    capabilities = readCapabilities(capabilitiesPath());
+    desktopBootstrap = { ...desktopBootstrap, networkMode, capabilities };
     configureBrowserPermissions();
     void requireSmbManager().mountAuto().catch((error) => console.warn("[Electron] SMB 自动挂载失败", error));
     mainWindow = createWindow();

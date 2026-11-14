@@ -1,8 +1,8 @@
 diff --git a/lib/index.mjs b/lib/index.mjs
-index c4e6127..d17d0c4 100644
+index ab279d9..d5508f2 100644
 --- a/lib/index.mjs
 +++ b/lib/index.mjs
-@@ -5367,7 +5367,7 @@ function defineBrowserOperations(deps, register) {
+@@ -5940,7 +5940,7 @@ function defineBrowserOperations(deps, register) {
  	}));
  	register(defineTool({
  		name: "inspect.screenshot",
@@ -11,7 +11,7 @@ index c4e6127..d17d0c4 100644
  		parameters: {
  			session: SESSION_PARAM,
  			ref: {
-@@ -5444,7 +5444,7 @@ function defineBrowserOperations(deps, register) {
+@@ -6017,7 +6017,7 @@ function defineBrowserOperations(deps, register) {
  			render: (_args, value) => {
  				const blocks = [{
  					type: "text",
@@ -20,13 +20,3 @@ index c4e6127..d17d0c4 100644
  				}];
  				if (value.image !== void 0) blocks.push({
  					type: "image",
-diff --git a/package.json b/package.json
---- a/package.json
-+++ b/package.json
-@@ -1,5 +1,6 @@
- {
-   "name": "@wxg-prc-cpg/browser-skill-dsh-plugin",
-+  "anyongPatchRevision": "1",
-   "description": "DeepSeek Harness tool plugin that exposes BrowserSkill browser automation (bsk_* tools) to the model",
-   "version": "0.4.0",
-   "license": "MIT",

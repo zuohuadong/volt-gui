@@ -104,6 +104,48 @@ Overall product acceptance remains `PARTIAL` for the parent receipt's Windows,
 PowerShell/CET, real-model/BrowserSkill/SMB/enterprise and full UI gates.
 No release, workflow dispatch or production deployment was performed.
 
+### Security continuation receipt: November 16, 2026
+
+Parent: the November 15 follow-up delivered as `df68af83e` on `dev`.
+Source/reason: the user's explicit continuation on `dev` and its remaining
+production-dependency audit findings. CNB main was re-fetched and remains at
+`00fbdf7231a761443b648cc13db0ce3e5c03527e`; no new source delta was available.
+Scope: two transitive security patch upgrades, regression assertions and this
+receipt. Native, medium risk, one writer and one independent read-only verifier.
+No main-branch operation, PR merge, workflow dispatch or release is included.
+
+- Exact overrides upgrade `hono` from `4.13.14` to `4.13.18` and
+  `@hono/node-server` from `2.1.5` to `2.1.8`. Registry engines and peer metadata
+  are compatible with the existing Node 26 and Hono 4 graph.
+  The lockfile changes only these two package/snapshot nodes and their consumers;
+  DSH, toolchain and all other dependency versions remain unchanged.
+- Production audit changed from one low and six moderate findings to zero
+  findings at every severity (`pnpm audit --prod --audit-level low --json`).
+  The existing CI high-severity threshold is unchanged.
+- Security regressions reject any alternate Hono or node-server version in the
+  lockfile. Distribution checks verify matching overrides in both generated
+  `package.json` and `pnpm-workspace.yaml`.
+- Frozen online installation passed. The initial offline attempt failed because
+  the new Hono tarball was not cached; after the online install, the frozen
+  offline retry also passed without changing the lockfile.
+- Core tests passed: 1197 passed, three platform skips, zero failures, including
+  751 frontend tests. Real DSH integration passed 18/18; the final security and
+  dual-distribution-manifest assertions also passed in a focused 2/2 rerun.
+- Source build, 13 workflow contracts, Electron/migration/skills boundaries,
+  syntax and final diff checks passed. Existing large-chunk build warnings
+  remain; no site sources or site dependency graph changed.
+- Fresh macOS staging and loopback/plugin RPC smoke passed with Node `26.13.1`
+  and official DSH `0.2.2-rc.3`. Both staged MCP consumers resolve Hono
+  `4.13.18` and node-server `2.1.8`, not merely the workspace versions.
+- The independent verifier found no blocking issue in the dependency patch.
+  Its non-blocking distribution-workspace assertion gap was covered by the
+  final focused rerun above.
+
+This security follow-up is locally verified. Overall product acceptance remains
+`PARTIAL`: Windows x64 installer/ZIP, target-Windows PowerShell/CET, authenticated
+model/BrowserSkill/SMB/enterprise flows and full desktop UI acceptance still
+require the separate target environments and credentials.
+
 ## GitHub unsigned-review release
 
 Run `.github/workflows/release-desktop.yml` with `workflow_dispatch`. The Windows runner verifies the candidate, packages the installer and portable ZIP, and requires Authenticode `NotSigned`.

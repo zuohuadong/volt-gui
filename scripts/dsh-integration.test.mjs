@@ -138,8 +138,9 @@ test('security patch overrides keep vulnerable transitive versions out of the lo
   assert.match(workspaceConfig, /^overrides:$/m);
   assert.match(workspaceConfig, /^  sharp: '0\.35\.5'$/m);
   assert.match(workspaceConfig, /^  js-yaml: '4\.3\.2'$/m);
-  assert.match(workspaceConfig, /^  hono: '4\.13\.14'$/m);
-  for (const required of ['sharp@0.35.5', 'js-yaml@4.3.2', 'undici@8.12.4', 'zod@4.6.7', '@modelcontextprotocol/client@2.4.0']) {
+  assert.match(workspaceConfig, /^  hono: '4\.13\.18'$/m);
+  assert.match(workspaceConfig, /^  '@hono\/node-server': '2\.1\.8'$/m);
+  for (const required of ['sharp@0.35.5', 'js-yaml@4.3.2', 'hono@4.13.18', '@hono/node-server@2.1.8', 'undici@8.12.4', 'zod@4.6.7', '@modelcontextprotocol/client@2.4.0']) {
     assert.ok(lockedPackageNames.includes(required), `${required} must be locked`);
   }
   const vulnerablePackages = new Set([
@@ -148,7 +149,8 @@ test('security patch overrides keep vulnerable transitive versions out of the lo
     'zod@4.4.3', '@modelcontextprotocol/client@2.2.0',
   ]);
   assert.deepEqual(lockedPackageNames.filter((name) => vulnerablePackages.has(name)), []);
-  assert.deepEqual(lockedPackageNames.filter((name) => name.startsWith('hono@') && name !== 'hono@4.13.14'), []);
+  assert.deepEqual(lockedPackageNames.filter((name) => name.startsWith('hono@') && name !== 'hono@4.13.18'), []);
+  assert.deepEqual(lockedPackageNames.filter((name) => name.startsWith('@hono/node-server@') && name !== '@hono/node-server@2.1.8'), []);
 });
 
 test('Anyong override composes with the supported official web and headless profiles', async () => {
@@ -273,6 +275,10 @@ test('distribution bundle pins the same official DSH version', async () => {
   assert.equal(distributionPackage.dependencies['@deepseek-ai/dsh'], expectedVersion);
   assert.equal(distributionPackage.engines.node, rootPackage.engines.node);
   assert.deepEqual(distributionPackage.overrides, parse(workspaceConfig).overrides);
+  const distributionWorkspace = parse(
+    await readFile(path.join(repositoryRoot, 'dist', 'anyong-dsh', 'pnpm-workspace.yaml'), 'utf8'),
+  );
+  assert.deepEqual(distributionWorkspace.overrides, parse(workspaceConfig).overrides);
 });
 
 test('Node 26 is the supported script runtime', () => {

@@ -48,7 +48,7 @@
         const bytes = Uint8Array.from(atob(result.data), (char) => char.charCodeAt(0));
         blob = new Blob([bytes], { type: result.attachment.mediaType });
       }
-      const preview = textFile && attachment.kind !== "image" ? await blob.slice(0, 256 * 1024).text() : "";
+      const preview = textFile && attachment.kind !== "image" ? await blob.slice(0, 2 * 1024 * 1024).text() : "";
       if (generation !== current) return;
       text = preview;
       url = URL.createObjectURL(blob);
@@ -93,7 +93,7 @@
   {#if !canRead}<small class="attachment-note">{t("transcript.historicalFileNotice")}</small>{/if}
   {#if error}<p role="alert">{error}</p>{/if}
   {#if expanded && url}
-    {#if attachment.kind === "image"}<img src={url} alt={attachment.name} />{:else}<pre>{text}</pre>{#if (attachment.bytes ?? 0) > 256 * 1024}<small>{t("transcript.previewTruncated")}</small>{/if}{/if}
+    {#if attachment.kind === "image"}<img src={url} alt={attachment.name} />{:else}<pre>{text}</pre>{#if (attachment.bytes ?? 0) > 2 * 1024 * 1024}<small>{t("transcript.previewTruncated")}</small>{/if}{/if}
   {/if}
 </div>
 

@@ -50,6 +50,7 @@ async function main() {
   // 2. Copy launcher
   await fs.mkdir(path.join(distDir, 'scripts'), { recursive: true });
   await fs.cp(path.join(rootDir, 'scripts', 'anyong.mjs'), path.join(distDir, 'scripts', 'anyong.mjs'));
+  await fs.cp(path.join(rootDir, 'scripts', 'anyong-skill.mjs'), path.join(distDir, 'scripts', 'anyong-skill.mjs'));
   await fs.cp(path.join(rootDir, 'scripts', 'provision-dsh-profile.mjs'), path.join(distDir, 'scripts', 'provision-dsh-profile.mjs'));
   await fs.cp(path.join(rootDir, 'scripts', 'anyong-integrations-mcp.mjs'), path.join(distDir, 'scripts', 'anyong-integrations-mcp.mjs'));
   for (const script of ['office-control.ps1', 'report-docx.py', 'sheet-engine.py']) {

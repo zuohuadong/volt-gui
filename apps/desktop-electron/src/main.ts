@@ -1,5 +1,8 @@
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences } from "electron";
 import { randomUUID } from "node:crypto";
+import { TerminalInputQueue } from "./terminal-input.js";
+import { assertSkillId, assertSkillRef, mergeSkillLists, parseSkillActionJson, parseSkillListJson, readSkillTokenFromCredentials, resolveSkillStoreConfig, runSkillStoreCommand, skillStoreEnv, skillStoreScriptPath, type SkillStoreState } from "./skill-store.js";
+import { parseAgentConfigLink, scanAgentConfigArgv } from "./agentconfig-link.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -16,7 +19,7 @@ import {
   startOfficialDshWithRetry,
 } from "./official-dsh-runtime.js";
 import { resolveElectronProfile } from "./electron-profile.js";
-import { DshRemoteClient, type DshRemoteEvent } from "./dsh-remote-client.js";
+import { DshRemoteClient, type DshCarrier, type DshRemoteEvent } from "./dsh-remote-client.js";
 import { isAllowedExternalUrl, isAllowedNavigationUrl, isAudioOnlyMediaPermission, isTrustedIpcSenderUrl } from "./renderer-security.js";
 import { applyAssistantStreamFrame, normalizeSessionSnapshot, type AssistantAttempt, type HistoryEntry } from "./session-follow.js";
 import { createSingleFlight } from "./single-flight.js";
@@ -52,6 +55,81 @@ app.setName(electronProfile.executableName);
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(moduleDir, "..");
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+const AGENTCONFIG_PROTOCOL = "agentconfig";
+/**
+ * 唯一待投递队列：推送只是"有新链接"的提示，真正的数据只从 `takePendingAgentConfigLinks`
+ * 取走。这样"推送早于渲染层订阅"、"多条链接连续到达"、"渲染层重载"都不会丢也不会错序。
+ */
+const pendingAgentConfigLinks: string[] = [];
+// 队列上限：深链是任意本地进程都能触发的输入，不设上限等于给了对方一个内存放大器。
+const AGENTCONFIG_QUEUE_LIMIT = 8;
+const AGENTCONFIG_QUEUE_MAX_CHARS = 200_000;
+
+function enqueueAgentConfigLink(link: string): void {
+  if (pendingAgentConfigLinks.includes(link)) return;
+  pendingAgentConfigLinks.push(link);
+  let total = pendingAgentConfigLinks.reduce((sum, item) => sum + item.length, 0);
+  while (pendingAgentConfigLinks.length > AGENTCONFIG_QUEUE_LIMIT || total > AGENTCONFIG_QUEUE_MAX_CHARS) {
+    const dropped = pendingAgentConfigLinks.shift();
+    if (!dropped) break;
+    total -= dropped.length;
+  }
+}
+
+function agentConfigWindowReady(): boolean {
+  return !!mainWindow && !mainWindow.isDestroyed() && !!mainWindow.webContents.getURL();
+}
+
+function rememberAgentConfigLink(link: string): void {
+  enqueueAgentConfigLink(link);
+  // 每次都提示：队列会按内容去重，重复提示只会让渲染层重新预览同一条链接（幂等、不写入），
+  // 但"上次预览失败了，再点一次"必须还能提示，否则用户没有重试入口。
+  if (!agentConfigWindowReady() || !mainWindow) return;
+  mainWindow.webContents.send("desktop:agentconfig-link", link);
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function flushAgentConfigLinks(): void {
+  if (!agentConfigWindowReady() || !mainWindow) return;
+  const latest = pendingAgentConfigLinks.at(-1);
+  if (latest) mainWindow.webContents.send("desktop:agentconfig-link", latest);
+}
+
+/**
+ * 渲染层来取：返回副本但**不清空**，由渲染层处理完再 ack。
+ * 这样渲染层重载或 invoke 失败时链接还在队列里，不会静默丢掉。
+ */
+function peekPendingAgentConfigLinks(): string[] {
+  return [...pendingAgentConfigLinks];
+}
+
+/** 渲染层确认已处理这条链接：只移除它自己，不动别的条目（重复 ack 无副作用）。 */
+function ackAgentConfigLink(link: string): void {
+  const index = pendingAgentConfigLinks.indexOf(link);
+  if (index >= 0) pendingAgentConfigLinks.splice(index, 1);
+}
+
+function logRejectedAgentConfigLinks(source: string, argv: readonly string[] = process.argv): void {
+  for (const rejection of scanAgentConfigArgv(argv).rejected) console.warn(`[Electron] agentconfig link rejected source=${source} reason=${rejection.reason}`);
+}
+
+function registerAgentConfigProtocol(): void {
+  // 开发态必须把入口脚本一起登记，否则 Windows 会把 exe 当成链接接到别处。
+  const registered = process.defaultApp && process.argv.length >= 2
+    ? app.setAsDefaultProtocolClient(AGENTCONFIG_PROTOCOL, process.execPath, [path.resolve(process.argv[1])])
+    : app.setAsDefaultProtocolClient(AGENTCONFIG_PROTOCOL);
+  if (!registered) {
+    console.warn("[Electron] agentconfig protocol registration refused by the OS");
+  }
+}
+
+for (const argument of process.argv) {
+  const parsed = parseAgentConfigLink(argument);
+  if (parsed.ok) enqueueAgentConfigLink(parsed.link);
+}
 
 function desktopAppVersion(): string {
   if (app.isPackaged) return app.getVersion();
@@ -98,6 +176,7 @@ let desktopBootstrap = {
   networkMode: DEFAULT_NETWORK_MODE as NetworkMode,
   memoryStatus: "disabled" as MemoryStatus,
   capabilities: { ...DEFAULT_CAPABILITIES } as Capabilities,
+  features: { permanentSessionDeletion: false, updateChecks: false },
 };
 
 app.setAppUserModelId(electronProfile.appId);
@@ -189,6 +268,66 @@ function integrationsMcpScriptPath(): string {
     ? path.join(process.resourcesPath, "dsh-runtime")
     : path.join(desktopRoot, ".dsh-runtime");
   return path.join(runtimeRoot, "scripts", "anyong-integrations-mcp.mjs");
+}
+
+function skillStoreEntryPath(): string {
+  const runtimeRoot = app.isPackaged
+    ? path.join(process.resourcesPath, "dsh-runtime")
+    : path.join(desktopRoot, ".dsh-runtime");
+  return skillStoreScriptPath(runtimeRoot);
+}
+
+// 令牌优先取启动环境（CI/命令行），否则读官方 DSH 凭据存储；
+// 设置页写入走 credentials.set，普通用户不需要接触环境变量。
+function skillStoreConfiguration(): { repo: string; indexUrl: string; token?: string } {
+  const fromEnvironment = resolveSkillStoreConfig({}, process.env);
+  if (fromEnvironment.token) return fromEnvironment;
+  const stored = readSkillTokenFromCredentials(dshHomePath());
+  return stored ? resolveSkillStoreConfig({ token: stored }, process.env) : fromEnvironment;
+}
+
+async function readSkillStore(): Promise<SkillStoreState> {
+  const config = skillStoreConfiguration();
+  const tokenConfigured = Boolean(config.token);
+  const scriptPath = skillStoreEntryPath();
+  if (!fs.existsSync(scriptPath)) {
+    return { available: false, skills: [], error: "技能管理脚本缺失，请重新安装应用", tokenConfigured };
+  }
+  const env = skillStoreEnv({ ...process.env, DSH_HOME: dshHomePath(), ANYONG_NETWORK_MODE: networkMode }, config);
+  const local = await runSkillStoreCommand(scriptPath, ["list", "--json"], { env, executable: nodeRuntimePath() });
+  if (!local.ok) {
+    return { available: true, skills: [], error: local.stderr.trim() || "读取已安装技能失败", tokenConfigured };
+  }
+  const parsedLocal = parseSkillListJson(local.stdout);
+  const remote = await runSkillStoreCommand(scriptPath, ["list", "--json", "--remote"], { env, executable: nodeRuntimePath() });
+  if (!remote.ok) {
+    return {
+      available: true,
+      directory: parsedLocal.dir,
+      skills: mergeSkillLists(parsedLocal.installed, []),
+      remoteError: remote.stderr.trim() || "远程索引不可用",
+      tokenConfigured,
+    };
+  }
+  return {
+    available: true,
+    directory: parsedLocal.dir,
+    skills: mergeSkillLists(parsedLocal.installed, parseSkillListJson(remote.stdout).remote),
+    tokenConfigured,
+  };
+}
+
+async function runSkillStoreAction(args: string[]): Promise<{ ok: boolean; error?: string; result?: unknown }> {
+  const scriptPath = skillStoreEntryPath();
+  if (!fs.existsSync(scriptPath)) return { ok: false, error: "技能管理脚本缺失，请重新安装应用" };
+  const env = skillStoreEnv({ ...process.env, DSH_HOME: dshHomePath(), ANYONG_NETWORK_MODE: networkMode }, skillStoreConfiguration());
+  const executed = await runSkillStoreCommand(scriptPath, args, { env, executable: nodeRuntimePath() });
+  if (!executed.ok) return { ok: false, error: executed.stderr.trim() || "技能命令执行失败" };
+  try {
+    return { ok: true, result: parseSkillActionJson(executed.stdout) };
+  } catch {
+    return { ok: true, result: { raw: executed.stdout.trim() } };
+  }
 }
 
 function browserSkillPluginPackagePath(): string {
@@ -291,6 +430,11 @@ function createWindow(): BrowserWindow {
   window.webContents.on("will-navigate", (event, targetUrl) => {
     if (!isAllowedNavigationUrl(targetUrl, frontendEntryUrl(), dshRuntime?.url)) event.preventDefault();
   });
+  window.webContents.on("did-finish-load", flushAgentConfigLinks);
+  window.webContents.on("did-start-navigation", (details) => {
+    if (details.isMainFrame && !details.isSameDocument) detachTerminal(dshClient);
+  });
+  window.webContents.on("destroyed", () => detachTerminal(dshClient));
   window.once("ready-to-show", () => {
     window.show();
     window.focus();
@@ -402,6 +546,10 @@ async function startDesktop(signal: AbortSignal): Promise<void> {
     },
     onExit: (code, signal) => {
       if (quitting || stoppingRuntime === runtime || dshRuntime !== runtime) return;
+      sessionStateController?.abort();
+      jobRosterController?.abort();
+      jobFollowController?.abort();
+      detachTerminal(dshClient);
       dshEventController?.abort();
       for (const controller of sessionFollowControllers.values()) controller.abort(desktopError(DesktopErrorCode.DSH_STOPPED, "官方 DSH 已停止"));
       sessionFollowControllers.clear();
@@ -471,6 +619,10 @@ const restartDesktopRuntime = createSingleFlight(async (): Promise<typeof deskto
   if (runtimeStartPromise) await runtimeStartPromise;
   if (quitting) throw desktopError(DesktopErrorCode.DSH_STOPPED, "桌面正在退出");
   desktopBootstrap = { ...desktopBootstrap, dshReady: false };
+  sessionStateController?.abort();
+  jobRosterController?.abort();
+  jobFollowController?.abort();
+  detachTerminal(dshClient);
   dshEventController?.abort();
   dshEventController = null;
   for (const controller of sessionFollowControllers.values()) controller.abort();
@@ -600,11 +752,284 @@ function transformRemoteEvent(event: DshRemoteEvent): Record<string, unknown> | 
   if (event.event === "api-session/removed") return { rpcId: randomUUID(), payload: { type: "host/session-removed", sessionId: String(event.args[0] ?? "") } };
   if (event.event === "api-session/status") return { rpcId: randomUUID(), payload: { type: "host/session-status", sessionId: String(event.args[0] ?? ""), running: event.args[1] === true } };
   if (event.event === "api-session/error") return { rpcId: randomUUID(), payload: { type: "host/agent-error", sessionId: String(event.args[0] ?? ""), message: String(event.args[1] ?? "") } };
+  if (event.event === "commands/change") return { rpcId: randomUUID(), payload: { type: "host/command-catalog-changed" } };
+  if (event.event === "schedule/changed") return { rpcId: randomUUID(), payload: { type: "host/schedule-changed" } };
   if (event.event === "api-session/activity" || event.event === "settings/document-updated" || event.event === "agent-preset/selected" || event.event === "llm/adapters-updated") return { rpcId: randomUUID(), payload: { type: "host/session-status" } };
   return undefined;
 }
 
 handleTrustedIpc("desktop:bootstrap", () => desktopBootstrap);
+handleTrustedIpc("desktop:agentconfig-pending", () => peekPendingAgentConfigLinks());
+handleTrustedIpc("desktop:observe-session-state", (_event, sessionId: unknown) => {
+  if (!dshClient) throw new Error("官方 DSH 尚未启动");
+  const id = typeof sessionId === "string" ? sessionId : "";
+  observeSessionState(dshClient, id);
+  return { accepted: true, sessionId: id };
+});
+handleTrustedIpc("desktop:agentconfig-ack", (_event, link: unknown) => {
+  if (typeof link === "string") ackAgentConfigLink(link);
+});
+// 变更摘要/逐文件比对是官方 host 的认证 HTTP 路由，不是 DSH RPC：
+// 主进程持有 cookie，渲染层只拿结构化结果，不接触凭据。
+handleTrustedIpc("desktop:changes-summary", async (_event, sessionId: unknown, seq: unknown) => {
+  if (!dshClient) throw new Error("官方 DSH 尚未启动");
+  if (typeof sessionId !== "string" || !sessionId.trim() || sessionId.length > 256) throw new Error("会话 ID 无效");
+  if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq < 0) throw new Error("变更事件序号无效");
+  return dshClient.changesJson("/api/changes.summary", { sessionId, seq: String(seq) });
+});
+handleTrustedIpc("desktop:changes-diff", async (_event, sessionId: unknown, seq: unknown, index: unknown) => {
+  if (!dshClient) throw new Error("官方 DSH 尚未启动");
+  if (typeof sessionId !== "string" || !sessionId.trim() || sessionId.length > 256) throw new Error("会话 ID 无效");
+  if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq < 0) throw new Error("变更事件序号无效");
+  if (typeof index !== "number" || !Number.isSafeInteger(index) || index < 0 || index > 10_000) throw new Error("文件序号无效");
+  return dshClient.changesJson("/api/changes.diff", { sessionId, seq: String(seq), index: String(index) });
+});
+/** 终端帧直接转发给渲染层；xterm 负责解释 ANSI，主进程不做屏幕模拟。 */
+function forwardTerminalFrame(sessionId: string, terminalId: string, frame: Record<string, unknown>): void {
+  mainWindow?.webContents.send("desktop:dsh-frame", {
+    rpcId: randomUUID(),
+    payload: { type: "terminal/frame", sessionId, terminalId, frame },
+  });
+}
+
+/** 官方终端默认输入上限（`maxInputBytes` 配置默认值），读取环境失败时用它兜底。 */
+const TERMINAL_DEFAULT_MAX_INPUT_BYTES = 64 * 1024;
+
+/**
+ * 释放终端附件：先取消 attach 与 retain，再请求 `terminal/close`。
+ *
+ * 官方明确规定取消 `attach` **不会**结束进程，所以必须显式 close；close 失败时
+ * 终端仍留在 Host 侧等待重试，因此失败要如实上报，不能吞掉。
+ */
+async function releaseTerminalAttachment(client: DshCarrier | null, attachment: TerminalAttachment): Promise<{ closed: boolean; error?: string }> {
+  terminalCleanup.set(attachment.terminalId, { client, attachment });
+  attachment.input?.close();
+  attachment.controller.abort();
+  void attachment.hold?.return?.(undefined).catch(() => undefined);
+  attachment.stream?.close();
+  if (!client) return { closed: false, error: "官方 DSH 尚未启动" };
+  try {
+    await client.call("terminal/close", { agentId: attachment.sessionId, id: attachment.terminalId });
+    if (terminalCleanup.get(attachment.terminalId)?.attachment === attachment) terminalCleanup.delete(attachment.terminalId);
+    return { closed: true };
+  } catch (error) {
+    return { closed: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** 任何"这一条已经过时"的路径都走这里：不让旧终端留在 Host 里。 */
+function detachTerminal(client: DshCarrier | null): void {
+  const attachment = terminalAttachment;
+  terminalAttachment = undefined;
+  terminalAttempt += 1;
+  terminalPending = undefined;
+  if (attachment) void releaseTerminalAttachment(client, attachment);
+}
+
+async function startTerminalAttachment(client: DshCarrier, sessionId: string, request: Record<string, unknown>): Promise<{ terminalId: string; stale?: true }> {
+  // 创建是异步的：先登记代次，返回后只有最新的那次有权成为活动附件。
+  // 否则"A 创建中 → B 创建中 → B 先完成 → A 后完成"，输入会被发到 A 的终端。
+  const attempt = ++terminalAttempt;
+  terminalPending = { id: String(request.id), attempt };
+  const previous = terminalAttachment;
+  terminalAttachment = undefined;
+  if (previous) void releaseTerminalAttachment(client, previous);
+  const info = recordValue(await client.call("terminal/create", { agentId: sessionId, request }));
+  const terminalId = typeof info.id === "string" ? info.id : "";
+  if (!terminalId) throw new Error("终端创建失败：官方未返回终端 id");
+  if (attempt !== terminalAttempt) {
+    // 期间被更新的请求或关闭取代：把刚建好的终端关掉，不留孤儿进程。
+    await releaseTerminalAttachment(client, { controller: new AbortController(), sessionId, terminalId });
+    return { terminalId: "", stale: true };
+  }
+  const { maxInputBytes, maxBufferedBytes } = await readTerminalMaxInputBytes(client, sessionId);
+  if (attempt !== terminalAttempt) {
+    await releaseTerminalAttachment(client, { controller: new AbortController(), sessionId, terminalId });
+    return { terminalId: "", stale: true };
+  }
+  const controller = new AbortController();
+  const attachment: TerminalAttachment = { controller, sessionId, terminalId };
+  terminalPending = undefined;
+  terminalAttachment = attachment;
+  // 官方窗口持有（retain）与输出附件相互独立：没有 hold 时，长时间无人的终端会被
+  // 空闲回收策略关掉，所以先挂 hold 再 attach。
+  const hold = client.openStream("terminal/retain", { sessionId, id: terminalId }, controller.signal)[Symbol.asyncIterator]();
+  attachment.hold = hold;
+  void (async () => {
+    try {
+      await hold.next();
+    } catch (error) {
+      if (!controller.signal.aborted) forwardTerminalFrame(sessionId, terminalId, { type: "error", message: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+    if (controller.signal.aborted || terminalAttachment !== attachment) return;
+    const duplex = client.openDuplexStream("terminal/attach", { agentId: sessionId, id: terminalId }, controller.signal);
+    attachment.stream = duplex;
+    attachment.input = new TerminalInputQueue(maxInputBytes, maxBufferedBytes, duplex.send);
+    try {
+      for await (const item of duplex.items) {
+        const frame = recordValue(item);
+        if (typeof frame.type !== "string") continue;
+        if (frame.type === "snapshot") attachment.input.configure(frame);
+        if (frame.type === "state") attachment.input.setWritable(frame.writable === true);
+        if (frame.type === "ack") attachment.input.acknowledge(frame.sequence);
+        forwardTerminalFrame(sessionId, terminalId, frame);
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) forwardTerminalFrame(sessionId, terminalId, { type: "error", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      attachment.input.close();
+    }
+  })();
+  return { terminalId };
+}
+
+/** 官方 `terminal/environment` 的 `maxInputBytes` 是**字节**上限，不是字符数。 */
+async function readTerminalMaxInputBytes(client: DshCarrier, sessionId: string): Promise<{ maxInputBytes: number; maxBufferedBytes: number }> {
+  try {
+    const environment = recordValue(await client.call("terminal/environment", { agentId: sessionId }));
+    const value = Number(environment.maxInputBytes);
+    const buffered = Number(environment.maxBufferedBytes);
+    return {
+      maxInputBytes: Number.isSafeInteger(value) && value > 0 ? value : TERMINAL_DEFAULT_MAX_INPUT_BYTES,
+      maxBufferedBytes: Number.isSafeInteger(buffered) && buffered > 0 ? buffered : 2 * 1024 * 1024,
+    };
+  } catch {
+    return { maxInputBytes: TERMINAL_DEFAULT_MAX_INPUT_BYTES, maxBufferedBytes: 2 * 1024 * 1024 };
+  }
+}
+
+handleTrustedIpc("desktop:terminal-start", async (_event, sessionId: unknown, cols: unknown, rows: unknown, requestedId: unknown) => {
+  if (!dshClient) throw new Error("官方 DSH 尚未启动");
+  if (typeof sessionId !== "string" || !sessionId.trim() || sessionId.length > 256) throw new Error("会话 ID 无效");
+  const safeCols = typeof cols === "number" && Number.isSafeInteger(cols) && cols >= 20 && cols <= 500 ? cols : 80;
+  const safeRows = typeof rows === "number" && Number.isSafeInteger(rows) && rows >= 5 && rows <= 200 ? rows : 24;
+  if (requestedId !== undefined && (typeof requestedId !== "string" || !/^[0-9a-f-]{36}$/iu.test(requestedId))) throw new Error("终端 ID 无效");
+  return startTerminalAttachment(dshClient, sessionId, { id: requestedId ?? randomUUID(), cols: safeCols, rows: safeRows });
+});
+handleTrustedIpc("desktop:terminal-input", (_event, data: unknown, typed: unknown) => {
+  const attachment = terminalAttachment;
+  if (!attachment?.input) return { accepted: false, reason: "no-terminal" };
+  if (typeof data !== "string" || data.length === 0) return { accepted: false, reason: "empty" };
+  return attachment.input.enqueue({ type: "write", data, ...(typed === true ? { typed: true } : {}) });
+});
+handleTrustedIpc("desktop:terminal-resize", (_event, cols: unknown, rows: unknown) => {
+  const attachment = terminalAttachment;
+  if (!attachment?.input) return { accepted: false, reason: "no-terminal" };
+  if (typeof cols !== "number" || typeof rows !== "number" || !Number.isSafeInteger(cols) || !Number.isSafeInteger(rows)
+    || cols < 20 || cols > 500 || rows < 5 || rows > 200) return { accepted: false, reason: "invalid-size" };
+  return attachment.input.enqueue({ type: "resize", cols, rows });
+});
+handleTrustedIpc("desktop:terminal-close", async (_event, terminalId: unknown) => {
+  const attachment = terminalAttachment;
+  const id = typeof terminalId === "string" && terminalId ? terminalId : attachment?.terminalId ?? terminalPending?.id;
+  const cleanup = id ? terminalCleanup.get(id) : undefined;
+  if (cleanup) return releaseTerminalAttachment(cleanup.client, cleanup.attachment);
+  if (terminalPending && id === terminalPending.id) {
+    terminalAttempt += 1;
+    terminalPending = undefined;
+    return { closed: true };
+  }
+  // 关闭必须点名是哪一条附件：主进程可能已经换过终端，误关会把新终端杀掉。
+  if (!attachment) return { closed: true };
+  if (typeof terminalId === "string" && terminalId && terminalId !== attachment.terminalId) return { closed: true, superseded: true };
+  terminalAttachment = undefined;
+  terminalAttempt += 1;
+  const result = await releaseTerminalAttachment(dshClient, attachment);
+  // close 失败时官方仍保留终端供重试，把失败如实交回渲染层。
+  return result;
+});
+handleTrustedIpc("desktop:observe-job-roster", (_event, sessionId: unknown) => {
+  if (!dshClient) throw new Error("官方 DSH 尚未启动");
+  const id = typeof sessionId === "string" ? sessionId : "";
+  observeJobRoster(dshClient, id);
+  return { accepted: true, sessionId: id };
+});
+handleTrustedIpc("desktop:job-kill", async (_event, sessionId: unknown, jobId: unknown) => {
+  if (!dshClient) throw new Error("官方 DSH 尚未启动");
+  if (typeof sessionId !== "string" || !sessionId.trim() || sessionId.length > 256) throw new Error("会话 ID 无效");
+  if (typeof jobId !== "string" || !jobId.trim() || jobId.length > 256) throw new Error("任务 ID 无效");
+  return dshClient.call("job/kill", { request: { sessionId, jobId } });
+});
+handleTrustedIpc("desktop:follow-job", (_event, sessionId: unknown, jobId: unknown) => {
+  if (!dshClient) throw new Error("官方 DSH 尚未启动");
+  if (typeof sessionId !== "string" || !sessionId.trim() || sessionId.length > 256) throw new Error("会话 ID 无效");
+  if (typeof jobId !== "string" || !jobId.trim() || jobId.length > 256) throw new Error("任务 ID 无效");
+  jobFollowController?.abort();
+  const controller = new AbortController();
+  jobFollowController = controller;
+  const client = dshClient;
+  let total = 0;
+  let lossy = false;
+  // 官方 `job/follow` 在终态帧之后**正常结束**：这里的循环只在传输失败时重连，
+  // 重连必须带上最后一次 `next`，否则会把已经看过的输出整段重放。
+  void (async () => {
+    let from: number | undefined;
+    while (!controller.signal.aborted) {
+      let ended = false;
+      try {
+        for await (const item of client.openStream("job/follow", { request: { sessionId, jobId, ...(from === undefined ? {} : { from }) } }, controller.signal)) {
+          const frame = recordValue(item);
+          if (frame.type === "opened") {
+            const job = recordValue(frame.job);
+            from = typeof frame.from === "number" ? frame.from : from;
+            // 打开位置已经晚于官方保留的最早字节：头部确实丢了。
+            const earliest = recordValue(job.output).earliest;
+            if (typeof earliest === "number" && typeof from === "number" && from > earliest) lossy = true;
+            forwardJobState(sessionId, jobId, job, lossy);
+            continue;
+          }
+          if (frame.type === "status") {
+            forwardJobState(sessionId, jobId, recordValue(frame.job), lossy);
+            ended = true;
+            continue;
+          }
+          if (frame.type !== "output" || !Array.isArray(frame.chunks)) continue;
+          if (typeof frame.next === "number") from = frame.next;
+          if (frame.lossy === true) lossy = true;
+          let text = "";
+          for (const chunk of frame.chunks) {
+            const record = recordValue(chunk);
+            // 块级缺口：比这块更早的字节已经丢了，即使帧自身没标 lossy。
+            if (record.gapBefore === true) lossy = true;
+            if (typeof record.text !== "string") continue;
+            text += record.text;
+          }
+          // 有界：单个任务的输出不能把渲染层内存撑爆；超出时明确标记丢弃。
+          const dropped = total + text.length > MAX_JOB_OUTPUT_CHARS;
+          if (dropped) {
+            text = text.slice(Math.max(0, text.length - MAX_JOB_OUTPUT_CHARS));
+            lossy = true;
+          }
+          total = Math.min(total + text.length, MAX_JOB_OUTPUT_CHARS);
+          mainWindow?.webContents.send("desktop:dsh-frame", {
+            rpcId: randomUUID(),
+            payload: { type: "job/output", sessionId, jobId, text, lossy },
+          });
+        }
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.warn("[Electron] DSH job/follow stream disconnected", error);
+      }
+      if (ended || controller.signal.aborted) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, 500));
+    }
+  })();
+  return { following: true };
+});
+
+function forwardJobState(sessionId: string, jobId: string, job: Record<string, unknown>, lossy: boolean): void {
+  mainWindow?.webContents.send("desktop:dsh-frame", {
+    rpcId: randomUUID(),
+    payload: { type: "job/state", sessionId, jobId, job, lossy },
+  });
+}
+
+handleTrustedIpc("desktop:unfollow-job", () => {
+  jobFollowController?.abort();
+  jobFollowController = undefined;
+  return { following: false };
+});
 handleTrustedIpc("desktop:retry-runtime", () => restartDesktopRuntime());
 handleTrustedIpc("desktop:network-mode", (_event, value: unknown) => networkMutationQueue(async () => {
   if (!isNetworkMode(value)) throw new Error("网络模式无效");
@@ -847,6 +1272,15 @@ handleTrustedIpc("desktop:export-session", async (_event, sessionId: unknown) =>
   return { saved: true as const, path: selected.filePath };
 });
 handleTrustedIpc("desktop:smb-list", async () => requireSmbManager().list());
+handleTrustedIpc("desktop:skills-list", async () => readSkillStore());
+handleTrustedIpc("desktop:skills-install", async (_event, id: unknown, version: unknown) => {
+  const skillId = assertSkillId(id);
+  const spec = typeof version === "string" && version.trim() ? `${skillId}@${assertSkillRef(version.trim())}` : skillId;
+  return runSkillStoreAction(["add", spec, "--json"]);
+});
+handleTrustedIpc("desktop:skills-remove", async (_event, id: unknown) => runSkillStoreAction(["remove", assertSkillId(id), "--json"]));
+handleTrustedIpc("desktop:skills-rollback", async (_event, id: unknown) => runSkillStoreAction(["rollback", assertSkillId(id), "--json"]));
+
 handleTrustedIpc("desktop:smb-mount", async (_event, request: unknown) => {
   if (!request || typeof request !== "object") throw desktopError(DesktopErrorCode.SMB_INVALID_REQUEST, "SMB 配置格式无效");
   return requireSmbManager().mount(request as Parameters<SmbMountManager["mount"]>[0]);
@@ -867,7 +1301,82 @@ handleTrustedIpc("desktop:smb-open", async (_event, localPath: unknown) => {
   return error ? { opened: false as const, error } : { opened: true as const };
 });
 
+// 待发送队列由官方 session/observeState 流提供（session/control 没有 queue 帧）。
+// 渲染层只关心"当前正在看的那个会话"，所以这里只维持一条观察流，切换会话时重开。
+let sessionStateController: AbortController | undefined;
+let observedStateSessionId = "";
+// 后台任务花名册：官方 `job/list` 是整集流动帧，按会话只维持一条订阅。
+let jobRosterController: AbortController | undefined;
+let observedJobsSessionId = "";
+// 单个任务的输出尾随：同一时刻只跟随一个任务，切换时先取消上一条。
+let jobFollowController: AbortController | undefined;
+const MAX_JOB_OUTPUT_CHARS = 200_000;
+// 终端：官方 `terminal/attach` 是双向流，一个窗口只保留一条活动附件。
+interface TerminalAttachment {
+  controller: AbortController;
+  stream?: { send: (value: unknown) => boolean; close: () => void };
+  /** `terminal/retain` 的迭代器：官方用它判断"有窗口持有"，避免空闲回收。 */
+  hold?: AsyncIterator<unknown>;
+
+  sessionId: string;
+  terminalId: string;
+  input?: TerminalInputQueue;
+}
+let terminalAttachment: TerminalAttachment | undefined;
+/** 终端创建代次：只有最后一次发起的创建结果有权成为活动附件。 */
+let terminalAttempt = 0;
+let terminalPending: { id: string; attempt: number } | undefined;
+const terminalCleanup = new Map<string, { client: DshCarrier | null; attachment: TerminalAttachment }>();
+
+export function forwardSessionState(sessionId: string, state: unknown): void {
+  mainWindow?.webContents.send("desktop:dsh-frame", {
+    rpcId: randomUUID(),
+    payload: { type: "session/state", sessionId, state },
+  });
+}
+
+function observeSessionState(client: DshCarrier, sessionId: string): void {
+  sessionStateController?.abort();
+  sessionStateController = undefined;
+  observedStateSessionId = "";
+  if (!sessionId) return;
+  const controller = new AbortController();
+  sessionStateController = controller;
+  observedStateSessionId = sessionId;
+  void runPersistentStream(client, "session/observeState", { request: { sessionId } }, (item) => {
+    // 流里可能出现空帧/基线外的形状：只有带 queue 或 running 的才转发，避免噪声。
+    const frame = recordValue(item);
+    forwardSessionState(sessionId, frame);
+  }, controller.signal);
+}
+
+export function forwardJobRoster(sessionId: string, jobs: unknown): void {
+  mainWindow?.webContents.send("desktop:dsh-frame", {
+    rpcId: randomUUID(),
+    payload: { type: "session/jobs", sessionId, rows: jobs },
+  });
+}
+
+function observeJobRoster(client: DshCarrier, sessionId: string): void {
+  jobRosterController?.abort();
+  jobRosterController = undefined;
+  observedJobsSessionId = "";
+  if (!sessionId) return;
+  const controller = new AbortController();
+  jobRosterController = controller;
+  observedJobsSessionId = sessionId;
+  void runPersistentStream(client, "job/list", { request: { sessionId } }, (item) => {
+    const frame = recordValue(item);
+    if (frame.type !== "rows") return;
+    forwardJobRoster(sessionId, Array.isArray(frame.jobs) ? frame.jobs : []);
+  }, controller.signal);
+}
+
 function startDshEventBridge(client: DshRemoteClient): void {
+  sessionStateController?.abort();
+  jobRosterController?.abort();
+  jobFollowController?.abort();
+  detachTerminal(dshClient);
   dshEventController?.abort();
   const controller = new AbortController();
   dshEventController = controller;
@@ -888,8 +1397,7 @@ function startDshEventBridge(client: DshRemoteClient): void {
   }, controller.signal).catch(reportRuntimeError);
   void runPersistentStream(client, "session/control", {}, (item) => {
     const frame = recordValue(item);
-    if (frame.type === "queue") mainWindow?.webContents.send("desktop:dsh-frame", { rpcId: randomUUID(), payload: { type: "session/queue", sessionId: frame.sessionId, items: frame.items } });
-    else if (frame.type === "jobs") mainWindow?.webContents.send("desktop:dsh-frame", { rpcId: randomUUID(), payload: { type: "session/jobs", sessionId: frame.sessionId, jobs: frame.jobs } });
+    if (frame.type === "jobs") mainWindow?.webContents.send("desktop:dsh-frame", { rpcId: randomUUID(), payload: { type: "session/jobs", sessionId: frame.sessionId, jobs: frame.jobs } });
     else if (frame.type === "projection") mainWindow?.webContents.send("desktop:dsh-frame", { rpcId: randomUUID(), payload: { type: "session/projection", sessionId: frame.sessionId, key: frame.key, value: frame.value, seq: frame.seq } });
   }, controller.signal);
   void runPersistentStream(client, "workspace/follow", {}, (item) => {
@@ -900,7 +1408,7 @@ function startDshEventBridge(client: DshRemoteClient): void {
 }
 
 async function runPersistentStream(
-  client: DshRemoteClient,
+  client: DshCarrier,
   endpoint: string,
   args: Record<string, unknown>,
   onItem: (item: unknown) => void,
@@ -926,7 +1434,9 @@ function reportRuntimeError(error: unknown): void {
 if (!gotSingleInstanceLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, argv) => {
+    for (const argument of argv) { const parsed = parseAgentConfigLink(argument); if (parsed.ok) rememberAgentConfigLink(parsed.link); }
+    logRejectedAgentConfigLinks("second-instance", argv);
     if (quitting) return;
     if (!mainWindow) {
       if (!app.isReady()) return;
@@ -937,7 +1447,14 @@ if (!gotSingleInstanceLock) {
     mainWindow.focus();
   });
 
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    const parsed = parseAgentConfigLink(url);
+    if (parsed.ok) rememberAgentConfigLink(parsed.link);
+  });
   app.whenReady().then(() => {
+    registerAgentConfigProtocol();
+    logRejectedAgentConfigLinks("startup");
     networkMode = readNetworkMode(networkModePath());
     capabilities = readCapabilities(capabilitiesPath());
     desktopBootstrap = { ...desktopBootstrap, networkMode, capabilities };
@@ -965,6 +1482,10 @@ app.on("before-quit", (event) => {
   desktopBootstrap = { ...desktopBootstrap, dshReady: false };
   dshClient = null;
   runtimeStartController?.abort(desktopError(DesktopErrorCode.DSH_STOPPED, "桌面正在退出"));
+  sessionStateController?.abort();
+  jobRosterController?.abort();
+  jobFollowController?.abort();
+  detachTerminal(dshClient);
   dshEventController?.abort();
   for (const controller of sessionFollowControllers.values()) controller.abort();
   void (async () => {

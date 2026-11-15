@@ -5,12 +5,12 @@
 main:
   push:
     - docker:
-        image: node:26.13.0
+        image: node:26.13.1
       stages:
         - name: install
           script: |
             corepack enable
-            corepack prepare pnpm@12.16.1 --activate
+            corepack prepare pnpm@12.21.0 --activate
             pnpm install --frozen-lockfile
         - name: verify
           script: |

@@ -22,6 +22,11 @@ export type TranscriptMessage = {
   protocolWarning?: boolean;
   tool?: ToolInfo;
   seq?: number;
+  /**
+   * 官方消息身份（`assistant/message` 事件的 `message.id`）。
+   * 消息反馈只接受这个 id；界面自己的 `assistant-<seq>` 是合成 id，不能拿去写反馈。
+   */
+  officialMessageId?: string;
   usage?: Record<string, unknown>;
   sources?: TranscriptSource[];
   attachments?: TranscriptAttachment[];
@@ -83,6 +88,73 @@ export function interruptRunningTools(state: TranscriptState): TranscriptState {
     return next;
   });
   return changed ? { messages, todos: state.todos } : state;
+}
+
+// 自动续接时发给运行时的内部指令：它是给执行体的调度说明，不是给用户的内容。
+// 只要首条消息与它逐字一致（任一语言），渲染层就必须换成一句业务提示。
+const INTERNAL_CONTINUATION_PREFIXES = [
+  "继续当前会话尚未完成的任务。",
+  "Continue the unfinished task in this session.",
+] as const;
+
+// 只匹配「前缀 + 内部措辞」同时命中的完整指令：用户手写的同开头短句不会被隐藏。
+const INTERNAL_CONTINUATION_MARKERS = [
+  "单轮保持短输出",
+  "单轮保持短输出：",
+  "Keep each turn short",
+] as const;
+
+/**
+ * 判定一条用户消息是否是运行时注入的自动续接指令。
+ *
+ * canonical 是本语言下完整的内部指令（App 传 t("activity.continuePrompt")）：
+ * 逐字相等是最可靠的身份判断；只有当消息足够长（≥ 指令 80% 长度）并且同时命中
+ * 前缀和内部措辞时，才按旧版本指令处理。用户手写的同开头短句不会被隐藏。
+ */
+export function isInternalContinuationPrompt(text: string | undefined, canonical?: string): boolean {
+  const value = text?.trim();
+  if (!value) return false;
+  const reference = canonical?.trim();
+  if (reference && value === reference) return true;
+  const prefixed = INTERNAL_CONTINUATION_PREFIXES.some((prefix) => value.startsWith(prefix));
+  if (!prefixed) return false;
+  // 旧版本指令可能被轻微改写，但篇幅不会缩短太多：低于 80% 长度按用户消息处理。
+  if (reference && value.length * 5 < reference.length * 4) return false;
+  return INTERNAL_CONTINUATION_MARKERS.some((marker) => value.includes(marker));
+}
+
+/**
+ * 连续的内部续接指令（自动续跑）只留一条提示。
+ *
+ * 模型跑完一轮被自动续接时，DST 会把每条续接指令都写进会话。逐条渲染会出现
+ * 一列同样的「已接着上次的进度继续处理。」，既看不出发生了几次，也把
+ * 对话流挤满。这里把每一段连续续接收敛成「一条提示 + 次数」。
+ */
+export type ContinuationHint = { lead: boolean; count: number };
+
+export function continuationHintIndex(
+  messages: readonly TranscriptMessage[],
+  instruction: string,
+): Map<string, ContinuationHint> {
+  const hints = new Map<string, ContinuationHint>();
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (!isContinuation(message)) continue;
+    let end = index + 1;
+    while (end < messages.length && isContinuation(messages[end])) end += 1;
+    const count = end - index;
+    // 每一条都登记（其余标记为非首位，渲染时跳过），用最后一条做代表：
+    // 用户展开时看到的是最近一次续接的指令。
+    for (let cursor = index; cursor < end; cursor += 1) {
+      hints.set(messages[cursor].id, { lead: cursor === end - 1, count: cursor === end - 1 ? count : 0 });
+    }
+    index = end - 1;
+  }
+  return hints;
+}
+
+function isContinuation(message: TranscriptMessage): boolean {
+  return message.role === "user" && isInternalContinuationPrompt(message.displayText ?? message.text);
 }
 
 export function hasMessageContent(message: TranscriptMessage): boolean {
@@ -323,8 +395,13 @@ export function applyTranscriptEvent(state: TranscriptState, event: SessionEvent
     const resolvedReasoning = extractedReasoning || (isFilteredInternal ? "" : existing?.reasoning || "");
     const sources = extractSources(message ?? data.content);
 
+    const officialMessageId = message && typeof message === "object" && !Array.isArray(message)
+      && typeof (message as Record<string, unknown>).id === "string"
+      ? (message as Record<string, unknown>).id as string
+      : undefined;
     const next: TranscriptMessage = {
       id: `assistant-${event.seq}`,
+      ...(officialMessageId ? { officialMessageId } : {}),
       role: "assistant",
       text: resolvedText,
       reasoning: resolvedReasoning,

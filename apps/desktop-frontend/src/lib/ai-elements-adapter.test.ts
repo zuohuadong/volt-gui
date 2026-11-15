@@ -197,3 +197,22 @@ describe("AI Elements adapters", () => {
     ]);
   });
 });
+
+describe("toolErrorSummary 空详情兜底", () => {
+  it("把仅有前缀的错误展开为校验项", () => {
+    const raw = JSON.stringify({ code: 1, message: "Error:", errors: [{ instancePath: "/margins/top", message: "must be >= 0" }] });
+    expect(toolErrorSummary(raw)).toContain("must be >= 0");
+  });
+  it("没有校验项时给出兜底文案而不是空字符串", () => {
+    expect(toolErrorSummary("Error:")).toContain("工具未返回错误详情");
+    expect(toolErrorSummary("Error: Description:")).toContain("工具未返回错误详情");
+    expect(toolErrorSummary("Error: Found 1 validation error(s):")).toContain("工具未返回错误详情");
+    expect(toolErrorSummary("")).toContain("工具未返回错误详情");
+  });
+  it("校验项超过三条时截断但保留内容", () => {
+    const errors = Array.from({ length: 6 }, (_, index) => ({ path: `/items/${index}`, message: `bad value ${index}` }));
+    const summary = toolErrorSummary(JSON.stringify({ message: "Error:", errors }));
+    expect(summary).toContain("bad value 0");
+    expect(summary).not.toContain("bad value 5");
+  });
+});

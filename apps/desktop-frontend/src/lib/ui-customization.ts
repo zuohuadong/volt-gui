@@ -197,6 +197,48 @@ export function restoreUiCustomization(stored: string): UiCustomizationState {
   }
 }
 
+/**
+ * 从助手回复中移除界面定制载荷。
+ *
+ * 载荷只是给本机解析器用的，用户不需要在对话流里读 schemaVersion / composerRows。
+ * 只有能被 `parsePatch` 接受的候选才会被移除，普通代码块保持原样。
+ */
+export function stripUiCustomizationPayload(text: string): string {
+  let remaining = text;
+  for (const candidate of candidateJsonStrings(text)) {
+    try {
+      parsePatch(JSON.parse(candidate));
+    } catch {
+      continue;
+    }
+    remaining = remaining.replace(candidate, "");
+  }
+  if (remaining === text) return text;
+  return remaining
+    .replace(/```(?:json)?\s*```/giu, "")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+}
+
+export type UiCustomizationChange =
+  | { key: "densityCompact" | "densityComfortable" | "sidebarCollapsed" | "sidebarExpanded" | "activityHidden" | "activityVisible" }
+  | { key: "composerRows"; count: number }
+  | { key: "title" | "subtitle"; value: string }
+  | { key: "quickActions"; count: number };
+
+/** 把界面 patch 翻译成业务语言，供确认卡片与结果提示使用。 */
+export function describeUiCustomizationPatch(patch: UiCustomizationPatch): UiCustomizationChange[] {
+  const changes: UiCustomizationChange[] = [];
+  if (patch.density) changes.push({ key: patch.density === "compact" ? "densityCompact" : "densityComfortable" });
+  if (patch.sidebar) changes.push({ key: patch.sidebar === "collapsed" ? "sidebarCollapsed" : "sidebarExpanded" });
+  if (patch.activity) changes.push({ key: patch.activity === "hidden" ? "activityHidden" : "activityVisible" });
+  if (patch.composerRows) changes.push({ key: "composerRows", count: patch.composerRows });
+  if (patch.title) changes.push({ key: "title", value: patch.title });
+  if (patch.subtitle) changes.push({ key: "subtitle", value: patch.subtitle });
+  if (patch.quickActions) changes.push({ key: "quickActions", count: patch.quickActions.length });
+  return changes;
+}
+
 export function isUiCustomizationIntent(text: string): boolean {
   const target = /(界面|布局|侧栏|活动面板|工作台|输入框|快捷操作|标题|副标题|密度|字体|字号|代码字体)/u;
   const change = /(调整|修改|改变|改成|改为|切换|收起|展开|显示|隐藏|自定义|定制|紧凑|舒适|增加|减少)/u;
@@ -204,5 +246,5 @@ export function isUiCustomizationIntent(text: string): boolean {
 }
 
 export function buildUiCustomizationPrompt(text: string): string {
-  return `${text}\n\n[Volt UI customization protocol]\n如果请求包含界面、布局、侧栏、活动面板、密度、字体、字号、代码字体、标题、快捷操作或输入框定制，请在回答末尾追加一个 fenced JSON patch。只能使用以下字段：schemaVersion="${UI_CUSTOMIZATION_SCHEMA}"、title、subtitle、density(compact|comfortable)、fontFamily(system|inter|yahei)、fontSize(small|medium|large)、codeFontFamily(system-mono|jetbrains|cascadia)、sidebar(expanded|collapsed)、activity(visible|hidden)、composerRows(2|3|4)、quickActions([{label,prompt}])。不要输出 HTML、CSS、JavaScript、Svelte、URL、文件路径或事件处理器。只修改用户明确要求的部分。`;
+  return `${text}\n\n[Volt UI customization protocol]\n如果请求包含界面、布局、侧栏、活动面板、密度、字体、字号、代码字体、标题、快捷操作或输入框定制，请在回答末尾追加一个 fenced JSON patch。只能使用以下字段：schemaVersion="${UI_CUSTOMIZATION_SCHEMA}"、title、subtitle、density(compact|comfortable)、fontFamily(system|inter|yahei)、fontSize(small|medium|large)、codeFontFamily(system-mono|jetbrains|cascadia)、sidebar(expanded|collapsed)、activity(visible|hidden)、composerRows(2|3|4)、quickActions([{label,prompt}])。不要输出 HTML、CSS、JavaScript、Svelte、URL、文件路径或事件处理器。只修改用户明确要求的部分。方案被用户确认之前，不要说“已改为”“已生效”“已完成”，应说明已生成方案、确认后才会生效；也不要复述 JSON 或字段名。`;
 }

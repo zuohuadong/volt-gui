@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DshClient, MAX_UPLOAD_FILE_BYTES, type PromptContentPart } from "./dsh-client";
+import { MAX_INLINE_UPLOAD_BYTES } from "./file-limits";
 
 function createClient(value: unknown = {}) {
   const calls: Array<{ method: string; payload: unknown }> = [];
@@ -87,10 +88,10 @@ describe("DshClient management RPC", () => {
     expect(calls).toEqual([]);
   });
 
-  it("accepts files up to the configured upload limit", async () => {
+  it("accepts files up to the inline base64 upload budget", async () => {
     const { client, calls } = createClient({ receiptId: "receipt-large" });
     const file = new File(["small payload"], "large.bin");
-    Object.defineProperty(file, "size", { value: MAX_UPLOAD_FILE_BYTES });
+    Object.defineProperty(file, "size", { value: MAX_INLINE_UPLOAD_BYTES });
 
     await client.uploadFile("s1", file);
 
@@ -98,12 +99,20 @@ describe("DshClient management RPC", () => {
     expect(calls[0].method).toBe("fileUploads.upload");
   });
 
-  it("rejects files above the configured upload limit", async () => {
+  it("rejects files above the configured per-file limit", async () => {
     const { client, calls } = createClient();
-    const file = new File(["small payload"], "too-large.bin");
-    Object.defineProperty(file, "size", { value: MAX_UPLOAD_FILE_BYTES + 1 });
+    // 不分配 2 GiB 内存：只伪造 size，上传前的检查必须在读取字节之前失败。
+    const file = { name: "too-large.bin", size: MAX_UPLOAD_FILE_BYTES + 1, arrayBuffer: async () => { throw new Error("must not read"); } } as unknown as File;
 
-    await expect(client.uploadFile("s1", file)).rejects.toThrow("2 GiB");
+    await expect(client.uploadFile("s1", file)).rejects.toThrow("2 GB");
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses to inline a file above the base64 upload budget", async () => {
+    const { client, calls } = createClient();
+    const file = { name: "big.docx", size: MAX_INLINE_UPLOAD_BYTES + 1, arrayBuffer: async () => { throw new Error("must not read"); } } as unknown as File;
+
+    await expect(client.uploadFile("s1", file)).rejects.toThrow("20 MB");
     expect(calls).toEqual([]);
   });
 

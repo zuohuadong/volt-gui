@@ -17,7 +17,7 @@ const lockfile = readFileSync(path.join(repositoryRoot, 'pnpm-lock.yaml'), 'utf8
 const lockedPackageNames = parseAllDocuments(lockfile)
   .flatMap((document) => Object.keys(document.toJS().packages ?? {}));
 const workspaceConfig = readFileSync(path.join(repositoryRoot, 'pnpm-workspace.yaml'), 'utf8');
-const expectedSupportedVersion = '0.2.2-rc.1';
+const expectedSupportedVersion = '0.2.2-rc.3';
 const expectedVersion = rootPackage.dependencies['@deepseek-ai/dsh'];
 const launcherPath = path.join(repositoryRoot, 'scripts', 'anyong.mjs');
 
@@ -161,6 +161,10 @@ test('Anyong override composes with the supported official web and headless prof
       assert.match(config, /model: vlm/);
       assert.match(config, /apiKeyEnv: XG_GOMODEL_API_KEY/);
       assert.doesNotMatch(config, /id: anyong-ui/);
+      if (args[0] === 'web') {
+        assert.match(config, /id: anyong-directory-picker-browse/);
+        assert.match(config, /name: '@deepseek-ai\/dsh-client-ui-directory-picker-browse'/);
+      }
     }
   } finally {
     await removeIntegrationTree(dshHome);
@@ -230,6 +234,9 @@ test('official DSH credentials remain configured after a web runtime restart', a
   try {
     runtime = startWebRuntime(dshHome);
     let client = await connectRuntime(runtime);
+    const listing = await client.call('directoryPicker/list', { path: dshHome });
+    assert.ok(Array.isArray(listing.entries), 'desktop and Web need the official browse capability');
+    assert.ok(listing.entries.some((entry) => entry.name === 'profiles'));
     await client.call('credentials/set', { ref, value: 'temporary-test-secret' });
     let described = await client.call('credentials/describe', { refs: [ref] });
     assert.equal(described[ref]?.configured, true);
@@ -270,5 +277,5 @@ test('distribution bundle pins the same official DSH version', async () => {
 
 test('Node 26 is the supported script runtime', () => {
   assert.equal(Number(process.versions.node.split('.')[0]), 26);
-  assert.equal(rootPackage.engines.node, '>=26.13.0 <27');
+  assert.equal(rootPackage.engines.node, '>=26.13.1 <27');
 });

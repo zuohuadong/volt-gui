@@ -8,7 +8,7 @@ import {
 import { Button } from "$components/ui/button";
 import { Input } from "$components/ui/input";
 import { DataState, SettingsGroup } from "@svadmin/ui";
-import type { PluginInventoryEntry } from "$lib/dsh-client";
+import type { DshClient, ManagedPluginEntry, PluginInventoryEntry } from "$lib/dsh-client";
 import {
   PLUGIN_CATEGORIES,
   filterEnrichedPlugins,
@@ -20,9 +20,54 @@ import { t, i18n } from "$lib/i18n";
 type Props = {
   entries: PluginInventoryEntry[];
   onRefresh?: () => void;
+  client?: DshClient;
+  onNotice?: (message: string) => void;
+  onError?: (message: string) => void;
 };
 
-let { entries, onRefresh }: Props = $props();
+let { entries, onRefresh, client, onNotice, onError }: Props = $props();
+
+/** 官方 `listPlugins` 给出的可写身份；读不到时保持只读，绝不猜 patchId。 */
+let managed = $state<Record<string, ManagedPluginEntry>>({});
+let toggleBusy = $state("");
+
+$effect(() => {
+  if (!client) return;
+  let cancelled = false;
+  void client.listManagedPlugins()
+    .then((result) => {
+      if (cancelled) return;
+      managed = Object.fromEntries(result.entries.map((entry) => [entry.entryId, entry]));
+    })
+    .catch(() => { if (!cancelled) managed = {}; });
+  return () => { cancelled = true; };
+});
+
+/** 官方的只读原因是带连字符的枚举，翻译键用下划线：显式映射，不拼字符串。 */
+function readOnlyReasonLabel(reason: string): string {
+  if (reason === "management-required") return t("plugins.readOnly_management_required");
+  if (reason === "unaddressable") return t("plugins.readOnly_unaddressable");
+  return t("plugins.readOnly");
+}
+
+async function togglePlugin(entryId: string, enabled: boolean): Promise<void> {
+  if (!client) return;
+  toggleBusy = entryId;
+  try {
+    const result = await client.setPluginEnabled(entryId, enabled);
+    // 五种结果都不是"成功"的同义词：overridden 说明写进去了但没生效。
+    if (result.application === "failed") onError?.(result.error?.message || t("plugins.toggleFailed"));
+    else if (result.application === "cancelled") onError?.(t("plugins.toggleCancelled"));
+    else if (result.application === "overridden") onError?.(t("plugins.toggleOverridden"));
+    else if (result.application === "restart-required") onNotice?.(t("plugins.restartRequired"));
+    else onNotice?.(enabled ? t("plugins.enabledNotice") : t("plugins.disabledNotice"));
+    onRefresh?.();
+  } catch (error) {
+    onError?.(error instanceof Error ? error.message : String(error));
+  } finally {
+    toggleBusy = "";
+  }
+}
 
 let searchQuery = $state("");
 let selectedCategory = $state<PluginCategory | "all">("all");
@@ -185,6 +230,17 @@ function getFiberPhaseLabel(phase?: string | null): string {
               <span class={`plugin-phase plugin-phase--${plugin.fiberPhase || "none"}`}>
                 {getFiberPhaseLabel(plugin.fiberPhase)}
               </span>
+              {#if managed[plugin.entryId]?.patchId}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={toggleBusy === plugin.entryId}
+                  title={plugin.enabled ? t("plugins.disableHint") : t("plugins.enableHint")}
+                  onclick={() => void togglePlugin(plugin.entryId, !plugin.enabled)}
+                >{plugin.enabled ? t("plugins.disableAction") : t("plugins.enableAction")}</Button>
+              {:else if managed[plugin.entryId]?.readOnlyReason}
+                <small class="plugin-readonly" title={readOnlyReasonLabel(managed[plugin.entryId].readOnlyReason ?? "")}>{t("plugins.readOnly")}</small>
+              {/if}
             </div>
           </div>
 

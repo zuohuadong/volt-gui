@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "target": "win32-x64",
   "reference": "https://github.com/deepseek-ai/deepseek-harness/blob/21638c56315ae6a2b552d6091945d3144c9af32e/scripts/primary-runtime/lock.json",
-  "nodeVersion": "26.13.0",
+  "nodeVersion": "26.13.1",
   "python": {
     "version": "3.14.10",
     "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.14.10%2B20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",

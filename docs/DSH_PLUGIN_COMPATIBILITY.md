@@ -1,12 +1,12 @@
 # Volt DSH Plugin Compatibility
 
-内置插件审计日期：2026-09-15。未引入的社区候选插件仍为历史评估版本，不表示当前最新版。
+内置插件审计日期：2026-11-15。未引入的社区候选插件仍为历史评估版本，不表示当前最新版。最新同步验收边界见 `RELEASING.md` 的 November 15 receipt。
 
 ## 官方运行时
 
-2026-09-10 查询 npm registry：`@deepseek-ai/dsh` 的 `latest` 与 `next` 均为 `0.1.5-rc.1`，`alpha` 为 `0.1.5-alpha.2`。Volt 不把 Alpha 当作可复现的稳定升级。
+2026-11-15 查询 npm registry：`@deepseek-ai/dsh` 的 `latest` 为 `0.2.2-rc.1`，`next` 为 `0.2.2-rc.3`，`alpha` 为 `0.2.2-alpha.3`。本轮使用较新的 rc.3，不降回较旧的 latest 标签，也不采用 Alpha。
 
-Volt 已精确锁定 `0.1.5-rc.1`。桌面已迁移到启动 token 换 Cookie、HTTP Remote RPC、`/api/remote.mux`、`$events`、`session/follow` 与 `session/control`，不保留旧协议双栈。迁移结果见 `docs/DSH_UPGRADE_REVIEW_2026-09-10.md`。
+Volt 已精确锁定 `0.2.2-rc.3`。桌面使用启动 token 换 Cookie、HTTP Remote RPC、`/api/remote.mux`、`$events`、`session/follow` 与 `session/control`，不保留旧协议双栈。队列使用官方 `session/observeState`，终端使用 `terminal/attach` 和 `terminal/retain`，不实现第二套运行时。September 10 的升级记录仅作历史参考。
 
 ## 第三方插件审计
 
@@ -18,15 +18,15 @@ Volt 已精确锁定 `0.1.5-rc.1`。桌面已迁移到启动 token 换 Cookie、
 | `dsh-conversation-navigator` | `0.2.1` | 暂不引入 | 仅官方 Web conversation 注入，Volt 已在本地 renderer 管理会话导航。 |
 | `@tecfancy/dsh-dock-terminal` | `0.5.3` | 暂不引入 | 带 `node-pty` 和 React client；会建立第二个终端呈现/权限面。 |
 | `dsh-localqwen-rolefix` | `1.0.3` | 观察名单 | Host-only Profile Bundle，MIT；依赖 pi-ai 内部 model descriptor，需针对 Volt 的本地 provider 做真实回归后才能启用。 |
-| `@wxg-prc-cpg/browser-skill-dsh-plugin` | `0.2.1` | 默认内置 | 腾讯 BrowserSkill 的 DSH 原生 Profile Bundle，MIT；Host 侧只是 `bsk --json` 的结构化桥接，不复制会话、权限或持久化。 |
-| `@officecli/officecli` | `1.0.149` | 默认内置 | Apache-2.0；没有 DSH Profile Bundle，但原生提供 `officecli mcp` stdio server，因此由官方 `@deepseek-ai/dsh-mcp-client` 接入，不复制 Office 文档引擎。 |
+| `@wxg-prc-cpg/browser-skill-dsh-plugin` | `0.5.0` | 默认内置 | 腾讯 BrowserSkill 的 DSH 原生 Profile Bundle，MIT；Host 侧只是 `bsk --json` 的结构化桥接，不复制会话、权限或持久化。 |
+| `@officecli/officecli` | `1.0.161` | 默认内置 | Apache-2.0；没有 DSH Profile Bundle，但原生提供 `officecli mcp` stdio server，因此由官方 `@deepseek-ai/dsh-mcp-client` 接入，不复制 Office 文档引擎。 |
 | `@wxg-prc-cpg/dsh-weknora` | `0.1.0` | 默认内置 | 腾讯 WeKnora 官方只读 DSH 插件，MIT；提供知识库列表、混合检索、文档读取和带引用的 RAG 问答，不实现本地知识库运行时。 |
 
 ## 浏览器与 Computer Use 评估
 
 | 方案 | 审计版本 | 适用场景 | Volt 结论 |
 | --- | --- | --- | --- |
-| BrowserSkill DSH plugin | `0.2.1` | 借用用户已登录的 Chrome/Edge 标签页、语义观察、截图、受控点击输入、多会话 | 默认采用。保持 `lazyTools: true`，浏览器扩展离线时 fail closed。 |
+| BrowserSkill DSH plugin | `0.5.0` | 借用用户已登录的 Chrome/Edge 标签页、语义观察、截图、受控点击输入、多会话 | 默认采用。保持 `lazyTools: true`，浏览器扩展离线时 fail closed。 |
 | Playwright MCP | `0.0.80` | 隔离 Chromium、accessibility snapshot、确定性网页回归 | 保留为测试候选，不与 BrowserSkill 同时默认启用。 |
 | Chrome DevTools MCP | `1.8.0` | Chrome 网络、Console、性能和 DevTools 诊断 | 仅按需启用；远程调试端口扩大控制面。 |
 | Nuphus MCP | `0.2.2` | 桌面鼠标键盘与浏览器的完整 Computer Use | 暂不接入。需先审计平台二进制、权限边界、坐标操作和人工接管。 |
@@ -38,7 +38,7 @@ Volt 已精确锁定 `0.1.5-rc.1`。桌面已迁移到启动 token 换 Cookie、
 3. 默认延迟公开工具 schema，适合内网模型与有限上下文；真实浏览器连接由 BrowserSkill daemon 和扩展管理。
 4. 本地 Svelte 工作台只读取官方 `pluginInventory/list` 并呈现插件状态，不加载或复制第三方 Web renderer。
 
-仓库记录了精确版本、许可证、npm SHA-512 与平台二进制 SHA-256。桌面包默认包含 `bsk 0.2.1`；安装与诊断命令：
+仓库记录了精确版本、许可证、npm SHA-512 与平台二进制 SHA-256。桌面包默认包含 `bsk 0.5.0`；安装与诊断命令：
 
 ```bash
 pnpm run setup:browser-skill
@@ -50,7 +50,7 @@ pnpm run doctor:browser-skill
 
 ## OfficeCLI 接入
 
-OfficeCLI `1.0.149` 已验证 MCP 激活与凭据隔离；空白 DOCX、XLSX、PPTX 的创建/读取/关闭能力沿用前版验收，本轮不宣称覆盖复杂文档转换和排版。其 npm 包没有 `dsh.bundle`，但 CLI 原生提供 MCP server，所以默认 Profile 通过官方 DSH MCP client 启动：
+OfficeCLI `1.0.161` 已纳入实际运行目录与插件 RPC smoke；文档能力仍需目标平台验收，本轮不宣称覆盖复杂文档转换和排版。其 npm 包没有 `dsh.bundle`，但 CLI 原生提供 MCP server，所以默认 Profile 通过官方 DSH MCP client 启动：
 
 ```text
 node officecli.js mcp
@@ -93,7 +93,7 @@ GitHub、CNB、Sentry 和飞书的凭据只通过环境或官方 DSH credentials
 
 ## 旧版插件迁移
 
-本次自动迁移仅允许仓库此前内置的 BrowserSkill `0.1.2` 或 `0.2.0` 升级到 `0.2.1`，分别作用于官方 `web`、`headless` Profile。未知版本、较新用户版本和旧包符号链接拒绝覆盖。升级前应关闭使用同一 Profile 的暗涌、DSH 和 CLI，备份整个用户 DSH_HOME；不要在旧进程仍加载插件时迁移。
+自动迁移允许仓库此前内置的 BrowserSkill 版本升级到 `0.5.0`，分别作用于官方 `web`、`headless` Profile；确切白名单以 `scripts/provision-dsh-profile.mjs` 为准。本轮增加已随包 DSH rc.1 到 rc.3 的依赖闭包升级与回滚。未知版本、较新用户版本和旧包符号链接拒绝覆盖。升级前应关闭使用同一 Profile 的暗涌、DSH 和 CLI，备份整个用户 DSH_HOME；不要在旧进程仍加载插件时迁移。
 
 迁移保留 Profile 中的自定义 dependencies、bundles、扩展字段和 `cordis.patch.yml`。新包在临时目录验证完整性后切换；旧包和原始 manifest 留在：
 

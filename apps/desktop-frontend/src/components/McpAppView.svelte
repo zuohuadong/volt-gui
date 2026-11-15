@@ -29,7 +29,7 @@
       const response = await request("/api/mcp-apps/view", "POST", { viewId: app.viewId });
       const view = response && typeof response === "object" ? response as Record<string, unknown> : {};
       if (typeof view.html !== "string" || view.html.length === 0 || view.html.length > 524288) {
-        throw new Error("MCP App 资源为空或超过 512 KB");
+        throw new Error("MCP App 资源为空或超过 8 MB");
       }
       html = view.html;
       sandboxUrl = `${app.sandboxOrigin}/sandbox.html?csp=${encodeURIComponent(JSON.stringify(view.csp ?? {}))}`;

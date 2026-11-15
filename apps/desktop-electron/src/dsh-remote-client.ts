@@ -41,6 +41,8 @@ export interface DshCarrier {
   call(endpoint: string, args?: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
   mcpAppsRequest(path: string, method: "GET" | "POST", body?: Record<string, unknown>): Promise<unknown>;
   exportSession(sessionId: string, selectedPath: string): Promise<void>;
+  changesJson(path: "/api/changes.summary" | "/api/changes.diff", query: Record<string, string>): Promise<unknown>;
+  openDuplexStream(endpoint: string, args: Record<string, unknown>, signal?: AbortSignal): { items: AsyncIterable<unknown>; send: (value: unknown) => boolean; close: () => void };
   openStream(endpoint: string, args: Record<string, unknown>, signal?: AbortSignal): DshRemoteStream;
   readFirstStreamItem(endpoint: string, args?: Record<string, unknown>): Promise<unknown>;
   runEvents(onEvent: (event: DshRemoteEvent) => void, signal: AbortSignal): Promise<void>;
@@ -389,6 +391,21 @@ export class DshRemoteClient implements DshCarrier {
     return parsedResponse.result.value;
   }
 
+  async changesJson(path: "/api/changes.summary" | "/api/changes.diff", query: Record<string, string>): Promise<unknown> {
+    const url = new URL(path, this.cleanOrigin);
+    for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
+    const response = await this.authenticatedFetch(`${url.pathname}${url.search}`);
+    if (response.status === 404) return undefined;
+    if (!response.ok) throw new Error(`变更记录读取失败（HTTP ${response.status}）`);
+    try {
+      return await response.json();
+    } catch (error) {
+      if (!isTransportFailure(error)) throw error;
+      this.onConnectionError?.();
+      throw new DshConnectionError();
+    }
+  }
+
   async mcpAppsRequest(path: string, method: "GET" | "POST", body?: Record<string, unknown>): Promise<unknown> {
     if (!MCP_APPS_PATHS.has(path)) throw new Error("MCP Apps 路径不受支持");
     if (method === "GET" && body !== undefined) throw new Error("MCP Apps GET 请求不能包含请求体");
@@ -523,6 +540,78 @@ export class DshRemoteClient implements DshCarrier {
       signal?.removeEventListener("abort", abort);
       if (!closed) abort();
     }
+  }
+
+  openDuplexStream(
+    endpoint: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): { items: AsyncIterable<unknown>; send: (value: unknown) => boolean; close: () => void } {
+    if (!this.origin || !this.cookie) throw new Error("官方 DSH 尚未完成认证");
+    const queue = new StreamQueue<unknown>();
+    const streamId = randomUUID();
+    const url = new URL("/api/remote.mux", this.origin);
+    url.protocol = "ws:";
+    const socket = new WebSocket(url, { headers: { Cookie: this.cookie }, origin: this.origin });
+    let closed = false;
+    let opened = false;
+    const close = (error?: Error) => {
+      if (closed) return;
+      closed = true;
+      opened = false;
+      queue.end(error);
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+    };
+    const abort = () => {
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "cancel", streamId }));
+      close(new Error("DSH Remote stream cancelled"));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+    socket.once("error", (error) => close(error instanceof Error ? error : new Error(String(error))));
+    let endedByFrame = false;
+    socket.once("close", () => close(endedByFrame ? undefined : new Error("DSH Remote stream closed unexpectedly")));
+    socket.on("message", (raw: RawData, isBinary: boolean) => {
+      try {
+        if (isBinary) throw new Error("DSH Remote stream 不支持二进制帧");
+        const message = parseRemoteStreamServerMessage(JSON.parse(raw.toString()));
+        if (message.streamId !== streamId) return;
+        if (message.type === "item") queue.push(message.value);
+        else if (message.type === "end") {
+          endedByFrame = true;
+          close();
+        } else {
+          close(new Error(message.error.message));
+        }
+      } catch (error) {
+        close(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+    void new Promise<void>((resolve, reject) => {
+      if (socket.readyState === WebSocket.OPEN) return resolve();
+      socket.once("open", () => resolve());
+      socket.once("error", (error: Error) => reject(error));
+      socket.once("close", () => reject(new Error("DSH Remote stream closed before opening")));
+    }).then(() => {
+      if (signal?.aborted) return;
+      socket.send(JSON.stringify({ type: "open", streamId, endpoint, payload: { args } }));
+      opened = true;
+    }).catch((error: unknown) => close(error instanceof Error ? error : new Error(String(error))));
+    return {
+      items: (async function* () {
+        while (true) {
+          const next = await queue.next();
+          if (next.done) return;
+          yield next.value;
+        }
+      })(),
+      send: (value: unknown) => {
+        if (!opened || closed || socket.readyState !== WebSocket.OPEN) return false;
+        socket.send(JSON.stringify({ type: "item", streamId, value }));
+        return true;
+      },
+      close: abort,
+    };
   }
 
   async readFirstStreamItem(endpoint: string, args: Record<string, unknown> = {}): Promise<unknown> {

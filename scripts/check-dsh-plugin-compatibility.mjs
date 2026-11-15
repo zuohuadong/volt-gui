@@ -12,8 +12,8 @@ const desktopPackageJson = JSON.parse(readFileSync(resolve(root, "apps", "deskto
 const intranetAuthPackageJson = JSON.parse(readFileSync(resolve(root, "plugins", "dsh-intranet-auth", "package.json"), "utf8"));
 const profileSource = readFileSync(resolve(root, "profiles", "anyong.yml"), "utf8");
 const dshVersion = packageJson.dependencies?.["@deepseek-ai/dsh"];
-if (dshVersion !== "0.2.2-rc.1") {
-  throw new Error(`Volt requires the audited official DSH version 0.2.2-rc.1, got ${JSON.stringify(dshVersion)}`);
+if (dshVersion !== "0.2.2-rc.3") {
+  throw new Error(`Volt requires the audited official DSH version 0.2.2-rc.3, got ${JSON.stringify(dshVersion)}`);
 }
 
 const disallowedPackages = [

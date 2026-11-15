@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { credentialStatusLabel } from "$lib/credential-status";
   import { ChevronDown, CircleAlert, CircleCheck, KeyRound, RefreshCw, Search } from "@lucide/svelte";
   import { Button } from "$components/ui/button";
   import { Input } from "$components/ui/input";
@@ -52,6 +53,9 @@
   const defaultApi = $derived(selected ? providerDefaultApi(namespaces, providers, selected.provider) : "");
   const credentialRef = $derived(selected ? providerCredentialRef(namespaces, providers, selected.provider) : undefined);
   const isCredentialConfigured = $derived(credentialRef ? !!credentials[credentialRef]?.configured : false);
+  function credentialStateText(ref: string | undefined, provider: string): string {
+    return credentialStatusLabel(ref ? credentials[ref] : undefined, { ref, provider }, t);
+  }
   const isProviderActive = $derived(selected?.active === true);
 
   function providerCredential(provider: ConfigurableProvider): string | undefined {
@@ -146,7 +150,7 @@
             <small>{providerCopy.description || provider.provider}</small>
           </span>
           {#if providerCredential(provider)}
-            <span class:configured={providerConfigured(provider)} class="provider-list-state" title={providerConfigured(provider) ? t("settings.configured") : t("settings.notConfigured")}></span>
+            <span class:configured={providerConfigured(provider)} class="provider-list-state" title={credentialStateText(providerCredential(provider), provider.provider)}></span>
           {/if}
           {#if provider.active}<CircleCheck size={13} aria-label={t("common.enabled")} />{/if}
         </button>
@@ -176,7 +180,7 @@
           {#if credentialRef}
             <div class="provider-meta-item">
               <span>{t("settings.credentialsSectionTitle")}</span>
-              <strong>{isCredentialConfigured ? t("settings.configured") : t("settings.notConfigured")}</strong>
+              <strong>{credentialStateText(credentialRef, selected?.provider ?? "")}</strong>
             </div>
           {/if}
         </div>
@@ -185,7 +189,7 @@
           <div class="provider-quick-key">
             <div class="provider-quick-key-header">
               <strong>{credentialRefTitle(credentialRef)}</strong>
-              <small>{isCredentialConfigured ? t("settings.configured") : t("settings.notConfigured")}</small>
+              <small>{credentialStateText(credentialRef, selected?.provider ?? "")}</small>
             </div>
             <div class="provider-quick-key-form">
               <Input

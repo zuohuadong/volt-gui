@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { fileUploadRequest } from "./file-upload-request.ts";
-import { permissionCommandRequest } from "./permission-request.ts";
+import { commandExecuteRequest } from "./permission-request.ts";
 import { subagentAddress } from "./subagent-routing.ts";
 import { sessionHistoryRequest } from "./session-follow.ts";
 
@@ -9,9 +9,9 @@ import { sessionHistoryRequest } from "./session-follow.ts";
 export const allowedDshMethods: ReadonlySet<string> = new Set([
   "session.list", "session.search", "session.create", "session.history", "session.prompt",
   "session.cancel", "session.models", "session.selectModel", "session.rename", "session.fork",
-  "session.attachment", "session.updateQueue", "workspace.list", "workspace.create",
+  "session.attachment", "session.updateQueue", "session.state", "workspace.list", "workspace.create",
   "fileUploads.upload",
-  "commands.execute", "permissionPresets.catalog",
+  "commands.execute", "commands.list", "permissionPresets.catalog",
   "workspace.rename", "workspace.delete", "workspace.insertBefore", "workspace.insertSessionBefore",
   "workspace.archiveSession", "workspace.unarchiveSession", "host.describe", "host.listDirectory", "host.createDirectory", "host.openPath",
   "agentPreset.list", "agentPreset.select", "agentPreset.read", "agentPreset.copy", "agentPreset.openDocument", "agentPreset.remove",
@@ -24,6 +24,14 @@ export const allowedDshMethods: ReadonlySet<string> = new Set([
   "weknora/test",
   "speech/catalog", "speech/prepare", "speech/cancelPreparation", "speech/transcribe",
   "mcpApps.request",
+  // 定时任务：全部走官方 schedule 命名空间，不新增本地任务存储。
+  "schedule.list", "schedule.run", "schedule.edit",
+  // 插件启停：官方 pluginManager 拥有 profile patch 与运行时应用，界面只触发。
+  "pluginManager.listPlugins", "pluginManager.setPluginEnabled",
+  // 消息反馈：官方 messageFeedback 的 list/put/delete（乐观并发，带 ifVersion）。
+  "messageFeedback.list", "messageFeedback.put", "messageFeedback.delete",
+  // Agent 团队模式：官方 `agentTeams.setEnabled` 保存根会话的选择。
+  "agentTeams.setEnabled",
 ]);
 
 // 由 IPC handler 在映射前直接处理、不需要端点的三个方法。
@@ -95,7 +103,25 @@ function mapLegacyDshRequest(method: string, payload: unknown): { endpoint: stri
   }
   if (method === "session.attachment") return { endpoint: "session/attachment", args: { request } };
   if (method === "fileUploads.upload") return fileUploadRequest(request);
-  if (method === "commands.execute") return permissionCommandRequest(request);
+  if (method === "commands.execute") return commandExecuteRequest(request);
+  // 官方命令目录：Agent 查找字段是 `agentId`（见生成器契约），返回已排序描述符数组。
+  if (method === "commands.list") return { endpoint: "commands/list", args: { agentId: request.sessionId } };
+  if (method === "agentTeams.setEnabled") {
+    return { endpoint: "agentTeams/setEnabled", args: { agentId: request.sessionId, enabled: request.enabled } };
+  }
+  if (method.startsWith("messageFeedback.")) {
+    return { endpoint: `messageFeedback/${method.slice("messageFeedback.".length)}`, args: { request } };
+  }
+  if (method.startsWith("pluginManager.")) {
+    const suffix = method.slice("pluginManager.".length);
+    if (suffix === "listPlugins") return { endpoint: "pluginManager/listPlugins", args: {} };
+    // 其余是按参数名透传的命令式方法（id/name + enabled）。
+    return { endpoint: `pluginManager/${suffix}`, args: request };
+  }
+  if (method.startsWith("schedule.")) {
+    const suffix = method.slice("schedule.".length);
+    return { endpoint: `schedule/${suffix}`, args: { request } };
+  }
   if (method === "permissionPresets.catalog") return { endpoint: "permissionPresets/catalog", args: {} };
   if (method === "session.updateQueue") return { endpoint: "session/updateQueue", args: { request } };
   if (method === "session.cancel") return { endpoint: "session/cancel", args: { request } };

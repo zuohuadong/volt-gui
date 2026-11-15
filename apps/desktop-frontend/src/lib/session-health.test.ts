@@ -5,6 +5,7 @@ import {
   clearsSessionError,
   sessionHealth,
   sessionHealthLabel,
+  sessionNeedsMigration,
   turnEndError,
   visibleSessions,
 } from "./session-health";
@@ -24,6 +25,7 @@ describe("sessionHealth", () => {
     expect(sessionHealth({ ...base, projections: { values: { lastError: "missing key" } } })).toBe("error");
     expect(sessionHealth(base)).toBe("ok");
     expect(sessionHealthLabel("error")).toBe("运行异常");
+    expect(sessionHealthLabel("migration-required")).toBe("需要新版本打开");
   });
 
   it("locks Agent presets after the session has started", () => {
@@ -78,5 +80,14 @@ describe("sessionHealth", () => {
     }));
     expect(visibleSessions(sessions, ["archived"], "active", ["text-draft", "image-draft", "archived"])
       .map((session) => session.sessionId)).toEqual(["active", "text-draft", "image-draft"]);
+  });
+
+  it("flags sessions written by a newer runtime as needing migration", () => {
+    const newer = { ...base, formatStatus: "migration-required" as const };
+    // 降级安装的典型症状：重试解决不了，必须让用户知道是版本问题。
+    expect(sessionNeedsMigration(newer)).toBe(true);
+    expect(sessionHealth(newer)).toBe("migration-required");
+    expect(sessionHealth(newer, true)).toBe("migration-required");
+    expect(sessionNeedsMigration({ ...base, formatStatus: "current" as const })).toBe(false);
   });
 });

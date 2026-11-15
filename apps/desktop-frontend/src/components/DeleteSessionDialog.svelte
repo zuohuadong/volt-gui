@@ -4,12 +4,15 @@
   import { Button } from "$components/ui/button";
   import { t } from "$lib/i18n";
 
-  let { title, disabled, description, onConfirm, onCancel }: {
+  let { title, heading, disabled, description, onConfirm, onCancel, confirmText }: {
     title: string;
+    /** 覆盖对话框标题（默认「删除会话」），用于清空对话等同类不可逆动作。 */
+    heading?: string;
     disabled: boolean;
     description?: string;
     onConfirm: () => void;
     onCancel: () => void;
+    confirmText?: string;
   } = $props();
   let dialog: HTMLDialogElement;
   let mounted = false;
@@ -27,12 +30,12 @@
 </script>
 
 <dialog bind:this={dialog} onclose={cancelMountedDialog} aria-labelledby="delete-session-title" aria-describedby="delete-session-description">
-  <h2 id="delete-session-title">{t("session.deleteSession")}</h2>
+  <h2 id="delete-session-title">{heading || t("session.deleteSession")}</h2>
   <p id="delete-session-description">{description || t("session.deleteConfirm", { title })}</p>
   {#if disabled}<p>{t("session.runningActionUnavailable")}</p>{/if}
   <div class="delete-actions">
     <Button variant="outline" onclick={onCancel}>{t("common.cancel")}</Button>
-    <Button variant="destructive" disabled={disabled} onclick={onConfirm}><Trash2 size={14} />{t("common.delete")}</Button>
+    <Button variant="destructive" disabled={disabled} onclick={onConfirm}><Trash2 size={14} />{confirmText || t("common.delete")}</Button>
   </div>
 </dialog>
 

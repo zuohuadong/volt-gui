@@ -154,6 +154,7 @@ describe("desktop update action", () => {
       window: { voltDesktop: { checkForUpdate } },
       updateChecking: false, updateCheck: undefined as unknown, updateError: "",
       managementError: "", managementNotice: "",
+      desktopFeatures: { updateChecks: true },
       userFacingError: (error: Error) => error.message, t,
     };
     const check = runInNewContext(`${updateSource}\ncheckForUpdate`, state) as (showError?: boolean) => Promise<void>;
@@ -185,6 +186,14 @@ describe("desktop update action", () => {
     const request = vi.fn().mockResolvedValue({});
     const h = harness(request);
     h.state.updateChecking = true;
+    await h.check();
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("does not check for updates in an unsigned review build", async () => {
+    const request = vi.fn().mockResolvedValue({});
+    const h = harness(request);
+    h.state.desktopFeatures.updateChecks = false;
     await h.check();
     expect(request).not.toHaveBeenCalled();
   });

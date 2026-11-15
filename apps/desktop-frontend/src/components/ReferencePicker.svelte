@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { File, Folder, History } from "@lucide/svelte";
+  import { File, Folder, History, Terminal } from "@lucide/svelte";
   import {
     PromptInputCommand,
     PromptInputCommandEmpty,
@@ -11,10 +11,11 @@
     usePromptInputController,
   } from "@svadmin/ai-elements";
   import type { DshClient, DshSkill, FileReferenceCandidate, SessionReferenceCandidate } from "$lib/dsh-client";
+  import { applySlashCandidate, slashCandidates, type HostCommand } from "$lib/slash-commands";
   import { t } from "$lib/i18n";
 
   interface Candidate {
-    kind: "file" | "directory" | "session" | "command";
+    kind: "file" | "directory" | "session" | "command" | "host-command";
     label: string;
     detail: string;
     path?: string;
@@ -25,13 +26,20 @@
   interface Props {
     readonly client?: DshClient;
     readonly skills?: DshSkill[];
+    /** 官方命令目录（`commands.list`）；为空时斜杠菜单只显示技能。 */
+    readonly commands?: readonly HostCommand[];
     readonly sessionId: string;
     readonly rows?: number;
     readonly disabled?: boolean;
     readonly placeholder?: string;
+    /**
+     * 任务执行中回车要"排队"而不是提交：PromptInput 在 loading 时把 submit 关掉了，
+     * 所以这个分支必须在这里接管，否则"回车 = 排队"永远不可达。
+     */
+    readonly onQueue?: () => void;
   }
 
-  let { client, skills = [], sessionId, rows = 4, disabled = false, placeholder = "" }: Props = $props();
+  let { client, skills = [], commands = [], sessionId, rows = 4, disabled = false, placeholder = "", onQueue }: Props = $props();
   const controller = usePromptInputController();
   let inputElement = $state<HTMLTextAreaElement>();
   let candidates = $state<Candidate[]>([]);
@@ -91,10 +99,16 @@
     busy = true;
     try {
       if (token.prefix === "/") {
-        candidates = skills
-          .filter((skill) => `${skill.name} ${skill.description}`.toLowerCase().includes(token.query.toLowerCase()))
+        // 斜杠菜单：官方 Host 命令在前，技能补充在后；两者都来自真实目录，
+        // 这里不再硬编码任何命令名。
+        candidates = slashCandidates(commands, skills, token.query)
           .slice(0, 8)
-          .map((skill) => ({ kind: "command" as const, label: `/${skill.name}`, detail: skill.description || t("reference.officialSkill"), replacement: `/${skill.name} ` }));
+          .map((item) => ({
+            kind: item.kind === "host-command" ? "host-command" as const : "command" as const,
+            label: `/${item.name}`,
+            detail: item.description || (item.kind === "host-command" ? t("reference.hostCommand") : t("reference.officialSkill")),
+            replacement: applySlashCandidate(item),
+          }));
         highlighted = Math.min(highlighted, Math.max(candidates.length - 1, 0));
         return;
       }
@@ -121,6 +135,10 @@
   function onKeydown(event: KeyboardEvent): void {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
+      if (onQueue && !candidates.length) {
+        onQueue();
+        return;
+      }
       const textarea = event.currentTarget as HTMLTextAreaElement;
       textarea.form?.requestSubmit();
       return;
@@ -150,6 +168,10 @@
     }
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
+      if (onQueue) {
+        onQueue();
+        return;
+      }
       const textarea = event.currentTarget as HTMLTextAreaElement;
       textarea.form?.requestSubmit();
     }
@@ -187,7 +209,7 @@
         <PromptInputCommandGroup>
           {#each candidates as candidate, index (candidate.kind + candidate.label)}
             <PromptInputCommandItem class={index === highlighted ? "active" : ""} value={`${candidate.label} ${candidate.detail}`} onclick={() => selectCandidate(candidate)}>
-              <span class="reference-icon">{#if candidate.kind === "session"}<History size={14} />{:else if candidate.kind === "directory"}<Folder size={14} />{:else}<File size={14} />{/if}</span>
+              <span class="reference-icon">{#if candidate.kind === "session"}<History size={14} />{:else if candidate.kind === "directory"}<Folder size={14} />{:else if candidate.kind === "host-command"}<Terminal size={14} />{:else}<File size={14} />{/if}</span>
               <span><strong>{candidate.label}</strong><small>{candidate.detail}</small></span>
             </PromptInputCommandItem>
           {/each}

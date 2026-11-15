@@ -1,6 +1,9 @@
-export type RpcResult<T> = { ok: true; value: T } | { ok: false; error: { message: string; code?: string } };
-import { MAX_INPUT_FILE_BYTES } from "./file-limits";
+import { MAX_INLINE_UPLOAD_BYTES, MAX_INPUT_FILE_BYTES, formatFileSize } from "./file-limits";
+import { normalizeCommands, type HostCommand } from "./slash-commands";
 
+export type RpcResult<T> = { ok: true; value: T } | { ok: false; error: { message: string; code?: string } };
+
+/** 单个输入文件上限（2 GiB）；超过 MAX_INLINE_UPLOAD_BYTES 的文件由调用方改成路径引用。 */
 export const MAX_UPLOAD_FILE_BYTES = MAX_INPUT_FILE_BYTES;
 export type PermissionSelect = {
   options: Array<{ value: string; label?: string; description?: string }>;
@@ -20,10 +23,29 @@ export type SessionSummary = {
   cwd?: string;
   workspaceError?: string;
   agentPreset?: string;
+  /**
+   * 官方报告的持久化格式状态：`migration-required` 表示这条会话由更新版本的
+   * DSH 写过，当前运行时不能安全读取（降级安装的典型症状）。
+   */
+  formatStatus?: "current" | "migration-required";
   projections?: { values?: Record<string, unknown> & { permissions?: PermissionSelect } };
 };
 export type SessionProjection = { asOfSeq: number; values: Record<string, unknown> & { permissions?: PermissionSelect } };
 export type SessionHistory = { events: HistoryEntry[]; hasMore: boolean; cursor: number; projections?: SessionProjection };
+/** 官方 `session/updateQueue` 的三种改动：改文字、删除、插队（立即转向）。 */
+export type SessionQueueAction =
+  | { readonly kind: "edit"; readonly content: readonly { type: "text"; text: string }[] }
+  | { readonly kind: "remove" }
+  | { readonly kind: "steer" };
+/** 官方 `session/state` 的被动状态快照。 */
+export type SessionRuntimeState = {
+  readonly cursor: number;
+  readonly active: boolean;
+  readonly running: boolean;
+  /** 没有活动 Agent 时官方返回 null（此时队列不可读，而不是空队列）。 */
+  readonly queue: readonly unknown[] | null;
+  readonly pendingInput?: readonly string[];
+};
 export type Workspace = { workspaceId: string; path: string; title: string; sessionIds: string[] };
 export type SessionSearchItem = { sessionId: string; snippet: string };
 export type HistoryEntry = { event: { type: string; seq: number; time: number; data: Record<string, unknown> }; view?: unknown };
@@ -45,6 +67,26 @@ export type PluginInventoryEntry = {
   moduleName: string;
   enabled: boolean;
   fiberPhase: "pending" | "loading" | "active" | "failed" | "unloading" | null;
+};
+export type ManagedPluginEntry = PluginInventoryEntry & {
+  /** 官方 profile patch 里的行 id；有这个字段才允许启停。 */
+  patchId?: string;
+  /** 官方拒绝就地修改的原因。 */
+  readOnlyReason?: "management-required" | "unaddressable";
+};
+/**
+ * 官方 `setPluginEnabled` 的结果（`ChangeResult.application`）。
+ *
+ * 五态都必须区分：`applied` 立即生效；`restart-required` 下次启动生效；
+ * `overridden` 表示配置写进去了但被更高优先级的覆盖压住（**没生效**）；
+ * `failed` 失败；`cancelled` 是调用方中止、文件已回滚。
+ */
+export type PluginToggleResult = {
+  application: "applied" | "restart-required" | "overridden" | "failed" | "cancelled";
+  enabled?: boolean;
+  restartReason?: string;
+  error?: { code?: string; message?: string };
+  warnings?: string[];
 };
 export type DiscoveredModel = { id: string; name?: string; contextWindow?: number; maxTokens?: number; input?: string[] };
 export type SpeechPreparationState =
@@ -143,6 +185,7 @@ type DshTransport = {
   dshRequest(method: string, payload: unknown): Promise<unknown>;
   dshRespond(message: unknown): Promise<unknown>;
   onDshFrame(listener: (frame: unknown) => void): () => void;
+  observeSessionState?(sessionId: string): Promise<{ accepted: boolean; sessionId?: string }>;
 };
 
 function unwrap<T>(body: { result?: RpcResult<T> }): T {
@@ -163,6 +206,9 @@ export class DshClient {
   }
 
   listSessions(): Promise<{ items: SessionSummary[] }> { return this.request("session.list", {}); }
+  listSchedules(request: Record<string, unknown>): Promise<unknown> { return this.request("schedule.list", request); }
+  runSchedule(request: Record<string, unknown>): Promise<unknown> { return this.request("schedule.run", request); }
+  editSchedule(request: Record<string, unknown>): Promise<unknown> { return this.request("schedule.edit", request); }
   searchSessions(query: string): Promise<{ items: SessionSearchItem[]; hasMore: boolean }> { return this.request("session.search", { query }); }
   listWorkspaces(): Promise<{ items: Workspace[]; archivedSessionIds: string[] }> { return this.request("workspace.list", {}); }
   createWorkspace(path: string): Promise<{ workspace: Workspace; created: boolean }> { return this.request("workspace.create", { path }); }
@@ -187,6 +233,15 @@ export class DshClient {
   executeCommand(sessionId: string, line: string): Promise<{ result?: { kind: "success" | "error"; text?: string } }> {
     return this.request("commands.execute", { sessionId, line, attachments: [] });
   }
+  /**
+   * 官方命令目录（斜杠菜单的唯一来源）。
+   *
+   * 目录按 Agent 解析：会话切走后返回的可能是上一会话的命令集，调用方必须用
+   * 自己的会话代际丢弃过期结果（与其它管理面一致）。
+   */
+  async listCommands(sessionId: string): Promise<HostCommand[]> {
+    return normalizeCommands(await this.request<unknown>("commands.list", { sessionId }));
+  }
   async selectPermission(sessionId: string, preset: string): Promise<PermissionSelect> {
     const catalog = await this.permissionCatalog();
     if (!catalog.options.some((option) => option.value === preset)) throw new Error("Permission preset is unavailable");
@@ -199,7 +254,9 @@ export class DshClient {
   }
   async uploadFile(sessionId: string, file: File, isCurrent: () => boolean = () => true): Promise<{ receiptId: string; file: { attachmentId: string; name: string; bytes: number } }> {
     if (!isCurrent()) throw new DOMException("文件上传已取消", "AbortError");
-    if (file.size > MAX_UPLOAD_FILE_BYTES) throw new Error("文件超过 2 GiB");
+    if (file.size > MAX_UPLOAD_FILE_BYTES) throw new Error(`文件超过 ${formatFileSize(MAX_UPLOAD_FILE_BYTES)}`);
+    // base64 单请求上传有字符串上限：大文件必须走工作区路径引用，不能在这里静默改道。
+    if (file.size > MAX_INLINE_UPLOAD_BYTES) throw new Error(`文件超过 ${formatFileSize(MAX_INLINE_UPLOAD_BYTES)}，请改用工作区路径引用`);
     const bytes = new Uint8Array(await file.arrayBuffer());
     if (!isCurrent()) throw new DOMException("文件上传已取消", "AbortError");
     let binary = "";
@@ -222,7 +279,22 @@ export class DshClient {
   fork(sessionId: string, atSeq?: number): Promise<{ sessionId: string }> { return this.request("session.fork", { sessionId, ...(atSeq === undefined ? {} : { atSeq }) }); }
   archiveSession(sessionId: string): Promise<{ archivedSessionIds: string[] }> { return this.request("workspace.archiveSession", { sessionId }); }
   unarchiveSession(sessionId: string): Promise<{ archivedSessionIds: string[] }> { return this.request("workspace.unarchiveSession", { sessionId }); }
-  updateQueue(sessionId: string, itemId: string, action: unknown): Promise<{ accepted: true }> { return this.request("session.updateQueue", { sessionId, itemId, action }); }
+  updateQueue(sessionId: string, itemId: string, action: SessionQueueAction): Promise<{ accepted: true }> {
+    return this.request("session.updateQueue", { sessionId, itemId, action });
+  }
+  /** 读取会话被动状态：待发送队列与运行标记（官方 `session/state`）。 */
+  sessionState(sessionId: string): Promise<SessionRuntimeState> {
+    return this.request("session.state", { sessionId });
+  }
+  /**
+   * 让主进程持续观察这个会话的状态（`session/observeState` 流）。
+   * 老版本桌面外壳没有这个通道时静默降级：队列读不到就不显示，不能因此报错。
+   */
+  async observeSessionState(sessionId: string): Promise<{ accepted: boolean }> {
+    if (!this.transport.observeSessionState) return { accepted: true };
+    const result = await this.transport.observeSessionState(sessionId);
+    return { accepted: result?.accepted === true };
+  }
   respond(message: unknown): Promise<unknown> { return this.transport.dshRespond(message); }
   models(sessionId: string): Promise<{ current: { provider: string; model: string; reasoningEffort?: string }; groups: ModelGroup[]; failures?: ModelCatalogFailure[]; routable: boolean }> {
     return this.request("session.models", { sessionId });
@@ -326,6 +398,33 @@ export class DshClient {
   }
   listPluginInventory(): Promise<{ entries: PluginInventoryEntry[] }> {
     return this.request("pluginInventory/list", { args: {} });
+  }
+  /**
+   * 可管理插件列表：官方 `pluginManager.listPlugins` 在只读清单之外给出
+   * `patchId`（可写）或 `readOnlyReason`（为什么不能从这里改）。
+   */
+  listManagedPlugins(): Promise<{ entries: ManagedPluginEntry[] }> {
+    return this.request<ManagedPluginEntry[]>("pluginManager.listPlugins", {}).then((entries) => ({ entries: Array.isArray(entries) ? entries : [] }));
+  }
+  /** 保存根会话的 Agent 团队模式选择（官方 `agentTeams.setEnabled`）。 */
+  setAgentTeamEnabled(sessionId: string, enabled: boolean): Promise<unknown> {
+    return this.request("agentTeams.setEnabled", { sessionId, enabled });
+  }
+  /** 读取本会话的消息反馈（官方 `messageFeedback.list`）。 */
+  listMessageFeedback(sessionId: string): Promise<unknown> {
+    return this.request("messageFeedback.list", { sessionId });
+  }
+  /** 写入/覆盖一条消息反馈；`ifVersion` 为 null 表示要求此前不存在。 */
+  putMessageFeedback(sessionId: string, messageId: string, rating: "positive" | "negative", ifVersion: string | null): Promise<unknown> {
+    return this.request("messageFeedback.put", { sessionId, messageId, rating, ifVersion });
+  }
+  /** 撤回一条消息反馈（官方要求带观察到的版本）。 */
+  deleteMessageFeedback(sessionId: string, messageId: string, ifVersion: string): Promise<unknown> {
+    return this.request("messageFeedback.delete", { sessionId, messageId, ifVersion });
+  }
+  /** 持久化并就地应用一个插件条目的启停状态。 */
+  setPluginEnabled(id: string, enabled: boolean): Promise<PluginToggleResult> {
+    return this.request("pluginManager.setPluginEnabled", { id, enabled });
   }
   testKnowledgeSource(): Promise<{ status: "connected" | "unauthorized" | "forbidden" | "unavailable"; knowledgeBases: Array<{ id: string; name: string }> }> {
     return this.request("weknora/test", {});

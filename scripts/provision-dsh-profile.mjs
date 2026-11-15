@@ -12,6 +12,9 @@ function canUpgradeBundledVersion(version, bundledVersion) {
 }
 
 function canUpgradeProfilePlugin(packageName, version, bundledVersion) {
+  if (/^@deepseek-ai\/dsh(?:-|$)/u.test(packageName)
+    && ['0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4', '0.2.1-rc.5', '0.2.2-rc.1'].includes(version)
+    && bundledVersion === '0.2.2-rc.3') return true;
   return packageName === VOICE_INPUT_BUNDLE
     && (
       (['0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4'].includes(version) && bundledVersion === '0.2.1-rc.5')
@@ -89,7 +92,8 @@ function updatedProfileManifest(dshHome, profileName, bundledVersion, additional
   for (const plugin of profilePlugins) {
     const configuredVersion = dependencies[plugin.packageName];
     if (configuredVersion !== undefined && configuredVersion !== plugin.version
-      && configuredVersion !== plugin.previousVersion) {
+      && configuredVersion !== plugin.previousVersion
+      && !canUpgradeProfilePlugin(plugin.packageName, configuredVersion, plugin.version)) {
       throw new Error(`DSH Profile 已配置不同 ${plugin.packageName} 版本：${configuredVersion}`);
     }
     dependencies[plugin.packageName] = plugin.version;
@@ -106,6 +110,15 @@ function updatedProfileManifest(dshHome, profileName, bundledVersion, additional
 
 function profilePluginTarget(profileDir, packageName) {
   return path.join(profileDir, 'node_modules', ...packageName.split('/'));
+}
+
+function rollbackAll(rollbacks) {
+  const failures = [];
+  for (const rollback of [...rollbacks].reverse()) {
+    try { rollback(); }
+    catch (error) { failures.push(error); }
+  }
+  if (failures.length > 0) throw new AggregateError(failures, failures.map(error => error.message).join('; '));
 }
 
 function verifyBundledProfilePlugin(packageDir, packageName, version) {
@@ -162,26 +175,49 @@ function installProfilePluginClosure(profileDir, roots) {
         throw new Error(`DSH Profile 中已有不同依赖：${targetDir}`);
       }
       if (installedManifest?.version === sourceManifest.version) continue;
-      if (installedManifest?.version !== undefined) {
+      if (installedManifest?.version !== undefined
+        && !canUpgradeProfilePlugin(packageName, installedManifest.version, sourceManifest.version)) {
         throw new Error(`DSH Profile 已配置不同 ${packageName} 版本：${installedManifest.version}`);
+      }
+      if (existsSync(targetDir) && lstatSync(targetDir).isSymbolicLink()) {
+        throw new Error(`DSH Profile 依赖不允许替换符号链接：${targetDir}`);
       }
       mkdirSync(path.dirname(targetDir), { recursive: true });
       const temporaryDir = `${targetDir}.${process.pid}.${Date.now()}.tmp`;
-      cpSync(packageDir, temporaryDir, {
-        recursive: true,
-        force: false,
-        errorOnExist: true,
-        filter: (source) => path.basename(source) !== "node_modules",
-      });
-      renameSync(temporaryDir, targetDir);
-      rollbacks.push(() => rmSync(targetDir, { recursive: true, force: true }));
+      const backupDir = installedManifest ? `${targetDir}.backup-${installedManifest.version}` : undefined;
+      if (backupDir && existsSync(backupDir)) throw new Error(`DSH Profile 迁移备份已存在：${backupDir}`);
+      let moved = false;
+      try {
+        cpSync(packageDir, temporaryDir, {
+          recursive: true,
+          force: false,
+          errorOnExist: true,
+          filter: (source) => path.basename(source) !== "node_modules",
+        });
+        if (backupDir) {
+          renameSync(targetDir, backupDir);
+          moved = true;
+        }
+        renameSync(temporaryDir, targetDir);
+        rollbacks.push(() => {
+          const rollbackDir = `${targetDir}.${process.pid}.${Date.now()}.rollback`;
+          renameSync(targetDir, rollbackDir);
+          if (backupDir) renameSync(backupDir, targetDir);
+          rmSync(rollbackDir, { recursive: true, force: true });
+        });
+      } catch (error) {
+        if (moved && !existsSync(targetDir)) renameSync(backupDir, targetDir);
+        throw error;
+      } finally {
+        rmSync(temporaryDir, { recursive: true, force: true });
+      }
     }
   } catch (error) {
-    for (const rollback of rollbacks.reverse()) rollback();
+    rollbackAll(rollbacks);
     throw error;
   }
   return rollbacks.length > 0 ? () => {
-    for (const rollback of rollbacks.reverse()) rollback();
+    rollbackAll(rollbacks);
   } : undefined;
 }
 
@@ -213,8 +249,10 @@ function installBundledProfilePlugin(profileDir, plugin) {
     if (backupDir) renameSync(targetDir, backupDir);
     renameSync(temporaryDir, targetDir);
     return () => {
-      rmSync(targetDir, { recursive: true, force: true });
+      const rollbackDir = `${targetDir}.${process.pid}.${Date.now()}.rollback`;
+      renameSync(targetDir, rollbackDir);
       if (backupDir) renameSync(backupDir, targetDir);
+      rmSync(rollbackDir, { recursive: true, force: true });
     };
   } catch (error) {
     if (backupDir && existsSync(backupDir) && !existsSync(targetDir)) renameSync(backupDir, targetDir);
@@ -368,7 +406,7 @@ export function provisionBundledBrowserSkillProfile({
       const serializedManifest = `${JSON.stringify(manifest, null, 2)}\n`;
       if (!existsSync(manifestPath) || readFileSync(manifestPath, 'utf8') !== serializedManifest) writeAtomically(manifestPath, serializedManifest);
     } catch (error) {
-      for (const rollback of rollbacks.reverse()) rollback();
+      rollbackAll(rollbacks);
       throw error;
     }
   } finally {

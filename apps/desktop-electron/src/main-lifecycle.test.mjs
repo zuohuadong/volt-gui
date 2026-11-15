@@ -106,6 +106,7 @@ async function createFixture(options = {}) {
     app: {
       isPackaged: true, isReady: () => true, setName() {}, setAppUserModelId() {},
       requestSingleInstanceLock: () => true, getVersion: () => "0.31.56",
+      setAsDefaultProtocolClient: () => true,
       getPath: () => root, whenReady: () => Promise.resolve(),
       on: (event, handler) => fixture.events.set(event, handler),
       quit: () => { fixture.quitCount += 1; },
@@ -150,7 +151,7 @@ async function createFixture(options = {}) {
         return { provisioned: false };
       };
       export const resolveOfficialDshBin = () => "fixture-dsh";
-      export const resolveOfficialDshVersion = () => "0.2.2-rc.1";
+      export const resolveOfficialDshVersion = () => "0.2.2-rc.3";
       export const rethrowUnlessBrokenPipe = (error) => { if (error.code !== "EPIPE") throw error; };`,
     client: `${shared} export const DshRemoteClient = fixture.Client;`,
     smb: `export class SmbMountManager { async mountAuto() {} }`,

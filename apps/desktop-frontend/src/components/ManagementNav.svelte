@@ -4,12 +4,14 @@
     BookOpen,
     Bot,
     Cable,
+    CalendarClock,
     ClipboardList,
     ChevronDown,
     FolderOpen,
     HardDrive,
     MessageSquare,
     Network,
+    Package,
     Settings2,
     ShieldAlert,
     Target,
@@ -25,9 +27,12 @@
     | "models"
     | "workspaces"
     | "mounts"
+    | "extensions"
     | "plugins"
     | "mcp"
     | "knowledge"
+    | "skills"
+    | "automation"
     | "settings"
     | "runtime";
 
@@ -45,6 +50,7 @@
     { id: "overview", icon: ClipboardList },
     { id: "sessions", icon: MessageSquare },
     { id: "models", icon: Bot },
+    { id: "extensions", icon: Blocks },
     { id: "settings", icon: Settings2 },
     { id: "runtime", icon: ShieldAlert },
   ] as const;
@@ -58,6 +64,8 @@
     { id: "plugins", icon: Blocks },
     { id: "mcp", icon: Cable },
     { id: "knowledge", icon: BookOpen },
+    { id: "skills", icon: Package },
+    { id: "automation", icon: CalendarClock },
   ] as const;
 
   const advancedActive = $derived(advancedTabs.some((tab) => tab.id === activeTab));

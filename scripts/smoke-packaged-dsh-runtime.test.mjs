@@ -36,7 +36,7 @@ function createResources(platform = "win32") {
     path.join(resources, "dsh-runtime", "node_modules", "@voltui", "dsh-intranet-auth", "package.json"),
     path.join(resources, "dsh-runtime", "node_modules", "zod", "package.json"),
     path.join(resources, "dsh-runtime", "scripts", "anyong-integrations-mcp.mjs"),
-    ...["office-control.ps1", "report-docx.py", "sheet-engine.py", "network-policy.mjs"].map(file => path.join(resources, "dsh-runtime", "scripts", file)),
+    ...["office-control.ps1", "report-docx.py", "sheet-engine.py", "network-policy.mjs", "anyong-skill.mjs"].map(file => path.join(resources, "dsh-runtime", "scripts", file)),
     ...["@voltui/dsh-office", "@voltui/dsh-mcp-apps", "@voltui/dsh-native-ui", "@deepseek-ai/dsh-experimental-voice-input-bundle", "undici"].map(name => path.join(resources, "dsh-runtime/node_modules", name, "package.json")),
     path.join(resources, "dsh-runtime/node_modules/memorix/dist/cli/index.js"),
     path.join(resources, "dsh-runtime", "node_modules", "@officecli", "officecli", "vendor", platform === "win32" ? "officecli.exe" : "officecli"),

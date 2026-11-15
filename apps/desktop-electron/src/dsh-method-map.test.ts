@@ -8,6 +8,25 @@ import { allowedDshMethods, handlerOnlyDshMethods, mapLegacyDshRequest } from ".
 const minimalPayloads: Record<string, Record<string, unknown>> = {
   "fileUploads.upload": { agentId: "s1", request: { data: "aGVsbG8=", name: "a.txt" } },
   "commands.execute": { sessionId: "s1", line: "/permission read-only" },
+  "commands.list": { sessionId: "s1" },
+  "job.list": { sessionId: "s1" },
+  "job.follow": { sessionId: "s1", jobId: "bash-1" },
+  "job.kill": { sessionId: "s1", jobId: "bash-1" },
+  "schedule.list": {},
+  "schedule.catalog": {},
+  "schedule.view": { id: "id" },
+  "schedule.history": { id: "id", limit: 10 },
+  "schedule.run": { id: "id" },
+  "schedule.edit": { id: "id", action: "update", patch: { active: false } },
+  "schedule.deleteInactive": {},
+  "terminal.list": { sessionId: "s1" },
+  "terminal.environment": { sessionId: "s1" },
+  "terminal.shells": { sessionId: "s1" },
+  "terminal.create": { sessionId: "s1", request: { id: "t1", cols: 80, rows: 24 } },
+  "terminal.readScreen": { sessionId: "s1", id: "t1", request: {} },
+  "terminal.close": { sessionId: "s1", id: "t1" },
+  "terminal.rename": { sessionId: "s1", id: "t1", title: "x" },
+  "agentTeams.setEnabled": { sessionId: "s1", enabled: true },
   "subagent.history": { parentSessionId: "p1", childSessionId: "c1", mode: "one-shot" },
 };
 
@@ -23,6 +42,28 @@ test("every allowlisted DSH method resolves to an endpoint", () => {
     }
   }
   assert.deepEqual(unmapped, [], `allowlisted methods without an endpoint: ${unmapped.join(", ")}`);
+});
+
+test("the command catalog lists through the official agent-scoped endpoint", () => {
+  assert.deepEqual(mapLegacyDshRequest("commands.list", { sessionId: "s1" }), {
+    endpoint: "commands/list",
+    args: { agentId: "s1" },
+  });
+});
+
+test("schedule actions use the official namespace while job and terminal streams stay on their dedicated IPC", () => {
+  for (const method of ["job.list", "job.follow", "terminal.readScreen", "terminal.create"]) {
+    assert.equal(allowedDshMethods.has(method), false);
+    assert.throws(() => mapLegacyDshRequest(method, {}), /不支持/u);
+  }
+  assert.deepEqual(mapLegacyDshRequest("schedule.edit", { id: "x", action: "delete" }), {
+    endpoint: "schedule/edit",
+    args: { request: { id: "x", action: "delete" } },
+  });
+  assert.deepEqual(mapLegacyDshRequest("agentTeams.setEnabled", { sessionId: "s1", enabled: false }), {
+    endpoint: "agentTeams/setEnabled",
+    args: { agentId: "s1", enabled: false },
+  });
 });
 
 test("handler-only methods are the documented bypasses", () => {

@@ -34,6 +34,18 @@ describe("local file drops", () => {
     expect(f.event.stopImmediatePropagation).toHaveBeenCalledOnce();
   });
 
+  it("references a 1.5 GiB document without any size check or error", () => {
+    const f = fixture();
+    // 新建一个真实 size 为 1.5 GiB 的句柄（不分配内存），模拟拖入大文档。
+    const big = { name: "年度报告.docx", size: 1.5 * 1024 * 1024 * 1024, type: "" } as unknown as File;
+    f.event.dataTransfer.files = [big];
+    f.options.resolvePath = vi.fn(() => "D:\\资料\\年度报告.docx");
+    f.handlers.drop(f.event);
+    expect(f.options.insert).toHaveBeenCalledExactlyOnceWith("@D:\\资料\\年度报告.docx");
+    expect(f.options.unavailable).not.toHaveBeenCalled();
+    expect(f.read).not.toHaveBeenCalled();
+  });
+
   it("references images and multiple files with spaces rather than adding attachments", () => {
     const f = fixture();
     f.event.dataTransfer.files = [new File([], "photo.png", { type: "image/png" }), f.file];

@@ -121,6 +121,28 @@ export function approachingOutputLimit(tokens: number | undefined, limit: number
   return tokens >= limit * OUTPUT_LIMIT_WARNING_RATIO && tokens < limit;
 }
 
+/**
+ * 本轮是否已经把完整答案交给用户。
+ *
+ * 判断依据是「最后一条用户消息之后存在非空助手正文，且没有仍在运行/被中断的工具，
+ * 也没有未解析的工具标记」。命中的轮次即使 turn/end 报了内部错误，也不应再显示
+ * 整轮失败的恢复卡片（#340）。
+ */
+export function deliveredAnswer(messages: readonly TranscriptMessage[]): boolean {
+  let lastUserIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "user") {
+      lastUserIndex = index;
+      break;
+    }
+  }
+  const current = lastUserIndex >= 0 ? messages.slice(lastUserIndex + 1) : messages;
+  if (current.some((message) => message.tool?.state === "running" || message.tool?.state === "interrupted")) return false;
+  return current.some((message) => message.role === "assistant"
+    && !hasUnparsedToolMarkup(message)
+    && (message.text ?? "").trim().length > 0);
+}
+
 export function taskRecoveryReason(
   messages: readonly TranscriptMessage[],
   todos: readonly TodoItem[],
@@ -148,6 +170,8 @@ export function taskRecoveryReason(
       break;
     }
   }
+  // 答案已经交付时，内部工具链的小异常不改写成整轮失败（#340）。
+  if (deliveredAnswer(messages) && !currentTaskMessages.some((message) => message.tool?.state === "error")) return undefined;
   if (latestAssistant && hasUnparsedToolMarkup(latestAssistant)) return "protocol";
   if (kind === "error") return "error";
   if (["interrupted", "aborted", "cancelled", "canceled", "timeout", "incomplete", "stopped", "stop", "forked"].includes(kind)) return "interrupted";

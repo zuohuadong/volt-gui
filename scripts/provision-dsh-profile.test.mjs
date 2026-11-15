@@ -132,14 +132,14 @@ test('upgrades the shipped voice bundle without replacing custom versions', asyn
   provisionBundledBrowserSkillProfile(options);
   await writeVersion('0.2.1-rc.5');
   provisionBundledBrowserSkillProfile(options);
-  await writeVersion('0.2.2-rc.1');
+  await writeVersion('0.2.2-rc.3');
   provisionBundledBrowserSkillProfile(options);
   provisionBundledBrowserSkillProfile(options);
   const profile = path.join(options.dshHome, 'profiles', 'web');
-  assert.equal(JSON.parse(await readFile(path.join(profile, 'node_modules', name, 'package.json'), 'utf8')).version, '0.2.2-rc.1');
+  assert.equal(JSON.parse(await readFile(path.join(profile, 'node_modules', name, 'package.json'), 'utf8')).version, '0.2.2-rc.3');
   const manifestPath = path.join(profile, 'package.json');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  assert.equal(manifest.dependencies[name], '0.2.2-rc.1');
+  assert.equal(manifest.dependencies[name], '0.2.2-rc.3');
   manifest.dependencies[name] = 'file:custom-voice';
   await writeFile(manifestPath, JSON.stringify(manifest));
   assert.throws(() => provisionBundledBrowserSkillProfile(options), /不同.*版本/u);
@@ -158,6 +158,72 @@ test('refreshes a patched BrowserSkill even when its upstream version is unchang
   provisionBundledBrowserSkillProfile(options);
   assert.match(await readFile(path.join(options.dshHome, 'profiles/web/node_modules/@wxg-prc-cpg/browser-skill-dsh-plugin/lib/index.mjs'), 'utf8'), /patched/u);
 });
+
+for (const failureMode of ['manifest', 'rollback-cleanup']) {
+test(`upgrades a shipped rc.1 dependency closure and restores it after ${failureMode} failure`, async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'anyong-closure-upgrade-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const packageName = '@deepseek-ai/dsh-tool-office';
+  const dependencyName = '@deepseek-ai/dsh-tools';
+  const packageDir = path.join(root, 'office');
+  const dependencyDir = path.join(packageDir, 'node_modules', dependencyName);
+  await mkdir(dependencyDir, { recursive: true });
+  const writeVersion = async (version) => {
+    await writeFile(path.join(packageDir, 'package.json'), JSON.stringify({
+      name: packageName, version, dependencies: { [dependencyName]: version },
+    }));
+    await writeFile(path.join(dependencyDir, 'package.json'), JSON.stringify({ name: dependencyName, version }));
+    for (const dir of [packageDir, dependencyDir]) {
+      await mkdir(path.join(dir, 'lib'), { recursive: true });
+      await writeFile(path.join(dir, 'lib', 'index.js'), `export const version = '${version}';\n`);
+    }
+  };
+  const options = {
+    dshHome: path.join(root, 'dsh'), profileName: 'web',
+    bundledPackageDir: await createBundledPackage(root),
+    profilePlugins: [{ packageName, packageDir }],
+  };
+  await writeVersion('0.2.2-rc.1');
+  provisionBundledBrowserSkillProfile(options);
+  const profile = path.join(options.dshHome, 'profiles', 'web');
+  const manifestPath = path.join(profile, 'package.json');
+  const original = await readFile(manifestPath, 'utf8');
+  await writeVersion('0.2.2-rc.3');
+  const renameSync = fs.renameSync;
+  const failure = t.mock.method(fs, 'renameSync', (from, to) => {
+    if (to === manifestPath) throw new Error('closure manifest commit failed');
+    return renameSync(from, to);
+  });
+  const rmSync = fs.rmSync;
+  const cleanupFailure = t.mock.method(fs, 'rmSync', (target, ...args) => {
+    if (failureMode === 'rollback-cleanup' && target.endsWith('.rollback')) {
+      rmSync(path.join(target, 'lib'), { recursive: true, force: true });
+      throw new Error('rollback cleanup failed');
+    }
+    return rmSync(target, ...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => provisionBundledBrowserSkillProfile(options), failureMode === 'manifest' ? /closure manifest commit failed/u : /rollback cleanup failed/u);
+    assert.equal(await readFile(manifestPath, 'utf8'), original);
+    for (const name of [packageName, dependencyName]) {
+      assert.equal(JSON.parse(await readFile(path.join(profile, 'node_modules', name, 'package.json'), 'utf8')).version, '0.2.2-rc.1');
+      assert.match(await readFile(path.join(profile, 'node_modules', name, 'lib', 'index.js'), 'utf8'), /0.2.2-rc.1/u);
+    }
+  } finally {
+    failure.mock.restore();
+    cleanupFailure.mock.restore();
+    syncBuiltinESMExports();
+  }
+  provisionBundledBrowserSkillProfile(options);
+  provisionBundledBrowserSkillProfile(options);
+  for (const name of [packageName, dependencyName]) {
+    const target = path.join(profile, 'node_modules', name);
+    assert.equal(JSON.parse(await readFile(path.join(target, 'package.json'), 'utf8')).version, '0.2.2-rc.3');
+    assert.equal(JSON.parse(await readFile(path.join(`${target}.backup-0.2.2-rc.1`, 'package.json'), 'utf8')).version, '0.2.2-rc.1');
+  }
+});
+}
 
 for (const profileName of ['web', 'headless']) {
   test(`upgrades the shipped BrowserSkill in ${profileName} without losing user configuration`, async (t) => {

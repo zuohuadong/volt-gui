@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AUTO_CONTINUE_LIMIT, approachingOutputLimit, hasRetryableTask, latestOutputTokens, latestTurnEndSeq,
-  latestUserPrompt, outputTokensFromUsage, shouldAutoContinue, taskRecoveryReason, turnEndKind,
+  latestUserPrompt, outputTokensFromUsage, shouldAutoContinue, taskRecoveryReason, turnEndKind, deliveredAnswer,
 } from "./task-retry";
 import type { TodoItem, TranscriptMessage } from "./transcript";
 
@@ -127,5 +127,32 @@ describe("output limit auto continue", () => {
       { event: { type: "assistant/message", seq: 11, time: 11, data: {} } },
     ])).toBe(9);
     expect(latestTurnEndSeq([])).toBeUndefined();
+  });
+});
+
+describe("delivered answers and protocol retry (#340/#334)", () => {
+  const message = (over: Partial<TranscriptMessage>): TranscriptMessage => ({ id: "m", role: "assistant", seq: 1, ...over } as TranscriptMessage);
+
+  it("treats a complete answer as delivered even without tools", () => {
+    expect(deliveredAnswer([message({ role: "user", text: "问题" }), message({ text: "完整答案" })])).toBe(true);
+  });
+
+  it("does not treat an unfinished tool or unparsed markup as delivered", () => {
+    const running = [message({ role: "user", text: "q" }), message({ text: "部分", tool: { name: "read", state: "running", args: {}, result: "" } as never })];
+    expect(deliveredAnswer(running)).toBe(false);
+    const markup = [message({ role: "user", text: "q" }), message({ text: "答案 <|/DSML|> 残留" })];
+    expect(deliveredAnswer(markup)).toBe(false);
+  });
+
+  it("downgrades an internal turn error when the answer was delivered", () => {
+    const messages = [message({ role: "user", text: "q", seq: 1 }), message({ text: "完整答案", seq: 2 })];
+    const history = [{ event: { type: "turn/end", seq: 3, data: { reason: { kind: "error" } } } }] as never;
+    expect(taskRecoveryReason(messages, [], false, history)).toBeUndefined();
+  });
+
+  it("still reports a failure when nothing was delivered", () => {
+    const messages = [message({ role: "user", text: "q", seq: 1 })];
+    const history = [{ event: { type: "turn/end", seq: 2, data: { reason: { kind: "error" } } } }] as never;
+    expect(taskRecoveryReason(messages, [], false, history)).toBe("error");
   });
 });

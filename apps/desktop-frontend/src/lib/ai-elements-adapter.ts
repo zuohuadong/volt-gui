@@ -57,6 +57,37 @@ export type ToolDisplay = {
   detail?: string;
 };
 
+
+// 上游工具（如 officecli）有时只回 `Error: ` 或 `Error: Found 1 validation error(s):`，
+// 真正的细节在 errors/validationErrors 数组里。这里统一提取，避免用户看到空详情。
+function onlyErrorPrefix(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  // 覆盖 `Error:`、`Error: Description:`、`Error: Found 1 validation error(s):` 这类只有前缀的返回。
+  return /^(?:(?:error|description|detail|message)\s*[:：]\s*)*(?:found\s+\d+\s+validation\s+error\(s\)\s*[:：]?)?$/iu.test(trimmed);
+}
+
+function collectValidationIssues(...candidates: Array<Record<string, unknown> | undefined>): string[] {
+  const issues: string[] = [];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    for (const key of ["errors", "validationErrors", "issues", "problems"]) {
+      const value = candidate[key];
+      if (!Array.isArray(value)) continue;
+      for (const item of value.slice(0, 5)) {
+        const record = asRecord(item);
+        const detail = record
+          ? text(record.message || record.detail || record.reason)
+            || [text(record.instancePath || record.path), text(record.keyword)].filter(Boolean).join(" ")
+          || JSON.stringify(record).slice(0, 160)
+          : text(item);
+        if (detail) issues.push(detail);
+      }
+    }
+  }
+  return issues;
+}
+
 export function toolResultSummary(result: string | undefined): string | undefined {
   const value = result?.trim();
   if (!value) return undefined;
@@ -67,10 +98,21 @@ export function toolResultSummary(result: string | undefined): string | undefine
 
 export function toolErrorSummary(result: string | undefined): string {
   const value = result?.trim() || "";
+  if (!value) return t("errors.toolNoDetail");
   const parsed = asRecord(parseJson(value));
   const parsedError = asRecord(parsed?.error);
+  const issues = collectValidationIssues(parsed, parsedError);
   const structured = text(parsedError?.message || parsed?.message || parsedError?.code || parsed?.code);
-  const normalized = structured || value;
+  // 只有前缀（"Error:"）等于没有信息：先展开校验项，再退到兜底文案。
+  const head = structured || value;
+  if (!head.trim() || onlyErrorPrefix(head)) {
+    return issues.length > 0 ? issues.join("；") : t("errors.toolNoDetail");
+  }
+  if (issues.length > 0) {
+    const merged = `${head}；${issues.join("；")}`;
+    return merged.length > 240 ? `${merged.slice(0, 240)}…` : merged;
+  }
+  const normalized = head;
   const browserSkillMessage = browserSkillErrorMessage(normalized, t);
   if (browserSkillMessage) return browserSkillMessage;
   if (/windows acl temp root|aclsandbox private temp directory/iu.test(normalized)) return "工作区与系统临时目录冲突，请选择具体项目文件夹并新建会话。";
@@ -83,7 +125,9 @@ export function toolErrorSummary(result: string | undefined): string {
   if (/interrupted|connection closed|unknown outcome/iu.test(normalized)) return "操作未完成，工具连接已中断。";
   if (/timeout|timed out/iu.test(normalized)) return "操作超时，请重试。";
   if (/permission|approval|denied/iu.test(normalized)) return "操作需要授权后才能继续。";
-  return toolResultSummary(normalized) || "工具执行失败，请重试。";
+  const summary = toolResultSummary(normalized);
+  if (!summary || onlyErrorPrefix(summary)) return t("errors.toolNoDetail");
+  return summary;
 }
 
 const toolActionLabels: Record<string, string> = {

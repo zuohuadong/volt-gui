@@ -29,11 +29,16 @@ describe("responsive desktop renderer layout", () => {
   test("includes reasoning-only messages and renders their expandable text separately from answers", () => {
     const transcript = readFileSync(new URL("../components/ConversationTranscript.svelte", import.meta.url), "utf8");
     expect(transcript).toContain("buildTranscriptView(nextMessages, cachedTranscriptView)");
+    expect(transcript).toContain("windowTranscriptGroups(displayGroups, renderGroupWindow)");
+    expect(transcript).toContain('{#each visibleGroups as group (group.id)}');
+    expect(transcript).toContain('t("transcript.revealEarlier"');
     expect(transcript).toContain('{#if isVisibleReasoning(message.reasoning)}');
     expect(transcript).toContain('<details class="message-reasoning">');
     expect(transcript).toContain('<Response content={message.reasoning} streaming={!!message.pending}');
     expect(transcript).toContain('t("transcript.unparsedToolMarkup")');
-    expect(transcript).toContain('{#if isVisibleMessageText(message.text)}');
+    // 正文先剥离内部协议，再判定是否可见（#363）。
+    expect(transcript).toContain("stripInternalProtocol(visiblePayload)");
+    expect(transcript).toContain("{:else if isVisibleMessageText(internal.text)}");
     expect(transcript).not.toContain('message.text : "…"');
   });
 
@@ -47,6 +52,10 @@ describe("responsive desktop renderer layout", () => {
     expect(handler).toContain('payload.event.type === "turn/end"');
     expect(app).toContain('const sending = $derived(sessionResponse.sending)');
     expect(handler).toContain('finishResponse(payload.sessionId)');
+    expect(handler).toContain('isBatchableSessionEvent(payload.event.type)');
+    expect(handler).toContain('streamRenderScheduler.schedule(applyMessages)');
+    expect(handler).toContain('streamRenderScheduler.clear()');
+    expect(app).toContain('streamRenderScheduler.flush()');
   });
 
   test("defines one theme and reserves space only for visible panels", () => {

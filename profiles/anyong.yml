@@ -64,6 +64,18 @@
   config:
     pwshPath: !!js "process.env.ANYONG_PWSH_PATH"
 
+# 工作台调用 list/createDirectory；rc.3 的 auto 在桌面会改选 native，
+# 必须同时组合官方 browse 后端与 Web surface，CLI Web 也保留目录选择入口。
+- id: directory-picker
+  disabled: true
+- insert:
+    - id: anyong-directory-picker-browse
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+      disabled: !!js "ctx.get('profileContext')?.name === 'headless'"
+    - id: anyong-directory-picker-surface
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
+      disabled: !!js "ctx.get('profileContext')?.name === 'headless'"
+
 # XG 内置 GOModel 网关。apiKeyEnv 是官方 DSH 的凭据引用名；Electron 会清空同名系统环境变量，密钥只通过官方 DSH credentials service 解析，绝不写入此文件。
 - id: llm-pi-ai
   name: '@deepseek-ai/dsh-llm-pi-ai'

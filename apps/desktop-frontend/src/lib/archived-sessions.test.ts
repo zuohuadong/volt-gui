@@ -25,6 +25,7 @@ function harness() {
     allSessions: [archived("A"), archived("B"), archived("live")],
     archivedSessionIds: ["A", "B"],
     managementBusy: "",
+    desktopFeatures: { permanentSessionDeletion: true },
     confirmingArchivedSessionId: "",
     confirmingArchivedCleanup: false,
     managementError: "",
@@ -82,5 +83,15 @@ describe("archived session management", () => {
     expect(h.state.allSessions.map((item: { sessionId: string }) => item.sessionId)).toEqual(["B", "live"]);
     expect(h.state.archivedSessionIds).toEqual(["B"]);
     expect(h.state.managementNotice).toBe("session.cleanupNotice:1");
+  });
+
+  it("does not purge when the official runtime has no safe deletion API", async () => {
+    const h = harness();
+    h.state.desktopFeatures.permanentSessionDeletion = false;
+    h.state.confirmingArchivedSessionId = "A";
+    h.state.confirmingArchivedCleanup = true;
+    await h.functions.purgeArchivedSession("A");
+    await h.functions.cleanupArchivedSessions();
+    expect(h.api.deleteArchivedSession).not.toHaveBeenCalled();
   });
 });

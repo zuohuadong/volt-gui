@@ -33,6 +33,7 @@ function harness() {
     subagentHistoryRequest: 0, subagents: [child("A")], selectedSubagentId: "A",
     subagentParentAvailable: false, subagentMessages: ["cached history"],
     managementError: "", managementNotice: "", managementBusy: "", runtimeConnectionError: "",
+    runtimeLastSyncedAt: 0,
     get selectedSubagent() { return this.subagents.find((entry) => entry.id === this.selectedSubagentId); },
     t: (key: string) => key, userFacingError: String,
     foldHistory: (events: unknown[]) => ({ messages: events }),

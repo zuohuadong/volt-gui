@@ -9,6 +9,7 @@
   import SettingsSectionNav, { type SettingsSection } from "$components/SettingsSectionNav.svelte";
   import SettingsPageHero from "$components/SettingsPageHero.svelte";
   import SpeechSettings from "$components/SpeechSettings.svelte";
+  import AgentConfigTransfer from "$components/AgentConfigTransfer.svelte";
   import ThemeSelector from "$components/ThemeSelector.svelte";
   import { startupState } from "$lib/startup-state";
   import { SessionResponse } from "$lib/session-response.svelte";
@@ -19,6 +20,7 @@
     Pause, Pencil, Play, PanelLeftClose, PanelLeftOpen, Save, Search, Send,
     Settings2, ShieldAlert, SlidersHorizontal, Square, Target, Trash2, UserRoundCog,
     X, RefreshCw, PlugZap, GitBranch, Blocks, Cable, Boxes, Globe, Languages, Database, RotateCcw, Download,
+    ListChecks,
   } from "@lucide/svelte";
   import { Button } from "$components/ui/button";
   import { Textarea } from "$components/ui/textarea";
@@ -42,7 +44,21 @@
     type PendingApproval, type PendingQuestion, type SessionSummary,
     type PromptContentPart, type SettingsNamespace, type SubagentEntry, type Workspace, type PluginInventoryEntry, type HistoryEntry,
   } from "$lib/dsh-client";
+  import { isHostCommandLine, normalizeCommands, type HostCommand } from "$lib/slash-commands";
+  import { planCardsFromHistory, planState, planToggleCommand } from "$lib/plan-mode";
+  import { readTeamBoard } from "$lib/agent-team";
+  import { maskSecrets } from "$lib/secret-mask";
+  import { latestChangesAnnouncement } from "$lib/workspace-changes";
+  import PlanCard from "$components/PlanCard.svelte";
+  import JobRoster from "$components/JobRoster.svelte";
+  import TeamBoard from "$components/TeamBoard.svelte";
+  import ShortcutsPanel from "$components/ShortcutsPanel.svelte";
+  import TerminalPanel from "$components/TerminalPanel.svelte";
+  import { normalizeJobRows, type JobRow } from "$lib/jobs";
+  import { feedbackAction, readFeedbackList, readFeedbackWrite, type FeedbackItem, type FeedbackRating } from "$lib/message-feedback";
+  import ChangedFilesCard from "$components/ChangedFilesCard.svelte";
   import { assistantMessageForEvent, applyTranscriptEvent, foldHistory, hasMessageContent, interruptRunningTools, mergeHistoryEntries, type SessionEvent, type TodoItem, type TranscriptMessage } from "$lib/transcript";
+  import { createStreamRenderScheduler, isBatchableSessionEvent } from "$lib/stream-render-scheduler";
   import {
     credentialRefHint,
     credentialRefTitle,
@@ -61,17 +77,33 @@
     supportedReasoningEffort,
   } from "$lib/model-catalog";
   import { providerDisplayCopy } from "$lib/provider-i18n";
-  import { agentPresetLocked, archivedSessionItems, clearsSessionError, sessionHealth, sessionHealthLabel, turnEndError, visibleSessions } from "$lib/session-health";
+  import { agentPresetLocked, archivedSessionItems, clearsSessionError, sessionHealth, sessionHealthLabel, turnEndError, turnEndFailure, visibleSessions } from "$lib/session-health";
   import { buildTranscriptView } from "$lib/transcript-view";
-  import { userFacingError } from "$lib/user-error";
+  import { credentialStatusLabel } from "$lib/credential-status";
+  import { classifyAuthFailure, errorText, userFacingError, type AuthFailureKind } from "$lib/user-error";
+  import {
+    isMutableQueueItem,
+    nativeQueueRows,
+    queueItemDraft,
+    inboxPendingCount,
+    toNativeQueueItems,
+    type NativeQueueItem,
+  } from "$lib/native-queue";
   import { browserSkillErrorKey } from "$lib/browser-skill-error";
   import { historyJumpShortcut, isEditableShortcutTarget, sessionNavigationShortcut, sessionNavigationTarget } from "$lib/session-navigation";
+  import { filterSessionsByQuery } from "$lib/session-search";
+  import { describeFileRejection, formatFileReference, planFileInput } from "$lib/attachment-plan";
+  import { deviceMemoryGiB, resolveInlineUploadBudget } from "$lib/file-limits";
+  import { appendQuoteToDraft } from "$lib/quote-reference";
   import { confirmSessionStopped } from "$lib/session-stop";
   import {
-    AUTO_CONTINUE_LIMIT, approachingOutputLimit, hasRetryableTask, latestOutputTokens, latestTurnEndSeq,
-    shouldAutoContinue, taskRecoveryReason,
+    AUTO_CONTINUE_LIMIT, approachingOutputLimit, deliveredAnswer, hasRetryableTask, latestOutputTokens,
+    latestTurnEndSeq, shouldAutoContinue, taskRecoveryReason, turnEndKind,
   } from "$lib/task-retry";
-  import { buildKnowledgePrompt, knowledgeToolName, parseKnowledgeReport, stripKnowledgeReport, type KnowledgeIndexReport, type KnowledgeOperation, type KnowledgeScope } from "$lib/knowledge";
+  import { classifyWorkspaceDirectories, workspaceSuggestions, type WorkspaceKind } from "$lib/workspace-suggestions";
+  import { buildKnowledgePrompt, externalKnowledgeStateFrom, externalScopeState, externalSourceSignature, isInternalKnowledgePrompt, knowledgeIndexSummary, knowledgeToolName, parseKnowledgeReport, stripKnowledgeArtifacts, type KnowledgeIndexReport, type KnowledgeOperation, type KnowledgeScope } from "$lib/knowledge";
+  import { enabledCapabilityCount, type CapabilityKey } from "$lib/capability-groups";
+  import { describeSpecDifference, formatTokenSpec, stripInternalAlias } from "$lib/model-spec";
   import { buildQuestionAnswers, questionsAnswered, toolErrorSummary } from "$lib/ai-elements-adapter";
   import {
     clearPendingApproval,
@@ -86,6 +118,7 @@
     applyUiCustomization,
     buildUiCustomizationPrompt,
     DEFAULT_UI_CUSTOMIZATION,
+    describeUiCustomizationPatch,
     isUiCustomizationIntent,
     parseUiCustomization,
     restoreUiCustomization,
@@ -130,13 +163,9 @@
   let customProductName = $state("");
   const productName = $derived(customProductName || t("app.name"));
   let appVersion = $state("");
+  let desktopFeatures = $state({ permanentSessionDeletion: false, updateChecks: false });
   let networkMode = $state<NetworkMode>("intranet");
   let networkModeBusy = $state(false);
-  const CAPABILITY_ROWS: ReadonlyArray<{ key: DesktopCapabilityKey }> = [
-    { key: "documentImport" }, { key: "report" }, { key: "sentry" },
-    { key: "github" }, { key: "cnb" }, { key: "feishu" },
-    { key: "altium" }, { key: "pcb" }, { key: "computerUse" },
-  ];
   const DEFAULT_CAPABILITIES: DesktopCapabilities = {
     altium: false, pcb: false, sentry: false, report: false,
     documentImport: false, github: false, cnb: false, feishu: false,
@@ -144,6 +173,15 @@
   };
   let capabilities = $state<DesktopCapabilities>({ ...DEFAULT_CAPABILITIES });
   let capabilitiesBusy = $state(false);
+  // 内置网关凭据被上游拒绝时自动恢复并重试一次：这条路径以前只给一句「去配置」，
+  // 用户只能重启应用，表现为「第一个问题正常，第二个问题就报 401」。
+  let autoRepairState = $state<"idle" | "running" | "done" | "failed">("idle");
+  // 401/403 到底是谁拒的：只有模型路由的拒绝才该提「模型凭据」（#362）。
+  let activeAuthFailureKind = $state<AuthFailureKind | undefined>(undefined);
+  let autoRepairNotice = $state("");
+  const autoRepairHandled = new Set<string>();
+  // 用户自己保存过该凭据时不自动覆盖：宁可报错，也不能悄悄替换掉真实密钥。
+  let userSavedCredentialRefs = new Set<string>();
   let updateCheck = $state<DesktopUpdateCheck>();
   let updateChecking = $state(false);
   let updateError = $state("");
@@ -159,6 +197,9 @@
   let modelSelectionRequest = 0;
   let historyLoad: { requestId: number; sessionId: string; frames: HistoryEntry[] } | undefined;
   let historyEntries = $state<HistoryEntry[]>([]);
+  const streamRenderScheduler = createStreamRenderScheduler();
+  let streamRenderSessionId = "";
+  let streamRenderPending: { messages: TranscriptMessage[]; todos: TodoItem[] } | undefined;
   let historyCursor = -1;
   let historyHasMore = $state(false);
   let historyLoading = $state(false);
@@ -167,6 +208,10 @@
   let input = $state("");
   let sessionDrafts = $state<Record<string, string>>({});
   let draftFilesBySession = $state<Record<string, File[]>>({});
+  // 任务执行期间允许先把下一条排上，当前轮结束后自动发出（issue #306）。
+  // 待发送队列以官方会话 inbox 为唯一真相（session/state），不再本地维护一份。
+  let nativeQueue = $state<Record<string, NativeQueueItem[]>>({});
+  // 取消排队后交给 Composer 的附件恢复令牌（配 restoreToken 使用）。
   let sessionQuery = $state("");
   let settingsQuery = $state("");
   let managementTab = $state<ManagementTab>("overview");
@@ -182,12 +227,23 @@
   let activityRestoreElement: HTMLElement | null = null;
   let sessionSearchInput = $state<HTMLInputElement>();
   let quickPickerOpen = $state(false);
+  let shortcutsOpen = $state(false);
+  /** 终端是会话级面板：切换会话即关闭，避免把旧 shell 挂在新会话下面。 */
+  let terminalOpenSessionId = $state("");
+  /** 任务板默认只在该会话开启团队或有任务时出现；快捷入口可强制展开。 */
+  let teamBoardOpen = $state(false);
   let quickPickerQuery = $state("");
   let quickPickerIndex = $state(0);
   let busyInteractions = $state<Record<string, boolean>>({});
   let view = $state<View>("conversation");
   let runtimeError = $state("");
   let runtimeConnectionError = $state("");
+  // 管理总览与运行诊断必须给出同一结论（#356）：两个页面都读这几个派生值。
+  let runtimeLastSyncedAt = $state(0);
+  const runtimeStatusKind = $derived(runtimeConnectionError ? "unavailable" : loading ? "loading" : "ready");
+  const runtimeLastSyncedLabel = $derived(runtimeLastSyncedAt
+    ? t("runtime.lastSyncedAt", { time: new Date(runtimeLastSyncedAt).toLocaleTimeString(getLocale()) })
+    : t("runtime.neverSynced"));
   let workspaceNotice = $state("");
   let historyNotice = $state("");
   let workspaceWarning = $state("");
@@ -202,6 +258,15 @@
   let modelLoadError = $state("");
   let sessionLoadError = $state("");
   let skills = $state<DshSkill[]>([]);
+  /** 斜杠命令目录（官方 `commands.list`）；只在当前会话内有效。 */
+  let hostCommands = $state<HostCommand[]>([]);
+  /** 命令执行结果提示；它不进对话历史，因此不需要持久化。 */
+  let commandNotice = $state("");
+  let commandCatalogSessionId = $state("");
+  /** 后台任务花名册（官方 job/list 流推送，按会话存放）。 */
+  let jobRoster = $state<Record<string, JobRow[]>>({});
+  /** 当前会话已记录的消息反馈（官方 messageFeedback.list）。 */
+  let feedbackItems = $state<Record<string, FeedbackItem>>({});
   let agentPresets = $state<AgentPreset[]>([]);
   let agentPreview = $state<{ id: string; content: string }>();
   let agentAuthorable = $state(false);
@@ -211,8 +276,13 @@
   let confirmingAgentPreset = $state("");
   let editingSessionId = $state("");
   let confirmingSessionId = $state("");
+  let confirmingDeleteSessionId = $state("");
+  let confirmingClearConversation = $state(false);
   let confirmingArchivedSessionId = $state("");
   let confirmingArchivedCleanup = $state(false);
+  // 侧栏直接露出已归档会话（含恢复/删除），归档后不需要再摸到管理工作台底部（#371/#372）。
+  let archivedListOpen = $state(false);
+  let lastArchivedSessionId = $state("");
   let newSessionDialogOpen = $state(false);
   let newSessionBusy = $state(false);
   let sessionTitleDraft = $state("");
@@ -243,6 +313,18 @@
   let catalogFailures = $state<Array<{ id: string; name: string; message: string }>>([]);
   let hostInfo = $state<{ version: string; cwd: string; provider?: string; model?: string; attachedSessions: number; home: string; canOpenPath: boolean }>();
   let pluginInventory = $state<PluginInventoryEntry[]>([]);
+  // 外部知识源的可用性：只有确认「插件未激活 / 未启用 / 缺凭据 / 未配地址」才判为不可用，
+  // settings 读取失败时保持 unknown，避免把可用的外部源误锁成不可选（#348）。
+  let externalKnowledgeState = $state<"unknown" | "ready" | "unavailable">("unknown");
+  // 外部知识源默认关闭：只有本次运行里「测试连接」成功过，才允许选外部/全部范围（#363）。
+  let externalKnowledgeVerified = $state(false);
+  let externalKnowledgeSignature = $state("");
+  // 每次验证结论变化都递增，用来丢弃刷新期间读到的过期配置。
+  let externalKnowledgeVerifiedEpoch = 0;
+  // 外部知识源实际使用的凭据引用：轮换同一 ref 的密钥时指纹不会变，必须显式作废验证。
+  let externalKnowledgeKeyRef = $state("WEKNORA_API_KEY");
+  // 默认只给本地检索：未启用 / 未测试通过都按「不可选外部」处理。
+  const externalKnowledgeUnavailable = $derived(externalScopeState({ state: externalKnowledgeState, verifiedInSession: externalKnowledgeVerified }) === "local-only");
   const currentLocale = $derived(i18n.locale);
   const pluginPartition = $derived(separatePluginsAndMcp(pluginInventory, currentLocale));
   const purePlugins = $derived(pluginPartition.plugins);
@@ -266,6 +348,11 @@
   let customizationNotice = $state("");
   let customizationHistory = $state<UiCustomizationState[]>([]);
   let surfaceDraft = $state<{ summary?: string; spec: SurfaceSpec }>();
+  // 本轮用户实际输入：界面提案只在这条消息确实表达了界面意图时才展示（#366）。
+  let lastUserPromptText = $state("");
+  // 系统把 agentconfig:// 深链转发进来时先落到这里，再交给设置页的配置迁移卡片。
+  let agentConfigIncomingLink = $state("");
+  let agentConfigIncomingLinkToken = $state(0);
   let generatedSurface = $state<SurfaceSpec>();
   type GeneratedSurfaceComponent = typeof import("$components/GeneratedSurface.svelte").default;
   type ConversationTranscriptComponent = typeof import("$components/ConversationTranscript.svelte").default;
@@ -278,29 +365,82 @@
   let conversationTranscriptImport = $state<Promise<void>>();
   let ActivityPanel = $state<ActivityPanelComponent>();
   let activityPanelImport = $state<Promise<void>>();
-  type ManagementComponentName = "provider" | "plugin" | "mcp" | "externalKnowledge" | "knowledgeSkill" | "knowledgeScope";
+  type ManagementComponentName = "provider" | "plugin" | "extensions" | "mcp" | "externalKnowledge" | "knowledgeSkill" | "knowledgeScope" | "skillStore" | "automation";
   type ProviderWorkbenchComponent = typeof import("$components/ProviderWorkbench.svelte").default;
   type PluginInventoryComponent = typeof import("$components/PluginInventoryView.svelte").default;
+  type ExtensionCapabilitiesComponent = typeof import("$components/ExtensionCapabilities.svelte").default;
   type McpInventoryComponent = typeof import("$components/McpInventoryView.svelte").default;
   type ExternalKnowledgeSourcesComponent = typeof import("$components/ExternalKnowledgeSources.svelte").default;
   type KnowledgeSkillListComponent = typeof import("$components/KnowledgeSkillList.svelte").default;
   type KnowledgeScopePickerComponent = typeof import("$components/KnowledgeScopePicker.svelte").default;
+  type SkillStoreComponent = typeof import("$components/SkillStoreView.svelte").default;
+  type AutomationPanelComponent = typeof import("$components/AutomationPanel.svelte").default;
   let ProviderWorkbenchComponent = $state<ProviderWorkbenchComponent>();
   let PluginInventoryComponent = $state<PluginInventoryComponent>();
+  let ExtensionCapabilitiesComponent = $state<ExtensionCapabilitiesComponent>();
   let McpInventoryComponent = $state<McpInventoryComponent>();
   let ExternalKnowledgeSourcesComponent = $state<ExternalKnowledgeSourcesComponent>();
   let KnowledgeSkillListComponent = $state<KnowledgeSkillListComponent>();
   let KnowledgeScopePickerComponent = $state<KnowledgeScopePickerComponent>();
+  let SkillStoreComponent = $state<SkillStoreComponent>();
+  let AutomationPanelComponent = $state<AutomationPanelComponent>();
   let managementComponentImports = $state<Partial<Record<ManagementComponentName, Promise<void>>>>({});
+  // 动态组件加载失败必须可见且可重试，否则页面会一直停在 Loader 上。
+  let managementComponentErrors = $state<Partial<Record<ManagementComponentName, string>>>({});
   let surfaceSourceId = $state("");
   let surfaceNotice = $state("");
   let surfaceHistory = $state<Array<SurfaceSpec | undefined>>([]);
   let knowledgeIndex = $state<KnowledgeIndexReport & { state: "idle" | "building" | "ready" | "partial" | "failed" }>({ state: "idle", status: "failed", files: 0, chunks: 0, failures: [] });
+  // 检索是独立动作：就地展示状态与结果，不把已完成的索引状态回退成「正在建立索引」（#344）。
+  let knowledgeQuerying = $state(false);
+  let knowledgeQuerySessionId = $state("");
+  let knowledgeQueryAnswer = $state("");
+  let knowledgeQueryFinished = $state(false);
+  // 记录发起检索时的消息数量：只接受这之后产生的助手回复，避免把上一轮答案当成本次结果（#344）。
+  let knowledgeQueryStartIndex = 0;
+  let knowledgeSessionNotice = $state("");
+  // 内部调度指令与机器可读报告不进对话流（#354）：渲染用这份，逻辑仍用 messages。
+  const visibleMessages = $derived(messages
+    .filter((message) => !(message.role === "user" && isInternalKnowledgePrompt(message.text)))
+    .map((message) => (message.role === "assistant" && message.text ? { ...message, text: stripKnowledgeArtifacts(message.text) } : message)));
+  const capabilitiesEnabledCount = $derived(enabledCapabilityCount(capabilities));
+  // 浏览器扩展是随包内置的，版本号由桌面桥提供；读不到就不显示版本行。
+  let bundledBrowserSkillVersion = $state("");
+  const browserSkillVersionLabel = $derived(bundledBrowserSkillVersion);
+  $effect(() => {
+    const desktop = typeof window === "undefined" ? undefined : window.voltDesktop;
+    if (!desktop?.browserExtension) return;
+    let cancelled = false;
+    void desktop.browserExtension()
+      .then((state) => { if (!cancelled) bundledBrowserSkillVersion = state.version ?? ""; })
+      .catch(() => { if (!cancelled) bundledBrowserSkillVersion = ""; });
+    return () => { cancelled = true; };
+  });
+  const knowledgeSummary = $derived(knowledgeIndexSummary(knowledgeIndex));
+  // 空会话建议按工作区可观察到的目录信号分类；拿不到信号时按文档型处理（#342）。
+  let workspaceKind = $state<WorkspaceKind>("documents");
+  const workspaceSuggestionCache = new Map<string, WorkspaceKind>();
+  $effect(() => {
+    const path = workspacePath;
+    const activeClient = client;
+    if (!path || !activeClient) { if (!path) workspaceKind = "documents"; return; }
+    const cached = workspaceSuggestionCache.get(path);
+    if (cached) { workspaceKind = cached; return; }
+    let cancelled = false;
+    void activeClient.listDirectory(path).then((listing) => {
+      if (cancelled) return;
+      const kind = classifyWorkspaceDirectories((listing.entries ?? []).map((entry) => entry.name));
+      workspaceSuggestionCache.set(path, kind);
+      workspaceKind = kind;
+    }).catch(() => { if (!cancelled) workspaceKind = "documents"; });
+    return () => { cancelled = true; };
+  });
   let knowledgeRoot = "";
   let knowledgeOperation = $state<KnowledgeOperation | "">("");
   let knowledgeScope = $state<KnowledgeScope>("local");
   let unsubscribeRuntimeError: (() => void) | undefined;
   let unsubscribeRuntimeReady: (() => void) | undefined;
+  let unsubscribeAgentConfigLink: (() => void) | undefined;
   let unsubscribeDshFrames: (() => void) | undefined;
   let bootstrapInFlight = false;
   let initializingSession = $state(false);
@@ -351,9 +491,11 @@
     }, 600);
   }
 
-  function providerAwareError(error: unknown): string {
+  function providerAwareError(error: unknown, code?: string): string {
     const message = userFacingError(error);
     if (message !== t("errors.authFailed")) return message;
+    // 只有模型路由的认证失败才把 provider 名拼进文案；工具/外部服务的 401 不能冒充模型凭据。
+    if (classifyAuthFailure(errorText(error), code) !== "provider") return message;
     const { provider } = parseModelSelectionKey(selectedModel);
     const providerName = displayProviderName(provider, modelGroups.find((group) => group.id === provider)?.name);
     return providerName ? t("errors.providerAuthFailed", { provider: providerName }) : message;
@@ -386,11 +528,13 @@
     }
   }
 
-  function setSessionRuntimeError(sessionId: string, error: unknown): string {
-    const message = providerAwareError(error);
+  function setSessionRuntimeError(sessionId: string, error: unknown, code?: string): string {
+    const message = providerAwareError(error, code);
+    const kind = classifyAuthFailure(errorText(error), code);
     sessionErrors = { ...sessionErrors, [sessionId]: message };
     if (sessionId === activeSessionId) {
       runtimeError = message;
+      activeAuthFailureKind = kind;
       if (message === t("errors.subagentAddress")) sessionLoadError = message;
     }
     return message;
@@ -439,6 +583,19 @@
   }
 
   const activeSession = $derived(sessions.find((item) => item.sessionId === activeSessionId));
+  /** 官方规划投影：缺失表示这套组合没有规划模式，而不是"未开启"。 */
+  const activePlan = $derived(planState(activeSession?.projections?.values));
+  const planCards = $derived(planCardsFromHistory(historyEntries));
+  /** 本轮变更摘要的坐标；摘要本身由官方 host 路由回读。 */
+  const changesAnnouncement = $derived(latestChangesAnnouncement(historyEntries));
+  const activeJobs = $derived(activeSessionId ? jobRoster[activeSessionId] ?? [] : []);
+  /** 官方 agentTeam 投影：缺失表示这套组合没有团队能力，而不是"已关闭"。 */
+  const teamBoard = $derived(readTeamBoard(activeSession?.projections?.values));
+  /** 草稿里的疑似密钥数量：只提示，绝不改写用户原文。 */
+  const draftSecretCount = $derived(maskSecrets(input).masked);
+  const feedbackByMessage = $derived(Object.fromEntries(
+    Object.values(feedbackItems).map((item) => [item.messageId, item.rating] as const),
+  ) as Record<string, FeedbackRating>);
   const activePendingInteractions = $derived(pendingInteractionsBySession[activeSessionId]);
   const pendingApproval = $derived(activePendingInteractions?.approval);
   const pendingQuestion = $derived(activePendingInteractions?.question);
@@ -468,11 +625,10 @@
     return t("settings.projectMemoryDisabledHint");
   }
 
- const filteredSessions = $derived.by(() => {
-    const query = sessionQuery.trim().toLowerCase();
-    if (!query) return sessions;
-    return sessions.filter((item) => sessionTitle(item).toLowerCase().includes(query) || (item.cwd || "").toLowerCase().includes(query));
-  });
+ const filteredSessions = $derived.by(() => filterSessionsByQuery(sessions, sessionQuery, {
+    title: (item) => sessionTitle(item),
+    cwd: (item) => item.cwd,
+  }));
   const archivedSessions = $derived(archivedSessionItems(allSessions, archivedSessionIds));
   const filteredArchivedSessions = $derived.by(() => {
     const query = settingsQuery.trim().toLowerCase();
@@ -492,6 +648,9 @@
       if (scroller) scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
     } },
     { id: "action:settings", kind: "action", title: t("nav.settings"), detail: t("quickPicker.settingsDetail"), run: () => openManagement("settings") },
+    { id: "action:shortcuts", kind: "action", title: t("shortcuts.title"), detail: t("quickPicker.shortcutsDetail"), run: () => { shortcutsOpen = true; } },
+    { id: "action:terminal", kind: "action", title: t("terminal.openAction"), detail: t("quickPicker.terminalDetail"), run: () => { if (activeSessionId) terminalOpenSessionId = activeSessionId; } },
+    { id: "action:team", kind: "action", title: t("team.openAction"), detail: t("quickPicker.teamDetail"), run: () => { if (activeSessionId) teamBoardOpen = true; } },
   ]);
   const quickPickerEntries = $derived.by<QuickPickerEntry[]>(() => {
     const query = quickPickerQuery.trim().toLowerCase();
@@ -560,6 +719,16 @@
       : t("activity.outputUsageNoLimit", { used: outputTokens.toLocaleString() });
   });
   const nearOutputLimit = $derived(taskActive && approachingOutputLimit(outputTokens, outputLimit));
+  const currentTurnKind = $derived(turnEndKind(historyEntries.filter((entry) => {
+    const userSeq = [...messages].reverse().find((message) => message.role === "user")?.seq;
+    return userSeq === undefined || entry.event.seq > userSeq;
+  })));
+  const answerDelivered = $derived(deliveredAnswer(messages));
+  // 答案已交付但后台仍有内部异常：只给不打断的轻提示，不显示整轮失败卡片（#340）。
+  // 答案已交付时不再显示整轮失败卡片（#340）：内部异常一律降级为不打断的提示，
+  // 且提示本身也只在真的出现异常时出现。
+  const backgroundIssueNotice = $derived(answerDelivered
+    && (!!recoveryReason || currentTurnKind === "error" || currentTurnKind === "protocol"));
   const lastFailedTool = $derived([...messages].reverse().find((message) => message.tool?.state === "error")?.tool);
   const recoveryDetail = $derived.by(() => {
     if (!recoveryReason) return "";
@@ -595,6 +764,31 @@
     // 等终态事件落定后再续写，避免在 phase 仍为 running 时被 canSubmit 拒绝。
     setTimeout(() => void retryInterruptedTask(), 250);
   });
+  // 首轮工具调用解析失败时自动重试一次：只在“没有交付任何答案、也没有待人工交互”时生效（#334）。
+  // 每个会话只允许一次，避免「失败 → 重试 → 再失败」的无限循环；人工提交后重置。
+  let protocolRetriedSessions = $state<Record<string, boolean>>({});
+  let protocolRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  // 标记本次 submit 来自系统自动重试（非响应式：只影响一次调用的副作用）。
+  let automaticRetrySubmission = false;
+  $effect(() => {
+    const sessionId = activeSessionId;
+    if (!sessionId || recoveryReason !== "protocol" || answerDelivered) return;
+    if (protocolRetriedSessions[sessionId]) return;
+    if (sending || continuingTask || pendingApproval || pendingQuestion || runtimeConnectionError) return;
+    if (!lastFailedPrompt || lastFailedPrompt.sessionId !== sessionId) return;
+    const turnSeq = latestTurnEndSeq(historyEntries);
+    if (turnSeq === undefined || liveTurnEndSeq[sessionId] !== turnSeq) return;
+    protocolRetriedSessions = { ...protocolRetriedSessions, [sessionId]: true };
+    clearTimeout(protocolRetryTimer);
+    protocolRetryTimer = setTimeout(() => {
+      protocolRetryTimer = undefined;
+      // 定时器兜底复核：会话已切换、已交付答案或已不再需要重试时直接放弃。
+      if (activeSessionId !== sessionId) return;
+      if (lastFailedPrompt?.sessionId !== sessionId || recoveryReason !== "protocol" || answerDelivered) return;
+      void retryLastPrompt({ automatic: true });
+    }, 250);
+  });
+  $effect(() => () => clearTimeout(protocolRetryTimer));
   const xgGatewayCredentialReady = $derived.by(() => {
     const config = resolveProviderSettings(settingsNamespaces, providers, "xg-gomodel")?.config;
     if (!config) return false;
@@ -605,10 +799,17 @@
     const { provider } = parseModelSelectionKey(selectedModel);
     return provider ? modelCredentialConfigured(provider) : true;
   });
-  const authFailure = $derived(/401|认证失败|authentication failed|unauthorized/iu.test(sessionLoadError || runtimeError));
+  const authFailure = $derived(!!classifyAuthFailure(sessionLoadError || runtimeError));
+  // 只有模型路由的认证失败才提示「模型凭据」；外部服务/知识库的 401 由各自文案说明。
+  const providerAuthFailure = $derived(authFailure && activeAuthFailureKind === "provider" && !!runtimeError.trim());
+  // 内置凭据在本次运行里没有被用户手工改过，才允许自动恢复。
+  const canAutoRepairBundledCredential = $derived(providerAuthFailure
+    && selectedProviderCredentialRef() === "XG_GOMODEL_API_KEY"
+    && !userSavedCredentialRefs.has("XG_GOMODEL_API_KEY")
+    && !!window.voltDesktop?.resetBundledModelCredential);
   const authFailureCredentialRef = $derived(selectedProviderCredentialRef());
   const authFailureDetail = $derived.by(() => {
-    if (!authFailure) return "";
+    if (!providerAuthFailure) return "";
     const { provider } = parseModelSelectionKey(selectedModel);
     const providerName = displayProviderName(provider, modelGroups.find((group) => group.id === provider)?.name);
     const credential = authFailureCredentialRef
@@ -620,7 +821,7 @@
       credential,
     });
   });
-  const authFailureHint = $derived(authFailure
+  const authFailureHint = $derived(providerAuthFailure
     ? authFailureCredentialRef === "XG_GOMODEL_API_KEY"
       ? t("errors.authFailureBuiltinHint")
       : t("errors.authFailureCustomHint")
@@ -666,6 +867,40 @@
     if (activityOpen) void ensureActivityPanel();
     armStartupTimers();
     unsubscribeRuntimeReady = window.voltDesktop?.onRuntimeReady(() => void bootstrap());
+    // 深链只把配置包送进"配置迁移"卡片等用户确认，不在这里执行任何写入（#ACB）。
+    const openAgentConfigLink = (link: string) => {
+      if (!link) return;
+      agentConfigIncomingLink = link;
+      agentConfigIncomingLinkToken += 1;
+      // 卡片自己会显示预览和"确认导入"，所以这里不再另发一条提示（settings 分支
+      // 也没有 managementNotice 的位置，写了也看不见）。
+      closeMobileSidebar(false);
+      view = "settings";
+      switchManagementTab("settings");
+      switchSettingsSection("advanced");
+    };
+    // 主进程只发"有新链接"的提示，真正的数据从队列里取：推送早于订阅、连续多条、
+    // 渲染层重载三种情况都由同一个队列兜住。多条时只处理最后一条 —— 用户最后点的那次
+    // 才是他的意图（更早的仍然留在队列里，下次挂载还能取到）。
+    // 串行化：通知与挂载时的补取可能同时触发，两个 drain 并发会重复 ack 同一批条目。
+    let drainingLinks = Promise.resolve();
+    const drainAgentConfigLinks = (): Promise<void> => {
+      drainingLinks = drainingLinks.then(async () => {
+        try {
+          const links = await window.voltDesktop?.pendingAgentConfigLinks?.() ?? [];
+          // 按到达顺序逐条处理并逐条确认：界面最后停在最新一条上，早先的条目也不会丢。
+          for (const link of links) {
+            openAgentConfigLink(link);
+            await window.voltDesktop?.ackAgentConfigLink?.(link);
+          }
+        } catch {
+          // 取不到就当没有；深链永远不应该让界面报错。
+        }
+      });
+      return drainingLinks;
+    };
+    unsubscribeAgentConfigLink = window.voltDesktop?.onAgentConfigLink?.(() => void drainAgentConfigLinks());
+    void drainAgentConfigLinks();
     void bootstrap();
     return () => {
       refreshDisposed = true;
@@ -674,6 +909,7 @@
       sessionResponse.dispose();
       unsubscribeRuntimeError?.();
       unsubscribeRuntimeReady?.();
+      unsubscribeAgentConfigLink?.();
       unsubscribeDshFrames?.();
       clearAttachmentFiles();
     };
@@ -778,6 +1014,8 @@
         return import("$components/ProviderWorkbench.svelte").then((module) => { ProviderWorkbenchComponent = module.default; });
       case "plugin":
         return import("$components/PluginInventoryView.svelte").then((module) => { PluginInventoryComponent = module.default; });
+      case "extensions":
+        return import("$components/ExtensionCapabilities.svelte").then((module) => { ExtensionCapabilitiesComponent = module.default; });
       case "mcp":
         return import("$components/McpInventoryView.svelte").then((module) => { McpInventoryComponent = module.default; });
       case "externalKnowledge":
@@ -786,6 +1024,10 @@
         return import("$components/KnowledgeSkillList.svelte").then((module) => { KnowledgeSkillListComponent = module.default; });
       case "knowledgeScope":
         return import("$components/KnowledgeScopePicker.svelte").then((module) => { KnowledgeScopePickerComponent = module.default; });
+      case "skillStore":
+        return import("$components/SkillStoreView.svelte").then((module) => { SkillStoreComponent = module.default; });
+      case "automation":
+        return import("$components/AutomationPanel.svelte").then((module) => { AutomationPanelComponent = module.default; });
     }
   }
 
@@ -793,7 +1035,14 @@
     const imports = names.map((name) => {
       const pending = managementComponentImports[name];
       if (pending) return pending;
-      const next = importManagementComponent(name);
+      if (managementComponentErrors[name]) {
+        const { [name]: _cleared, ...remaining } = managementComponentErrors;
+        managementComponentErrors = remaining;
+      }
+      const next = importManagementComponent(name).catch((error: unknown) => {
+        managementComponentErrors = { ...managementComponentErrors, [name]: userFacingError(error) };
+        throw error;
+      });
       const tracked = next.finally(() => {
         const current = managementComponentImports[name];
         if (current === tracked) {
@@ -935,6 +1184,12 @@
       return;
     }
     if (event.key === "Escape") {
+      // 浮层优先：面板打开时 Escape 只关面板，绝不能顺带取消正在跑的任务。
+      if (shortcutsOpen) {
+        event.preventDefault();
+        shortcutsOpen = false;
+        return;
+      }
       if (document.getElementById("workbench-menu")?.matches(":popover-open")) return;
       if (taskActive) {
         event.preventDefault();
@@ -1014,6 +1269,8 @@
 
  function captureSurfaceProposal(message: TranscriptMessage | undefined): void {
    if (!message || message.role !== "assistant" || !message.text || message.id === surfaceSourceId) return;
+   // 用户没要界面（例如只是让读一段资料），就不把回答里的提案渲染成卡片（#366）。
+   if (!lastUserPromptText || !isSurfaceGenerationIntent(lastUserPromptText)) return;
    const proposal = resolveVoltSurfaceSegments(message.text, !!message.pending)
      .find((segment) => segment.kind === "proposal");
    if (!proposal || proposal.kind !== "proposal") return;
@@ -1079,13 +1336,14 @@
       const info = await withTimeout(shell.bootstrap(), 10_000, t("app.startupShellTimeout"));
       if (info.productName) customProductName = info.productName;
       appVersion = info.version;
+      desktopFeatures = info.features ?? { permanentSessionDeletion: false, updateChecks: false };
       networkMode = info.networkMode;
-      if (info.capabilities) capabilities = info.capabilities;
       workspacePath = info.workspace;
       bootstrapWorkspace = info.workspace;
       defaultChatDirectory = readDefaultChatDirectory() || info.workspace;
       workspaceWarning = info.workspaceWarning ?? "";
       memoryStatus = info.memoryStatus ?? "disabled";
+      if (info.capabilities) capabilities = info.capabilities;
       unsubscribeRuntimeError?.();
       unsubscribeRuntimeError = shell.onRuntimeError((message) => {
         if (networkModeBusy) return;
@@ -1138,6 +1396,10 @@
       loading = !client && !runtimeConnectionError;
       bootstrapInFlight = false;
       if (queuedRefresh && client && !runtimeConnectionError) void refresh();
+      // 设置页可能在 bootstrap 完成前就已打开（例如冷启动直接收到 agentconfig 深链），
+      // 那时 refreshManagement 因没有 client 直接返回了，这里补一次，否则设置页
+      // 会一直拿着空的 providers/settings 去算配置迁移计划。
+      if (client && view === "settings") void refreshManagement();
       if (bootstrapQueued) {
         bootstrapQueued = false;
         void bootstrap();
@@ -1168,6 +1430,41 @@
       loading = false;
     } finally {
       runtimeRetrying = false;
+    }
+  }
+
+  async function toggleCapability(key: DesktopCapabilityKey): Promise<void> {
+    const shell = window.voltDesktop;
+    if (!shell || capabilitiesBusy || networkModeBusy || bootstrapInFlight || runtimeRetrying) return;
+    const next = !capabilities[key];
+    capabilitiesBusy = true;
+    managementError = "";
+    managementNotice = "";
+    runtimeConnectionError = "";
+    runtimeError = "";
+    clearStartupTimers();
+    disconnectSession();
+    unsubscribeDshFrames?.();
+    unsubscribeDshFrames = undefined;
+    clearRefreshTimer();
+    client = undefined;
+    loading = true;
+    try {
+      const info = await withTimeout(shell.setCapabilities({ [key]: next }), 480_000, t("app.startupRetryTimeout"));
+      if (info.capabilities) capabilities = info.capabilities;
+      if (info.startupError) throw new Error(info.startupError);
+      capabilitiesBusy = false;
+      armStartupTimers();
+      await bootstrap();
+      if (!runtimeConnectionError) managementNotice = t("settings.capabilityChanged");
+    } catch (error) {
+      clearStartupTimers();
+      managementError = userFacingError(error);
+      runtimeConnectionError = managementError;
+      runtimeError = managementError;
+      loading = false;
+    } finally {
+      capabilitiesBusy = false;
     }
   }
 
@@ -1206,47 +1503,9 @@
     }
   }
 
-  async function toggleCapability(key: DesktopCapabilityKey): Promise<void> {
-    const shell = window.voltDesktop;
-    if (!shell || capabilitiesBusy || networkModeBusy || bootstrapInFlight || runtimeRetrying) return;
-    capabilitiesBusy = true;
-    managementError = "";
-    managementNotice = "";
-    runtimeConnectionError = "";
-    runtimeError = "";
-    clearStartupTimers();
-    disconnectSession();
-    unsubscribeDshFrames?.();
-    unsubscribeDshFrames = undefined;
-    clearRefreshTimer();
-    client = undefined;
-    loading = true;
-    try {
-      const info = await withTimeout(
-        shell.setCapabilities({ [key]: !capabilities[key] }),
-        480_000,
-        t("app.startupRetryTimeout"),
-      );
-      capabilities = info.capabilities ?? capabilities;
-      if (info.startupError) throw new Error(info.startupError);
-      capabilitiesBusy = false;
-      armStartupTimers();
-      await bootstrap();
-      if (!runtimeConnectionError) managementNotice = t("settings.capabilityChanged");
-    } catch (error) {
-      clearStartupTimers();
-      managementError = userFacingError(error);
-      runtimeConnectionError = managementError;
-      runtimeError = managementError;
-      loading = false;
-    } finally {
-      capabilitiesBusy = false;
-    }
-  }
-
   async function checkForUpdate(showError = true): Promise<void> {
     const shell = window.voltDesktop;
-    if (!shell || updateChecking) return;
+    if (!shell || updateChecking || !desktopFeatures.updateChecks) return;
     updateChecking = true;
     updateError = "";
     updateCheck = undefined;
@@ -1313,6 +1572,7 @@
         || sessionResult.items.find((session) => session.blank && !archivedSessionIds.includes(session.sessionId))?.sessionId
         || "";
       sessions = visibleSessions(sessionResult.items, archivedSessionIds, retainedBlankSessionId, draftSessionIds);
+      pruneSessionCaches(sessions.map((item) => item.sessionId));
       const active = sessions.find((item) => item.sessionId === activeSessionIdAtStart);
       if (active) {
         workspacePath = active.cwd ?? "";
@@ -1376,14 +1636,14 @@
     let loadError = "";
     const failedLoad = (error: unknown): undefined => { loadError = userFacingError(error); return undefined; };
     const needs = {
-      settings: managementTab === "settings" || managementTab === "runtime" || managementTab === "models",
+      settings: managementTab === "settings" || managementTab === "runtime" || managementTab === "models" || managementTab === "knowledge",
       skills: managementTab === "knowledge" && !!activeSessionId,
       agents: managementTab === "agents",
       providers: managementTab === "models" || managementTab === "settings" || managementTab === "runtime",
       subagents: (managementTab === "subagents" || managementTab === "runtime") && !!activeSessionId,
       catalog: managementTab === "models",
       host: managementTab === "runtime",
-      plugins: managementTab === "plugins" || managementTab === "mcp",
+      plugins: managementTab === "plugins" || managementTab === "mcp" || managementTab === "knowledge" || managementTab === "extensions",
     };
     const [settingsResult, skillResult, agentResult, providerResult, subagentResult, catalogResult, hostResult, pluginResult] = await Promise.all([
       needs.settings ? client.describeSettings().catch(failedLoad) : Promise.resolve(undefined),
@@ -1412,6 +1672,22 @@
       }
       credentialRefs = collectCredentialRefs(settingsNamespaces, providerResult?.providers ?? providers);
       if (describedCredentials) credentials = describedCredentials.credentials;
+      if (managementTab === "knowledge") {
+        const weknora = settingsNamespaces.find((item) => item.ns === "weknora")?.value as Record<string, unknown> | undefined;
+        const weknoraPlugin = (pluginResult?.entries ?? pluginInventory).find((item) => item.moduleName === "@wxg-prc-cpg/dsh-weknora");
+        const keyRef = typeof weknora?.apiKeyRef === "string" && weknora.apiKeyRef ? weknora.apiKeyRef : "WEKNORA_API_KEY";
+        const keyReady = describedCredentials?.credentials?.[keyRef]?.configured === true;
+        const endpoint = typeof weknora?.baseUrl === "string" ? weknora.baseUrl.trim() : "";
+        const enabled = weknora?.enabled === true;
+        externalKnowledgeState = externalKnowledgeStateFrom({
+          namespace: weknora,
+          plugin: weknoraPlugin,
+          credential: describedCredentials?.credentials?.[keyRef],
+          pluginLookupFailed: !pluginResult,
+          credentialLookupFailed: !describedCredentials,
+        });
+        if (externalKnowledgeState === "unavailable" && knowledgeScope !== "local") knowledgeScope = "local";
+      }
     }
     if (skillResult) skills = skillResult.skills;
     if (agentResult) {
@@ -1427,6 +1703,7 @@
     }
     if (needs.catalog) modelLoadError = loadError || (catalogResult?.failures.length ? t("models.loadFailed") : "");
     if (hostResult) hostInfo = hostResult;
+    if (!loadError) runtimeLastSyncedAt = Date.now();
     if (pluginResult) pluginInventory = pluginResult.entries;
     if (subagentResult) {
       subagents = subagentResult.entries;
@@ -1519,6 +1796,7 @@
       if (workspaceRequest !== workspaceSelectionRequest) return;
       allSessions = listed.items;
       sessions = visibleSessions(listed.items, archivedSessionIds, created.sessionId, Object.keys(sessionDrafts));
+      pruneSessionCaches(sessions.map((item) => item.sessionId));
       if (view === requestedFromView && sessionSelectionRequest === requestedFromSelection) {
         await selectSession(created.sessionId);
       }
@@ -1551,13 +1829,18 @@
     subagentMessages = [];
     subagentParentAvailable = false;
     const selectedSession = sessions.find((item) => item.sessionId === sessionId);
-    workspacePath = selectedSession?.cwd ?? workspacePath;
+    // 已知会话没有工作区时必须清空；未选中任何会话（列表清空）时同样清空，
+    // 不能沿用上一个会话的路径，否则知识索引 key 和空会话建议都会错位。
+    workspacePath = selectedSession ? selectedSession.cwd ?? "" : sessionId ? workspacePath : "";
     workspaceWarning = selectedSession?.workspaceError ? userFacingError(selectedSession.workspaceError) : "";
     sessionResponse.select(sessionId, selectedSession?.running ?? false);
     const pending = pendingInteractionsBySession[sessionId];
     if (pending?.approval || pending?.question) sessionResponse.waitForInteraction(sessionId);
     view = "conversation";
     if (!sameSession) {
+      streamRenderScheduler.clear();
+      streamRenderSessionId = "";
+      streamRenderPending = undefined;
       messages = [];
       todos = [];
       historyEntries = [];
@@ -1572,9 +1855,15 @@
     sessionLoadError = "";
     if (!sessionId) {
       historyLoad = undefined;
+      hostCommands = [];
+      skills = [];
+      commandCatalogSessionId = "";
       return;
     }
     historyLoad = { requestId, sessionId, frames: [] };
+    // 命令/技能目录不阻塞历史加载：菜单在目录到位前为空，但输入不受影响。
+    void loadSessionCatalog(sessionId, selectionClient, requestId);
+    void loadMessageFeedback(sessionId);
     const historyRequest = selectionClient.history(sessionId);
     const modelsLoaded = loadSessionModels(sessionId, requestId, selectionClient, historyRequest.then(() => true, () => false));
     try {
@@ -1844,8 +2133,40 @@
       resolveInteraction("question", payload.sessionId, frame.rpcId);
       return;
     }
-    if (payload.type === "session/queue") return;
-    if (payload.type === "session/jobs") return;
+    // 官方被动状态帧：待发送队列与运行标记的唯一来源（session/observeState）。
+    if (payload.type === "session/state") {
+      if (typeof payload.sessionId === "string") applySessionQueueState(payload.sessionId, payload.state);
+      return;
+    }
+    // 旧外壳可能仍在转发 session/queue 帧，形状相同，按同一套逻辑合并。
+    if (payload.type === "session/queue") {
+      if (typeof payload.sessionId === "string") applySessionQueueState(payload.sessionId, { queue: payload.items });
+      return;
+    }
+    if (payload.type === "host/command-catalog-changed") {
+      if (client && activeSessionId) void loadSessionCatalog(activeSessionId, client, sessionSelectionRequest);
+      return;
+    }
+    if (payload.type === "session/jobs") {
+      if (typeof payload.sessionId === "string") {
+        jobRoster = { ...jobRoster, [payload.sessionId]: normalizeJobRows({ type: "rows", jobs: payload.rows ?? payload.jobs }) };
+      }
+      return;
+    }
+    if (payload.type === "job/state") {
+      if (typeof payload.sessionId !== "string" || typeof payload.jobId !== "string") return;
+      const job = payload.job && typeof payload.job === "object" ? payload.job : null;
+      if (!job) return;
+      const rows = normalizeJobRows({ type: "rows", jobs: [job] });
+      if (rows.length === 0) return;
+      const existing = jobRoster[payload.sessionId] ?? [];
+      const merged = existing.some((item) => item.id === rows[0].id)
+        ? existing.map((item) => (item.id === rows[0].id ? rows[0] : item))
+        : [...existing, rows[0]];
+      jobRoster = { ...jobRoster, [payload.sessionId]: merged };
+      return;
+    }
+    if (payload.type === "job/output") return;
     if (payload.type === "session/projection") { requestRefresh(); return; }
     if (payload.type === "host/session-added" || payload.type === "host/session-status" || payload.type === "host/session-removed" || payload.type === "host/workspace-changed" || payload.type === "host/workspace-removed") { requestRefresh(); return; }
     if (payload.type === "host/agent-error") {
@@ -1855,6 +2176,7 @@
         : providerAwareError(payload.message || t("errors.agentFailed"));
       if (sessionId) finishResponse(sessionId, true);
       if (sessionId !== activeSessionId) return;
+      streamRenderScheduler.flush();
       messages = messages.map((item) => item.pending ? { ...item, pending: false } : item);
       return;
     }
@@ -1867,12 +2189,31 @@
       historyEntries = merged;
     }
     if (payload.event.type === "turn/start") sessionResponse.started(payload.sessionId);
-    const transcript = applyTranscriptEvent({ messages, todos }, payload.event, payload.view as Record<string, unknown> | undefined);
+    // 若上一帧流式提交尚未 flush，后续 chunk 必须叠在 pending 视图上，避免丢字。
+    const transcriptBase = streamRenderPending && streamRenderSessionId === payload.sessionId
+      ? streamRenderPending
+      : { messages, todos };
+    const transcript = applyTranscriptEvent(transcriptBase, payload.event, payload.view as Record<string, unknown> | undefined);
     noteResponseActivity(payload.sessionId, transcript.messages);
     // 历史加载只缓冲消息渲染，运行状态仍须立即响应结束事件。
+    // 流式 chunk 合批到下一帧，降低长回复期间的同步重绘；收尾/工具等事件立即 flush。
     if (historyLoad?.sessionId !== payload.sessionId) {
-      messages = transcript.messages;
-      todos = transcript.todos;
+      if (streamRenderSessionId && streamRenderSessionId !== payload.sessionId) streamRenderScheduler.flush();
+      streamRenderPending = { messages: transcript.messages, todos: transcript.todos };
+      streamRenderSessionId = payload.sessionId;
+      const applyMessages = () => {
+        if (!streamRenderPending) return;
+        messages = streamRenderPending.messages;
+        todos = streamRenderPending.todos;
+        streamRenderPending = undefined;
+      };
+      if (isBatchableSessionEvent(payload.event.type)) {
+        streamRenderScheduler.schedule(applyMessages);
+      } else {
+        // 取消未执行的帧回调；pending 已包含本事件，直接提交，避免 flush+apply 二次清空。
+        streamRenderScheduler.clear();
+        applyMessages();
+      }
     }
     if (payload.event.type === "tool/call" && knowledgeToolName(String(payload.event.data.name || "")) && knowledgeOperation) {
       knowledgeIndex = { ...knowledgeIndex, state: "building" };
@@ -1903,7 +2244,7 @@
         knowledgeIndex = { ...knowledgeIndex, ...report, state: report.status };
         persistKnowledgeSnapshot(workspacePath, knowledgeIndex);
         knowledgeOperation = "";
-        if (assistantMessage) assistantMessage.text = stripKnowledgeReport(assistantMessage.text);
+        if (assistantMessage) assistantMessage.text = stripKnowledgeArtifacts(assistantMessage.text);
       }
     }
     if (payload.event.type === "tool/result" && payload.event.data.error && knowledgeOperation) {
@@ -1914,17 +2255,36 @@
     }
     if (payload.event.type === "turn/end") {
       liveTurnEndSeq = { ...liveTurnEndSeq, [payload.sessionId]: payload.event.seq };
+      // 一轮结束时官方可能刚消费掉队首：重新取一次队列快照，避免界面停在旧列表。
+      void syncSessionQueue(payload.sessionId);
       pendingInteractionsBySession = clearPendingSession(pendingInteractionsBySession, payload.sessionId);
       messages = messages.map((item) => item.pending ? { ...item, pending: false } : item).filter((item) => item.role === "tool" || !!item.text?.trim() || !!item.reasoning?.trim() || !!item.tool);
-      if (knowledgeOperation) {
+      if (knowledgeOperation && knowledgeOperation !== "query") {
         knowledgeIndex = { ...knowledgeIndex, state: "partial", failures: [t("knowledge.reportMissing")] };
         persistKnowledgeSnapshot(workspacePath, knowledgeIndex);
         knowledgeOperation = "";
       }
-      const endError = turnEndError(payload.event);
-      if (endError) {
+      const endFailure = turnEndFailure(payload.event);
+      if (endFailure && classifyAuthFailure(endFailure.message, endFailure.code) === "weknora") {
+        // 外部知识源被拒：本次运行视为未验证，并退回本地检索，避免每轮都重试同一个 401。
+        externalKnowledgeVerified = false;
+        knowledgeScope = "local";
+        managementNotice = t("knowledge.externalDeniedFallback");
+      }
+      const endError = endFailure?.message ?? turnEndError(payload.event);
+      // 答案已经交付时，内部错误只降级为后台提示，不再挂整轮失败卡片（#340）。
+      if (endError && deliveredAnswer(messages)) {
+        finishResponse(payload.sessionId);
+        // 已有失败态一并清掉：答案已交付，顶部不该继续挂着红色错误卡（#340）。
+        const cleared = sessionErrors[payload.sessionId];
+        if (cleared) {
+          const { [payload.sessionId]: _gone, ...remaining } = sessionErrors;
+          sessionErrors = remaining;
+          if (runtimeError === cleared) runtimeError = "";
+        }
+      } else if (endError) {
         finishResponse(payload.sessionId, true);
-        setSessionRuntimeError(activeSessionId, endError);
+        setSessionRuntimeError(activeSessionId, endError, endFailure?.code);
       } else if (clearsSessionError(payload.event) && sessionErrors[activeSessionId]) {
         finishResponse(payload.sessionId);
         const clearedMessage = sessionErrors[activeSessionId];
@@ -1937,25 +2297,397 @@
     }
   }
 
+  /**
+   * 官方 inbox 的队列状态只有一个来源：`session/state`（主进程通过
+   * `session/observeState` 流转发）。`null` 表示"这个会话当前没有活动 Agent，
+   * 队列不可读"，不能当成"队列为空"。
+   */
+  /**
+   * 会话级缓存（队列快照、任务花名册）不能只加不减：会话被归档/删除后，
+   * 它们的键会一直留在内存里。这里以当前可见会话集合为准淘汰。
+   */
+  function pruneSessionCaches(keep: readonly string[]): void {
+    const live = new Set(keep);
+    const prune = <T,>(record: Record<string, T>): Record<string, T> => {
+      const entries = Object.entries(record).filter(([sessionId]) => live.has(sessionId));
+      return entries.length === Object.keys(record).length ? record : Object.fromEntries(entries);
+    };
+    nativeQueue = prune(nativeQueue);
+    jobRoster = prune(jobRoster);
+  }
+
+  function applySessionQueueState(sessionId: string, state: unknown): void {
+    if (!sessionId || !state || typeof state !== "object") return;
+    const value = state as { queue?: unknown };
+    if (!Array.isArray(value.queue)) {
+      // 官方在"没有活动 Agent"时返回 queue:null：这一会话的队列不可读，
+      // 必须清掉旧快照，否则界面会一直显示早已失效的待发送条目。
+      if (nativeQueue[sessionId]) {
+        const { [sessionId]: _stale, ...rest } = nativeQueue;
+        nativeQueue = rest;
+      }
+      return;
+    }
+    nativeQueue = { ...nativeQueue, [sessionId]: toNativeQueueItems(value.queue) };
+  }
+
+  /** 让主进程观察当前会话，并主动读一次快照（流的第一帧可能还没到）。 */
+  async function syncSessionQueue(sessionId: string): Promise<void> {
+    if (!sessionId) return;
+    try {
+      await client?.observeSessionState(sessionId);
+      const state = await client?.sessionState(sessionId);
+      if (!state || sessionId !== activeSessionId) return;
+      applySessionQueueState(sessionId, state);
+    } catch {
+      // 老运行时没有这个端点：队列不显示即可，不能因为它报错。
+    }
+  }
+
+  /**
+   * 把一条消息排进官方 inbox（mode=queue）：当前回合结束后由 DSH 自己发出，
+   * 因此它能在重启/多窗口后依然存在。
+   */
+  async function queueCurrentPrompt(
+    sessionId: string,
+    payload: { text: string; images: Extract<PromptContentPart, { type: "image" }>[]; files: File[] },
+  ): Promise<boolean> {
+    if (!client || !sessionId) return false;
+    const rawText = payload.text;
+    const text = rawText.trim();
+    if (!text && payload.images.length === 0 && payload.files.length === 0) return false;
+    const queueClient = client;
+    let queuedFiles: Array<{ receiptId: string }> = [];
+    try {
+      const plan = planFileInput(payload.files, {
+        resolvePath: (file) => {
+          try {
+            return window.voltDesktop?.getPathForFile?.(file) ?? "";
+          } catch {
+            return "";
+          }
+        },
+        isImage: (file) => /^image\//u.test(file.type || ""),
+        inlineUploadBytes: resolveInlineUploadBudget({ deviceMemoryGiB: deviceMemoryGiB() }),
+      });
+      if (plan.rejections.length > 0) {
+        runtimeError = describeFileRejection(plan.rejections[0], t);
+        return false;
+      }
+      for (const file of plan.uploads) {
+        const uploaded = await queueClient.uploadFile(sessionId, file);
+        queuedFiles.push(uploaded);
+      }
+      const referencePrefix = plan.references.map((entry) => formatFileReference(entry.path)).join(" ");
+      const content: PromptContentPart[] = [
+        ...([referencePrefix, rawText].filter(Boolean).join("\n") ? [{ type: "text", text: [referencePrefix, rawText].filter(Boolean).join("\n") } satisfies PromptContentPart] : []),
+        ...payload.images,
+        ...queuedFiles.map(({ receiptId }) => ({ type: "file", receiptId }) satisfies PromptContentPart),
+      ];
+      await queueClient.prompt(sessionId, content, "queue");
+      await syncSessionQueue(sessionId);
+      return true;
+    } catch (error) {
+      // 入队失败要把文字还给用户，不能静默丢掉一条消息。
+      if (!sessionDrafts[sessionId]) {
+        input = rawText;
+        sessionDrafts[sessionId] = rawText;
+      }
+      runtimeError = userFacingError(error);
+      return false;
+    }
+  }
+
+  /** 取消排队：官方队列删掉这一条，文字放回输入框（附件已上传，不再重复投递）。 */
+  async function cancelQueuedPrompt(item: NativeQueueItem): Promise<void> {
+    const sessionId = activeSessionId;
+    if (!sessionId || !client || !isMutableQueueItem(item)) return;
+    try {
+      await client.updateQueue(sessionId, item.id, { kind: "remove" });
+    } catch (error) {
+      runtimeError = userFacingError(error);
+      return;
+    }
+    restoreQueuedText(sessionId, queueItemDraft(item));
+    await syncSessionQueue(sessionId);
+  }
+
+  /** 编辑排队条目：拿回输入框并从官方队列删除，改完由用户重新提交。 */
+  async function editQueuedPrompt(item: NativeQueueItem): Promise<void> {
+    const sessionId = activeSessionId;
+    if (!sessionId || !client || !isMutableQueueItem(item)) return;
+    // 队列条目里的附件只有回执，取回原文是不可能的：先删后发会静默丢掉它们，
+    // 所以带附件的条目只提供"取消"，不提供"编辑"。
+    if (item.attachmentCount > 0) {
+      runtimeError = t("composer.queueEditWithAttachments");
+      return;
+    }
+    restoreQueuedText(sessionId, queueItemDraft(item));
+    try {
+      await client.updateQueue(sessionId, item.id, { kind: "remove" });
+    } catch (error) {
+      runtimeError = userFacingError(error);
+      return;
+    }
+    await syncSessionQueue(sessionId);
+  }
+
+  /** 插队：让官方把这条件提前到当前回合处理（steer），而不是等这轮结束。 */
+  async function steerQueuedPrompt(item: NativeQueueItem): Promise<void> {
+    const sessionId = activeSessionId;
+    if (!sessionId || !client || !isMutableQueueItem(item)) return;
+    try {
+      await client.updateQueue(sessionId, item.id, { kind: "steer" });
+    } catch (error) {
+      runtimeError = userFacingError(error);
+      return;
+    }
+    await syncSessionQueue(sessionId);
+  }
+
+  /** 选区引用：引用块接到草稿末尾，不覆盖用户正在写的内容。 */
+  function quoteToComposer(quote: string): void {
+    const sessionId = activeSessionId;
+    if (!sessionId || !quote) return;
+    const merged = appendQuoteToDraft(sessionDrafts[sessionId] ?? input ?? "", quote);
+    input = merged;
+    sessionDrafts[sessionId] = merged;
+  }
+
+  /**
+   * 把排队文字并回草稿；绝不覆盖用户正在写的内容。
+   *
+   * 请求是异步的：期间用户可能已经切到别的会话，`input` 属于那个新会话的草稿。
+   * 所以只有发起请求的会话仍是当前会话时才写 `input`，否则只更新它自己的草稿。
+   */
+  function restoreQueuedText(sessionId: string, text: string): void {
+    if (!text) return;
+    const draft = (sessionDrafts[sessionId] ?? "").trim();
+    const merged = !draft || draft === text.trim() ? text : `${draft}\n${text}`;
+    sessionDrafts[sessionId] = merged;
+    if (sessionId === activeSessionId) input = merged;
+  }
+
+  // 切换会话就换一条观察流；否则队列会停在旧会话上。
+  $effect(() => {
+    const sessionId = activeSessionId;
+    if (!sessionId || !client) return;
+    void syncSessionQueue(sessionId);
+    // 后台任务花名册同样只跟当前会话；切走时主进程会取消上一条订阅。
+    void window.voltDesktop?.observeJobRoster?.(sessionId);
+    // 终端绑定的是具体 shell 进程：会话一换就必须关掉，不能让旧 shell 留在新会话下。
+    if (terminalOpenSessionId && terminalOpenSessionId !== sessionId) terminalOpenSessionId = "";
+  });
+
+  /**
+   * 会话未激活时官方不返回可读队列（`queue: null`），但 inbox 投影里仍有待发送条目。
+   * 这不是"没有队列"：显示条数，不显示可操作的行。
+   */
+  const coldInboxCount = $derived(
+    nativeQueue[activeSessionId] === undefined ? inboxPendingCount(activeSession?.projections?.values) : 0,
+  );
+  const activeQueueRows = $derived(
+    activeSessionId ? nativeQueueRows(nativeQueue[activeSessionId] ?? []) : [],
+  );
+
+  /**
+   * 斜杠命令目录与技能目录按会话加载：两者都只在这一个会话里有效，
+   * 切换会话后旧目录必须立刻作废（否则会把上一个会话的命令执行到新会话上）。
+   */
+  async function loadSessionCatalog(sessionId: string, selectionClient: DshClient, requestId: number): Promise<void> {
+    if (!sessionId) {
+      hostCommands = [];
+      skills = [];
+      commandCatalogSessionId = "";
+      return;
+    }
+    const [commandsResult, skillsResult] = await Promise.all([
+      selectionClient.listCommands(sessionId).catch(() => [] as HostCommand[]),
+      selectionClient.listSkills(sessionId).catch(() => ({ skills: [] as DshSkill[] })),
+    ]);
+    if (client !== selectionClient || activeSessionId !== sessionId || requestId !== sessionSelectionRequest) return;
+    hostCommands = normalizeCommands(commandsResult);
+    skills = skillsResult.skills;
+    commandCatalogSessionId = sessionId;
+  }
+
+  /**
+   * 执行一条官方命令行。
+   *
+   * 与提示词不同，命令不进入模型消息：失败只给可见提示，绝不退化成"把这条命令
+   * 当普通提问发出去"。
+   */
+  async function runHostCommand(line: string): Promise<boolean> {
+    if (!client || !activeSessionId) return false;
+    const sessionId = activeSessionId;
+    try {
+      const execution = await client.executeCommand(sessionId, line);
+      if (activeSessionId !== sessionId) return true;
+      const outcome = execution?.result;
+      if (outcome?.kind === "error") {
+        runtimeError = outcome.text || t("errors.generalError");
+      } else if (outcome?.text) {
+        commandNotice = outcome.text;
+        setTimeout(() => { if (commandNotice === outcome.text) commandNotice = ""; }, 6000);
+      }
+      requestRefresh();
+      return true;
+    } catch (error) {
+      runtimeError = userFacingError(error);
+      return true;
+    }
+  }
+
+  async function loadMessageFeedback(sessionId: string): Promise<void> {
+    if (!client || !sessionId) return;
+    try {
+      const result = readFeedbackList(await client.listMessageFeedback(sessionId));
+      if (sessionId !== activeSessionId) return;
+      feedbackItems = Object.fromEntries(result.items.map((item) => [item.messageId, item]));
+      // 列表被拒（例如会话不存在）不是"没有反馈"，但也不该打断对话：留一条提示。
+      if (result.error && result.error !== "session-not-found") runtimeError = feedbackFailureMessage(result.error);
+    } catch {
+      // 传输失败不影响对话；界面只是不显示已选状态。
+      if (sessionId === activeSessionId) feedbackItems = {};
+    }
+  }
+
+  async function rateMessage(messageId: string, rating: FeedbackRating): Promise<void> {
+    if (!client || !activeSessionId) return;
+    const sessionId = activeSessionId;
+    const action = feedbackAction(feedbackItems[messageId], rating);
+    try {
+      const result = action.kind === "delete"
+        ? await client.deleteMessageFeedback(sessionId, messageId, action.ifVersion)
+        : await client.putMessageFeedback(sessionId, messageId, rating, action.ifVersion);
+      const outcome = readFeedbackWrite(result);
+      if (!outcome.ok) {
+        // 冲突时采纳服务端的 `current`：否则下一次点击会继续拿旧版本冲突。
+        if (outcome.code === "version-conflict") {
+          if (outcome.current) feedbackItems = { ...feedbackItems, [messageId]: outcome.current };
+          else {
+            const next = { ...feedbackItems };
+            delete next[messageId];
+            feedbackItems = next;
+          }
+        }
+        runtimeError = feedbackFailureMessage(outcome.code);
+        return;
+      }
+      await loadMessageFeedback(sessionId);
+    } catch (error) {
+      runtimeError = userFacingError(error);
+    }
+  }
+
+  /** 官方拒绝码逐条说明，不合并成一句"失败了"。 */
+  function feedbackFailureMessage(code: string): string {
+    if (code === "version-conflict") return t("transcript.feedbackConflict");
+    if (code === "target-not-found") return t("transcript.feedbackTargetMissing");
+    if (code === "session-not-found") return t("transcript.feedbackSessionMissing");
+    if (code === "note-too-large") return t("transcript.feedbackNoteTooLarge");
+    return t("transcript.feedbackFailed");
+  }
+
+  async function killJob(job: JobRow): Promise<void> {
+    if (!activeSessionId) return;
+    try {
+      await window.voltDesktop?.killJob?.(activeSessionId, job.id);
+    } catch (error) {
+      runtimeError = userFacingError(error);
+    }
+  }
+
+  async function togglePlanMode(): Promise<void> {
+    const active = activePlan?.active === true;
+    await runHostCommand(planToggleCommand(active));
+  }
+
+  async function toggleAgentTeam(enabled: boolean): Promise<void> {
+    if (!client || !activeSessionId) return;
+    const sessionId = activeSessionId;
+    try {
+      await client.setAgentTeamEnabled(sessionId, enabled);
+      commandNotice = enabled ? t("team.enabledNotice") : t("team.disabledNotice");
+      window.setTimeout(() => { commandNotice = ""; }, 6000);
+      // 开关落在会话日志里，投影由官方刷新后才算数。
+      if (sessionId === activeSessionId) requestRefresh();
+    } catch (error) {
+      runtimeError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
   async function submit(
     textOverride?: string,
     imageAttachments: Extract<PromptContentPart, { type: "image" }>[] = [],
     fileAttachments: File[] = [],
     sourceSessionId = activeSessionId,
-    options: { readonly skipSurfaceContract?: boolean } = {},
-  ): Promise<void> {
+    options: { readonly skipSurfaceContract?: boolean; readonly keepView?: boolean } = {},
+  ): Promise<boolean> {
     if (initializingSession) throw new Error(t("app.connecting"));
     if (sourceSessionId !== activeSessionId) throw new Error(t("composer.sessionChanged"));
     if (sessionResponse.loading) throw new Error(t("app.connecting"));
     if (sessionLoadError) throw new Error(sessionLoadError);
-    const text = (textOverride ?? input).trim();
-    if (!client || !activeSessionId || (!text && imageAttachments.length === 0 && fileAttachments.length === 0) || !sessionResponse.canSubmit) return;
+    // 用户消息逐字保真：只有在判断「是否为空」时 trim，实际内容保留首尾空格与换行（#349）。
+    const rawText = textOverride ?? input;
+    const text = rawText.trim();
+    // 由输入框发起的提交才拥有草稿（清空/失败回填）；队列与重试传入 textOverride，
+    // 不得动用户当前正在编辑的内容。
+    const ownsDraft = textOverride === undefined;
+    if (!client || !activeSessionId || (!text && imageAttachments.length === 0 && fileAttachments.length === 0)) return false;
+    // 正在跑的时候按回车 = 排进官方 inbox（Codex 的行为），而不是弹一个"不能提交"。
+    // 只在"这一轮真的在跑"时这么做：submitting/stopping/waiting/disconnected 仍然拒绝。
+    if (!sessionResponse.canSubmit && (sessionResponse.phase === "running" || sessionResponse.phase === "waiting")) {
+      const queued = await queueCurrentPrompt(sourceSessionId, { text: rawText, images: imageAttachments, files: fileAttachments });
+      if (queued && ownsDraft) {
+        input = "";
+        sessionDrafts[sourceSessionId] = "";
+        draftFilesBySession[sourceSessionId] = [];
+      }
+      if (!queued) throw new Error(runtimeError || t("errors.generalError"));
+      return true;
+    }
+    if (!sessionResponse.canSubmit) return false;
+    // 斜杠命令：只有官方目录里确实存在的命令才拦截，其余以斜杠开头的文本仍然是
+    // 普通提示词。命令声明要不要附件我们不猜——带附件的提交直接拒绝，命令本身照常执行。
+    if (isHostCommandLine(text, hostCommands)) {
+      if (imageAttachments.length > 0 || fileAttachments.length > 0) {
+        throw new Error(t("composer.commandAttachmentsUnsupported"));
+      }
+      if (ownsDraft) {
+        input = "";
+        sessionDrafts[sourceSessionId] = "";
+      }
+      return await runHostCommand(text);
+    }
+    // 输入文件策略：≤256 MiB 走字节上传，更大的改成 "@路径" 引用（不复制内容），
+    // 只有拿不到本机路径或超过 2 GiB 才拒绝。避免 base64 单请求把内存和字符串上限打爆。
+    const filePlan = planFileInput(fileAttachments, {
+      resolvePath: (file) => {
+        try {
+          return window.voltDesktop?.getPathForFile?.(file) ?? "";
+        } catch {
+          return "";
+        }
+      },
+      isImage: (file) => /^image\//u.test(file.type || ""),
+      // 20 MiB 是协议上限，机器内存紧张时按可用内存收缩（峰值约为文件的 4.7 倍）。
+      inlineUploadBytes: resolveInlineUploadBudget({ deviceMemoryGiB: deviceMemoryGiB() }),
+    });
+    if (filePlan.rejections.length > 0) {
+      // 拒绝原因要落在可见状态上（顶部错误条 + 输入区提示），不能只抛给调用方：
+      // 输入框提交路径不会展示异常，抛出去就变成静默失败。
+      runtimeError = describeFileRejection(filePlan.rejections[0], t);
+      return false;
+    }
+    const attachmentsToUpload = filePlan.uploads;
+    const referencePrefix = filePlan.references.map((entry) => formatFileReference(entry.path)).join(" ");
     const promptClient = client;
     if (workspaceWarning) {
       runtimeError = "";
       if (textOverride !== undefined) throw new Error(workspaceWarning);
       runtimeError = workspaceWarning;
-      return;
+      return false;
     }
     const credentialRef = selectedProviderCredentialRef();
     const currentProvider = parseModelSelectionKey(selectedModel).provider;
@@ -1965,42 +2697,64 @@
       sessionErrors = { ...sessionErrors, [activeSessionId]: runtimeError };
       openCredentialSettings(credentialRef);
       if (textOverride !== undefined) throw new Error(runtimeError);
-      return;
+      return false;
     }
     if (imageAttachments.length > 0 && !(selectedModelInfo()?.input || []).includes("image")) {
       throw new Error(t("models.unsupportedImage", { model: displayModelSelection(selectedModel) }));
     }
-    input = "";
-    sessionDrafts[sourceSessionId] = "";
+    if (ownsDraft) {
+      input = "";
+      sessionDrafts[sourceSessionId] = "";
+    }
     // 人工提交新任务时重置自动续写配额。
     if (text !== t("activity.continuePrompt") && autoContinueAttempts[sourceSessionId]) {
       const { [sourceSessionId]: _reset, ...rest } = autoContinueAttempts;
       autoContinueAttempts = rest;
     }
     const submittedFiles = fileAttachments.slice();
-    view = "conversation";
+    // 用户的新提问意味着上一轮提案已经过期：不能继续霸占首屏（#366 第 3 条）。
+    if (surfaceDraft) surfaceDraft = undefined;
+    lastUserPromptText = rawText;
+    // 知识库检索必须留在知识库页看就地结果（#353）；普通提问仍然回到对话区。
+    if (!options.keepView) view = "conversation";
     const pendingId = `pending-${Date.now()}`;
     const failedPrompt = {
       sessionId: activeSessionId,
       pendingId,
-      text,
+      // 失败/重试路径同样保留未 trim 原文，重试不能悄悄改掉首尾空白（#349）。
+      text: rawText,
       images: imageAttachments.map((image) => ({ ...image })),
       files: fileAttachments.slice(),
     };
     sessionResponse.begin(failedPrompt);
-    messages = [...messages, { id: pendingId, role: "user", text, pending: true }];
+    // 系统自动重试不能清掉一次性标记；只有人工提交才重置，并顺带取消排队的自动重试。
+    if (!automaticRetrySubmission) {
+      clearTimeout(protocolRetryTimer);
+      protocolRetryTimer = undefined;
+      if (protocolRetriedSessions[sourceSessionId]) {
+        const { [sourceSessionId]: _reset, ...rest } = protocolRetriedSessions;
+        protocolRetriedSessions = rest;
+      }
+    }
+    // 先记录提交前是否停在底部，再追加消息；否则长消息自身会把视口顶出阈值（#335）。
+    const wasAtLatest = transcriptAtLatest();
+    messages = [...messages, { id: pendingId, role: "user", text: rawText, pending: true }];
+    if (wasAtLatest) scrollTranscriptToLatest();
     // 卡片选择回传是普通对话内容，不再注入界面生成契约，避免模型又生成一张卡片。
-    const prompt = options.skipSurfaceContract === true
-      ? text
+    // 送模型的正文同样用未 trim 的原文，避免吞掉用户刻意添加的首尾空白（#349）；
+    // 升级/续写等内部包装仍需拿 trimmed 值做意图判断。
+    const promptBody = options.skipSurfaceContract === true
+      ? rawText
       : isSurfaceGenerationIntent(text)
-        ? buildVoltSurfacePrompt(text)
+        ? buildVoltSurfacePrompt(rawText)
         : isUiCustomizationIntent(text)
-          ? buildUiCustomizationPrompt(text)
-          : text;
+          ? buildUiCustomizationPrompt(rawText)
+          : rawText;
+    const prompt = [referencePrefix, promptBody].filter(Boolean).join("\n");
     const uploadedAttachmentIds: string[] = [];
     try {
       const uploadedFiles: Array<{ receiptId: string; file: { attachmentId: string; name: string; bytes: number } }> = [];
-      for (const file of fileAttachments) {
+      for (const file of attachmentsToUpload) {
         const uploaded = await promptClient.uploadFile(sourceSessionId, file, () => activePrompt === failedPrompt);
         if (activePrompt !== failedPrompt) throw new Error(t("composer.sessionChanged"));
         uploadedFiles.push(uploaded);
@@ -2030,9 +2784,9 @@
         if (Object.keys(retainedFiles).length > 0) attachmentFilesBySession[sourceSessionId] = retainedFiles;
         else clearAttachmentFiles(sourceSessionId);
       }
-      if (!sessionDrafts[sourceSessionId]) sessionDrafts[sourceSessionId] = text;
+      if (ownsDraft && !sessionDrafts[sourceSessionId]) sessionDrafts[sourceSessionId] = rawText;
       if (cancelledPromptIds.delete(failedPrompt.pendingId)) {
-        return;
+        return false;
       }
       if (activePrompt !== failedPrompt) throw error;
       if (sourceSessionId !== activeSessionId) {
@@ -2040,7 +2794,7 @@
         throw error;
       }
       sessionResponse.fail(sourceSessionId);
-      if (!input) input = text;
+      if (ownsDraft && !input) input = rawText;
       messages = messages.map((message) => message.id === pendingId ? { ...message, pending: false } : message);
       const message = setSessionRuntimeError(activeSessionId, error);
       if (message.includes("设置与凭据") || message.includes("Settings & Credentials")) openManagement("settings");
@@ -2049,21 +2803,75 @@
         if (!runtimeConnectionError) runtimeError = "";
         throw new Error(message);
       }
+      return false;
     }
+    return true;
   }
 
-  async function retryLastPrompt(): Promise<void> {
+  // automatic=true 表示这次重试由系统触发：它不能重置「每会话只自动重试一次」的标记，
+  // 否则失败一次就会无限重试（#334）。
+  async function retryLastPrompt(options: { automatic?: boolean } = {}): Promise<void> {
     const failed = lastFailedPrompt;
     if (!failed || failed.sessionId !== activeSessionId || sending) return;
+    // 先清失败态才能重新提交（canSubmit 受它影响）；提交未被接受时把失败态恢复。
     sessionResponse.clearFailure();
     runtimeError = "";
     const { [failed.sessionId]: _cleared, ...remaining } = sessionErrors;
     sessionErrors = remaining;
     messages = messages.filter((message) => message.id !== failed.pendingId);
     input = failed.text;
-    await submit(undefined, failed.images, failed.files);
+    automaticRetrySubmission = options.automatic === true;
+    let accepted = false;
+    try {
+      accepted = await submit(undefined, failed.images, failed.files);
+    } finally {
+      automaticRetrySubmission = false;
+    }
+    if (accepted) {
+      // 重试成功后刷新官方队列快照：DSH 之前可能已经消费掉了对应的排队条目。
+      void syncSessionQueue(failed.sessionId);
+    } else if (lastFailedPrompt?.pendingId === failed.pendingId) {
+      // submit 已经记录过失败（长新 pendingId 的情况不会进这里），避免重复 fail 覆盖状态。
+      sessionResponse.fail(failed.sessionId);
+    }
   }
 
+  /**
+   * 401 自愈：用随包内置凭据重新授权，然后把刚才那条提问重发一次。
+   * 每一条失败提问只尝试一次，避免连续失败时无限重试。
+   */
+  async function repairBundledCredentialAndRetry(options: { manual?: boolean } = {}): Promise<boolean> {
+    const shell = window.voltDesktop;
+    const failed = lastFailedPrompt;
+    if (!client || !shell?.resetBundledModelCredential || sending || autoRepairState === "running") return false;
+    if (!options.manual && (!canAutoRepairBundledCredential || !failed || failed.sessionId !== activeSessionId)) return false;
+    const repairKey = `${activeSessionId}:${failed?.pendingId ?? "current"}`;
+    if (!options.manual && autoRepairHandled.has(repairKey)) return false;
+    autoRepairHandled.add(repairKey);
+    autoRepairState = "running";
+    autoRepairNotice = t("errors.autoRepairRunning");
+    try {
+      const result = await shell.resetBundledModelCredential();
+      if (!result.available || !result.reset) {
+        autoRepairState = "failed";
+        autoRepairNotice = t("errors.autoRepairUnavailable");
+        return false;
+      }
+      if (client) {
+        const described = await client.describeCredentials(["XG_GOMODEL_API_KEY"]).catch(() => undefined);
+        if (described) credentials = { ...credentials, ...described.credentials };
+      }
+      clearCredentialRequirementError();
+      autoRepairState = "done";
+      autoRepairNotice = t("errors.autoRepairDone");
+      await retryLastPrompt({ automatic: true });
+      return true;
+    } catch (error) {
+      autoRepairState = "failed";
+      autoRepairNotice = userFacingError(error);
+      return false;
+    }
+  }
   async function retryInterruptedTask(): Promise<void> {
     if (!client || !sessionResponse.canSubmit || continuingTask || !activeSessionId || pendingApproval || pendingQuestion) return;
     const sessionId = activeSessionId;
@@ -2301,6 +3109,9 @@
        sessionSelectionRequest += 1;
        activeSessionId = "";
        input = "";
+       streamRenderScheduler.clear();
+       streamRenderSessionId = "";
+       streamRenderPending = undefined;
        messages = [];
        todos = [];
        historyEntries = [];
@@ -2314,10 +3125,91 @@
      delete draftFilesBySession[sessionId];
      clearAttachmentFiles(sessionId);
      await refresh();
+     lastArchivedSessionId = sessionId;
      managementNotice = t("session.archiveSuccess");
    });
    if (!deleted && managementError && view === "conversation") runtimeError = managementError;
  }
+
+/**
+ * 活跃会话的「删除会话」（#370）：先归档（数据安全策略不变），再永久删除本地会话日志。
+ * 与归档的区别写进确认文案：不可恢复、但工作区文件与项目记忆不受影响。
+ */
+async function deleteSessionPermanently(sessionId: string): Promise<void> {
+  const api = window.voltDesktop;
+  const session = sessions.find((item) => item.sessionId === sessionId);
+  if (!client || !api || !desktopFeatures.permanentSessionDeletion || !session || session.running || managementBusy || confirmingDeleteSessionId !== sessionId) return;
+  confirmingDeleteSessionId = "";
+  const deleted = await performManagementAction(`session-purge-active:${sessionId}`, async () => {
+    await client!.archiveSession(sessionId);
+    await api.deleteArchivedSession(sessionId);
+    recordSessionOperation("purged", sessionId, sessionTitle(session));
+    allSessions = allSessions.filter((item) => item.sessionId !== sessionId);
+    archivedSessionIds = archivedSessionIds.filter((id) => id !== sessionId);
+    if (activeSessionId === sessionId) {
+      sessionSelectionRequest += 1;
+      activeSessionId = "";
+      input = "";
+      streamRenderScheduler.clear();
+      streamRenderSessionId = "";
+      streamRenderPending = undefined;
+      messages = [];
+      todos = [];
+      historyEntries = [];
+      historyHasMore = false;
+      historyLoading = false;
+      historyLoad = undefined;
+      sessionResponse.dispose();
+    }
+    pendingInteractionsBySession = clearPendingSession(pendingInteractionsBySession, sessionId);
+    delete sessionDrafts[sessionId];
+    delete draftFilesBySession[sessionId];
+    clearAttachmentFiles(sessionId);
+    await refresh();
+    managementNotice = t("session.deleteForeverSuccess");
+  });
+  if (!deleted && managementError && view === "conversation") runtimeError = managementError;
+}
+
+/** 撤销归档：把刚归档的会话恢复到列表（#371）。 */
+async function undoArchiveSession(): Promise<void> {
+  const sessionId = lastArchivedSessionId;
+  if (!sessionId || !client || managementBusy) return;
+  lastArchivedSessionId = "";
+  await performManagementAction(`session-undo-archive:${sessionId}`, async () => {
+    const result = await client!.unarchiveSession(sessionId);
+    archivedSessionIds = result.archivedSessionIds;
+    await refresh();
+    managementNotice = t("session.archiveUndone");
+  });
+}
+
+/** 清空本对话（#373）：删除当前会话的对话记录，工作区文件与项目记忆不受影响。 */
+async function clearActiveConversation(): Promise<void> {
+  const sessionId = activeSessionId;
+  const api = window.voltDesktop;
+  if (!client || !api || !desktopFeatures.permanentSessionDeletion || !sessionId || sending || !confirmingClearConversation) return;
+  confirmingClearConversation = false;
+  const session = allSessions.find((item) => item.sessionId === sessionId);
+  await performManagementAction(`session-clear:${sessionId}`, async () => {
+    await client!.archiveSession(sessionId);
+    await api.deleteArchivedSession(sessionId);
+    archivedSessionIds = archivedSessionIds.filter((id) => id !== sessionId);
+    allSessions = allSessions.filter((item) => item.sessionId !== sessionId);
+    recordSessionOperation("purged", sessionId, session ? sessionTitle(session) : sessionId);
+    await refresh();
+    const created = await client!.createSession();
+    activeSessionId = created.sessionId;
+    messages = [];
+    todos = [];
+    historyEntries = [];
+    historyHasMore = false;
+    historyLoading = false;
+    input = "";
+    managementNotice = t("session.clearConversationSuccess");
+    await refresh();
+  });
+}
 
  async function restoreArchivedSession(sessionId: string): Promise<void> {
    const session = archivedSessions.find((item) => item.sessionId === sessionId);
@@ -2334,7 +3226,7 @@
  async function purgeArchivedSession(sessionId: string): Promise<void> {
    const api = window.voltDesktop;
    const session = archivedSessions.find((item) => item.sessionId === sessionId);
-   if (!client || !api || managementBusy || confirmingArchivedSessionId !== sessionId) return;
+   if (!client || !api || !desktopFeatures.permanentSessionDeletion || managementBusy || confirmingArchivedSessionId !== sessionId) return;
    confirmingArchivedSessionId = "";
    await performManagementAction(`session-purge:${sessionId}`, async () => {
      await api.deleteArchivedSession(sessionId);
@@ -2348,7 +3240,7 @@
 
  async function cleanupArchivedSessions(): Promise<void> {
    const api = window.voltDesktop;
-   if (!client || !api || managementBusy || !confirmingArchivedCleanup) return;
+   if (!client || !api || !desktopFeatures.permanentSessionDeletion || managementBusy || !confirmingArchivedCleanup) return;
    const targets = archivedSessions.filter((session) => !session.running);
    confirmingArchivedCleanup = false;
    if (targets.length === 0) return;
@@ -2634,6 +3526,8 @@
       settingsNamespaces = settingsNamespaces.map((item) => item.ns === updated.ns ? updated : item);
       settingsDraft = JSON.stringify(updated.user || {}, null, 2);
       managementNotice = updated.applies === "restart" ? t("settings.savedRestartNotice") : t("settings.savedNotice");
+      // 高级 JSON 也能改外部知识源：写完必须重算指纹，否则旧验证结论会被沿用到新配置上。
+      if (updated.ns === "weknora") await refreshExternalKnowledgeState();
     });
   }
 
@@ -2676,6 +3570,10 @@
     if (!client || !ref || !value || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(ref)) return;
     const saved = await performManagementAction("credential-set:" + ref, async () => {
       await client!.setCredential(ref, value);
+      // 轮换凭据同样会改变鉴权结果：指纹只看「是否已配置」，同 ref 换 key 不会变，必须显式作废。
+      await refreshExternalKnowledgeState();
+      if (ref === externalKnowledgeKeyRef) invalidateExternalKnowledgeVerification();
+      userSavedCredentialRefs = new Set([...userSavedCredentialRefs, ref]);
       credentialValueDraft = "";
       credentials = { ...credentials, ...(await client!.describeCredentials([ref])).credentials };
       if (!credentialRefs.includes(ref)) credentialRefs = [...credentialRefs, ref].sort();
@@ -2722,6 +3620,9 @@
     if (!client) return;
     await performManagementAction("credential-unset:" + ref, async () => {
       await client!.unsetCredential(ref);
+      // 先刷新外部知识源状态：凭据回读失败不能连带跳过验证作废。
+      await refreshExternalKnowledgeState();
+      if (ref === externalKnowledgeKeyRef) invalidateExternalKnowledgeVerification();
       credentials = { ...credentials, ...(await client!.describeCredentials([ref])).credentials };
       confirmingCredentialRef = "";
       managementNotice = t("settings.credentialRemovedNotice");
@@ -2781,11 +3682,7 @@
     return (entry.mode === "continuable" ? t("subagents.continuable") : t("subagents.oneOff")) + " · " + (entry.activity === "running" ? t("common.running") : t("common.pending"));
   }
   function credentialSummary(ref: string): string {
-    const credential = credentials[ref];
-    const source = credential?.source;
-    const label = source === "env" ? t("settings.sourceEnvironment")
-      : source === "file" ? t("settings.sourceFile") : source || t("settings.userLayerShort");
-    return credential?.configured ? `${t("settings.configured")} · ${label}` : t("settings.notConfigured");
+    return credentialStatusLabel(credentials[ref], { ref }, t);
   }
   function switchManagementTab(tab: ManagementTab): void {
     managementTab = tab;
@@ -2802,17 +3699,112 @@
         ? ["plugin"]
         : tab === "mcp"
           ? ["mcp"]
+          : tab === "extensions"
+            ? ["extensions"]
           : tab === "knowledge"
             ? ["externalKnowledge", "knowledgeSkill", "knowledgeScope"]
+            : tab === "skills"
+              ? ["skillStore"]
+              : tab === "automation"
+                ? ["automation"]
           : [];
     if (componentNames.length) void ensureManagementComponents(componentNames);
     void refreshManagement();
   }
+  // 扩展能力是一级入口（#360）：直接进管理页的该页签，不再要求「设置 → 管理工具」三步。
+  function openExtensions(): void {
+    openManagement("extensions");
+  }
+  const extensionsViewActive = $derived(view === "settings" && managementTab === "extensions");
   function openManagement(tab: ManagementTab): void {
     closeMobileSidebar(false);
     view = "settings";
     void tick().then(() => document.getElementById("workbench-content")?.focus());
     switchManagementTab(tab);
+  }
+  function dismissCustomizationPanel(): void {
+    if (customizationOpen && !customizationDraft) customizationOpen = false;
+  }
+  // 界面设置是低频工具：切换会话后自动收起，避免长期占据对话区首屏（#343）。
+  let customizationSessionId = "";
+  $effect(() => {
+    const current = activeSessionId;
+    if (customizationSessionId && current !== customizationSessionId) {
+      // 先清掉待确认的方案再收起，否则 dismissCustomizationPanel 会因 draft 存在而跳过。
+      customizationDraft = undefined;
+      customizationOpen = false;
+      // 空会话建议按当前会话的工作区重新分类，先回到默认再按新路径判定。
+      workspaceKind = "documents";
+    }
+    customizationSessionId = current;
+  });
+  // 知识库页面也可以直接打开（不经过管理页签），这里独立刷新一次外部源可用性（#348）。
+  // 读取失败保持 unknown：只有明确的负面证据才判 unavailable，避免把可用的外部源误锁住。
+  /** 显式作废外部知识源的「本次已验证」结论（凭据轮换等指纹看不出来的变化）。 */
+  function invalidateExternalKnowledgeVerification(): void {
+    externalKnowledgeVerifiedEpoch += 1;
+    externalKnowledgeVerified = false;
+    externalKnowledgeSignature = "";
+    if (knowledgeScope !== "local") knowledgeScope = "local";
+  }
+
+  async function refreshExternalKnowledgeState(): Promise<void> {
+    const activeClient = client;
+    if (!activeClient) return;
+    // 竞态保护：如果刷新期间用户刚通过了连接测试，本次读到的旧配置不得覆盖新结论。
+    const verifiedEpoch = externalKnowledgeVerifiedEpoch;
+    // 刷新期间旧结论不再可信，先回到 unknown，防止沿用过期的 ready/unavailable。
+    externalKnowledgeState = "unknown";
+    let settings: Awaited<ReturnType<DshClient["describeSettings"]>>;
+    try {
+      settings = await activeClient.describeSettings();
+    } catch {
+      return;
+    }
+    if (client !== activeClient) return;
+    const weknora = settings.namespaces.find((item) => item.ns === "weknora")?.value as Record<string, unknown> | undefined;
+    const keyRef = typeof weknora?.apiKeyRef === "string" && weknora.apiKeyRef ? weknora.apiKeyRef : "WEKNORA_API_KEY";
+    externalKnowledgeKeyRef = keyRef;
+    let plugins: Awaited<ReturnType<DshClient["listPluginInventory"]>> | undefined;
+    try {
+      plugins = await activeClient.listPluginInventory();
+    } catch {
+      plugins = undefined;
+    }
+    if (client !== activeClient) return;
+    let credential: { configured?: boolean } | undefined;
+    let credentialLookupFailed = false;
+    if (weknora) {
+      try {
+        const described = await activeClient.describeCredentials([keyRef]);
+        if (client !== activeClient) return;
+        credential = described.credentials?.[keyRef];
+      } catch {
+        credentialLookupFailed = true;
+      }
+    }
+    const plugin = plugins?.entries?.find((item) => item.moduleName === "@wxg-prc-cpg/dsh-weknora");
+    externalKnowledgeState = externalKnowledgeStateFrom({
+      namespace: weknora,
+      plugin,
+      credential,
+      pluginLookupFailed: plugins === undefined,
+      credentialLookupFailed,
+    });
+    // 凭据读取失败时不要把它当成「凭据没了」，否则一次瞬时失败就等于作废验证结论。
+    const signature = credentialLookupFailed
+      ? externalKnowledgeSignature
+      : externalSourceSignature(weknora, credential?.configured === true);
+    if (signature !== externalKnowledgeSignature) {
+      if (externalKnowledgeVerifiedEpoch !== verifiedEpoch && externalKnowledgeVerified) return;
+      // 地址、租户、知识库范围或凭据变了：旧的成功结论不再成立，必须重新测试连接。
+      // 注意这里不回写 externalKnowledgeSignature 给设置页当作「已验证」，只清空结论。
+      externalKnowledgeSignature = signature;
+      externalKnowledgeVerified = false;
+    }
+    if (externalScopeState({ state: externalKnowledgeState, verifiedInSession: externalKnowledgeVerified }) === "local-only" && knowledgeScope !== "local") {
+      knowledgeScope = "local";
+    }
   }
   function openKnowledge(): void {
     closeMobileSidebar(false);
@@ -2821,6 +3813,7 @@
     managementError = "";
     managementNotice = "";
     void ensureManagementComponents(["externalKnowledge", "knowledgeSkill", "knowledgeScope"]);
+    void refreshExternalKnowledgeState();
     void refreshManagement();
   }
   // 知识库由多个独立滚动区组成，进入页面时统一回到顶部，避免停留在上一次的旧位置。
@@ -2858,7 +3851,10 @@
       status: status === "ready" || status === "partial" ? status : "failed",
       root: typeof stored?.root === "string" ? stored.root : path,
       files: typeof stored?.files === "number" ? stored.files : 0,
+      ...(typeof stored?.indexed === "number" ? { indexed: stored.indexed } : {}),
+      ...(typeof stored?.skipped === "number" ? { skipped: stored.skipped } : {}),
       chunks: typeof stored?.chunks === "number" ? stored.chunks : 0,
+      ...(typeof stored?.placeholders === "number" ? { placeholders: stored.placeholders } : {}),
       failures: Array.isArray(stored?.failures) ? stored.failures.filter((item): item is string => typeof item === "string") : [],
       ...(typeof stored?.updatedAt === "string" ? { updatedAt: stored.updatedAt } : {}),
     };
@@ -2871,7 +3867,10 @@
         status: snapshot.status,
         root: snapshot.root ?? path,
         files: snapshot.files ?? 0,
+        ...(snapshot.indexed === undefined ? {} : { indexed: snapshot.indexed }),
+        ...(snapshot.skipped === undefined ? {} : { skipped: snapshot.skipped }),
         chunks: snapshot.chunks ?? 0,
+        ...(snapshot.placeholders === undefined ? {} : { placeholders: snapshot.placeholders }),
         failures: snapshot.failures ?? [],
         updatedAt: snapshot.updatedAt ?? new Date().toISOString(),
       }));
@@ -2881,8 +3880,8 @@
   }
 
   const knowledgeMetrics = $derived.by<MetricStripItem[]>(() => [
-    { id: "files", label: t("knowledge.statWorkspace"), value: knowledgeIndex.files || 0, tone: "info", badge: { text: t("knowledge.filesUnit") } },
-    { id: "chunks", label: t("knowledge.statIndex"), value: knowledgeIndex.chunks || 0, tone: "primary", badge: { text: t("knowledge.chunksUnit") } },
+    { id: "files", label: t("knowledge.statSearchableFiles"), value: knowledgeSummary.indexed, tone: "info", badge: { text: t("knowledge.filesUnit") } },
+    { id: "chunks", label: t("knowledge.statIndex"), value: knowledgeSummary.searchableChunks, tone: "primary", badge: { text: t("knowledge.chunksUnit") } },
     { id: "skills", label: t("knowledge.statSkill"), value: skills.length, tone: "success", badge: { text: t("knowledge.callableCapabilities") } },
     {
       id: "state",
@@ -2895,7 +3894,7 @@
   function knowledgeStatusLabel(): string {
     if (knowledgeIndex.state === "building") return t("knowledge.indexing");
     if (knowledgeIndex.state === "ready") return t("knowledge.indexReady");
-    if (knowledgeIndex.state === "partial") return t("knowledge.indexPartial");
+    if (knowledgeIndex.state === "partial") return t("knowledge.indexPartialCounts", { indexed: knowledgeSummary.indexed, skipped: knowledgeSummary.skipped });
     if (knowledgeIndex.state === "failed") return t("knowledge.indexFailed");
     return workspacePath ? t("knowledge.statusLocalReady") : t("knowledge.statusLocalWaiting");
   }
@@ -2905,33 +3904,119 @@
     return !!activeSessionId;
   }
   async function runKnowledgeOperation(operation: KnowledgeOperation, query = ""): Promise<void> {
-    if (sending || !client || !(await ensureKnowledgeSession())) return;
+    // 互斥锁必须最先置位：下面有多个 await，双击会在等待期间并发建会话并提交两次检索。
+    if (sending || knowledgeQuerying || knowledgeOperation || !client) return;
     const normalizedQuery = query.trim();
     if (operation === "query" && !normalizedQuery) return;
+    knowledgeQuerying = operation === "query";
     knowledgeOperation = operation;
-    knowledgeIndex = {
-      ...knowledgeIndex,
-      state: "building",
-      ...(operation === "query" ? { query: normalizedQuery, matches: undefined } : {}),
-      ...(operation !== "query" ? { root: workspacePath, failures: [] } : {}),
-    };
-    const prompt = buildKnowledgePrompt(operation, workspacePath, normalizedQuery, knowledgeScope);
+    let submitted = false;
     try {
-      await submit(prompt);
+      const hadSession = !!activeSessionId;
+      if (!(await ensureKnowledgeSession())) return;
+      if (operation === "query" && !hadSession) knowledgeSessionNotice = t("knowledge.querySessionCreated");
+      if (operation === "query" && knowledgeScope !== "local" && !externalKnowledgeVerified) {
+        await refreshExternalKnowledgeState();
+        if (!externalKnowledgeVerified) {
+          knowledgeScope = "local";
+          managementNotice = t("knowledge.externalNeedsVerification");
+        }
+      }
+      // 外部源状态未确认时不能默认它可用：先刷新一次，仍无法确认就退回本地检索。
+      // 只有明确 unavailable 才禁用范围选择，避免把「读不到设置」误锁成不可用（#348）。
+      if (operation === "query" && knowledgeScope !== "local" && externalKnowledgeState === "unknown") {
+        await refreshExternalKnowledgeState();
+        if (externalKnowledgeState === "unknown") {
+          knowledgeScope = "local";
+          managementNotice = t("knowledge.externalStateUnknownFallback");
+        }
+      }
+      if (!client) return;
+      if (operation === "query") {
+        knowledgeQueryAnswer = "";
+        knowledgeQueryFinished = false;
+        knowledgeQueryStartIndex = messages.length;
+        knowledgeQuerySessionId = activeSessionId;
+      }
+      knowledgeIndex = {
+        ...knowledgeIndex,
+        ...(operation === "query" ? {} : { state: "building" as const }),
+        ...(operation === "query" ? { query: normalizedQuery, matches: undefined } : {}),
+        ...(operation !== "query" ? { root: workspacePath, failures: [] } : {}),
+      };
+      const prompt = buildKnowledgePrompt(operation, workspacePath, normalizedQuery, knowledgeScope);
+      // 先切到知识库页再提交，且提交过程不把视图切回会话：结果就地呈现（#353）。
       view = "knowledge";
       focusKnowledgePage();
+      await submit(prompt, [], [], activeSessionId, { keepView: true });
+      submitted = true;
     } catch (error) {
       knowledgeOperation = "";
+      knowledgeQuerying = false;
       knowledgeIndex = { ...knowledgeIndex, state: "failed", failures: [userFacingError(error)] };
       persistKnowledgeSnapshot(workspacePath, knowledgeIndex);
+    } finally {
+      // 未真正提交（没有会话、客户端断开等）时释放互斥，避免界面卡在“正在检索”。
+      if (!submitted) {
+        knowledgeOperation = "";
+        knowledgeQuerying = false;
+      }
     }
   }
   $effect(() => {
     syncKnowledgeForWorkspace(workspacePath);
   });
+  // 检索轮结束：把答案就地留在知识库页面，而不是只丢进新建的会话里（#344）。
+  $effect(() => {
+    if (!knowledgeQuerying || sending) return;
+    const answer = messages.slice(knowledgeQueryStartIndex)
+      .find((message) => message.role === "assistant" && (message.text ?? "").trim());
+    knowledgeQueryAnswer = stripKnowledgeArtifacts(answer?.text ?? "").trim();
+    knowledgeQueryFinished = true;
+    knowledgeQuerying = false;
+    knowledgeOperation = "";
+  });
 
+  // 提交后立刻把新消息滚进视野（#335）：只有在用户本来就停在最新位置时才抢滚动，
+  // 用户向上翻阅时保留原位，由消息区的“回到最新”按钮接管。
+  function transcriptAtLatest(): boolean {
+    const scroller = document.querySelector<HTMLElement>(".conversation-root .message-scroll");
+    if (!scroller) return false;
+    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 120;
+  }
+  function scrollTranscriptToLatest(): void {
+    void tick().then(() => {
+      const scroller = document.querySelector<HTMLElement>(".conversation-root .message-scroll");
+      if (!scroller) return;
+      scroller.scrollTop = scroller.scrollHeight;
+    });
+  }
+  // 裸文件名（没有 Markdown 链接）也要可点击：在工作区根目录按名字定位后打开（#355）。
+  async function openWorkspaceFileByName(name: string): Promise<void> {
+    const activeClient = client;
+    const root = workspacePath.trim();
+    const trimmed = name.trim();
+    if (!activeClient || !root || !trimmed || /[\\/]/u.test(trimmed)) return;
+    const separator = /[\\/]$/u.test(root) ? "" : /\\/u.test(root) ? "\\" : "/";
+    try {
+      await activeClient.openPath(`${root}${separator}${trimmed}`);
+    } catch {
+      managementNotice = t("transcript.openFileFailed");
+    }
+  }
   function permissionNotice(message: string): void { managementNotice = message; }
 </script>
+
+{#snippet managementComponentFallback(name: ManagementComponentName)}
+  {#if managementComponentErrors[name]}
+    <div class="management-load-error" role="alert">
+      <p>{managementComponentErrors[name]}</p>
+      <Button variant="outline" size="sm" onclick={() => void ensureManagementComponents([name])}><RotateCcw size={13} />{t("common.retry")}</Button>
+    </div>
+  {:else}
+    <Loader size={18} />
+  {/if}
+{/snippet}
 
 <svelte:head><title>{productName}</title></svelte:head>
 <ModeWatcher defaultMode="light" disableHeadScriptInjection />
@@ -2954,7 +4039,6 @@
       <div class="brand">
         <span class="brand-mark"><Bot size={15} /></span>
         <strong>{productName}</strong>
-        {#if appVersion}<span class="app-version" title={t("updates.currentVersion", { version: appVersion })}>v{appVersion}</span>{/if}
         <span class="status-dot" class:offline={!!runtimeConnectionError} class:warning={!runtimeConnectionError && activeSessionHasError} title={runtimeConnectionError ? t("overview.runtimeError") : (activeSessionHasError ? t("overview.runtimeNormalWithSessionError") : t("overview.runtimeNormal"))}></span>
       </div>
       <div class="topbar-center">
@@ -2980,6 +4064,8 @@
         <div id="workbench-menu" class="workbench-menu" popover="auto">
           <button aria-pressed={view === "conversation" && activityOpen} onclick={() => { closeWorkbenchMenu(); setActivityOpen(view !== "conversation" || !activityOpen); view = "conversation"; }}><History size={16} />{t("activity.title")}</button>
           <button disabled={messages.length === 0} onclick={() => { closeWorkbenchMenu(); downloadConversationMarkdown(); }}><Download size={16} />{t("transcript.download")}</button>
+          <button disabled={!desktopFeatures.permanentSessionDeletion || messages.length === 0 || sending} title={!desktopFeatures.permanentSessionDeletion ? t("session.permanentDeletionUnavailable") : undefined} onclick={() => { closeWorkbenchMenu(); confirmingClearConversation = true; }}><Trash2 size={16} />{t("session.clearConversation")}</button>
+          <button onclick={() => { closeWorkbenchMenu(); openExtensions(); }}><Blocks size={16} />{t("nav.extensions")}</button>
           <button onclick={() => { closeWorkbenchMenu(); openKnowledge(); }}><BookOpen size={16} />{t("nav.knowledge")}</button>
           <button onclick={() => { closeWorkbenchMenu(); view = "conversation"; customizationOpen = !customizationOpen; }}><SlidersHorizontal size={16} />{t("app.uiCustomization")}</button>
           <button onclick={() => { closeWorkbenchMenu(); void refresh(); }}><RefreshCw size={16} />{t("common.refresh")}</button>
@@ -3012,22 +4098,23 @@
             <Button variant="ghost" size="icon-sm" aria-label={t("session.newSession")} title={t("session.newSession")} onclick={() => void createSession()}>
               <MessageSquarePlus size={16} />
             </Button>
+            <Button variant="ghost" size="icon-sm" aria-label={`${t("nav.extensions")} (${capabilitiesEnabledCount})`} title={t("nav.extensions")} onclick={openExtensions}><Blocks size={16} /></Button>
             <Button variant="ghost" size="icon-sm" aria-label={t("nav.knowledge")} title={t("nav.knowledge")} onclick={openKnowledge}><BookOpen size={16} /></Button>
             <Button variant="ghost" size="icon-sm" aria-label={t("nav.settings")} title={t("nav.settings")} onclick={() => openManagement("settings")}><Settings2 size={16} /></Button>
           </div>
         {/if}
         <div id="sidebar-navigation" class="sidebar-navigation" hidden={!sidebarExpanded}>
           <div class="workspace-picker"><div class="section-label">{t("session.sessionScope")}</div><button class="workspace-row" onclick={() => newSessionDialogOpen = true}><FolderOpen size={15} /><span title={activeWorkspace?.path || defaultChatDirectory || workspacePath}>{activeWorkspace?.title || t("session.ordinarySession")}</span><ChevronRight size={14} /></button></div>
-          <div class="sidebar-search"><Search size={14} /><input bind:this={sessionSearchInput} aria-label={t("session.searchSessions")} placeholder={t("session.searchSessions")} bind:value={sessionQuery} />{#if sessionQuery}<button class="search-clear" aria-label={t("common.clear")} title={t("common.clear")} onclick={() => sessionQuery = ""}><X size={13} /></button>{/if}</div>
+          <div class="sidebar-search"><Search size={14} /><input bind:this={sessionSearchInput} aria-label={t("session.searchSessions")} placeholder={t("session.searchSessions")} title={sessionQuery || undefined} bind:value={sessionQuery} onkeydown={(event) => { if (event.key === "Escape" && sessionQuery) { event.stopPropagation(); sessionQuery = ""; } }} onblur={(event) => { event.currentTarget.scrollLeft = 0; }} />{#if sessionQuery}<button class="search-clear" aria-label={t("common.clear")} title={t("common.clear")} onclick={() => { sessionQuery = ""; sessionSearchInput?.focus(); }}><X size={13} /></button>{/if}</div>
           <Separator />
-          <div class="session-list"><div class="section-label section-row"><span>{t("nav.sessions")}</span><span class="session-shortcut-hint" title={t("session.shortcutHint")}>{t("session.shortcutHintShort")}</span><span class="count-badge">{filteredSessions.length}</span></div>{#if filteredSessions.length === 0}<div class="sidebar-empty"><Search size={16} /><span>{sessionQuery ? t("session.noSearchResults") : t("session.emptyActive")}</span>{#if !sessionQuery}<small>{t("session.emptyActiveDesc")}</small>{/if}</div>{:else}{#each filteredSessions as session (session.sessionId)}
+          <div class="session-list"><div class="section-label section-row"><span>{t("nav.sessions")}</span><span class="session-shortcut-hint" title={t("session.shortcutHint")}>{t("session.shortcutHintShort")}</span><span class="count-badge">{filteredSessions.length}</span></div>{#if filteredSessions.length === 0}<div class="sidebar-empty"><Search size={16} /><span>{sessionQuery ? t("session.noSearchResults") : t("session.emptyActive")}</span>{#if sessionQuery}<small>{t("session.noSearchResultsDesc")}</small><button class="search-empty-clear" onclick={() => { sessionQuery = ""; sessionSearchInput?.focus(); }}>{t("session.clearSearch")}</button>{:else}<small>{t("session.emptyActiveDesc")}</small>{/if}</div>{:else}{#each filteredSessions as session (session.sessionId)}
               {@const health = sessionHealth(session, !!sessionErrors[session.sessionId])}
               <div class:active={session.sessionId === activeSessionId && view === "conversation"} class="session-item">
               <button data-session-id={session.sessionId} title={sessionErrors[session.sessionId] || session.cwd || workspaceName} aria-current={session.sessionId === activeSessionId && view === "conversation" ? "page" : undefined} class="session-row" onclick={() => { closeMobileSidebar(); void selectSession(session.sessionId); }}>
-                <span class="session-state" class:running={health === "running"} class:error={health === "error"}></span>
+                <span class="session-state" class:running={health === "running"} class:error={health === "error"} class:migration={health === "migration-required"} title={health === "migration-required" ? t("session.statusMigrationRequired") : undefined}></span>
                 <span class="session-copy">
                   <strong>{sessionTitle(session)}</strong>
-                  <small>{projectNameForSession(session) || t("session.ordinarySession")}</small>
+                  <small>{health === "migration-required" ? t("session.statusMigrationRequired") : projectNameForSession(session)}</small>
                 </span>
                 <span class="session-meta-wrap">
                   <time>{formatTime(session.updatedAt)}</time>
@@ -3035,10 +4122,44 @@
               </button>
               <div class="session-item-actions">
                 <button class="session-delete" disabled={session.running || !!managementBusy} aria-label={`${t("session.archiveSession")}: ${sessionTitle(session)}`} title={session.running ? t("session.runningActionUnavailable") : t("session.archiveSession")} onclick={() => confirmingSessionId = session.sessionId}><Archive size={14} /></button>
+                <button class="session-delete session-purge" disabled={!desktopFeatures.permanentSessionDeletion || session.running || !!managementBusy} aria-label={`${t("session.deleteForever")}: ${sessionTitle(session)}`} title={!desktopFeatures.permanentSessionDeletion ? t("session.permanentDeletionUnavailable") : session.running ? t("session.runningActionUnavailable") : t("session.deleteForever")} onclick={() => confirmingDeleteSessionId = session.sessionId}><Trash2 size={14} /></button>
               </div>
               </div>
-            {/each}{/if}</div>
+            {/each}{/if}
+            {#if lastArchivedSessionId && !sessionQuery}
+              <div class="session-undo" role="status">
+                <span>{t("session.archiveSuccess")}</span>
+                <Button variant="ghost" size="sm" onclick={() => void undoArchiveSession()}><RotateCcw size={13} />{t("session.archiveUndo")}</Button>
+              </div>
+            {/if}
+            <div class="archived-sessions">
+              <button class="archived-toggle" aria-expanded={archivedListOpen} aria-controls="sidebar-archived-list" onclick={() => { archivedListOpen = !archivedListOpen; }} title={t("session.archivedSectionTitle")}>
+                <Archive size={14} />
+                <span>{archivedListOpen ? t("session.archivedSectionCollapse") : t("session.archivedSectionExpand", { count: archivedSessions.length })}</span>
+                <span class="count-badge">{archivedSessions.length}</span>
+              </button>
+              {#if archivedListOpen}
+                <div id="sidebar-archived-list" class="archived-list">
+                  <p class="archived-hint">{t("session.archivedListDesc")}</p>
+                  {#if archivedSessions.length === 0}
+                    <p class="archived-empty">{t("session.emptyArchived")}</p>
+                  {:else}
+                    {#each archivedSessions as session (session.sessionId)}
+                      <div class="archived-item">
+                        <span title={sessionTitle(session)}>{sessionTitle(session)}</span>
+                        <div class="archived-item-actions">
+                          <button disabled={!!managementBusy} aria-label={`${t("common.restore")}: ${sessionTitle(session)}`} title={t("common.restore")} onclick={() => void restoreArchivedSession(session.sessionId)}><RotateCcw size={13} /></button>
+                          <button disabled={!desktopFeatures.permanentSessionDeletion || !!managementBusy || session.running} aria-label={`${t("session.deleteForever")}: ${sessionTitle(session)}`} title={!desktopFeatures.permanentSessionDeletion ? t("session.permanentDeletionUnavailable") : t("session.deleteForever")} onclick={() => confirmingArchivedSessionId = session.sessionId}><Trash2 size={13} /></button>
+                        </div>
+                      </div>
+                    {/each}
+                  {/if}
+                </div>
+              {/if}
+            </div>
+          </div>
           <div class="sidebar-footer">
+            <Button variant="ghost" class={`footer-button${extensionsViewActive ? " active" : ""}`} onclick={openExtensions}><Blocks size={15} />{t("nav.extensions")}<span class="count-badge">{capabilitiesEnabledCount}</span></Button>
             <Button variant="ghost" class={`footer-button${view === "knowledge" ? " active" : ""}`} onclick={openKnowledge}><BookOpen size={15} />{t("nav.knowledge")}</Button>
             <Button variant="ghost" class={`footer-button${view === "settings" ? " active" : ""}`} onclick={() => openManagement("settings")}><Settings2 size={15} />{t("nav.settings")}</Button>
           </div>
@@ -3055,6 +4176,7 @@
                 ariaLabel={t("app.managementNavAria")}
                 labels={{
                   overview: t("nav.overview"),
+                  extensions: t("nav.extensions"),
                   sessions: t("nav.sessions"),
                   goals: t("nav.goals"),
                   subagents: t("nav.subagents"),
@@ -3065,6 +4187,8 @@
                   plugins: t("nav.plugins"),
                   mcp: t("nav.mcp"),
                   knowledge: t("nav.knowledge"),
+                  skills: t("nav.skills"),
+                  automation: t("nav.automation"),
                   settings: t("nav.settings"),
                   runtime: t("nav.runtime"),
                 }}
@@ -3079,7 +4203,7 @@
                 {#if managementError}<div class="management-feedback error"><CircleAlert size={14} /><span>{managementError}</span><button aria-label={t("app.closeManagementError")} onclick={() => managementError = ""}><X size={13} /></button></div>{/if}
                 {#if managementNotice}<div class="management-feedback success"><CircleCheck size={14} /><span>{managementNotice}</span><button aria-label={t("app.closeManagementNotice")} onclick={() => managementNotice = ""}><X size={13} /></button></div>{/if}
                 {#if managementTab === "overview"}
-                  <div class="management-summary-grid"><button onclick={() => switchManagementTab("sessions")}><span class="summary-icon"><MessageSquare size={16} /></span><strong>{t("overview.sessionsTitle")}</strong><small>{t("overview.sessionsDesc", { active: sessions.length, archived: archivedSessionIds.length })}</small></button><button onclick={() => switchManagementTab("models")}><span class="summary-icon"><Bot size={16} /></span><strong>{t("overview.modelsTitle")}</strong><small>{selectedModel || t("overview.noModelSelected")}</small></button><button onclick={() => switchManagementTab("settings")}><span class="summary-icon"><Settings2 size={16} /></span><strong>{t("overview.settingsTitle")}</strong><small>{t("overview.settingsDesc", { namespaces: settingsNamespaces.length, credentials: credentialRefs.length })}</small></button><button onclick={() => switchManagementTab("runtime")}><span class="summary-icon"><ShieldAlert size={16} /></span><strong>{t("overview.runtimeTitle")}</strong><small>{runtimeConnectionError ? t("overview.runtimeError") : t("overview.runtimeNormal")}</small></button></div>
+                  <div class="management-summary-grid"><button onclick={() => switchManagementTab("sessions")}><span class="summary-icon"><MessageSquare size={16} /></span><strong>{t("overview.sessionsTitle")}</strong><small>{t("overview.sessionsDesc", { active: sessions.length, archived: archivedSessionIds.length })}</small></button><button onclick={() => switchManagementTab("models")}><span class="summary-icon"><Bot size={16} /></span><strong>{t("overview.modelsTitle")}</strong><small>{selectedModel || t("overview.noModelSelected")}</small></button><button onclick={() => switchManagementTab("settings")}><span class="summary-icon"><Settings2 size={16} /></span><strong>{t("overview.settingsTitle")}</strong><small>{t("overview.settingsDesc", { namespaces: settingsNamespaces.length, credentials: credentialRefs.length })}</small></button><button onclick={() => switchManagementTab("runtime")}><span class="summary-icon"><ShieldAlert size={16} /></span><strong>{t("overview.runtimeTitle")}</strong><small>{runtimeStatusKind === "unavailable" ? t("runtime.statusUnavailable") : runtimeStatusKind === "loading" ? t("runtime.statusLoading") : t("overview.runtimeNormal")}</small></button></div>
                   <SettingsGroup title={t("overview.currentSession")} description={t("overview.currentSessionDesc")}><div class="diagnostic-row"><span>{t("overview.sessionLabel")}</span><strong>{activeSession ? sessionTitle(activeSession) : t("overview.unselected")}</strong></div><div class="diagnostic-row"><span>{t("overview.workspaceLabel")}</span><strong>{workspacePath || t("overview.unselected")}</strong></div><div class="diagnostic-row"><span>{t("overview.modelLabel")}</span><strong>{selectedModel || t("overview.defaultModel")}</strong></div></SettingsGroup>
                 {:else if managementTab === "sessions"}
                   <SettingsGroup title={t("session.sessionManagement")} description={t("session.sessionManagementDesc")}>
@@ -3128,7 +4252,7 @@
                   <SettingsGroup title={t("session.archivedSessions")} description={t("session.archivedListDesc")}>
                     <div class="management-actions archived-session-toolbar">
                       <span class="management-capability">{t("session.archivedCount", { count: archivedSessions.length })}</span>
-                      <Button variant="outline" size="sm" disabled={!!managementBusy || archivedSessions.length === 0} onclick={() => confirmingArchivedCleanup = true}><Trash2 size={14} />{t("session.cleanupArchived")}</Button>
+                      <Button variant="outline" size="sm" disabled={!desktopFeatures.permanentSessionDeletion || !!managementBusy || archivedSessions.length === 0} title={!desktopFeatures.permanentSessionDeletion ? t("session.permanentDeletionUnavailable") : undefined} onclick={() => confirmingArchivedCleanup = true}><Trash2 size={14} />{t("session.cleanupArchived")}</Button>
                     </div>
                     {#if filteredArchivedSessions.length === 0}
                       <DataState state="empty" title={archivedSessions.length === 0 ? t("session.emptyArchived") : t("session.noArchivedMatches")} description={t("session.archivedListDesc")} />
@@ -3147,7 +4271,7 @@
                             </div>
                             <div class="row-actions session-actions">
                               <Button variant="ghost" size="icon-sm" aria-label={t("session.restoreSession")} title={t("session.restoreSession")} disabled={!!managementBusy} onclick={() => void restoreArchivedSession(item.sessionId)}><RotateCcw size={14} /></Button>
-                              <Button variant="ghost" size="icon-sm" aria-label={t("session.deleteSession")} title={t("session.deleteSession")} disabled={!!managementBusy || item.running} onclick={() => confirmingArchivedSessionId = item.sessionId}><Trash2 size={14} /></Button>
+                              <Button variant="ghost" size="icon-sm" aria-label={t("session.deleteSession")} title={!desktopFeatures.permanentSessionDeletion ? t("session.permanentDeletionUnavailable") : t("session.deleteSession")} disabled={!desktopFeatures.permanentSessionDeletion || !!managementBusy || item.running} onclick={() => confirmingArchivedSessionId = item.sessionId}><Trash2 size={14} /></Button>
                             </div>
                           </div>
                         {/each}
@@ -3344,11 +4468,11 @@
                           {#each group.models as model (model.id)}
                             <button class:chosen={modelSelectionKey(group.id, model.id) === selectedModel} class="model-option" disabled={modelBusy || !modelCredentialConfigured(group.id)} title={modelCredentialConfigured(group.id) ? undefined : t("models.missingProviderKey")} onclick={() => void chooseModel(group.id, model.id)}>
                               <span>
-                                <strong>{model.name}</strong>
+                                <strong title={model.name}>{stripInternalAlias(model.name)}</strong>
                                 <small>
                                   {modelCredentialConfigured(group.id) ? modelCapabilityLabel(model, group.id === "xg-gomodel" && unknownModelCapabilities.has(model.id)) : t("models.needApiKey")}
-                                  {#if model.contextWindow} · {t("models.contextWindow", { count: model.contextWindow.toLocaleString() })}{/if}
-                                  {#if model.maxTokens} · {t("models.maxTokens", { count: model.maxTokens.toLocaleString() })}{/if}
+                                  {#if model.contextWindow} · {t("models.contextWindow", { count: formatTokenSpec(model.contextWindow) })}{/if}
+                                  {#if model.maxTokens} · {t("models.maxTokens", { count: formatTokenSpec(model.maxTokens) })}{/if}
                                 </small>
                               </span>
                               {#if modelSelectionKey(group.id, model.id) === selectedModel}
@@ -3371,14 +4495,17 @@
                             <div class="catalog-models-list">
                               {#each group.models as model (model.id)}
                                 <div class="catalog-model-row">
-                                  <strong>{model.name}</strong>
-                                  <small>{model.id}{#if model.contextWindow} · {t("models.contextWindow", { count: model.contextWindow.toLocaleString() })}{/if}{#if model.maxTokens} · {t("models.maxTokens", { count: model.maxTokens.toLocaleString() })}{/if}</small>
+                                  <strong title={model.name}>{stripInternalAlias(model.name)}</strong>
+                                  <small>{model.id}{#if model.contextWindow} · {t("models.contextWindow", { count: formatTokenSpec(model.contextWindow) })}{/if}{#if model.maxTokens} · {t("models.maxTokens", { count: formatTokenSpec(model.maxTokens) })}{/if}</small>
                                 </div>
                               {/each}
                             </div>
                           </div>
                         {/each}
                       </div>
+                    {/if}
+                    {#if describeSpecDifference(availableModelGroups.flatMap((group) => group.models.map((model) => model.maxTokens)))}
+                      <p class="knowledge-note"><CircleAlert size={14} /><span>{t("models.outputLimitVaries")}</span></p>
                     {/if}
                     {#if catalogFailures.length > 0}
                       <div class="knowledge-note">
@@ -3443,17 +4570,34 @@
                     {/if}
                   </SettingsGroup>
                   <SettingsGroup title={t("workspaces.officialOrder")} description={t("workspaces.officialOrderDesc")}><div class="management-list">{#each filteredWorkspaces as workspace, index (workspace.workspaceId)}<div class="management-list-row"><span class="row-icon"><FolderOpen size={15} /></span><div><strong>{workspace.title}</strong><small>{t("workspaces.sessionsCount", { count: workspace.sessionIds.length })}</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label={t("workspaces.moveWorkspaceUp")} title={t("workspaces.moveWorkspaceUp")} disabled={index === 0 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, -1)}><ChevronDown class="rotate-180" size={14} /></Button><Button variant="ghost" size="icon-sm" aria-label={t("workspaces.moveWorkspaceDown")} title={t("workspaces.moveWorkspaceDown")} disabled={index === filteredWorkspaces.length - 1 || !!managementBusy} onclick={() => void moveWorkspace(workspace.workspaceId, 1)}><ChevronDown size={14} /></Button></div></div>{#each workspace.sessionIds as sessionId, sessionIndex (sessionId)}<div class="management-list-row nested-order-row"><span class="row-icon"><MessageSquare size={13} /></span><div><strong>{sessionTitle(sessions.find((item) => item.sessionId === sessionId) || { sessionId, updatedAt: 0, running: false, blank: false })}</strong><small>{sessionId}</small></div><div class="row-actions"><Button variant="ghost" size="icon-sm" aria-label={t("workspaces.moveSessionUp")} title={t("workspaces.moveSessionUp")} disabled={sessionIndex === 0 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, -1)}><ChevronDown class="rotate-180" size={13} /></Button><Button variant="ghost" size="icon-sm" aria-label={t("workspaces.moveSessionDown")} title={t("workspaces.moveSessionDown")} disabled={sessionIndex === workspace.sessionIds.length - 1 || !!managementBusy} onclick={() => void moveWorkspaceSession(workspace, sessionId, 1)}><ChevronDown size={13} /></Button></div></div>{/each}{/each}</div></SettingsGroup>
+                {:else if managementTab === "automation"}
+                  {#if AutomationPanelComponent}
+                    <AutomationPanelComponent {client} onNotice={(message: string) => managementNotice = message} onError={(message: string) => managementError = message} />
+                  {:else}{@render managementComponentFallback("automation")}{/if}
                 {:else if managementTab === "mounts"}
                   <SmbMounts />
+                {:else if managementTab === "skills"}
+                  {#if SkillStoreComponent}<SkillStoreComponent {client} />{:else}{@render managementComponentFallback("skillStore")}{/if}
                 {:else if managementTab === "plugins"}
-                  {#if PluginInventoryComponent}<PluginInventoryComponent entries={pluginInventory} onRefresh={() => void refreshManagement()} />{:else}<Loader size={18} />{/if}
+                  {#if PluginInventoryComponent}<PluginInventoryComponent {client} entries={pluginInventory} onRefresh={() => void refreshManagement()} onNotice={(message: string) => managementNotice = message} onError={(message: string) => managementError = message} />{:else}{@render managementComponentFallback("plugin")}{/if}
+                {:else if managementTab === "extensions"}
+                  {#if ExtensionCapabilitiesComponent}
+                    <ExtensionCapabilitiesComponent
+                      {capabilities}
+                      browserSkillVersion={browserSkillVersionLabel}
+                      busy={capabilitiesBusy || loading}
+                      error={managementError}
+                      onToggle={(key: CapabilityKey) => toggleCapability(key as DesktopCapabilityKey)}
+                      onRefresh={() => void refreshManagement()}
+                    />
+                  {:else}{@render managementComponentFallback("extensions")}{/if}
                 {:else if managementTab === "mcp"}
-                  {#if McpInventoryComponent}<McpInventoryComponent entries={pluginInventory} onRefresh={() => void refreshManagement()} onNavigateToSettings={() => openManagement("settings")} />{:else}<Loader size={18} />{/if}
+                  {#if McpInventoryComponent}<McpInventoryComponent entries={pluginInventory} onRefresh={() => void refreshManagement()} onNavigateToSettings={() => openManagement("settings")} />{:else}{@render managementComponentFallback("mcp")}{/if}
                 {:else if managementTab === "knowledge"}
                   <MetricStrip items={knowledgeMetrics} columns={4} ariaLabel={t("knowledge.title")} />
                   <SettingsGroup title={t("knowledge.searchTitle")} description={t("knowledge.searchSub")}>
-                    <div class="knowledge-search-row"><Input aria-label={t("knowledge.questionAria")} bind:value={input} placeholder={t("knowledge.searchPlaceholder")} /><Button size="sm" disabled={(knowledgeScope === "local" && !workspacePath) || !input.trim() || sending || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("query", input)}><Search size={14} />{t("knowledge.searchBtn")}</Button></div>
-                    <div class="knowledge-search-options">{#if KnowledgeScopePickerComponent}<KnowledgeScopePickerComponent bind:scope={knowledgeScope} />{:else}<Loader size={18} />{/if}<span class="knowledge-search-hint">{workspacePath ? workspaceName : t("knowledge.statusLocalWaiting")}</span></div>
+                    <div class="knowledge-search-row"><Input aria-label={t("knowledge.questionAria")} bind:value={input} placeholder={t("knowledge.searchPlaceholder")} /><Button size="sm" disabled={(knowledgeScope === "local" && !workspacePath) || !input.trim() || sending || knowledgeQuerying || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("query", input)}><Search size={14} />{t("knowledge.searchBtn")}</Button></div>
+                    <div class="knowledge-search-options">{#if KnowledgeScopePickerComponent}<KnowledgeScopePickerComponent bind:scope={knowledgeScope} externalUnavailable={externalKnowledgeUnavailable} onConfigure={() => openKnowledge()} />{:else}{@render managementComponentFallback("knowledgeScope")}{/if}<span class="knowledge-search-hint">{externalKnowledgeUnavailable ? t("knowledge.scopeExternalUnavailable") : workspacePath ? workspaceName : t("knowledge.statusLocalWaiting")}</span></div><div class="knowledge-query-inline">{#if knowledgeQuerying}<div class="knowledge-query-status" role="status"><Loader size={14} class="spin" aria-hidden="true" />{t("knowledge.querying")}</div>{:else if knowledgeQueryAnswer}<div class="knowledge-query-result"><strong>{t("knowledge.queryResultTitle")}</strong><p>{knowledgeQueryAnswer}</p></div>{:else if knowledgeQueryFinished}<div class="knowledge-query-status" role="status">{t("knowledge.queryEmpty")}</div>{/if}{#if knowledgeSessionNotice && knowledgeQuerySessionId}<div class="knowledge-query-session"><span>{knowledgeSessionNotice}</span><Button variant="outline" size="sm" onclick={() => void selectSession(knowledgeQuerySessionId)}>{t("knowledge.queryOpenSession")}</Button></div>{/if}</div>
                   </SettingsGroup>
                   <SettingsGroup title={t("knowledge.statPersistent")} description={t("knowledge.statPersistentDesc")}>
                     <div class="knowledge-action-grid">
@@ -3461,15 +4605,15 @@
                       <button disabled={!workspacePath || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("refresh")}><RefreshCw size={15} /><span><strong>{t("knowledge.refreshIndexCard")}</strong><small>{t("knowledge.refreshIndexSub")}</small></span></button>
                       <button onclick={() => openKnowledge()}><BookOpen size={15} /><span><strong>{t("knowledge.title")}</strong><small>{t("knowledge.heroDesc")}</small></span></button>
                     </div>
-                    {#if knowledgeIndex.failures && knowledgeIndex.failures.length > 0}<div class="knowledge-note"><CircleAlert size={14} /><span>{t("knowledge.indexFailures", { count: knowledgeIndex.failures.length, names: knowledgeIndex.failures.join("、") })}</span></div>{/if}
+                    {#if knowledgeIndex.failures && knowledgeIndex.failures.length > 0}<div class="knowledge-note"><CircleAlert size={14} /><div class="knowledge-note__body"><span>{t("knowledge.indexFailures", { count: knowledgeIndex.failures.length, names: knowledgeIndex.failures.join("、") })}</span><small>{t("knowledge.indexFailuresHint")}</small>{#if knowledgeSummary.placeholders > 0}<small>{t("knowledge.placeholderNote", { count: knowledgeSummary.placeholders })}</small>{/if}</div></div>{/if}{#if knowledgeIndex.state === "failed" && !(knowledgeIndex.failures && knowledgeIndex.failures.length)}<div class="knowledge-note"><CircleAlert size={14} /><div class="knowledge-note__body"><span>{t("knowledge.indexFailedHint")}</span></div></div>{/if}
                   </SettingsGroup>
-                  {#if client && ExternalKnowledgeSourcesComponent}<ExternalKnowledgeSourcesComponent {client} plugins={pluginInventory} onRefresh={refreshManagement} />{/if}
+                  {#if client && ExternalKnowledgeSourcesComponent}<ExternalKnowledgeSourcesComponent {client} plugins={pluginInventory} onRefresh={refreshManagement} verifiedSignature={externalKnowledgeVerified ? externalKnowledgeSignature : ""} onVerified={() => { externalKnowledgeVerified = true; managementNotice = t("knowledge.externalVerifiedNotice"); }} onVerifiedChange={(signature) => { externalKnowledgeVerifiedEpoch += 1; if (signature) { externalKnowledgeVerified = true; externalKnowledgeSignature = signature; } else { externalKnowledgeVerified = false; if (knowledgeScope !== "local") knowledgeScope = "local"; } }} />{/if}
                   <SettingsGroup title={t("knowledge.skillsSectionTitle")} description={t("knowledge.callableCapabilities")}>
                     <div class="management-actions"><Button variant="outline" size="sm" onclick={() => void refreshManagement()}><History size={14} />{t("knowledge.refreshKnowledgeBtn")}</Button></div>
                     {#if skills.length === 0}
                       <DataState state="empty" title={t("knowledge.emptyKnowledgeTitle")} description={t("knowledge.emptyKnowledgeDesc")} />
                     {:else}
-                      {#if KnowledgeSkillListComponent}<KnowledgeSkillListComponent {skills} query={settingsQuery} />{:else}<Loader size={18} />{/if}
+                      {#if KnowledgeSkillListComponent}<KnowledgeSkillListComponent {skills} query={settingsQuery} />{:else}{@render managementComponentFallback("knowledgeSkill")}{/if}
                     {/if}
                   </SettingsGroup>
                   <div class="knowledge-note"><ShieldAlert size={14} /><span>{t("knowledge.noteDesc")}</span></div>
@@ -3488,10 +4632,10 @@
                         <strong>{t("updates.currentVersion", { version: appVersion })}</strong>
                         <small role="status">{updateChecking ? t("updates.checking") : updateError ? t("updates.failed") : updateCheck?.status === "available" ? t("updates.available", { version: updateCheck.latestVersion }) : updateCheck ? t("updates.current", { version: updateCheck.currentVersion }) : t("updates.notChecked")}</small>
                         {#if updateError}<small role="alert">{updateError}</small>{/if}
-                        <small>{networkMode === "intranet" ? t("updates.intranetDisabled") : updateCheck?.publishedAt ? t("updates.publishedAt", { date: new Date(updateCheck.publishedAt).toLocaleString() }) : t("updates.manualInstall")}</small>
+                        <small>{!desktopFeatures.updateChecks ? t("updates.reviewBuild") : networkMode === "intranet" ? t("updates.intranetDisabled") : updateCheck?.publishedAt ? t("updates.publishedAt", { date: new Date(updateCheck.publishedAt).toLocaleString() }) : t("updates.manualInstall")}</small>
                       </div>
                       <div class="row-actions">
-                        <Button variant="outline" size="sm" disabled={updateChecking || networkMode === "intranet"} onclick={() => void checkForUpdate()}><RefreshCw size={13} class={updateChecking ? "spin" : undefined} />{updateChecking ? t("updates.checking") : t("updates.check")}</Button>
+                        <Button variant="outline" size="sm" disabled={!desktopFeatures.updateChecks || updateChecking || networkMode === "intranet"} onclick={() => void checkForUpdate()}><RefreshCw size={13} class={updateChecking ? "spin" : undefined} />{updateChecking ? t("updates.checking") : t("updates.check")}</Button>
                         {#if updateCheck?.status === "available" && updateCheck.downloadUrl}
                           <Button size="sm" onclick={() => void openUpdateDownload()}><Download size={13} />{t("updates.download")}</Button>
                         {/if}
@@ -3550,24 +4694,6 @@
                     <p class="settings-choice-hint">{t("settings.networkChoiceHint")}</p>
                     {#if networkModeBusy}<small class="settings-inline-status">{t("settings.networkModeRestarting")}</small>{/if}
                   </SettingsGroup>
-                  <SettingsGroup title={t("settings.capabilitiesTitle")} description={t("settings.capabilitiesDesc")}>
-                    <div class="management-list">
-                      {#each CAPABILITY_ROWS as row (row.key)}
-                        <div class="management-list-row">
-                          <span class="row-icon"><Blocks size={15} /></span>
-                          <div>
-                            <strong>{t(`settings.capability.${row.key}.title`)}</strong>
-                            <small>{t(`settings.capability.${row.key}.desc`)}</small>
-                          </div>
-                          <StatusBadge status={capabilities[row.key] ? "success" : "neutral"} label={capabilities[row.key] ? t("settings.capabilityOn") : t("settings.capabilityOff")} />
-                          <Button variant="outline" size="sm" disabled={capabilitiesBusy || networkModeBusy || loading} onclick={() => void toggleCapability(row.key)}>
-                            {capabilities[row.key] ? t("settings.capabilityDisable") : t("settings.capabilityEnable")}
-                          </Button>
-                        </div>
-                      {/each}
-                    </div>
-                    <p class="settings-choice-hint">{t("settings.capabilitiesHint")}</p>
-                  </SettingsGroup>
                   {/if}
                   {#if settingsSection === "models"}
                   <SettingsGroup title={t("settings.modelProviderTitle")}>
@@ -3587,7 +4713,7 @@
                           }}
                           onBundledCredentialReset={resetBundledModelCredential}
                         />
-                      {:else}<Loader size={18} />{/if}
+                      {:else}{@render managementComponentFallback("provider")}{/if}
                     {/if}
                   </SettingsGroup>
                   {/if}
@@ -3595,12 +4721,35 @@
                   <SpeechSettings {client} />
                   {/if}
                   {#if settingsSection === "advanced"}
+                  <AgentConfigTransfer
+                    {client}
+                    {providers}
+                    namespaces={settingsNamespaces}
+                    {credentials}
+                    agentPresets={agentPresets}
+                    incomingLink={agentConfigIncomingLink}
+                    incomingLinkToken={agentConfigIncomingLinkToken}
+                    onImported={() => void refreshManagement()}
+                  />
                   <SettingsGroup title={t("settings.projectMemoryTitle")} description={t("settings.projectMemoryDesc")}>
                     <div class="settings-directory-row">
                       <code title={workspacePath}>{workspacePath || "—"}</code>
                       <StatusBadge status={memoryStatus === "active" ? "success" : memoryStatus === "requiresGit" ? "warning" : "neutral"} label={memoryStatusLabel()} />
                     </div>
                     <p class="settings-choice-hint">{memoryStatusHint()}</p>
+                  </SettingsGroup>
+                  <SettingsGroup title={t("settings.capabilitiesTitle")} description={t("settings.capabilitiesDesc")}>
+                    <div class="management-list">
+                      <div class="management-list-row">
+                        <span class="row-icon"><Blocks size={15} /></span>
+                        <div>
+                          <strong>{t("settings.capabilitiesSummary", { count: capabilitiesEnabledCount })}</strong>
+                          <small>{t("settings.capabilitiesSummaryDesc")}</small>
+                        </div>
+                        <Button variant="outline" size="sm" disabled={loading} onclick={() => openExtensions()}>{t("settings.capabilitiesOpen")}</Button>
+                      </div>
+                    </div>
+                    <p class="settings-choice-hint">{t("settings.capabilitiesHint")}</p>
                   </SettingsGroup>
                   <BrowserExtensionCard />
                   <SettingsGroup title={t("settings.credentialsSectionTitle")} description={t("settings.credentialsSectionDesc")}>
@@ -3720,13 +4869,19 @@
                   </div>
                 {:else}
                   <SettingsGroup title={t("runtime.title")} description={t("runtime.description")}>
-                    <div class={`status-alert-banner ${runtimeConnectionError ? "status-alert-banner--error" : "status-alert-banner--success"}`}>
-                      {#if runtimeConnectionError}
+                    <div class={`status-alert-banner ${runtimeStatusKind === "unavailable" ? "status-alert-banner--error" : "status-alert-banner--success"}`}>
+                      {#if runtimeStatusKind === "unavailable"}
                         <ShieldAlert size={16} />
                         <div>
-                          <strong>{t("overview.runtimeError")}</strong>
-                          <span>{runtimeConnectionError}</span>
+                          <strong>{t("runtime.statusUnavailable")}</strong>
+                          <span>{t("runtime.statusUnavailableHint")}</span>
                           <span>{t("errors.runtimeCached")}</span>
+                          <span>{runtimeLastSyncedLabel}</span>
+                          <details class="diagnostics-technical">
+                            <summary>{t("transcript.toolTechnicalDetails")}</summary>
+                            <p>{runtimeConnectionError}</p>
+                            <Button variant="outline" size="sm" disabled={runtimeRetrying} onclick={() => void retryRuntime()}><RotateCcw size={13} />{t("runtime.restartApp")}</Button>
+                          </details>
                         </div>
                         <Button variant="outline" size="sm" disabled={runtimeRetrying} onclick={() => void retryRuntime()}><RotateCcw size={13} />{t("common.retry")}</Button>
                       {:else}
@@ -3734,12 +4889,13 @@
                         <div>
                           <strong>{t("overview.runtimeNormal")}</strong>
                           <span>{t("runtime.eventStreamEstablished")}</span>
+                          <span>{runtimeLastSyncedLabel}</span>
                         </div>
                       {/if}
                     </div>
                     <div class="diagnostics-metrics-grid">
                       <div class="diagnostic-metric-card"><span>{t("runtime.activeSessions")}</span><strong>{sessions.length}</strong><small>{activeSession ? sessionTitle(activeSession) : t("runtime.unselectedSession")}</small></div>
-                      <div class="diagnostic-metric-card"><span>{t("runtime.activeTools")}</span><strong>{runtimeConnectionError ? "?" : runningTools.length}</strong><small>{runtimeConnectionError ? t("overview.runtimeError") : t("runtime.runningNow")}</small></div>
+                      <div class="diagnostic-metric-card"><span>{t("runtime.activeTools")}</span><strong>{runtimeStatusKind === "unavailable" ? t("runtime.valueUnavailable") : runningTools.length}</strong><small>{runtimeStatusKind === "unavailable" ? t("runtime.statusUnavailableHint") : t("runtime.runningNow")}</small></div>
                       <div class="diagnostic-metric-card"><span>{t("runtime.settingsNamespaces")}</span><strong>{settingsNamespaces.length}</strong><small>{t("runtime.registeredNamespaces")}</small></div>
                       <div class="diagnostic-metric-card"><span>{t("runtime.providers")}</span><strong>{providers.length}</strong><small>{t("runtime.registeredProviders")}</small></div>
                       <div class="diagnostic-metric-card"><span>{t("runtime.subagents")}</span><strong>{subagents.length}</strong><small>{t("runtime.directSubagents")}</small></div>
@@ -3781,13 +4937,13 @@
                     <h2>{t("knowledge.searchHeading")}</h2>
                     <p>{t("knowledge.searchSub")}</p>
                   </div>
-                  <span class="knowledge-source-count"><Database size={15} />{knowledgeIndex.files || 0} {t("knowledge.filesUnit")} · {knowledgeIndex.chunks || 0} {t("knowledge.chunksUnit")}</span>
+                  <span class="knowledge-source-count"><Database size={15} />{t("knowledge.sourceCount", { indexed: knowledgeSummary.indexed, skipped: knowledgeSummary.skipped })}</span>
                 </div>
                 <div class="knowledge-search-main">
-                  <div class="knowledge-search-row"><Input aria-label={t("knowledge.questionAria")} bind:value={input} placeholder={t("knowledge.searchPlaceholder")} /><Button size="sm" disabled={(knowledgeScope === "local" && !workspacePath) || !input.trim() || sending || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("query", input)}><Search size={14} />{t("knowledge.searchBtn")}</Button></div>
-                  <div class="knowledge-search-options">{#if KnowledgeScopePickerComponent}<KnowledgeScopePickerComponent bind:scope={knowledgeScope} />{:else}<Loader size={18} />{/if}<span class="knowledge-search-hint">{workspacePath ? workspaceName : t("knowledge.statusLocalWaiting")}</span></div>
+                  <div class="knowledge-search-row"><Input aria-label={t("knowledge.questionAria")} bind:value={input} placeholder={t("knowledge.searchPlaceholder")} /><Button size="sm" disabled={(knowledgeScope === "local" && !workspacePath) || !input.trim() || sending || knowledgeQuerying || knowledgeIndex.state === "building"} onclick={() => void runKnowledgeOperation("query", input)}><Search size={14} />{t("knowledge.searchBtn")}</Button></div>
+                  <div class="knowledge-search-options">{#if KnowledgeScopePickerComponent}<KnowledgeScopePickerComponent bind:scope={knowledgeScope} externalUnavailable={externalKnowledgeUnavailable} onConfigure={() => openKnowledge()} />{:else}{@render managementComponentFallback("knowledgeScope")}{/if}<span class="knowledge-search-hint">{externalKnowledgeUnavailable ? t("knowledge.scopeExternalUnavailable") : workspacePath ? workspaceName : t("knowledge.statusLocalWaiting")}</span></div><div class="knowledge-query-inline">{#if knowledgeQuerying}<div class="knowledge-query-status" role="status"><Loader size={14} class="spin" aria-hidden="true" />{t("knowledge.querying")}</div>{:else if knowledgeQueryAnswer}<div class="knowledge-query-result"><strong>{t("knowledge.queryResultTitle")}</strong><p>{knowledgeQueryAnswer}</p></div>{:else if knowledgeQueryFinished}<div class="knowledge-query-status" role="status">{t("knowledge.queryEmpty")}</div>{/if}{#if knowledgeSessionNotice && knowledgeQuerySessionId}<div class="knowledge-query-session"><span>{knowledgeSessionNotice}</span><Button variant="outline" size="sm" onclick={() => void selectSession(knowledgeQuerySessionId)}>{t("knowledge.queryOpenSession")}</Button></div>{/if}</div>
                 </div>
-                {#if knowledgeIndex.failures && knowledgeIndex.failures.length > 0}<div class="knowledge-note"><CircleAlert size={14} /><span>{t("knowledge.indexFailures", { count: knowledgeIndex.failures.length, names: knowledgeIndex.failures.join("、") })}</span></div>{/if}
+                {#if knowledgeIndex.failures && knowledgeIndex.failures.length > 0}<div class="knowledge-note"><CircleAlert size={14} /><div class="knowledge-note__body"><span>{t("knowledge.indexFailures", { count: knowledgeIndex.failures.length, names: knowledgeIndex.failures.join("、") })}</span><small>{t("knowledge.indexFailuresHint")}</small>{#if knowledgeSummary.placeholders > 0}<small>{t("knowledge.placeholderNote", { count: knowledgeSummary.placeholders })}</small>{/if}</div></div>{/if}{#if knowledgeIndex.state === "failed" && !(knowledgeIndex.failures && knowledgeIndex.failures.length)}<div class="knowledge-note"><CircleAlert size={14} /><div class="knowledge-note__body"><span>{t("knowledge.indexFailedHint")}</span></div></div>{/if}
               </section>
               <div class="knowledge-panel-grid">
                 <SettingsGroup title={t("knowledge.statPersistent")} description={t("knowledge.statPersistentDesc")} class="knowledge-action-group">
@@ -3804,13 +4960,13 @@
                   <div class="context-stat"><span>{t("settings.projectMemoryTitle")}</span><strong>{memoryStatusLabel()}</strong></div>
                 </SettingsGroup>
               </div>
-              {#if client && ExternalKnowledgeSourcesComponent}<ExternalKnowledgeSourcesComponent {client} plugins={pluginInventory} onRefresh={refreshManagement} />{/if}
+              {#if client && ExternalKnowledgeSourcesComponent}<ExternalKnowledgeSourcesComponent {client} plugins={pluginInventory} onRefresh={refreshManagement} verifiedSignature={externalKnowledgeVerified ? externalKnowledgeSignature : ""} onVerified={() => { externalKnowledgeVerified = true; managementNotice = t("knowledge.externalVerifiedNotice"); }} onVerifiedChange={(signature) => { externalKnowledgeVerifiedEpoch += 1; if (signature) { externalKnowledgeVerified = true; externalKnowledgeSignature = signature; } else { externalKnowledgeVerified = false; if (knowledgeScope !== "local") knowledgeScope = "local"; } }} />{/if}
               <SettingsGroup title={t("knowledge.skillsSectionTitle")} description={t("knowledge.callableCapabilities")}>
                 <div class="management-actions"><Button variant="ghost" size="sm" onclick={() => void refreshManagement()}><History size={14} />{t("common.refresh")}</Button></div>
                 {#if skills.length === 0}
                   <DataState state="empty" title={t("knowledge.emptySkillsTitle")} description={t("knowledge.emptySkillsDesc")} />
                 {:else}
-                  {#if KnowledgeSkillListComponent}<KnowledgeSkillListComponent {skills} query={settingsQuery} />{:else}<Loader size={18} />{/if}
+                  {#if KnowledgeSkillListComponent}<KnowledgeSkillListComponent {skills} query={settingsQuery} />{:else}{@render managementComponentFallback("knowledgeSkill")}{/if}
                 {/if}
               </SettingsGroup>
               <div class="knowledge-note"><ShieldAlert size={14} /><span>{t("knowledge.noteDesc")}</span></div>
@@ -3822,7 +4978,10 @@
             {#if workspaceNotice || historyNotice}<div class="error-banner" role="status"><FolderOpen size={15} /><span>{workspaceNotice || historyNotice}</span><button aria-label={t("app.closeError")} onclick={() => { workspaceNotice = ""; historyNotice = ""; }}><X size={14} /></button></div>{/if}
             <header class="conversation-header"><div class="conversation-title"><h1 title={customization.title || (activeSession ? sessionTitle(activeSession) : t("app.startNewSession"))}>{customization.title || (activeSession ? sessionTitle(activeSession) : t("app.startNewSession"))}</h1><p title={customization.subtitle || workspacePath}>{customization.subtitle || workspacePath || t("app.selectWorkspaceToStart")}</p></div></header>
             {#if runtimeError || sessionLoadError}
-              <div class="error-banner" role="alert"><CircleAlert size={15} /><div class="error-banner-message"><span>{sessionLoadError || runtimeError}</span>{#if authFailureDetail}<small>{authFailureDetail}</small>{/if}{#if authFailureHint}<small class="error-banner-hint">{authFailureHint}</small>{/if}</div>
+              <div class="error-banner" role="alert"><CircleAlert size={15} /><div class="error-banner-message"><span>{sessionLoadError || runtimeError}</span>{#if authFailureDetail}<small>{authFailureDetail}</small>{/if}{#if authFailureHint}<small class="error-banner-hint">{authFailureHint}</small>{/if}{#if autoRepairNotice}<small class="error-banner-hint">{autoRepairNotice}</small>{/if}
+                  {#if authFailure}
+                    <details class="error-banner-technical"><summary>{t("transcript.toolTechnicalDetails")}</summary><code>{sessionLoadError || runtimeError}{#if recoveryDetail}{"\n"}{recoveryDetail}{/if}</code></details>
+                  {/if}</div>
                 {#if runtimeConnectionError || runtimeError === t("errors.runtimeConnection")}
                   <Button variant="outline" size="sm" disabled={runtimeRetrying} onclick={() => void retryRuntime()}><RotateCcw size={13} />{t("common.retry")}</Button>
                 {:else if sessionLoadError}
@@ -3831,18 +4990,22 @@
                 {:else if lastFailedPrompt?.sessionId === activeSessionId && !sending}
                   <Button variant="outline" size="sm" onclick={() => void retryLastPrompt()}><RotateCcw size={13} />{t("common.retry")}</Button>
                 {/if}
+                {#if authFailure && authFailureCredentialRef === "XG_GOMODEL_API_KEY"}
+                  <Button variant="outline" size="sm" disabled={autoRepairState === "running"} onclick={() => void repairBundledCredentialAndRetry({ manual: true })}><RotateCcw size={13} />{autoRepairState === "running" ? t("errors.autoRepairRunning") : t("errors.autoRepairAction")}</Button>
+                {/if}
                 {#if canSwitchToBuiltinModel}<Button variant="outline" size="sm" onclick={() => void switchToBuiltinModel()}><PlugZap size={13} />{t("app.switchToBuiltinModel")}</Button>{/if}
                 {#if authFailure || runtimeError.includes("设置与凭据") || runtimeError.includes("Settings & Credentials") || !selectedProviderCredentialReady}<Button variant="ghost" size="sm" onclick={openCredentialSettingsForCurrentModel}><KeyRound size={13} />{t("app.goToConfigure")}</Button>{/if}
                 {#if !sessionLoadError}<button aria-label={t("app.closeError")} onclick={() => { runtimeError = ""; }}><X size={14} /></button>{/if}
               </div>
             {/if}
-            {#if customizationOpen}<section class="customization-panel" aria-label={t("customization.title")}><div class="customization-panel__header"><div><div class="section-label">{t("customization.title")}</div><strong>{t("customization.subtitle")}</strong><p>{t("customization.example")}</p></div><Button variant="ghost" size="icon-sm" aria-label={t("customization.close")} onclick={() => customizationOpen = false}><X size={14} /></Button></div>{#if customizationNotice}<div class="customization-feedback"><CircleCheck size={14} /><span>{customizationNotice}</span></div>{/if}{#if customizationDraft}<div class="customization-preview"><div><strong>{t("customization.pendingPatch")}</strong><span>{t("customization.patchFromSession")}</span></div><code>{JSON.stringify(customizationDraft)}</code><div class="customization-actions"><Button variant="outline" size="sm" onclick={() => customizationDraft = undefined}>{t("common.ignore")}</Button><Button size="sm" onclick={() => applyCustomizationPatch(customizationDraft!)}><Check size={13} />{t("customization.applyPatch")}</Button></div></div>{/if}<div class="customization-summary"><span class="mode-chip">{customization.density === "compact" ? t("customization.compactDensity") : t("customization.comfortableDensity")}</span><span>{customization.sidebar === "collapsed" ? t("customization.sidebarCollapsed") : t("customization.sidebarExpanded")}</span><span>{customization.activity === "visible" ? t("customization.activityVisible") : t("customization.activityHidden")}</span><span>{t("customization.composerRows", { count: customization.composerRows })}</span></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={customizationHistory.length === 0} onclick={undoCustomization}>{t("customization.undoLast")}</Button><Button variant="ghost" size="sm" onclick={() => { customization = DEFAULT_UI_CUSTOMIZATION; customizationHistory = []; persistUiCustomization(customization); applyRuntimeCustomization(customization); customizationNotice = t("customization.restoredNotice"); }}>{t("customization.restoreDefaults")}</Button></div></section>{/if}
+            {#if customizationOpen}<section class="customization-panel" aria-label={t("customization.title")}><div class="customization-panel__header"><div><div class="section-label">{t("customization.title")}</div><strong>{t("customization.subtitle")}</strong><p>{t("customization.example")}</p></div><Button variant="ghost" size="icon-sm" aria-label={t("customization.close")} onclick={() => customizationOpen = false}><X size={14} /></Button></div>{#if customizationNotice}<div class="customization-feedback"><CircleCheck size={14} /><span>{customizationNotice}</span></div>{/if}{#if customizationDraft}<div class="customization-preview"><div><strong>{t("customization.pendingPatch")}</strong><span>{t("customization.patchFromSession")}</span></div><ul class="customization-changes">{#each describeUiCustomizationPatch(customizationDraft) as change (change.key + ("value" in change ? change.value : "") + ("count" in change ? change.count : ""))}<li>{change.key === "composerRows" ? t("customization.changeComposerRows", { count: "count" in change ? change.count : 0 }) : change.key === "title" ? t("customization.changeTitle", { value: "value" in change ? change.value : "" }) : change.key === "subtitle" ? t("customization.changeSubtitle", { value: "value" in change ? change.value : "" }) : change.key === "quickActions" ? t("customization.changeQuickActions", { count: "count" in change ? change.count : 0 }) : t(`customization.${change.key}`)}</li>{/each}</ul><details class="customization-technical"><summary>{t("customization.technicalDetails")}</summary><code>{JSON.stringify(customizationDraft)}</code></details><div class="customization-actions"><Button variant="outline" size="sm" onclick={() => customizationDraft = undefined}>{t("common.ignore")}</Button><Button size="sm" onclick={() => applyCustomizationPatch(customizationDraft!)}><Check size={13} />{t("customization.applyPatch")}</Button></div></div>{/if}<div class="customization-summary"><span class="section-label">{t("customization.summaryTitle")}</span><p class="customization-summary__sentence">{t("customization.summarySentence", { items: [customization.density === "compact" ? t("customization.compactDensity") : t("customization.comfortableDensity"), customization.sidebar === "collapsed" ? t("customization.sidebarCollapsed") : t("customization.sidebarExpanded"), customization.activity === "visible" ? t("customization.activityVisible") : t("customization.activityHidden"), t("customization.composerRows", { count: customization.composerRows })].join("、") })}</p></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={customizationHistory.length === 0} title={t("customization.undoHint")} onclick={undoCustomization}>{t("customization.undoLast")}</Button><Button variant="ghost" size="sm" onclick={() => { customization = DEFAULT_UI_CUSTOMIZATION; customizationHistory = []; persistUiCustomization(customization); applyRuntimeCustomization(customization); customizationNotice = t("customization.restoredNotice"); }}>{t("customization.restoreDefaults")}</Button></div></section>{/if}
             {#if surfaceDraft}<section class="surface-proposal" aria-label={t("surface.proposalTitle")}><div><div class="section-label">{t("surface.proposalTitle")}</div><strong>{surfaceDraft.spec.title}</strong><p>{surfaceDraft.summary || t("surface.proposalDefaultSummary", { count: surfaceDraft.spec.widgets.length })}</p></div><div class="surface-proposal__meta"><span>{t("surface.proposalWidgetsCount", { count: surfaceDraft.spec.widgets.length })}</span><span>{t("surface.proposalDataSourcesCount", { count: surfaceDraft.spec.dataSources.length })}</span></div><div class="customization-actions"><Button variant="ghost" size="sm" onclick={() => { surfaceDraft = undefined; surfaceNotice = t("surface.proposalIgnored"); }}>{t("common.ignore")}</Button><Button size="sm" onclick={applySurfaceProposal}><Check size={13} />{t("surface.confirmRender")}</Button></div></section>{/if}
-            {#if generatedSurface && client}<section class="generated-surface" aria-label={t("surface.generatedTitle")}><header><div><div class="section-label">{t("surface.generatedTitle")}</div><strong>{generatedSurface.title}</strong><p>{surfaceNotice || t("surface.readOnlyDesc")}</p></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={surfaceHistory.length === 0} onclick={undoGeneratedSurface}>{t("common.undo")}</Button><Button variant="ghost" size="sm" onclick={removeGeneratedSurface}><Trash2 size={13} />{t("common.remove")}</Button></div></header>{#if GeneratedSurface}<GeneratedSurface spec={generatedSurface} {client} {activeSessionId} onError={(message) => { surfaceNotice = message; }} />{:else if generatedSurfaceLoadFailed}<div class="surface-load-error" role="alert"><span>{surfaceNotice}</span><Button variant="outline" size="sm" onclick={() => void ensureGeneratedSurfaceComponent()}>{t("common.retry")}</Button></div>{:else}<Loader size={16} />{/if}</section>{/if}
+            {#if generatedSurface && client}<section class="generated-surface" aria-label={t("surface.generatedTitle")}><header><div><div class="section-label">{t("surface.generatedTitle")}</div><strong>{generatedSurface.title}</strong><p>{surfaceNotice || t("surface.readOnlyDesc")}</p></div><div class="customization-actions"><Button variant="ghost" size="sm" disabled={surfaceHistory.length === 0} onclick={undoGeneratedSurface}>{t("common.undo")}</Button><Button variant="ghost" size="sm" onclick={removeGeneratedSurface}><Trash2 size={13} />{t("surface.removeThisSurface")}</Button></div></header>{#if GeneratedSurface}<GeneratedSurface spec={generatedSurface} {client} {activeSessionId} onError={(message) => { surfaceNotice = message; }} />{:else if generatedSurfaceLoadFailed}<div class="surface-load-error" role="alert"><span>{surfaceNotice}</span><Button variant="outline" size="sm" onclick={() => void ensureGeneratedSurfaceComponent()}>{t("common.retry")}</Button></div>{:else}<Loader size={16} />{/if}</section>{/if}
             <div class:activity-open={activityOpen} class="main-grid">
               <div class="conversation-lane">
               {#if ConversationTranscript}<ConversationTranscript
-                messages={messages}
+                messages={visibleMessages}
+                onOpenBareFile={(name: string) => void openWorkspaceFileByName(name)}
                 {client}
                 onSurfaceInteraction={handleSurfaceInteraction}
                 attachmentFiles={attachmentFilesBySession[activeSessionId] ?? {}}
@@ -3854,13 +5017,23 @@
                 {historyHasMore}
                 {historyLoading}
                 onLoadEarlier={loadEarlierHistory}
-                quickActions={customization.quickActions.length ? customization.quickActions : [
-                  { label: t("transcript.checkProject"), prompt: t("transcript.checkProjectPrompt") },
-                  { label: t("transcript.understandCode"), prompt: t("transcript.understandCodePrompt") },
-                  { label: t("transcript.runTests"), prompt: t("transcript.runTestsPrompt") },
-                ]}
+                quickActions={customization.quickActions.length ? customization.quickActions
+                  : workspaceSuggestions(workspaceKind).map((suggestion) => ({ label: t(suggestion.labelKey), prompt: t(suggestion.promptKey) }))}
                 onPromptSelect={(prompt) => input = prompt}
+                onRegenerate={lastFailedPrompt?.sessionId === activeSessionId ? () => void retryLastPrompt() : undefined}
+                onQuote={(quote) => quoteToComposer(quote.text)}
+                feedback={feedbackByMessage}
+                onRate={(messageId: string, rating: FeedbackRating) => void rateMessage(messageId, rating)}
               />{:else}<Loader size={16} />{/if}
+            {#if activeSessionId && terminalOpenSessionId === activeSessionId}
+              {#key activeSessionId}<TerminalPanel sessionId={activeSessionId} onClose={() => terminalOpenSessionId = ""} />{/key}
+            {/if}
+            {#if activeSessionId && activeJobs.length > 0}<JobRoster sessionId={activeSessionId} jobs={activeJobs} onKill={killJob} />{/if}
+            {#if activeSessionId && planCards.length > 0}<PlanCard cards={planCards} active={activePlan?.active === true} />{/if}
+            {#if activeSessionId && teamBoard && (teamBoardOpen || teamBoard.enabled || teamBoard.tasks.length > 0)}
+              <TeamBoard board={teamBoard} busy={!client || sessionResponse.loading} onToggle={(enabled) => void toggleAgentTeam(enabled)} />
+            {/if}
+            {#if activeSessionId && changesAnnouncement}<ChangedFilesCard sessionId={activeSessionId} seq={changesAnnouncement.seq} turn={changesAnnouncement.turn} />{/if}
             <PendingInteractions
               approval={pendingApproval}
               question={pendingQuestion}
@@ -3879,13 +5052,19 @@
                 </div>
               </div>
             {/if}
-            {#if recoveryReason}
+            {#if backgroundIssueNotice}
+              <div class="error-banner recovery-banner warning-banner" role="status">
+                <CircleAlert size={15} />
+                <div class="recovery-copy"><strong>{t("activity.backgroundIssueTitle")}</strong><span>{t("activity.backgroundIssueDetail")}</span></div>
+              </div>
+            {/if}
+            {#if recoveryReason && !answerDelivered}
               <div class="error-banner recovery-banner" role="status">
                 <CircleAlert size={15} />
                 <div class="recovery-copy">
                   <strong>{t("activity.turnIncomplete")}</strong>
                   <span>{t(`activity.recovery.${recoveryReason}`)}</span>
-                  {#if outputUsageLine}<small>{outputUsageLine}</small>{:else if recoveryDetail}<small>{recoveryDetail}</small>{:else}<small>{t("activity.recoveryNoDetail")}</small>{/if}
+                  {#if outputUsageLine}<small>{outputUsageLine}</small>{:else if recoveryDetail}<small>{recoveryDetail}</small>{:else if runtimeError}<small>{runtimeError}</small>{:else}<small>{t("activity.recoveryNoDetail")}</small>{/if}
                   {#if autoContinueExhausted && !continuingTask}
                     <small>{t("activity.autoContinueExhausted", { limit: AUTO_CONTINUE_LIMIT })}</small>
                   {:else if continuingTask && recoveryReason === "maxTokens"}
@@ -3901,6 +5080,7 @@
                       <div><dt>{t("activity.recoverySession")}</dt><dd>{activeSessionId || t("overview.unselected")}</dd></div>
                       {#if recoveryDetail}<div><dt>{t("activity.recoveryErrorDetail")}</dt><dd>{recoveryDetail}</dd></div>{/if}
                       {#if lastFailedTool}<div><dt>{t("activity.recoveryFailedTool")}</dt><dd>{lastFailedTool.name}: {toolErrorSummary(lastFailedTool.result)}</dd></div>{/if}
+                      {#if lastFailedTool?.result}<div><dt>{t("activity.recoveryRawDetail")}</dt><dd><pre class="recovery-raw">{lastFailedTool.result.slice(0, 4000)}</pre></dd></div>{/if}
                     </dl>
                   </details>
                 </div>
@@ -3919,7 +5099,59 @@
             {/if}
             {#key activeSessionId}
             {@const composerSessionId = activeSessionId}
-            <div class="composer"><div class="composer-shell"><DshPromptComposer
+            <div class="composer">
+              {#if activeQueueRows.length === 0 && coldInboxCount > 0}
+                <div class="queued-list" role="status">
+                  <div class="queued-list-head">
+                    <span>{t("composer.coldInbox", { count: coldInboxCount })}</span>
+                    <small>{t("composer.coldInboxHint")}</small>
+                  </div>
+                </div>
+              {/if}
+              {#if activeQueueRows.length > 0}
+                <div class="queued-list" role="status">
+                  <div class="queued-list-head">
+                    <span>{t("composer.queuedCount", { count: activeQueueRows.length })}</span>
+                    <small>{t("composer.queueNativeHint")}</small>
+                  </div>
+                  {#each activeQueueRows as row (row.id)}
+                    <div class="queued-prompt">
+                      <span class="queued-index">{row.position ?? "↳"}</span>
+                      <span>{row.summary || t("composer.queueAttachmentOnly")}</span>
+                      {#if row.placement === "steering"}<span class="queued-badge">{t("composer.queueSteering")}</span>{/if}
+                      <span class="queued-actions">
+                        {#if isMutableQueueItem(row)}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={row.attachmentCount > 0}
+                            title={row.attachmentCount > 0 ? t("composer.queueEditWithAttachments") : t("composer.queueEditHint")}
+                            onclick={() => void editQueuedPrompt(row)}
+                          >{t("composer.queueEdit")}</Button>
+                          <Button variant="ghost" size="sm" title={t("composer.queueSteerHint")} onclick={() => void steerQueuedPrompt(row)}>{t("composer.queueSteer")}</Button>
+                          <Button variant="ghost" size="sm" onclick={() => void cancelQueuedPrompt(row)}>{t("common.cancel")}</Button>
+                        {/if}
+                      </span>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+              {#if activePlan?.active}
+                <div class="plan-mode-banner" role="status">
+                  <ListChecks size={14} aria-hidden="true" />
+                  <span>{t("plan.toggleHint")}</span>
+                  <Button variant="ghost" size="sm" disabled={!client || sessionResponse.loading} onclick={() => void togglePlanMode()}>
+                    {t("plan.toggleOff")}
+                  </Button>
+                </div>
+              {/if}
+              {#if draftSecretCount > 0}
+                <div class="secret-warning" role="status"><ShieldAlert size={14} aria-hidden="true" /><span>{t("composer.secretWarning", { count: String(draftSecretCount) })}</span></div>
+              {/if}
+              {#if commandNotice}
+                <div class="command-notice" role="status"><CircleCheck size={14} aria-hidden="true" /><span>{commandNotice}</span></div>
+              {/if}
+              <div class="composer-shell"><DshPromptComposer
               bind:value={() => composerSessionId === activeSessionId ? input : sessionDrafts[composerSessionId] ?? "", (text) => {
                 sessionDrafts[composerSessionId] = text;
                 if (composerSessionId === activeSessionId) input = text;
@@ -3928,6 +5160,7 @@
               {client}
               sessionId={activeSessionId}
               {skills}
+              commands={hostCommands}
               rows={customization.composerRows}
               disabled={!activeSessionId || !!sessionLoadError || sessionResponse.loading || sessionResponse.phase === "disconnected" || !!pendingApproval || !!pendingQuestion}
               loading={taskActive}
@@ -3945,16 +5178,22 @@
               onModelSelect={(provider, model) => void chooseModel(provider, model)}
               onPermissionNotice={permissionNotice}
               onActivityOpen={() => setActivityOpen(true)}
-              onSubmit={(text, images, files) => submit(text, images, files, composerSessionId)}
+              onSubmit={async (text, images, files) => {
+                const accepted = await submit(text, images, files, composerSessionId);
+                // 未被接受（canSubmit=false 等）不能让组件误以为成功，否则草稿会被清掉。
+                if (!accepted) throw new Error(runtimeError || t("errors.generalError"));
+              }}
+              onQueue={(text, images, files) => void queueCurrentPrompt(composerSessionId, { text, images, files })}
               onStop={() => void cancel()}
             /></div></div>
             {/key}
               </div>
-              {#if activityOpen && ActivityPanel}<ActivityPanel {messages} {todos} {sessionOperations} sending={taskActive} {client} sessionId={activeSessionId} history={historyEntries} open={activityOpen} onClose={() => setActivityOpen(false)} onRetry={retryInterruptedTask} onStop={() => void cancel()} />{/if}
+              {#if activityOpen && ActivityPanel}<ActivityPanel messages={visibleMessages} {todos} {sessionOperations} sending={taskActive} {client} sessionId={activeSessionId} history={historyEntries} open={activityOpen} onClose={() => setActivityOpen(false)} onRetry={retryInterruptedTask} onStop={() => void cancel()} />{/if}
             </div>
           </div>
         {/if}
       </section>
+      <ShortcutsPanel open={shortcutsOpen} onClose={() => shortcutsOpen = false} />
       {#if quickPickerOpen}<QuickPicker open={quickPickerOpen} query={quickPickerQuery} items={quickPickerEntries} selectedIndex={quickPickerIndex} activeSessionId={activeSessionId} onQuery={updateQuickPickerQuery} onSelect={runQuickPickerItem} onClose={closeQuickPicker} />{/if}
       {#if confirmingSessionId}
         {@const sessionToArchive = sessions.find((session) => session.sessionId === confirmingSessionId)}
@@ -3966,6 +5205,31 @@
             onCancel={() => confirmingSessionId = ""}
           />
         {/if}
+      {/if}
+      {#if confirmingDeleteSessionId}
+        {@const sessionToDelete = sessions.find((session) => session.sessionId === confirmingDeleteSessionId)}
+        {#if sessionToDelete}
+          <DeleteSessionDialog
+            title={sessionTitle(sessionToDelete)}
+            heading={t("session.deleteForever")}
+            description={t("session.deleteForeverConfirm", { title: sessionTitle(sessionToDelete) })}
+            confirmText={t("session.deleteForever")}
+            disabled={sessionToDelete.running || !!managementBusy}
+            onConfirm={() => void deleteSessionPermanently(sessionToDelete.sessionId)}
+            onCancel={() => confirmingDeleteSessionId = ""}
+          />
+        {/if}
+      {/if}
+      {#if confirmingClearConversation}
+        <DeleteSessionDialog
+          title={t("session.clearConversation")}
+          heading={t("session.clearConversation")}
+          description={t("session.clearConversationConfirm")}
+          confirmText={t("session.clearConversation")}
+          disabled={sending || !!managementBusy}
+          onConfirm={() => void clearActiveConversation()}
+          onCancel={() => confirmingClearConversation = false}
+        />
       {/if}
       {#if newSessionDialogOpen}
         <NewSessionDialog
@@ -3993,7 +5257,7 @@
       <ConfirmDialog
         open={confirmingArchivedCleanup}
         title={t("session.cleanupArchived")}
-        message={t("session.cleanupConfirm")}
+        message={t("session.cleanupConfirm", { count: archivedSessions.length })}
         confirmText={t("common.delete")}
         cancelText={t("common.cancel")}
         variant="danger"

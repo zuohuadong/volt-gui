@@ -17,6 +17,12 @@ const desktopRequire = createRequire(path.join(rootDir, 'apps', 'desktop-electro
 
 const defaultProfilePatch = path.join(rootDir, 'profiles', 'anyong.yml');
 const userArgs = process.argv.slice(2);
+if (userArgs[0] === 'skill') {
+  const { installNetworkPolicy } = await import('./network-policy.mjs');
+  const { runSkillCommand } = await import('./anyong-skill.mjs');
+  installNetworkPolicy();
+  process.exit(await runSkillCommand(userArgs.slice(1)));
+}
 const dshPackageJson = require.resolve('@deepseek-ai/dsh/package.json');
 const dshBin = path.join(path.dirname(dshPackageJson), 'lib', 'bin.js');
 const officeCliInstaller = require.resolve('@officecli/officecli');

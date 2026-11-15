@@ -177,7 +177,7 @@ test("bundled PowerShell stays on the .NET 8 LTS line", () => {
 });
 
 test("lock pins every archive, the Bun binary and the complete official Python library set", () => {
-  assert.equal(desktopToolsLock.nodeVersion, "26.13.0");
+  assert.equal(desktopToolsLock.nodeVersion, "26.13.1");
   for (const asset of [
     desktopToolsLock.python, desktopToolsLock.bun,
     desktopToolsLock.coreutils, desktopToolsLock.powershell, ...desktopToolsLock.wheels,

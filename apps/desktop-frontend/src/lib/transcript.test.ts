@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assistantMessageForEvent, applyTranscriptEvent, extractAttachments, foldHistory, interruptRunningTools, isVisibleMessageText, isVisibleReasoning, mergeHistoryEntries, stripInternalPromptSuffix, type TranscriptState } from "./transcript";
+import { assistantMessageForEvent, applyTranscriptEvent, extractAttachments, foldHistory, interruptRunningTools, isVisibleMessageText, isVisibleReasoning, mergeHistoryEntries, stripInternalPromptSuffix, type TranscriptState, type TranscriptMessage, continuationHintIndex } from "./transcript";
 
 const event = (type: string, seq: number, data: Record<string, unknown>) => ({ type, seq, time: seq, data });
 
@@ -432,5 +432,39 @@ describe("transcript folding", () => {
     expect(next.messages).toHaveLength(1);
     expect(next.messages[0].text).toBe("切换到紧凑模式");
     expect(next.messages[0].pending).toBeUndefined();
+  });
+});
+
+describe("continuation hints (#363 follow-up)", () => {
+  const instruction = "继续当前会话尚未完成的任务。先核对已有工具结果、待办和文件实际状态，从未完成的步骤接着执行，不要重复已成功的操作。单轮保持短输出：每个阶段先用工具把结果写入工作区文件，再进入下一阶段。";
+  const message = (id: string, text: string, role: "user" | "assistant" = "user") =>
+    ({ id, role, text }) as TranscriptMessage;
+
+  it("keeps one hint per run of consecutive continuations", () => {
+    const hints = continuationHintIndex([
+      message("u1", instruction),
+      message("u2", instruction),
+      message("u3", instruction),
+    ], instruction);
+    expect(hints.get("u1")).toEqual({ lead: false, count: 0 });
+    expect(hints.get("u2")).toEqual({ lead: false, count: 0 });
+    expect(hints.get("u3")).toEqual({ lead: true, count: 3 });
+  });
+
+  it("splits runs at any visible message and ignores assistant continuations", () => {
+    const hints = continuationHintIndex([
+      message("u1", instruction),
+      message("a1", "中间输出", "assistant"),
+      message("u2", instruction),
+      message("a2", instruction, "assistant"),
+    ], instruction);
+    expect(hints.get("u1")).toEqual({ lead: true, count: 1 });
+    expect(hints.get("u2")).toEqual({ lead: true, count: 1 });
+    expect(hints.has("a2")).toBe(false);
+  });
+
+  it("leaves ordinary user messages alone", () => {
+    const hints = continuationHintIndex([message("u1", "帮我看下这个文件")], instruction);
+    expect(hints.size).toBe(0);
   });
 });

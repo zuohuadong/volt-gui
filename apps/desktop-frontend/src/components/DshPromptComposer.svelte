@@ -14,8 +14,8 @@
   } from "@svadmin/ai-elements";
   import type { PromptInputSubmitDetail } from "@svadmin/ai-elements";
 import type { ScreenshotSelection } from "../electron";
-  import { MAX_INPUT_FILE_BYTES } from "$lib/file-limits";
-  import { type PromptContentPart, type DshClient, type DshSkill, type ModelGroup, type PermissionSelect, type SpeechCatalog } from "$lib/dsh-client";
+  import { MAX_INLINE_IMAGE_BYTES } from "$lib/file-limits";
+  import { MAX_UPLOAD_FILE_BYTES, type PromptContentPart, type DshClient, type DshSkill, type ModelGroup, type PermissionSelect, type SpeechCatalog } from "$lib/dsh-client";
   import { Eye, History, LoaderCircle, Mic, Monitor, Send, Square } from "@lucide/svelte";
   import { preferredImageModel } from "$lib/model-catalog";
   import { VoiceRecorder } from "$lib/voice-input";
@@ -27,6 +27,7 @@ import type { ScreenshotSelection } from "../electron";
   import PermissionSelector from "$components/PermissionSelector.svelte";
 import ReferencePicker from "$components/ReferencePicker.svelte";
 import ScreenshotCrop from "$components/ScreenshotCrop.svelte";
+import type { HostCommand } from "$lib/slash-commands";
 import { t } from "$lib/i18n";
 
 type ImagePart = Extract<PromptContentPart, { type: "image" }>;
@@ -35,8 +36,13 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
     readonly client?: DshClient;
     readonly sessionId: string;
     readonly skills?: DshSkill[];
+    /** 官方命令目录（斜杠菜单），由 App 按会话加载。 */
+    readonly commands?: readonly HostCommand[];
     value?: string;
     draftFiles?: File[];
+    /** 取消排队时恢复的附件；配合 restoreToken 触发重建。 */
+    restoreFiles?: File[];
+    restoreToken?: number;
     readonly rows?: number;
     readonly disabled?: boolean;
     readonly loading?: boolean;
@@ -55,6 +61,8 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
     readonly onPermissionNotice?: (message: string) => void;
     readonly onActivityOpen: () => void;
   readonly onSubmit: (text: string, images: ImagePart[], files: File[]) => void | Promise<void>;
+    // 任务执行中把这一条排队；payload 与正常提交完全一致（图片已转换、已做能力校验）。
+    readonly onQueue?: (text: string, images: ImagePart[], files: File[]) => void;
     readonly onStop: () => void;
   }
 
@@ -62,8 +70,12 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
     client,
     sessionId,
     skills = [],
+    commands = [],
     value = $bindable(""),
     draftFiles = $bindable<File[]>([]),
+    // 取消排队时由父组件恢复附件：token 变化即重建，避免与回写 effect 互相覆盖。
+    restoreFiles = [],
+    restoreToken = 0,
     rows = 4,
     disabled = false,
     loading = false,
@@ -82,6 +94,7 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
     onPermissionNotice,
     onActivityOpen,
     onSubmit,
+    onQueue,
     onStop,
   }: Props = $props();
   let actionMenuOpen = $state(false);
@@ -90,6 +103,8 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
   let fileDropError = $state(false);
   let captureBusy = $state(false);
   let captureError = $state(false);
+  // 提交被拒时的可见原因（文件超限、会话切换、凭据缺失等）。
+  let submitError = $state("");
   // 框选截图：先把整屏 PNG 冻结下来，用户在弹层里框选后再裁切。
   let pendingCapture = $state("");
   let cropBusy = $state(false);
@@ -111,14 +126,27 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
     restoredUrls.add(url);
     return { id: `draft-${index}`, name: file.name, mediaType: file.type, size: file.size, file, url };
   })));
+  // draftFiles 是"对外投影"：附件一变就回写，父组件据此保留草稿。
+  // 外部恢复（取消排队）不直接写 draftFiles，而是走 restoreToken，避免互相覆盖。
   $effect(() => {
-    draftFiles = attachments.flatMap((attachment) => attachment.file ? [attachment.file] : []);
+    draftFiles = attachments.flatMap((attachment) => (attachment.file ? [attachment.file] : []));
     const activeUrls = new Set(attachments.map((attachment) => attachment.url));
     for (const url of restoredUrls) {
       if (activeUrls.has(url)) continue;
       URL.revokeObjectURL(url);
       restoredUrls.delete(url);
     }
+  });
+  // 取消排队把内容退回输入框：由父组件递增 token 触发，重建附件预览。
+  $effect(() => {
+    const token = restoreToken;
+    if (!token) return;
+    const incoming = untrack(() => restoreFiles ?? []);
+    attachments = incoming.map((file: File, index: number) => {
+      const url = URL.createObjectURL(file);
+      restoredUrls.add(url);
+      return { id: `restore-${token}-${index}`, name: file.name, mediaType: file.type, size: file.size, file, url };
+    });
   });
   onDestroy(() => {
     destroyed = true;
@@ -379,29 +407,66 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
     return data ? { type: "image", mediaType: mediaType as ImagePart["mediaType"], data, name: attachment.name } : undefined;
   }
 
-  async function handleSubmit(detail: PromptInputSubmitDetail): Promise<void> {
+  async function collectSubmission(
+    detail: PromptInputSubmitDetail,
+  ): Promise<{ text: string; images: ImagePart[]; files: File[] } | undefined> {
     if (!imageInputSupported && detail.files.some(isImageAttachment)) {
       if (imageModel) imageActionBlocked = true;
       else imageRejectedNoModel = true;
-      return;
+      return undefined;
     }
-    const images = (await Promise.all(detail.files.map((attachment) => toImagePart(attachment.file, attachment)))).filter(
-      (item): item is ImagePart => Boolean(item),
-    );
+    const images = (await Promise.all(detail.files.map((attachment) => {
+      const file = attachment.file;
+      // 超过阈值的图片只引用不内联，避免在本进程里再复制一份 base64。
+      if (file && imageTypes.has(attachment.mediaType || file.type || "") && file.size > MAX_INLINE_IMAGE_BYTES) return undefined;
+      return toImagePart(file, attachment);
+    }))).filter((item): item is ImagePart => Boolean(item));
     const files = detail.files.flatMap((attachment) => {
       const file = attachment.file;
-      return file && !imageTypes.has(attachment.mediaType || file.type || "") ? [file] : [];
+      if (!file) return [];
+      // 超过图片内联阈值的图片不再内联成 base64，而是交给上层走 "@路径" 引用。
+      if (imageTypes.has(attachment.mediaType || file.type || "")) return file.size > MAX_INLINE_IMAGE_BYTES ? [file] : [];
+      return [file];
     });
-    await onSubmit(detail.text, images, files);
+    return { text: detail.text, images, files };
+  }
+
+  async function handleSubmit(detail: PromptInputSubmitDetail): Promise<void> {
+    const payload = await collectSubmission(detail);
+    if (!payload) return;
+    submitError = "";
+    try {
+      await onSubmit(payload.text, payload.images, payload.files);
+    } catch (error) {
+      // 提交被拒（例如超大文件拿不到本机路径）必须留在输入区可见，不能静默吞掉。
+      submitError = error instanceof Error && error.message ? error.message : t("errors.generalError");
+    }
+  }
+
+  // 任务执行中先把这一条排上；清空内部附件状态，避免下一轮重复带上。
+  async function handleQueue(): Promise<void> {
+    if (!onQueue || !sessionId) return;
+    const payload = await collectSubmission({ text: value, files: attachments } as PromptInputSubmitDetail);
+    if (!payload) return;
+    if (!payload.text.trim() && payload.images.length === 0 && payload.files.length === 0) return;
+    onQueue(payload.text, payload.images, payload.files);
+    value = "";
+    attachments = [];
   }
 </script>
 
 <div bind:this={promptInputElement} class="prompt-input-drop-zone">
+  {#if loading && onQueue && (value.trim() || attachments.length > 0)}
+    <div class="queued-prompt" role="status">
+      <span>{t("composer.queueHint")}</span>
+      <Button type="button" variant="outline" size="sm" onclick={() => void handleQueue()}>{t("composer.queueSend")}</Button>
+    </div>
+  {/if}
   <PromptInput
     bind:value
     bind:attachments
     multiple
-    maxFileSize={MAX_INPUT_FILE_BYTES}
+    maxFileSize={MAX_UPLOAD_FILE_BYTES}
     globalDrop={false}
     disabled={disabled || !sessionId}
     loading={loading}
@@ -413,7 +478,8 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
   >
   <PromptInputHeader class="prompt-input-composer__header">
     <ComposerAttachments />
-    {#if captureBusy}<p role="status">{t("composer.capturingScreenshot")}</p>{/if}
+    {#if submitError}<p class="file-drop-error" role="alert">{submitError}</p>{/if}
+  {#if captureBusy}<p role="status">{t("composer.capturingScreenshot")}</p>{/if}
     {#if captureError}<p class="file-drop-error" role="alert">{t("composer.screenshotFailed")}</p>{/if}
     {#if voiceFailure}
       <p class="file-drop-error" role="alert">{voiceFailureLabel(voiceFailure)}</p>
@@ -483,10 +549,12 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
     <ReferencePicker
       {client}
       {skills}
+      {commands}
       {sessionId}
       {rows}
       {disabled}
       placeholder={sessionId ? t("composer.placeholder") : t("composer.newSessionFirst")}
+      onQueue={loading && onQueue ? () => void handleQueue() : undefined}
     />
   </PromptInputBody>
   <PromptInputFooter class="prompt-input-composer__footer">
@@ -509,7 +577,7 @@ type ImagePart = Extract<PromptContentPart, { type: "image" }>;
       {#if !activityOpen}
         <Button variant="ghost" size="sm" class="composer-activity-btn" onclick={onActivityOpen} title={t("composer.expandActivity")}>
           <History size={14} />
-          <span>{t("composer.activity")}</span>
+          <span>{loading ? t("composer.activityRunning") : t("composer.activityIdle")}</span>
         </Button>
       {/if}
     </PromptInputTools>

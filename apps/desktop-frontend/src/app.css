@@ -827,6 +827,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .error-banner-message span { flex: initial; }
 .error-banner-message small { color: inherit; opacity: .82; font-size: 11px; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
 .error-banner-hint { opacity: .72 !important; }
+/* 401 之类需要研发排障时：原文收进折叠区，主视图只留业务语言。 */
+.error-banner-technical { font-size: 11px; opacity: .9; }
+.error-banner-technical code { display: block; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono, ui-monospace, monospace); }
 .recovery-banner { align-items: flex-start; max-width: 100%; min-width: 0; }
 /* 输出上限预警用中性告警色，避免和真实错误混淆。 */
 .warning-banner { border-color: color-mix(in oklch, oklch(0.75 0.15 80) 40%, var(--border)); background: color-mix(in oklch, oklch(0.75 0.15 80) 9%, var(--card)); color: oklch(0.45 0.09 70); }
@@ -838,6 +841,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .recovery-copy > small { color: color-mix(in oklch, currentColor 82%, var(--muted-foreground)); line-height: 1.5; overflow-wrap: anywhere; }
 .recovery-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .recovery-diagnostic { margin-top: 3px; }
+.recovery-raw { max-height: 180px; margin: 0; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono, ui-monospace, monospace); font-size: 10.5px; line-height: 1.45; }
+.queued-prompt { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 6px; padding: 6px 10px; border: 1px dashed color-mix(in oklch, var(--primary) 35%, var(--border)); border-radius: 6px; background: color-mix(in oklch, var(--primary) 6%, var(--card)); font-size: 11.5px; color: var(--muted-foreground); }
+.queued-prompt span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recovery-diagnostic summary { color: inherit; font-size: 11.5px; text-decoration: underline; text-underline-offset: 2px; }
 .recovery-diagnostic dl { display: grid; gap: 4px; margin: 7px 0 0; padding: 8px 9px; border: 1px solid color-mix(in oklch, currentColor 18%, var(--border)); border-radius: 5px; background: color-mix(in oklch, var(--card) 82%, transparent); font-size: 11px; }
 .recovery-diagnostic dl > div { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 8px; }
@@ -3890,3 +3896,25 @@ select:focus-visible {
 .settings-management .settings-subsection {
   border-top-color: var(--workbench-border-soft);
 }
+.queued-list { display: grid; gap: 4px; margin: 0 0 6px; padding: 8px 10px; border: 1px dashed color-mix(in oklch, var(--primary) 35%, var(--border)); border-radius: 6px; background: color-mix(in oklch, var(--primary) 5%, var(--card)); }
+.queued-list-head { font-size: 11px; font-weight: 600; color: var(--muted-foreground); }
+.queued-list .queued-prompt { margin: 0; padding: 4px 0; border: 0; background: none; }
+.queued-index { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; border-radius: 50%; background: color-mix(in oklch, var(--primary) 18%, transparent); font-size: 10px; }
+.queued-actions { display: inline-flex; align-items: center; gap: 2px; }
+/* 官方 inbox 队列：插队条目用一个轻标记，避免和普通待发送混淆。 */
+.queued-badge { flex: 0 0 auto; padding: 0 6px; border-radius: 999px; font-size: 10.5px; line-height: 16px; color: var(--primary); background: color-mix(in oklch, var(--primary) 12%, transparent); }
+/* 规划模式与命令执行结果都是“会话状态”，贴着输入区而不是进对话历史。 */
+.plan-mode-banner, .command-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 6px; padding: 6px 10px; border-radius: 8px; font-size: 12px; }
+.plan-mode-banner { color: var(--primary); background: color-mix(in oklch, var(--primary) 10%, transparent); }
+.plan-mode-banner span { flex: 1; min-width: 0; }
+.command-notice { color: var(--muted-foreground); background: var(--muted); }
+.secret-warning { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; padding: 6px 10px; border-radius: 8px; font-size: 12px; color: var(--destructive); background: color-mix(in srgb, var(--destructive) 10%, transparent); }
+.secret-warning span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.command-notice span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.queued-list-head small { margin-left: 8px; font-weight: 400; color: var(--muted-foreground); opacity: .8; }
+/* 选区引用：按钮浮在消息右上角，不改变正文排版。 */
+.transcript-message { position: relative; }
+.quote-anchor { position: absolute; z-index: 6; }
+.quote-anchor :global(.button) { box-shadow: var(--shadow-sm, 0 1px 2px rgb(0 0 0 / 12%)); }
+/* 由更新版本写过、当前运行时读不了的会话：用第三种状态区分"出错"与"版本不够"。 */
+.session-state.migration { background: color-mix(in oklch, var(--primary) 65%, transparent); box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 45%, transparent); }

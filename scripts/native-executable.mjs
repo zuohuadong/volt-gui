@@ -1,4 +1,4 @@
-import { closeSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { closeSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import path from "node:path";
 
 export const IMAGE_FILE_MACHINE_AMD64 = 0x8664;
@@ -108,12 +108,19 @@ export function windowsRuntimeNativeBinaries(runtimeRoot) {
 export function ensureWindowsKoffiPackage(targetRoot, searchRoots = [], label = "Windows x64 Koffi") {
   const destPkg = path.join(targetRoot, koffiWin32X64PackageRelative());
   const destNode = path.join(destPkg, "win32_x64", "koffi.node");
+  const runtimeManifest = path.join(targetRoot, "node_modules", "koffi", "package.json");
+  const expectedVersion = existsSync(runtimeManifest) ? JSON.parse(readFileSync(runtimeManifest, "utf8")).version : undefined;
   const candidates = [
     destPkg,
     ...searchRoots.map((root) => path.join(root, koffiWin32X64PackageRelative())),
     ...searchRoots.flatMap((root) => pnpmPackageDirs(root, "@koromix+koffi-win32-x64@", path.join("@koromix", "koffi-win32-x64"))),
   ];
-  const sourcePkg = firstMatchingDirectory(candidates, (pkg) => isWindowsX64PeExecutable(path.join(pkg, "win32_x64", "koffi.node")));
+  const sourcePkg = firstMatchingDirectory(candidates, (pkg) => {
+    if (!isWindowsX64PeExecutable(path.join(pkg, "win32_x64", "koffi.node"))) return false;
+    if (!expectedVersion) return true;
+    const manifestPath = path.join(pkg, "package.json");
+    return existsSync(manifestPath) && JSON.parse(readFileSync(manifestPath, "utf8")).version === expectedVersion;
+  });
   if (!sourcePkg) throw new Error(`${label} is missing or not a Windows x64 PE image`);
   if (path.resolve(sourcePkg) !== path.resolve(destPkg)) {
     mkdirSync(path.dirname(destPkg), { recursive: true });

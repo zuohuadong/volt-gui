@@ -6,6 +6,7 @@
   import type { DesktopBrowserCandidate, DesktopBrowserExtension, DesktopShellApi } from "../electron";
   import { t } from "$lib/i18n";
   import { writeClipboard } from "$lib/clipboard";
+  import { condensePath } from "$lib/tool-summary";
 
   interface Props { readonly shell?: DesktopShellApi; }
   let { shell }: Props = $props();
@@ -110,8 +111,13 @@
   </header>
 
   {#if extension?.directory}
-    <div class="browser-extension-path" title={extension.directory}>{extension.directory}</div>
+    <div class="browser-extension-path" title={extension.directory}>{condensePath(extension.directory)}</div>
     <p class="browser-extension-hint">{t("browserExtension.loadHint")}</p>
+    <details class="browser-extension-technical">
+      <summary>{t("transcript.toolTechnicalDetails")}</summary>
+      <code>{extension.directory}</code>
+      <Button variant="ghost" size="sm" onclick={() => void copyPath()}><Copy size={13} />{copied ? t("browserExtension.copied") : t("browserExtension.copyPath")}</Button>
+    </details>
     {#if extension.installed && browsers.length > 0}
       <p class="browser-extension-hint">{t("browserExtension.installHint")}</p>
     {/if}
@@ -163,6 +169,8 @@
   .browser-extension-header div { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
   .browser-extension-header strong { font-size: 13px; }
   .browser-extension-header small { font-size: 12px; opacity: 0.72; overflow-wrap: anywhere; }
+  .browser-extension-technical { display: grid; gap: 6px; font-size: 12px; }
+  .browser-extension-technical code { overflow-wrap: anywhere; font-family: var(--font-mono, ui-monospace, monospace); }
   .browser-extension-path { max-width: 100%; overflow: hidden; padding: 6px 8px; border-radius: 6px; background: var(--muted, rgba(127, 127, 127, 0.08)); font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .browser-extension-hint { margin: 0; font-size: 12px; opacity: 0.72; overflow-wrap: anywhere; }
   .browser-extension-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }

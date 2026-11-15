@@ -115,3 +115,33 @@ describe("userFacingError", () => {
       .toContain("preset is locked");
   });
 });
+
+describe("上游错误分类", () => {
+  it("把 503 熔断识别为不可用而不是超时", () => {
+    setLocale("zh-CN");
+    const raw = '503: {"code":null,"message":"circuit breaker is open - provider temporarily unavailable","param":null,"type":"provider_error"}';
+    const message = userFacingError(raw);
+    expect(message).toContain("熔断");
+    expect(message).not.toContain("超时");
+    expect(message).not.toContain("{");
+  });
+  it("按上游类型给出限流、配额、模型与上下文提示", () => {
+    setLocale("zh-CN");
+    expect(userFacingError('429: {"message":"rate limit exceeded for requests"}')).toContain("限流");
+    expect(userFacingError('402: {"message":"insufficient balance"}')).toContain("余额");
+    expect(userFacingError('404: {"message":"model deepseek-x not found"}')).toContain("模型不可用");
+    expect(userFacingError('400: {"message":"maximum context length is 128000 tokens"}')).toContain("上下文");
+  });
+  it("区分 OCR 失败与 OCR 超时", () => {
+    setLocale("zh-CN");
+    expect(userFacingError("dsh-ab-ocr: image decode failed")).toContain("识别");
+    expect(userFacingError("dsh-ab-ocr: recognition timeout after 120s")).toContain("超时");
+  });
+  it("不再把无法识别的 JSON 原样抛给用户", () => {
+    setLocale("zh-CN");
+    const raw = '503: {"code":null,"message":"weird upstream failure","param":null,"type":"gateway_error"}';
+    const message = userFacingError(raw);
+    expect(message).not.toContain("code");
+    expect(message).toContain("诊断");
+  });
+});

@@ -6,6 +6,8 @@ import { buildQuestionAnswers, questionsAnswered, toolDisplay } from "./ai-eleme
 import { clearPendingApproval, clearPendingQuestion, clearPendingSession, setQuestionAnswer, type PendingInteractionsBySession } from "./pending-interactions";
 import { SessionResponse, type PendingPrompt } from "./session-response.svelte";
 import { foldHistory, hasMessageContent, interruptRunningTools, mergeHistoryEntries, type TranscriptMessage } from "./transcript";
+import { describeFileRejection, formatFileReference, planFileInput } from "./attachment-plan";
+import { resolveInlineUploadBudget } from "./file-limits";
 import type { SessionHistory } from "./dsh-client";
 import type { SessionOperation } from "./session-activity";
 import { historyJumpShortcut, isEditableShortcutTarget, sessionNavigationShortcut, sessionNavigationTarget } from "./session-navigation";
@@ -61,6 +63,26 @@ function submissionHarness() {
     busyInteractions: {} as Record<string, boolean>,
     autoContinueAttempts: {} as Record<string, number>,
     t: (key: string) => key,
+    scrollTranscriptToLatest: () => {},
+    transcriptAtLatest: () => true,
+    protocolRetriedSessions: {} as Record<string, boolean>,
+    automaticRetrySubmission: false,
+    // 输入文件策略：真实实现来自 lib/attachment-plan.ts，测试里全部按 inline 上传处理。
+    planFileInput: (files: File[]) => ({ uploads: files, references: [], rejections: [] }),
+    // 斜杠命令目录：沙箱里默认为空，所以所有文本仍然按普通提示词发送。
+    hostCommands: [] as { name: string }[],
+    isHostCommandLine: () => false,
+    runHostCommand: async () => true,
+    resolveInlineUploadBudget: () => 20 * 1024 * 1024,
+    deviceMemoryGiB: () => undefined,
+    describeFileRejection: (rejection: { name: string }) => `rejected: ${rejection.name}`,
+    formatFileReference: (filePath: string) => `@${filePath}`,
+    window: { voltDesktop: { getPathForFile: () => "" } },
+    protocolRetryTimer: undefined,
+    clearTimeout: () => {},
+    // 界面提案与输入意图相关的状态（#366）：沙箱里用普通变量模拟 $state。
+    surfaceDraft: undefined,
+    lastUserPromptText: "",
   };
   const submit = runInNewContext(`${submissionSource}\nsubmit`, state) as
     (text: string, images: never[], files: File[]) => Promise<void>;
@@ -101,6 +123,12 @@ describe("delete confirmation", () => {
       clearPendingSession: vi.fn(() => ({})), clearAttachmentFiles: vi.fn(),
       refresh: vi.fn(async () => undefined), t: (key: string) => key,
       userFacingError: String,
+      streamRenderSessionId: "",
+      streamRenderPending: undefined,
+      streamRenderScheduler: { schedule() {}, flush() {}, clear() {}, pending: () => false },
+      messages: [], todos: [], historyEntries: [], historyHasMore: false, historyLoading: false, historyLoad: undefined,
+      input: "",
+      sessionResponse: { dispose() {} },
     };
     const remove = runInNewContext(`${componentFunctions(app, ["deleteManagedSession", "recordSessionOperation", "performManagementAction"])}\ndeleteManagedSession`, state);
     return { state, remove };
@@ -201,7 +229,7 @@ describe("delete confirmation", () => {
     const openQuickPicker = vi.fn();
     const selectSession = vi.fn(async () => undefined);
     const state = {
-      initializingSession: false, confirmingSessionId: "", taskActive: false,
+      initializingSession: false, confirmingSessionId: "", taskActive: false, shortcutsOpen: false,
       activeSessionId: "middle", filteredSessions: [{ sessionId: "newest" }, { sessionId: "middle" }, { sessionId: "oldest" }],
       selectSession, sessionNavigationShortcut, sessionNavigationTarget, isEditableShortcutTarget, historyJumpShortcut,
       viewportWidth: 1200, sidebarCollapsed: false, mobileSidebarOpen: false, view: "conversation",
@@ -251,7 +279,7 @@ describe("delete confirmation", () => {
     const scrollTo = vi.fn();
     const jumpToHistoryTop = vi.fn();
     const state = {
-      initializingSession: false, confirmingSessionId: "", taskActive: false,
+      initializingSession: false, confirmingSessionId: "", taskActive: false, shortcutsOpen: false,
       sessionNavigationShortcut, sessionNavigationTarget, isEditableShortcutTarget, historyJumpShortcut,
       selectSession: vi.fn(), filteredSessions: [], activeSessionId: "A", jumpToHistoryTop, quickPickerOpen: false,
       quickPickerEntries: [], quickPickerIndex: 0, runQuickPickerItem: vi.fn(), closeQuickPicker: vi.fn(), quickPickerSelected: undefined,
@@ -286,7 +314,7 @@ describe("delete confirmation", () => {
   it("stops the active task with Escape even while the activity panel is open", () => {
     const cancel = vi.fn();
     const state = {
-      initializingSession: false, confirmingSessionId: "", taskActive: true,
+      initializingSession: false, confirmingSessionId: "", taskActive: true, shortcutsOpen: false,
       activityOpen: true, mobileSidebarOpen: false, closeMobileSidebar: vi.fn(), setActivityOpen: vi.fn(), cancel, quickPickerOpen: false,
       quickPickerEntries: [], quickPickerIndex: 0, runQuickPickerItem: vi.fn(), closeQuickPicker: vi.fn(), quickPickerSelected: undefined,
       document: { getElementById: () => null }, sessionNavigationShortcut, sessionNavigationTarget, isEditableShortcutTarget, historyJumpShortcut,
@@ -513,6 +541,57 @@ describe("response inactivity timer", () => {
   });
 });
 
+describe("large file submissions (#input-limits)", () => {
+  function bigFile(name: string, size: number, type = ""): File {
+    return { name, size, type, lastModified: 0 } as unknown as File;
+  }
+  function useRealPlan(h: ReturnType<typeof submissionHarness>, path: string): void {
+    // 用真实的 planFileInput 走完整分档，只把本机路径解析固定下来。
+    // 沙箱 state 是宽松对象，这里按实际签名赋值。
+    const state = h.state as unknown as Record<string, unknown>;
+    state.planFileInput = (files: File[], options: Record<string, unknown>) => planFileInput(files, {
+      ...options,
+      resolvePath: () => path,
+      isImage: (file: File) => /^image\//u.test(file.type || ""),
+      inlineUploadBytes: resolveInlineUploadBudget(),
+    });
+    state.describeFileRejection = describeFileRejection;
+    state.formatFileReference = formatFileReference;
+  }
+
+  it("sends a 1.5 GiB document as a path reference without uploading bytes", async () => {
+    const h = submissionHarness();
+    useRealPlan(h, "D:\\资料\\年度报告.docx");
+    const accepted = await h.submit("总结这份文档", [], [bigFile("年度报告.docx", 1.5 * 1024 * 1024 * 1024)]);
+
+    expect(accepted).not.toBe(false);
+    expect(h.client.uploadFile).not.toHaveBeenCalled();
+    const calls = h.client.prompt.mock.calls as unknown as Array<[string, unknown]>;
+    const content = JSON.stringify(calls[0]?.[1] ?? []);
+    expect(content).toContain("@D:\\\\资料\\\\年度报告.docx");
+    expect(h.state.runtimeError).toBe("");
+  });
+
+  it("keeps small files on the upload path", async () => {
+    const h = submissionHarness();
+    useRealPlan(h, "D:\\资料\\小文件.docx");
+    await h.submit("传小文件", [], [bigFile("小文件.docx", 4 * 1024 * 1024)]);
+
+    expect(h.client.uploadFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("explains the limit instead of failing silently when no path is available", async () => {
+    const h = submissionHarness();
+    useRealPlan(h, "");
+    const accepted = await h.submit("传大文件", [], [bigFile("clip.docx", 64 * 1024 * 1024)]);
+
+    expect(accepted).toBe(false);
+    expect(h.client.prompt).not.toHaveBeenCalled();
+    // 沙箱里的 t() 只返回键名；真本文案由 attachment-plan.test.ts 断言含 20 MB。
+    expect(h.state.runtimeError).toBe("composer.fileReferenceUnavailable");
+  });
+});
+
 describe("attachment reference lifecycle", () => {
   it("only removes attachments actually submitted", async () => {
     const h = submissionHarness();
@@ -719,6 +798,10 @@ describe("session lifecycle integration", () => {
       describeSettings: vi.fn(async () => ({ namespaces: [], writable: false, hasDocument: false })),
       listProviders: vi.fn(async () => ({ providers: [] })),
       models: vi.fn(async () => ({ groups: [], current: { provider: "p", model: "m" } })),
+      // 会话切换会顺带加载命令/技能目录；测试里两者都为空。
+      listCommands: vi.fn(async () => []),
+      listSkills: vi.fn(async () => ({ skills: [] })),
+      listMessageFeedback: vi.fn(async () => ({ ok: true, value: { items: [] } })),
     });
     const state = Object.assign(h.state, {
       sessionSelectionRequest: 0, modelSelectionRequest: 0,
@@ -733,8 +816,14 @@ describe("session lifecycle integration", () => {
       collectCredentialRefs: (): string[] => [], enrichModelGroups: (groups: unknown) => groups,
       modelSelectionKey: (provider: string, model: string) => `${provider}/${model}`,
       modelCredentialConfigured: () => true, userFacingError: String,
+      streamRenderSessionId: "",
+      streamRenderPending: undefined,
+      streamRenderScheduler: { schedule() {}, flush() {}, clear() {}, pending: () => false },
+      hostCommands: [], skills: [], commandCatalogSessionId: "",
+      normalizeCommands: (value: unknown) => value,
+      feedbackItems: {}, readFeedbackList: () => ({ items: [] }),
     });
-    const select = runInNewContext(`${componentFunctions(app, ["selectSession", "loadSessionModels"])}\nselectSession`, state);
+    const select = runInNewContext(`${componentFunctions(app, ["selectSession", "loadSessionModels", "loadSessionCatalog", "loadMessageFeedback"])}\nselectSession`, state);
     return { ...h, state, select, resolveHistory: (history: SessionHistory) => resolveHistory(history) };
   }
 
@@ -856,7 +945,9 @@ describe("issue workflow presentation boundaries", () => {
     expect(composer).toContain("unsupportedImages || modelBusy");
     expect(composer).toContain("if (!imageInputSupported && detail.files.some(isImageAttachment))");
     expect(composer).not.toContain('throw new Error(t("models.unsupportedImage"');
-    expect(composer).not.toMatch(/attachments\s*=\s*\[\]/);
+    // 切模型/换会话不得清空附件（历史回归）；排队成功后交还给队列是唯一例外。
+    expect(composer).toMatch(/onQueue\(payload\.text[\s\S]{0,200}attachments = \[\]/);
+    expect(composer).not.toMatch(/modelBusy[^\n]*attachments\s*=\s*\[\]/);
   });
 
   it("removes images immediately when no vision model exists and links to configuration", () => {
@@ -868,7 +959,9 @@ describe("issue workflow presentation boundaries", () => {
   });
 
   it("shows model, provider, and credential context for 401 failures", () => {
-    expect(app).toContain("const authFailure = $derived(/401|认证失败|authentication failed|unauthorized/iu.test(sessionLoadError || runtimeError));");
+    // 401 必须先判断是谁拒的：只有模型路由的失败才展示 provider/凭据上下文（#362）。
+    expect(app).toContain("const authFailure = $derived(!!classifyAuthFailure(sessionLoadError || runtimeError));");
+    expect(app).toContain("const providerAuthFailure = $derived(authFailure && activeAuthFailureKind === \"provider\"");
     expect(app).toContain('t("errors.authFailureContext"');
     expect(app).toContain('t("errors.authFailureBuiltinHint")');
     expect(app).toContain("function openCredentialSettingsForCurrentModel()");

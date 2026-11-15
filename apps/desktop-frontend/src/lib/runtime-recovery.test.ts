@@ -47,7 +47,8 @@ describe("runtime recovery wiring", () => {
     expect(app).toContain('if (!runtimeConnectionError) runtimeError = "";');
     expect(app).toContain('{#if runtimeConnectionError || runtimeError === t("errors.runtimeConnection")}');
     expect(app).toContain('t("errors.runtimeCached")');
-    expect(app).toContain('runtimeConnectionError ? "?" : runningTools.length');
+    // 数值卡片不再显示问号：读不到时给业务语言（#356）。
+    expect(app).toContain('t("runtime.valueUnavailable")');
     expect(app).toContain("if (runtimeConnectionError || client !== managementClient) return;");
   });
 
@@ -137,12 +138,16 @@ function recoveryHarness(activeSessionId = "A", connected = true) {
     networkModeBusy: false, runtimeRetrying: false, managementError: "", managementNotice: "", sessionLoadError: "",
     unsubscribeDshFrames: undefined as (() => void) | undefined,
     unsubscribeRuntimeError: undefined as (() => void) | undefined,
-    runtimeConnectionError: "", runtimeError: "", loading: true, sessionResponse,
+    runtimeConnectionError: "", runtimeError: "", loading: true, sessionResponse, runtimeLastSyncedAt: 0,
     get sending() { return sessionResponse.sending; },
     initializingSession: false, refreshQueued: false, refreshTimer: undefined as ReturnType<typeof setTimeout> | undefined,
+    view: "conversation", refreshManagement: vi.fn(async () => undefined),
+    nativeQueue: {}, activeQueueRows: [],
+    applySessionQueueState: vi.fn(), syncSessionQueue: vi.fn(async () => undefined), pruneSessionCaches: vi.fn(),
     eventRefreshFlight: undefined, refreshDisposed: false, bootstrapInFlight: false, bootstrapQueued: false,
     setTimeout, clearTimeout,
     customProductName: "", appVersion: "", workspacePath: "/A", workspaceWarning: "",
+    desktopFeatures: { permanentSessionDeletion: false, updateChecks: false },
     memoryStatus: "disabled",
     bootstrapWorkspace: "/A", defaultChatDirectory: "/A", readDefaultChatDirectory: () => "",
     activeSessionId, sessionSelectionRequest: 0, sessionEventRevision: 0,

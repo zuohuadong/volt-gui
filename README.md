@@ -4,8 +4,8 @@ VoltUI is a local Electron desktop shell for the official DeepSeek Harness (DSH)
 
 ## Runtime contract
 
-- Node.js `26.13.0` (Node 26 type stripping is supported for erasable `.ts` scripts).
-- pnpm `12.16.1` with a frozen lockfile.
+- Node.js `26.13.1` (Node 26 type stripping is supported for erasable `.ts` scripts).
+- pnpm `12.21.0` with a frozen lockfile.
 - Electron `45.1.0` and electron-builder `26.18.0`.
 - Official `@deepseek-ai/dsh@0.2.1-rc.5`, pinned exactly in the root and Electron packages.
 - Windows x64 is the verified packaging target. Release artifacts are unsigned-review artifacts until signing and updater contracts are approved.
@@ -16,7 +16,7 @@ Electron owns the window, navigation policy, process lifecycle and package ident
 
 ```sh
 corepack enable
-corepack prepare pnpm@12.16.1 --activate
+corepack prepare pnpm@12.21.0 --activate
 pnpm install --frozen-lockfile
 pnpm run desktop
 ```

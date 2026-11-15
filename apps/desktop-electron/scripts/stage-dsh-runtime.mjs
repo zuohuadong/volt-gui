@@ -59,6 +59,7 @@ if (result.status !== 0) process.exit(result.status ?? 1);
 const integrationsScriptTarget = path.join(target, "scripts", "anyong-integrations-mcp.mjs");
 fs.mkdirSync(path.dirname(integrationsScriptTarget), { recursive: true });
 fs.copyFileSync(path.resolve(appDir, "..", "..", "scripts", "anyong-integrations-mcp.mjs"), integrationsScriptTarget);
+fs.copyFileSync(path.resolve(appDir, "../../scripts/anyong-skill.mjs"), path.join(target, "scripts", "anyong-skill.mjs"));
 fs.copyFileSync(path.resolve(appDir, "..", "..", "scripts", "network-policy.mjs"), path.join(target, "scripts", "network-policy.mjs"));
 for (const script of ["sheet-engine.py", "report-docx.py", "office-control.ps1"]) {
   fs.copyFileSync(path.resolve(appDir, "../../scripts", script), path.join(target, "scripts", script));
@@ -81,6 +82,7 @@ const required = [
   "node_modules/@voltui/dsh-intranet-auth/package.json",
   "node_modules/zod/package.json",
   "scripts/anyong-integrations-mcp.mjs",
+  "scripts/anyong-skill.mjs",
   "scripts/network-policy.mjs",
   "node_modules/js-yaml/package.json",
   "node_modules/node-pty/package.json",
@@ -163,7 +165,7 @@ const version = spawnSync(process.execPath, [path.join(target, required[0]), "--
   env: process.env,
 });
 if (version.error) throw version.error;
-if (version.status !== 0 || version.stdout.trim() !== "0.2.2-rc.1") {
+if (version.status !== 0 || version.stdout.trim() !== "0.2.2-rc.3") {
   throw new Error(`staged DSH runtime version check failed: ${version.stdout}${version.stderr}`);
 }
 

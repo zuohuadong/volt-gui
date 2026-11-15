@@ -19,8 +19,8 @@ const desktopRequire = createRequire(path.join(root, "apps", "desktop-electron",
 const electronBuilderRequire = createRequire(desktopRequire.resolve("electron-builder/package.json"));
 const { listPackage } = electronBuilderRequire("@electron/asar");
 const packageOutput = path.join(root, "apps", "desktop-electron", "dist-package");
-const expectedNodeVersion = "v26.13.0";
-const expectedDshVersion = "0.2.2-rc.1";
+const expectedNodeVersion = "v26.13.1";
+const expectedDshVersion = "0.2.2-rc.3";
 const startupTimeoutMs = STARTUP_TIMEOUT_MS;
 const requiredRuntimeFiles = [
   "dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js",
@@ -36,6 +36,7 @@ const requiredRuntimeFiles = [
   "dsh-runtime/node_modules/@voltui/dsh-intranet-auth/package.json",
   "dsh-runtime/node_modules/zod/package.json",
   "dsh-runtime/scripts/anyong-integrations-mcp.mjs",
+  "dsh-runtime/scripts/anyong-skill.mjs",
   "dsh-runtime/scripts/office-control.ps1",
   "dsh-runtime/scripts/report-docx.py",
   "dsh-runtime/scripts/sheet-engine.py",

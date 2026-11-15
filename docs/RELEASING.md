@@ -2,7 +2,7 @@
 
 ## Candidate
 
-Release candidates are immutable commits verified with Node `26.13.0`, pnpm `12.16.1`, the frozen lockfile and the current official DSH package.
+Release candidates are immutable commits verified with Node `26.13.1`, pnpm `12.21.0`, the frozen lockfile and the current official DSH package.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -33,6 +33,46 @@ pnpm run smoke:staged-runtime
 The workflow records hashes for the installer executable and portable ZIP archive, and requires the installer's Authenticode status to be `NotSigned`. The archive is extracted once and runs `Anyong.exe` directly instead of unpacking the complete DSH runtime on every launch. These remain unsigned-review artifacts, not a production release.
 
 Windows packaging copies missing `node-pty` `win32-x64` ConPTY files and `@koromix/koffi-win32-x64` from the desktop workspace or pnpm virtual store, then fail closed unless `node.exe`, `officecli.exe`, `bsk.exe`, `conpty.node`, `conpty_console_list.node`, `conpty.dll`, `OpenConsole.exe`, Koffi, and `Anyong.exe` exist as Windows x64 PE images (`MZ` + `PE` + AMD64 machine). The Windows extraResources graph omits Darwin/Linux/ARM64 natives and `*.pdb` files. Desktop CI and release both require Authenticode `NotSigned`. Do not run `electron-builder --win` from a macOS-staged runtime. Official DSH child processes do not inherit user API keys or OEM endpoint environment variables.
+
+### Selective sync receipt: November 15, 2026
+
+Reviewed CNB `anyong-agent` through `983b4f606cea98b2ab894daa4ae2faee93ae6866`
+(`0.35.3`), including the product snapshot at
+`f4ccee7d7594110267205535062646662d91c8b2`. This is a behavioral port, not a
+merge or a claim of complete product acceptance.
+
+- Ported the Svelte workbench updates for AgentConfig, official queue/jobs,
+  terminal attachment, changes, message feedback, teams, automation and skills.
+  Official DSH remains the owner of sessions, permissions, credentials and jobs.
+- Added bounded terminal input with ACK-based flow control, pending-create
+  cancellation, retryable close, and profile dependency rollback fault tests.
+- Real Electron startup found rc.3's adaptive directory picker selecting native
+  mode while the workbench needs listing. The profile now composes the official
+  browse backend and matching Web surface together, with a real listing RPC
+  regression; Electron's existing native folder dialog remains available.
+- Updated Node, pnpm, DSH, Electron and compatible dependencies with exact pins.
+  DSH uses `next=0.2.2-rc.3`; registry `latest=0.2.2-rc.1` is older. Frontend
+  TypeScript API stays on 6.x for svelte-check's peer contract; `--tsgo` uses 7.0.2.
+  Koffi JavaScript and the Windows addon must both be 3.3.8.
+- PowerShell intentionally stays at the latest 7.4 maintenance release,
+  `7.4.22`. The requested `7.7.0` upgrade remains pending target-Windows nested
+  shell/CET acceptance; the existing .NET 8 compatibility gate is not relaxed.
+- The new reference delta after `f4ccee7d` only changes reference release
+  metadata, its excluded CNB OfficeCLI installer/cache and an overlay test not
+  present locally. Do not import those release scripts or weaken local gates.
+- Local core tests, 18 real DSH integration tests, source build, Svelte check,
+  workflow tests, migration/skills boundaries and staged Node/DSH/plugin RPC
+  smoke passed on macOS. Production dependency audit has no high/critical
+  findings, but retains one low and six moderate findings.
+- Playwright observed an isolated Electron window and settings navigation.
+  The test used separate app/user/DSH directories, disabled protocol
+  registration, and had no model key; this is not model or full UI acceptance.
+
+Execution status: `PARTIAL`. Windows x64 installer/ZIP, target-Windows
+PowerShell/CET behavior, authenticated model/BrowserSkill/SMB/enterprise-service
+flows and final desktop UI acceptance remain separate gates. Local tests and
+macOS staging do not establish those outcomes. No release or production
+deployment is authorized by this receipt.
 
 ## GitHub unsigned-review release
 

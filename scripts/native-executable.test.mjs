@@ -128,6 +128,22 @@ test("replaces a staged ARM64 Koffi binary with the Windows x64 package", () => 
   assert.equal(isWindowsX64PeExecutable(staged), true);
 });
 
+test("never combines Koffi JavaScript with a different native addon version", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "voltui-koffi-version-"));
+  fixtures.push(dir);
+  const sourceRoot = path.join(dir, "workspace");
+  const targetRoot = path.join(dir, "staged");
+  const sourcePackage = path.join(sourceRoot, "node_modules", "@koromix", "koffi-win32-x64");
+  const runtimePackage = path.join(targetRoot, "node_modules", "koffi");
+  writePe(path.join(sourcePackage, "win32_x64", "koffi.node"));
+  mkdirSync(runtimePackage, { recursive: true });
+  writeFileSync(path.join(runtimePackage, "package.json"), JSON.stringify({ name: "koffi", version: "3.3.8" }));
+  writeFileSync(path.join(sourcePackage, "package.json"), JSON.stringify({ name: "@koromix/koffi-win32-x64", version: "3.1.1" }));
+  assert.throws(() => ensureWindowsKoffiPackage(targetRoot, [sourceRoot]), /missing/u);
+  writeFileSync(path.join(sourcePackage, "package.json"), JSON.stringify({ name: "@koromix/koffi-win32-x64", version: "3.3.8" }));
+  assert.equal(isWindowsX64PeExecutable(ensureWindowsKoffiPackage(targetRoot, [sourceRoot])), true);
+});
+
 test("copies the complete Windows x64 node-pty ConPTY prebuild and replaces mixed-arch leftovers", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "voltui-pty-"));
   fixtures.push(dir);

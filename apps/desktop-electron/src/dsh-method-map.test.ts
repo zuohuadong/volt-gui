@@ -9,26 +9,18 @@ const minimalPayloads: Record<string, Record<string, unknown>> = {
   "fileUploads.upload": { agentId: "s1", request: { data: "aGVsbG8=", name: "a.txt" } },
   "commands.execute": { sessionId: "s1", line: "/permission read-only" },
   "commands.list": { sessionId: "s1" },
-  "job.list": { sessionId: "s1" },
-  "job.follow": { sessionId: "s1", jobId: "bash-1" },
-  "job.kill": { sessionId: "s1", jobId: "bash-1" },
   "schedule.list": {},
-  "schedule.catalog": {},
-  "schedule.view": { id: "id" },
-  "schedule.history": { id: "id", limit: 10 },
   "schedule.run": { id: "id" },
   "schedule.edit": { id: "id", action: "update", patch: { active: false } },
-  "schedule.deleteInactive": {},
-  "terminal.list": { sessionId: "s1" },
-  "terminal.environment": { sessionId: "s1" },
-  "terminal.shells": { sessionId: "s1" },
-  "terminal.create": { sessionId: "s1", request: { id: "t1", cols: 80, rows: 24 } },
-  "terminal.readScreen": { sessionId: "s1", id: "t1", request: {} },
-  "terminal.close": { sessionId: "s1", id: "t1" },
-  "terminal.rename": { sessionId: "s1", id: "t1", title: "x" },
   "agentTeams.setEnabled": { sessionId: "s1", enabled: true },
   "subagent.history": { parentSessionId: "p1", childSessionId: "c1", mode: "one-shot" },
 };
+
+test("minimal payload fixtures only describe allowlisted methods", () => {
+  for (const method of Object.keys(minimalPayloads)) {
+    assert.ok(allowedDshMethods.has(method), `${method} has an obsolete request fixture`);
+  }
+});
 
 test("every allowlisted DSH method resolves to an endpoint", () => {
   const unmapped: string[] = [];
@@ -52,7 +44,12 @@ test("the command catalog lists through the official agent-scoped endpoint", () 
 });
 
 test("schedule actions use the official namespace while job and terminal streams stay on their dedicated IPC", () => {
-  for (const method of ["job.list", "job.follow", "terminal.readScreen", "terminal.create"]) {
+  for (const method of [
+    "job.list", "job.follow", "job.kill",
+    "terminal.list", "terminal.environment", "terminal.shells", "terminal.create",
+    "terminal.readScreen", "terminal.close", "terminal.rename",
+    "terminal/readScreen", "terminal/retain", "terminal/attach",
+  ]) {
     assert.equal(allowedDshMethods.has(method), false);
     assert.throws(() => mapLegacyDshRequest(method, {}), /不支持/u);
   }

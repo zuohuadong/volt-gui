@@ -2,6 +2,9 @@
 
 ## Candidate
 
+Source-gate failures: [CNB build runbook](CNB_BUILD_RUNBOOK.md).
+Target-platform and real-service acceptance: [desktop checklist](DESKTOP_ACCEPTANCE_CHECKLIST.md).
+
 Release candidates are immutable commits verified with Node `26.13.1`, pnpm `12.21.0`, the frozen lockfile and the current official DSH package.
 
 ```sh
@@ -73,6 +76,33 @@ PowerShell/CET behavior, authenticated model/BrowserSkill/SMB/enterprise-service
 flows and final desktop UI acceptance remain separate gates. Local tests and
 macOS staging do not establish those outcomes. No release or production
 deployment is authorized by this receipt.
+
+### Selective follow-up receipt: November 15, 2026
+
+Parent: the selective sync receipt above (`983b4f606`).
+Source: CNB `anyong-agent` main
+`00fbdf7231a761443b648cc13db0ce3e5c03527e`, following `6d428b4d4`.
+Reason: the user's explicit continuation request after new upstream commits.
+Scope: the two-commit delta only; Native, low risk, one writer, external=0.
+No dependency, runtime implementation, workflow, version or release changes.
+
+| Source change | Disposition |
+| --- | --- |
+| Remove the nonexistent `terminal/readScreen` mapping | Already covered locally: terminal methods use dedicated IPC and streams, not the generic request allowlist. Removed stale payload fixtures and expanded negative regression checks, including raw stream endpoint names. |
+| Desktop manual acceptance checklist | Adapted to the local RPC surface, byte/ACK limits, migration rollback, disabled unsupported actions, and pending Windows/real-service gates. This is a checklist, not a passing receipt. |
+| CNB build runbook | Adapted to source-only CNB and GitHub Windows packaging. Excluded reference tag/release commands, internal updater/cache paths, release permissions assumptions and timing claims. |
+| Workbench/releasing links | Added to the local feature matrix and candidate instructions; did not copy the reference feature document or release process. |
+
+Verification: 44/44 targeted RPC/terminal/lifecycle, workflow and runtime-boundary
+tests passed; Electron typecheck and runtime/migration/skills boundary commands
+passed. Documentation links and final diff hygiene were checked.
+No full build or authenticated-service test was rerun for this docs/test-only
+delta; the parent's evidence is not a new Windows or real-service receipt.
+
+Incremental source alignment is complete for this two-commit delta.
+Overall product acceptance remains `PARTIAL` for the parent receipt's Windows,
+PowerShell/CET, real-model/BrowserSkill/SMB/enterprise and full UI gates.
+No release, workflow dispatch or production deployment was performed.
 
 ## GitHub unsigned-review release
 

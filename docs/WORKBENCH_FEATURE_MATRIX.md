@@ -13,3 +13,7 @@
 | Windows x64 package | Electron-builder | Unsigned review |
 | Signing, notarization, updater | Release control plane | Not enabled |
 | Legacy runtime compatibility | None | Retired |
+
+Implemented does not mean accepted on a target platform. Manual and real-service
+acceptance is tracked with [the desktop checklist](DESKTOP_ACCEPTANCE_CHECKLIST.md);
+the current release boundaries remain in [Releasing](RELEASING.md).
